@@ -1,0 +1,15 @@
+{
+  "catalog_version": "0.1.0",
+  "category": "radial_ball_bearing",
+  "units": "mm",
+  "notes": "Synthetic MakerBench radial ball bearings with ISO 15 standard dimensions. Local catalog: reproducible, offline, and free of commercial-data IP concerns. Bore fit (shaft): bore_mm - 0.01 to bore_mm - 0.05 (press). Housing fit (bore): housing bore = od_mm - 0.05 to od_mm - 0.20 for printed PLA; od_mm + 0.05 to od_mm + 0.15 for clearance/removable.",
+  "parts": [
+    {"part_number": "MB-BRG-625", "category": "radial_ball_bearing", "designation": "625", "bore_mm": 5.0, "od_mm": 16.0, "width_mm": 5.0, "material": "steel", "shield": "open", "notes": "Common in small skate wheels, fidget spinners, and RC axles."},
+    {"part_number": "MB-BRG-626", "category": "radial_ball_bearing", "designation": "626", "bore_mm": 6.0, "od_mm": 19.0, "width_mm": 6.0, "material": "steel", "shield": "open", "notes": "Common 6mm-bore bearing for motor shafts and small printer axes."},
+    {"part_number": "MB-BRG-608", "category": "radial_ball_bearing", "designation": "608", "bore_mm": 8.0, "od_mm": 22.0, "width_mm": 7.0, "material": "steel", "shield": "open", "notes": "The most common bearing worldwide; 8mm bore. Used in skateboards, printers, and wheels."},
+    {"part_number": "MB-BRG-6001", "category": "radial_ball_bearing", "designation": "6001", "bore_mm": 12.0, "od_mm": 28.0, "width_mm": 8.0, "material": "steel", "shield": "open", "notes": "12mm bore, common in small gearboxes and motor mounts."},
+    {"part_number": "MB-BRG-6002", "category": "radial_ball_bearing", "designation": "6002", "bore_mm": 15.0, "od_mm": 35.0, "width_mm": 11.0, "material": "steel", "shield": "open", "notes": "15mm bore, used in mid-size motor mounts and spindle assemblies."},
+    {"part_number": "MB-BRG-6003", "category": "radial_ball_bearing", "designation": "6003", "bore_mm": 17.0, "od_mm": 40.0, "width_mm": 12.0, "material": "steel", "shield": "open", "notes": "17mm bore, found in appliance motors and medium CNC spindles."},
+    {"part_number": "MB-BRG-6004", "category": "radial_ball_bearing", "designation": "6004", "bore_mm": 20.0, "od_mm": 47.0, "width_mm": 14.0, "material": "steel", "shield": "open", "notes": "20mm bore, used in larger motors, pumps, and lathe tailstocks."}
+  ]
+}
