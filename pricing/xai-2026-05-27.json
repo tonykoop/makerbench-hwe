@@ -1,0 +1,44 @@
+{
+  "provider": "xai",
+  "effective_date": "2026-05-27",
+  "source_url": "https://docs.x.ai/developers/pricing",
+  "notes": "xAI Chat API standard token rates. Reasoning tokens are billed as standard model output tokens; server-side tool invocation costs are separate and are not estimated by MakerBench token pricing.",
+  "models": {
+    "grok-4.3": {
+      "input_usd_per_1m_tokens": 1.25,
+      "cached_input_usd_per_1m_tokens": 0.2,
+      "output_usd_per_1m_tokens": 2.5,
+      "notes": "1M context general chat model; output price includes reasoning tokens."
+    },
+    "grok-4.3-latest": {
+      "input_usd_per_1m_tokens": 1.25,
+      "cached_input_usd_per_1m_tokens": 0.2,
+      "output_usd_per_1m_tokens": 2.5,
+      "notes": "Alias for grok-4.3; output price includes reasoning tokens."
+    },
+    "grok-build-0.1": {
+      "input_usd_per_1m_tokens": 1.0,
+      "cached_input_usd_per_1m_tokens": 0.2,
+      "output_usd_per_1m_tokens": 2.0,
+      "notes": "Current xAI coding model surface; aliases include grok-code-fast-1, grok-code-fast, and grok-code-fast-1-0825."
+    },
+    "grok-code-fast-1": {
+      "input_usd_per_1m_tokens": 1.0,
+      "cached_input_usd_per_1m_tokens": 0.2,
+      "output_usd_per_1m_tokens": 2.0,
+      "notes": "Alias for grok-build-0.1."
+    },
+    "grok-code-fast": {
+      "input_usd_per_1m_tokens": 1.0,
+      "cached_input_usd_per_1m_tokens": 0.2,
+      "output_usd_per_1m_tokens": 2.0,
+      "notes": "Alias for grok-build-0.1."
+    },
+    "grok-code-fast-1-0825": {
+      "input_usd_per_1m_tokens": 1.0,
+      "cached_input_usd_per_1m_tokens": 0.2,
+      "output_usd_per_1m_tokens": 2.0,
+      "notes": "Alias for grok-build-0.1."
+    }
+  }
+}

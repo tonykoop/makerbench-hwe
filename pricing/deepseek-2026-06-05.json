@@ -1,0 +1,20 @@
+{
+  "provider": "deepseek",
+  "effective_date": "2026-06-05",
+  "source_url": "https://api-docs.deepseek.com/quick_start/pricing",
+  "notes": "Native DeepSeek OpenAI-compatible Chat Completions API rates for DeepSeek V4. The official pricing table lists cache-hit input, cache-miss input, and output prices per 1M tokens. Reasoning content is returned as completion-token detail and is billed within the output token bucket; server-side tool calls and gateways are outside this token-price estimate.",
+  "models": {
+    "deepseek-v4-pro": {
+      "input_usd_per_1m_tokens": 0.435,
+      "cached_input_usd_per_1m_tokens": 0.003625,
+      "output_usd_per_1m_tokens": 0.87,
+      "notes": "Current DeepSeek V4 Pro native model. 1M-token context, thinking mode supported and enabled by default, max output documented as 384K."
+    },
+    "deepseek-v4-flash": {
+      "input_usd_per_1m_tokens": 0.14,
+      "cached_input_usd_per_1m_tokens": 0.0028,
+      "output_usd_per_1m_tokens": 0.28,
+      "notes": "Current DeepSeek V4 Flash native model. 1M-token context, thinking and non-thinking modes supported."
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "provider": "moonshot",
+  "effective_date": "2026-06-04",
+  "source_url": "https://platform.kimi.ai/docs/pricing/chat-k26",
+  "notes": "Native Moonshot/Kimi Chat Completion API rates for Kimi K2.6. The official pricing table lists cache-hit input, cache-miss input, and output prices per 1M tokens. Reasoning content counts toward input/output token quota; server-side tool calls and gateways are outside this token-price estimate.",
+  "models": {
+    "kimi-k2.6": {
+      "input_usd_per_1m_tokens": 0.95,
+      "cached_input_usd_per_1m_tokens": 0.16,
+      "output_usd_per_1m_tokens": 4.0,
+      "notes": "Current Kimi K2.6 native Moonshot model, 262,144-token context. Output price includes thinking/reasoning tokens."
+    }
+  }
+}

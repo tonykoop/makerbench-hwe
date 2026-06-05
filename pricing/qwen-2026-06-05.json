@@ -1,0 +1,63 @@
+{
+  "provider": "qwen",
+  "effective_date": "2026-06-05",
+  "source_url": "https://help.aliyun.com/zh/model-studio/model-pricing",
+  "currency_conversion": {
+    "source_currency": "CNY",
+    "target_currency": "USD",
+    "cny_to_usd": 0.148,
+    "conversion_source_url": "https://cny.currencyrate.today/usd",
+    "conversion_note": "Alibaba Cloud publishes Qwen/DashScope token rates in CNY per 1M tokens. USD estimates use 1 CNY = 0.148 USD, observed during the 2026-06-05 implementation pass."
+  },
+  "notes": "Native Alibaba Cloud Model Studio / DashScope OpenAI-compatible Chat Completions rates. The pricing helper currently supports one input, cached-input, and output price per exact model. Qwen has region, tier, batch, and context-cache variants; these entries use the documented Global deployment first-tier realtime rates unless the model has a single tier. Cached input is conservatively priced at the same rate as regular input until MakerBench supports Qwen's explicit/implicit cache discount tiers. Qwen reports reasoning tokens as completion_tokens_details.reasoning_tokens; official output pricing covers thinking chain plus answer, so reasoning tokens are tracked separately for provenance and not billed again.",
+  "models": {
+    "qwen3.7-max": {
+      "input_usd_per_1m_tokens": 1.776,
+      "cached_input_usd_per_1m_tokens": 1.776,
+      "output_usd_per_1m_tokens": 5.328,
+      "notes": "Current Qwen3.7 Max stable model, documented as equivalent to qwen3.7-max-2026-05-20. Global deployment, 0<Token<=1M first/single tier, thinking and non-thinking modes share the same output price bucket."
+    },
+    "qwen3.7-max-2026-05-20": {
+      "input_usd_per_1m_tokens": 1.776,
+      "cached_input_usd_per_1m_tokens": 1.776,
+      "output_usd_per_1m_tokens": 5.328,
+      "notes": "Pinned Qwen3.7 Max snapshot. Keep separate from the stable alias when publishing rows."
+    },
+    "qwen3-max": {
+      "input_usd_per_1m_tokens": 0.37,
+      "cached_input_usd_per_1m_tokens": 0.37,
+      "output_usd_per_1m_tokens": 1.48,
+      "notes": "Qwen3 Max stable alias, documented as equivalent to qwen3-max-2026-01-23. Global deployment first tier, 0<Token<=32K; higher prompt-token tiers are not represented by the flat pricing helper."
+    },
+    "qwen3-max-2026-01-23": {
+      "input_usd_per_1m_tokens": 0.37,
+      "cached_input_usd_per_1m_tokens": 0.37,
+      "output_usd_per_1m_tokens": 1.48,
+      "notes": "Pinned Qwen3 Max snapshot. Keep separate from qwen3.7-max and from the qwen3-max stable alias when publishing rows."
+    },
+    "qwen3-coder-plus": {
+      "input_usd_per_1m_tokens": 0.592,
+      "cached_input_usd_per_1m_tokens": 0.592,
+      "output_usd_per_1m_tokens": 2.368,
+      "notes": "Qwen3 Coder Plus stable alias, documented as equivalent to qwen3-coder-plus-2025-09-23. Global deployment first tier, 0<Token<=32K; higher tiers and Qwen's cache discounts are not represented by the flat pricing helper."
+    },
+    "qwen3-coder-plus-2025-09-23": {
+      "input_usd_per_1m_tokens": 0.592,
+      "cached_input_usd_per_1m_tokens": 0.592,
+      "output_usd_per_1m_tokens": 2.368,
+      "notes": "Pinned Qwen3 Coder Plus snapshot. Keep separate from Max and open-weight Qwen rows."
+    },
+    "qwen3-coder-flash": {
+      "input_usd_per_1m_tokens": 0.148,
+      "cached_input_usd_per_1m_tokens": 0.148,
+      "output_usd_per_1m_tokens": 0.592,
+      "notes": "Qwen3 Coder Flash stable alias, documented as equivalent to qwen3-coder-flash-2025-07-28. Global deployment first tier, 0<Token<=32K."
+    },
+    "qwen3.6-35b-a3b": {
+      "input_usd_per_1m_tokens": 0.2664,
+      "cached_input_usd_per_1m_tokens": 0.2664,
+      "output_usd_per_1m_tokens": 1.5984,
+      "notes": "Open-weight Qwen3.6 35B A3B served by DashScope Global deployment, 0<Token<=256K tier. Keep open-weight hosted rows distinct from proprietary Max/Coder rows and from local runtime rows."
+    }
+  }
+}

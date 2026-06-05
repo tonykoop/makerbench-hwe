@@ -1,0 +1,20 @@
+{
+  "provider": "google",
+  "effective_date": "2026-06-02",
+  "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
+  "notes": "Gemini Developer API standard paid-tier text/image/video token rates where verified. Antigravity subscription or CLI runs are opaque unless measured API usage is reported separately.",
+  "models": {
+    "gemini-3-flash-preview": {
+      "input_usd_per_1m_tokens": 0.5,
+      "cached_input_usd_per_1m_tokens": 0.05,
+      "output_usd_per_1m_tokens": 3.0,
+      "notes": "Output price includes thinking tokens."
+    },
+    "gemini-3.5-flash": {
+      "input_usd_per_1m_tokens": 1.5,
+      "cached_input_usd_per_1m_tokens": 0.15,
+      "output_usd_per_1m_tokens": 9.0,
+      "notes": "Standard paid-tier rates; output price includes thinking tokens."
+    }
+  }
+}

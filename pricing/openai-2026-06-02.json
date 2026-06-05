@@ -1,0 +1,20 @@
+{
+  "provider": "openai",
+  "effective_date": "2026-06-02",
+  "source_url": "https://openai.com/api/pricing/",
+  "notes": "Standard API text-token rates. Subscription-routed Codex or ChatGPT runs are opaque unless measured API usage is reported separately.",
+  "models": {
+    "gpt-5.5": {
+      "input_usd_per_1m_tokens": 5.0,
+      "cached_input_usd_per_1m_tokens": 0.5,
+      "output_usd_per_1m_tokens": 30.0,
+      "notes": "Standard processing rates for context lengths under the provider's long-context threshold."
+    },
+    "gpt-5.4": {
+      "input_usd_per_1m_tokens": 2.5,
+      "cached_input_usd_per_1m_tokens": 0.25,
+      "output_usd_per_1m_tokens": 15.0,
+      "notes": "Standard processing rates for context lengths under the provider's long-context threshold."
+    }
+  }
+}
