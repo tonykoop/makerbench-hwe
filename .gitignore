@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.venv-win/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# MakerBench run artifacts (agent outputs, renders, scratch)
+runs/
+/results.json
+/r_*.json
+/smoke.json
+*.stl
+*.off
+*.3mf
+*.png
+!docs/**/*.png          # keep documentation images
+!tasks/**/expected_*.png # keep any committed reference renders
+# 3D viewer meshes (#11): pipeline-generated from SUBMITTED artifacts by
+# makerbench/viewer_export.py and committed so the stdlib-only Pages build can
+# serve them. Never oracle geometry. Regenerate with `python -m makerbench.viewer_export`.
+!site/assets/meshes/*.stl
+
+# Local secrets (model API keys etc.)
+.env
+*.local
+
+# Local runner/session state (not benchmark data)
+cache/
+
+# Local site-preview / MCP scratch (not artifacts)
+.playwright-mcp/
+.server-*.out.log
+.server-*.err.log

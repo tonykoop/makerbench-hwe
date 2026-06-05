@@ -1,0 +1,8 @@
+# Keep repository text files stable across Windows, WSL, and CI.
+* text=auto eol=lf
+
+*.sh text eol=lf
+
+# Result source artifacts are verbatim model output, committed byte-for-byte
+# to match their recorded sha256 (anti-cheat binding). Do not whitespace-check.
+results/**/artifacts/** -whitespace
