@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450" role="img" aria-label="Synthetic failure render placeholder">
+  <rect width="800" height="450" fill="#f6f7f9"/>
+  <rect x="12" y="12" width="776" height="426" rx="16" fill="none" stroke="#cdd2d9" stroke-width="3" stroke-dasharray="12 10"/>
+  <g transform="translate(400 196)" fill="none" stroke="#9aa1ac" stroke-width="6" stroke-linejoin="round">
+    <path d="M-70 -40 L70 -40 L100 0 L-40 0 Z"/>
+    <path d="M-70 -40 L-70 40 L-40 80 L-40 0 Z"/>
+    <path d="M-40 0 L100 0 L100 80 L-40 80 Z"/>
+    <line x1="-70" y1="-40" x2="-110" y2="-80" stroke="#d6562b" stroke-dasharray="8 8"/>
+  </g>
+  <text x="400" y="330" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" fill="#5b626d">Synthetic placeholder</text>
+  <text x="400" y="366" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#9aa1ac">Illustrative only — no oracle geometry or held-out fixture data</text>
+</svg>
