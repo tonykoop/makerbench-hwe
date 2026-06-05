@@ -1,0 +1,4 @@
+[submodule "private/oracles"]
+	path = private/oracles
+	url = git@github.com:tonykoop/makerbench-oracles.git
+	branch = main
