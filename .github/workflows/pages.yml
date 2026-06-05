@@ -1,0 +1,57 @@
+name: deploy-pages
+
+# Publishes the static leaderboard site (site/) to GitHub Pages. The data file
+# data, badge endpoints, share pages, and OG cards are regenerated from results/
+# on every deploy, so the live site always reflects whatever runs are committed
+# on the default branch. build_data.py is stdlib-only — no pip install, no
+# OpenSCAD — so this stays fast.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "results/**"
+      - "tasks/registry.json"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+# Allow the workflow to publish to Pages, and serialize deploys.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Regenerate leaderboard site data
+        run: python site/build_data.py
+
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
