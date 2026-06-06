@@ -507,10 +507,35 @@
     }
 
     var frontier = frontierPoints(points);
+    // Connect a single model's effort / thinking-level variants with a line
+    // (e.g. gpt-5.5 medium -> high), like the DeepSWE cost/score trajectory.
+    var byBase = {};
+    points.forEach(function (p) {
+      var k = p._model.identifier;
+      (byBase[k] = byBase[k] || []).push(p);
+    });
+    var effortLines = Object.keys(byBase).map(function (k) {
+      var g = byBase[k];
+      if (g.length < 2) return null;
+      g = g.slice().sort(function (a, b) { return a.x - b.x; });
+      return {
+        label: "effort — " + k,
+        data: g.map(function (p) { return { x: p.x, y: p.y }; }),
+        parsing: false,
+        type: "line",
+        borderColor: alphaColor(g[0]._color, 0.6),
+        borderWidth: 1.5,
+        borderDash: [5, 3],
+        pointRadius: 0,
+        pointHitRadius: 0,
+        tension: 0,
+        fill: false,
+      };
+    }).filter(Boolean);
     charts["chart-efficiency"] = new Chart(canvas, {
       type: "scatter",
       data: {
-        datasets: [
+        datasets: effortLines.concat([
           {
             label: "models",
             data: points,
@@ -537,7 +562,7 @@
             tension: 0,
             fill: false,
           },
-        ],
+        ]),
       },
       options: commonOpts({
         plugins: {
@@ -546,7 +571,7 @@
               color: cssVar("--text-soft"),
               boxWidth: 12,
               font: { size: 11 },
-              filter: function (item) { return item.datasetIndex === 1; },
+              filter: function (item) { return item.text === "efficient frontier"; },
             },
           },
           tooltip: {
@@ -848,8 +873,8 @@
 
     if (note) {
       note.textContent = missingCells
-        ? "Each card stacks variants from one model family. Blank vertices mark missing task packs; they are not counted as zero."
-        : "Each card stacks variants from one model family. All current task packs have chartable scores on this track.";
+        ? "Each card stacks variants from one model family. Blank vertices mark task packs this model hasn't run yet — they are not counted as zero."
+        : "Each card stacks variants from one model family across all capability axes.";
     }
   }
 
@@ -941,6 +966,26 @@
     }).join("");
   }
 
+  // ---- extended / diagnostic families (off-Core, score-only) --------------
+  function renderExtended() {
+    var grid = document.getElementById("extended-grid");
+    if (!grid) return;
+    var fams = DATA.extended_families || [];
+    if (!fams.length) {
+      grid.innerHTML = '<p class="muted-note">No extended-family data collected yet.</p>';
+      return;
+    }
+    grid.innerHTML = fams.map(function (f) {
+      var pct = (f.mean_score / 4 * 100).toFixed(0);
+      return '<div class="ext-card"><div class="ext-head"><h3>' + escapeHTML(f.title) + "</h3>" +
+        '<span class="score ' + scoreClass(f.mean_score) + '">' + f.mean_score.toFixed(2) +
+        '<span class="bar"><i style="width:' + pct + '%"></i></span></span></div>' +
+        '<p class="ext-meta">' + f.n_models + " models · " + f.n_seeds + " graded cells</p>" +
+        '<p class="ext-best">best: <strong>' + escapeHTML(f.best_model) + "</strong> (" +
+        f.best_score.toFixed(2) + ")</p></div>";
+    }).join("");
+  }
+
   // ---- model picker -------------------------------------------------------
   function fillHistPicker() {
     var sel = document.getElementById("hist-model");
@@ -980,6 +1025,7 @@
       document.getElementById("bench-version").textContent = "v" + data.benchmark_version;
     }
     renderTasks();
+    renderExtended();
     setTrack(TRACK);
   }
 
