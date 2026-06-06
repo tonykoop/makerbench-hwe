@@ -145,7 +145,8 @@ def test_site_reports_track_level_seed_totals_for_mixed_counts(tmp_path):
 
 
 def test_site_excludes_diagnostic_and_calibrator_families_from_stats(tmp_path):
-    """diagnostic_ablations / intermediate_calibrators must never enter N/mean/spread."""
+    """diagnostic_ablations / intermediate_calibrators surface as extra radar
+    spokes (flagged ``extended``) but must never enter Core N/mean/spread."""
     results_dir = tmp_path / "results"
     results_dir.mkdir()
     # Results exist for BOTH a real family and a calibrator family.
@@ -161,14 +162,21 @@ def test_site_excludes_diagnostic_and_calibrator_families_from_stats(tmp_path):
     payload = build_data.build_payload(results_dir, registry)
     track = payload["models"][0]["tracks"]["blind"]
     assert [f["id"] for f in payload["task_families"]] == ["vented_plate"]
-    assert set(track["families"].keys()) == {"vented_plate"}
-    assert "enclosure_dfm_tight" not in track["families"]
-    assert track["overall_mean"] == 4.0  # the 1.0 calibrator scores never pull the mean
-    assert track["n_seeds_total"] == 3   # calibrator seeds excluded from totals
+    # The calibrator is now a spoke (it has data), flagged extended; the Core
+    # family is not flagged. The data-less diagnostic rung never appears.
+    assert track["families"]["enclosure_dfm_tight"]["extended"] is True
+    assert "extended" not in track["families"]["vented_plate"]
+    assert "enclosure_two_body" not in track["families"]
+    assert "enclosure_dfm_tight" in [a["id"] for a in payload["capability_axes"]]
+    # Core stats stay clean: the 1.0 calibrator scores never pull mean/totals.
+    assert track["overall_mean"] == 4.0
+    assert track["n_seeds_total"] == 3
+    assert track["n_families_scored"] == 1
 
 
 def test_site_ignores_frontier_ladders(tmp_path):
-    """frontier_ladders rungs must never surface in task_families, cells, or means."""
+    """frontier_ladders rungs may surface as radar spokes but must never enter
+    task_families, Core means, or Core seed totals."""
     results_dir = tmp_path / "results"
     results_dir.mkdir()
     _write_multi_seed_run(results_dir / "vp.json", "m", [4, 4], task_id="vented_plate")
@@ -186,9 +194,12 @@ def test_site_ignores_frontier_ladders(tmp_path):
     payload = build_data.build_payload(results_dir, registry)
     track = payload["models"][0]["tracks"]["blind"]
     assert [f["id"] for f in payload["task_families"]] == ["vented_plate"]
-    assert "sheet_metal_multibend_tray" not in track["families"]
+    # Frontier rung with data is a spoke (flagged extended) but out of Core stats.
+    assert track["families"]["sheet_metal_multibend_tray"]["extended"] is True
+    assert "sheet_metal_multibend_tray" in [a["id"] for a in payload["capability_axes"]]
     assert track["overall_mean"] == 4.0   # frontier rung's 1.0 never pulls the mean
     assert track["n_seeds_total"] == 2    # frontier seeds excluded from totals
+    assert track["n_families_scored"] == 1
 
 
 def test_site_reports_task_saturation_without_changing_scores(tmp_path):
@@ -402,11 +413,20 @@ def test_site_groups_known_exact_models_for_spider_charts():
     assert build_data.model_family("claude-code-sonnet-4.6-thinking-high") == "Sonnet 4.6"
     assert build_data.model_family("claude-code-opus-4.8") == "Opus 4.8"
     assert build_data.model_family("claude-code-haiku-4.5") == "Haiku 4.5"
+    # Dash- and dot-spelled versions of one model collapse to a single family
+    # (else the spider view shows duplicate "Sonnet 4.6"/"Haiku 4.5" cards).
+    assert build_data.model_family("claude-code-sonnet-4-6") == "Sonnet 4.6"
+    assert build_data.model_family("claude-code-haiku-4-5") == "Haiku 4.5"
     assert build_data.model_family("antigravity-gemini-default") == "Gemini"
     assert build_data.model_family("antigravity-gemini-3.5-flash") == "Gemini 3.5 Flash"
     assert build_data.model_family("antigravity-gemini-3.1-pro") == "Gemini 3.1 Pro"
     assert build_data.model_family("antigravity-gemini-3-flash-preview") == "Gemini 3 Flash Preview"
     assert build_data.model_family("codex-gpt-5.5") == "Codex GPT-5.5"
+    # Distinct SKUs of one GPT version get their own card (legend can't tell
+    # mini/spark from the full model otherwise).
+    assert build_data.model_family("codex-gpt-5.4") == "Codex GPT-5.4"
+    assert build_data.model_family("codex-gpt-5.4-mini") == "Codex GPT-5.4 Mini"
+    assert build_data.model_family("codex-gpt-5.3-codex-spark") == "Codex GPT-5.3 Spark"
     assert build_data.model_family("baseline-v0") == "Baseline"
 
 
