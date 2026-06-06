@@ -772,15 +772,27 @@ def build_payload(results_dir: Path, registry_path: Path) -> dict:
                 if sv_summary is not None:
                     fam_cells[fid]["self_verification"] = sv_summary
 
-            # Extended/diagnostic families -> extra radar spokes only. Scored
-            # into the capability profile via fam_cells, but intentionally kept
-            # out of family_means/costs/histogram/n_seeds_total so Core overall,
-            # ranking, and saturation stay byte-identical.
+            # Extended/diagnostic families -> extra radar spokes only for SCORING:
+            # kept out of family_means/costs/histogram/n_seeds_total so Core
+            # overall, ranking, and saturation stay byte-identical. Token/cost
+            # TELEMETRY, however, is aggregated across all same-profile packs
+            # (issue #5 intent) so the token/cost charts reflect every run, not
+            # just the original 4 core families.
             for fid in extended_family_ids:
                 bucket = cells[model_key].get(track, {}).get(fid)
                 if bucket is None:
                     fam_cells[fid] = None
                     continue
+                # Telemetry only here (no scores into family_means / costs_all /
+                # histogram / n_seeds_total -> overall ranking stays byte-identical).
+                _merge_counts(usage_reporting, bucket["usage_reporting"])
+                _merge_counts(token_counts, bucket["token_counts"])
+                for key, value in bucket["token_sums"].items():
+                    token_sums[key] += value
+                _merge_counts(local_log_token_counts, bucket["local_log_token_counts"])
+                for key, value in bucket["local_log_token_sums"].items():
+                    local_log_token_sums[key] += value
+                api_equivalent_costs.extend(bucket["api_equivalent_costs"])
                 ext_scores = bucket["scores"]
                 fam_cells[fid] = {
                     "mean_score": _round(sum(ext_scores) / len(ext_scores))

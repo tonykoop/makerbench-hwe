@@ -332,7 +332,7 @@
         "usage_reporting": {
           "n_estimated": 0,
           "n_measured": 0,
-          "n_not_reported": 20,
+          "n_not_reported": 55,
           "n_subscription_opaque": 0
         }
       },
@@ -644,7 +644,7 @@
         "usage_reporting": {
           "n_estimated": 0,
           "n_measured": 0,
-          "n_not_reported": 20,
+          "n_not_reported": 55,
           "n_subscription_opaque": 0
         }
       }
