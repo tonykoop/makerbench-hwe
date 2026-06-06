@@ -23,8 +23,11 @@ a machine-readable ``usage`` block (input / output / cache tokens) plus a
 are summed across the draft + perception calls and recorded as a ``measured``
 UsageReport, so subscription Claude runs carry real token counts instead of an
 opaque placeholder (#6). On subscription you are not billed per token, so the
-cost is the CLI's API-equivalent estimate, recorded for the API-vs-subscription
-price comparison.
+CLI's ``total_cost_usd`` is an *API-equivalent* figure, not an actual charge: it
+is recorded as ``CostReport.api_equivalent_usd`` (source ``not_available``) and
+the legacy ``cost_usd`` / ``total_cost_usd`` stay null, per the telemetry
+contract in ``docs/USAGE_TELEMETRY.md`` — an estimate must never be shown as
+money actually spent.
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ import subprocess
 import tempfile
 import time
 
-from makerbench.schema import Attempt, TaskSpec, Track, UsageReport
+from makerbench.schema import Attempt, CostReport, TaskSpec, Track, UsageReport
 
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
 MODEL = os.environ.get("MAKERBENCH_MODEL")
@@ -113,6 +116,23 @@ def _usage_report(acc: dict) -> UsageReport:
         total_tokens=total,
         measurement_authority="api_billing",
         measurement_tool="claude_cli_json",
+    )
+
+
+def _cost_report(acc: dict) -> CostReport | None:
+    """API-equivalent cost from the CLI's ``total_cost_usd``, as a what-if figure.
+
+    On a Claude subscription the per-token charge is not an actual bill, so the
+    value lands in ``api_equivalent_usd`` with ``source="not_available"`` and the
+    actual ``total_cost_usd`` stays null — the site shows it as a labelled
+    estimate, never as money spent (see docs/USAGE_TELEMETRY.md).
+    """
+    if not acc["any"] or not acc["cost"]:
+        return None
+    return CostReport(
+        source="not_available",
+        api_equivalent_usd=round(acc["cost"], 6),
+        pricing_ref="claude_cli_total_cost_usd",
     )
 
 
@@ -204,5 +224,7 @@ def agent(spec: TaskSpec, *, track: Track, tools: dict,
         trace=trace,
         iterations=iterations,
         usage=_usage_report(usage_acc),
-        cost_usd=round(usage_acc["cost"], 6) if usage_acc["any"] and usage_acc["cost"] else None,
+        # Subscription cost is opaque -> leave the actual `cost_usd` null; the
+        # CLI's API-equivalent figure rides in `cost.api_equivalent_usd`.
+        cost=_cost_report(usage_acc),
     )
