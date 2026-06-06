@@ -463,8 +463,8 @@
         "usage_reporting": {
           "n_estimated": 0,
           "n_measured": 0,
-          "n_not_reported": 0,
-          "n_subscription_opaque": 20
+          "n_not_reported": 2,
+          "n_subscription_opaque": 53
         }
       },
       "perception": {
@@ -916,8 +916,8 @@
         "usage_reporting": {
           "n_estimated": 0,
           "n_measured": 0,
-          "n_not_reported": 0,
-          "n_subscription_opaque": 20
+          "n_not_reported": 1,
+          "n_subscription_opaque": 45
         }
       }
     }
