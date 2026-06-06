@@ -89,4 +89,15 @@ def test_agent_flows_measured_usage_and_cost(monkeypatch):
     assert attempt.usage.input_tokens == 120
     assert attempt.usage.output_tokens == 300
     assert attempt.usage.model == "claude-sonnet-4-6"
-    assert attempt.cost_usd == 0.0521
+    # Subscription cost is an API-equivalent estimate, never an actual bill:
+    # legacy cost_usd stays null; the figure rides in cost.api_equivalent_usd.
+    assert attempt.cost_usd is None
+    assert attempt.cost is not None
+    assert attempt.cost.source == "not_available"
+    assert attempt.cost.total_cost_usd is None
+    assert attempt.cost.api_equivalent_usd == 0.0521
+
+
+def test_cost_report_is_none_without_usage():
+    # No parseable usage -> no cost figure at all (not a zero bill).
+    assert claude._cost_report(claude._new_usage_acc()) is None
