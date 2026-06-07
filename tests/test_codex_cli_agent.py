@@ -125,6 +125,23 @@ def test_cost_report_none_for_opaque_usage():
     assert codex._cost_report(opaque) is None
 
 
+def test_agent_falls_back_to_opaque_when_run_yields_no_usage(monkeypatch):
+    # A CLI that completes but emits no turn.completed usage (e.g. ignores --json,
+    # prints plain text) -> honest subscription_opaque row, no fabricated cost.
+    mod = _load_agent_module(monkeypatch, model="gpt-5.4")
+    monkeypatch.setattr(mod, "_call_codex",
+                        lambda prompt, retries=1: ("cube([1,2,3]);", []))
+    spec = TaskSpec(
+        task_id="vented_plate", seed=0, params={}, brief="make a plate",
+        units="mm", allowed_tools=[],
+    )
+    attempt = mod.agent(spec, track="blind", tools={}, perceive=None, budget=1)
+    assert attempt.source == "cube([1,2,3]);"   # plain text still usable as output
+    assert attempt.usage.source == "subscription_opaque"
+    assert attempt.usage.total_tokens is None
+    assert attempt.cost is None
+
+
 def test_agent_flows_local_log_usage_and_cost(monkeypatch):
     mod = _load_agent_module(monkeypatch, model="gpt-5.4")
     monkeypatch.setattr(mod, "_call_codex",

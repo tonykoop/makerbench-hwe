@@ -29,8 +29,14 @@ token counts are real but the per-run charge is opaque: they are recorded as a
 ``makerbench.pricing`` into ``CostReport.api_equivalent_usd`` only — a what-if at
 public API rates, never an actual bill. The legacy ``cost_usd`` / ``total_cost_usd``
 stay null, per ``docs/USAGE_TELEMETRY.md``: an estimate must never look like money
-spent. Older Codex CLIs without ``--json`` fall back to an honest
-``subscription_opaque`` row rather than fabricated zeros.
+spent.
+
+This requires a Codex CLI that supports ``codex exec --json`` (``--json`` is always
+passed). A run that *completes* but emits no ``turn.completed`` usage — e.g. a CLI
+that ignores ``--json`` and prints plain text — degrades to an honest
+``subscription_opaque`` row rather than fabricated zeros. A *hard* CLI failure
+(non-zero exit, after one retry) raises, so a broken run fails loudly instead of
+being silently recorded as opaque.
 """
 
 from __future__ import annotations

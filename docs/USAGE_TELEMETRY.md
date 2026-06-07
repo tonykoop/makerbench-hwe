@@ -68,9 +68,11 @@ time — no separate log-scrape needed when the harness drives the CLI:
   these across the draft + perception calls into a `local_log` UsageReport
   (`measurement_tool="codex_cli_json"`, `measurement_source="codex"`) and prices them
   through `makerbench.pricing` into `cost.api_equivalent_usd` only — `total_cost_usd`
-  stays null. An older Codex CLI without `--json` falls back to `subscription_opaque`.
-  A model with no pricing row (e.g. a `-mini` variant) surfaces tokens with a null
-  `api_equivalent_usd` rather than an invented cost.
+  stays null. `--json` is always passed; a run that completes but emits no
+  `turn.completed` usage (e.g. a CLI that ignores `--json`) degrades to
+  `subscription_opaque`, while a hard CLI failure (non-zero exit, after one retry)
+  raises rather than logging zeros. A model with no pricing row (e.g. a `-mini`
+  variant) surfaces tokens with a null `api_equivalent_usd` rather than an invented cost.
 - **Claude (`agents/claude_cli_agent.py`)** — `claude -p --output-format json` returns
   `usage` plus a `total_cost_usd`; recorded as `measured` tokens + an API-equivalent
   cost (see the agent docstring).
