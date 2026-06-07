@@ -203,8 +203,9 @@
     if (local != null) {
       return estimateCell(
         formatTokens(local),
-        "Mean tokens estimated from local coding-CLI logs (ccusage); " +
-          "subscription billing is not visible",
+        "Mean tokens from a subscription coding-CLI's own usage output " +
+          "(e.g. codex --json, ccusage); real token counts, but subscription " +
+          "billing is not visible",
         "est · local logs"
       );
     }
