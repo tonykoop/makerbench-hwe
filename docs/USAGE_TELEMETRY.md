@@ -57,6 +57,29 @@ attach an all-sources ccusage aggregate to a single MakerBench row — that woul
 in tokens from unrelated agents. `makerbench.usage_logs` takes the `source`
 explicitly and never auto-aggregates.
 
+## How each subscription CLI populates its tokens
+
+A `local_log` row's counts can come from the CLI's *own* structured output at run
+time — no separate log-scrape needed when the harness drives the CLI:
+
+- **Codex (`agents/codex_cli_agent.py`)** — invokes `codex exec --json`, which emits
+  a `turn.completed` event per turn carrying `usage` (`input_tokens`,
+  `cached_input_tokens`, `output_tokens`, `reasoning_output_tokens`). The agent sums
+  these across the draft + perception calls into a `local_log` UsageReport
+  (`measurement_tool="codex_cli_json"`, `measurement_source="codex"`) and prices them
+  through `makerbench.pricing` into `cost.api_equivalent_usd` only — `total_cost_usd`
+  stays null. An older Codex CLI without `--json` falls back to `subscription_opaque`.
+  A model with no pricing row (e.g. a `-mini` variant) surfaces tokens with a null
+  `api_equivalent_usd` rather than an invented cost.
+- **Claude (`agents/claude_cli_agent.py`)** — `claude -p --output-format json` returns
+  `usage` plus a `total_cost_usd`; recorded as `measured` tokens + an API-equivalent
+  cost (see the agent docstring).
+- **Antigravity / Gemini (`agents/agy_cli_agent.py`)** — the antigravity CLI exposes
+  **no** per-run token counts locally (neither in its conversation stores nor a usage
+  log), so these rows stay `subscription_opaque` with null tokens. This is a known
+  limitation, not a bug: there is currently no honest local token source for it, and
+  a fuzzy estimate is deliberately avoided.
+
 ## Why `cost_usd` stays null for subscription runs
 
 `cost.total_cost_usd` (and the legacy top-level `cost_usd`) is an *actual* cost. It
