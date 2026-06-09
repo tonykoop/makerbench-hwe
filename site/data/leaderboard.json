@@ -2348,7 +2348,7 @@
           }
         }
       },
-      "verification_status": "unverified"
+      "verification_status": "public-regrade-verified"
     },
     {
       "agent_identifier": "legacy_unknown",
