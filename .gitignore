@@ -29,8 +29,11 @@ results/**/artifacts/*.3mf
 *.off
 *.3mf
 *.png
-!docs/**/*.png          # keep documentation images
-!tasks/**/expected_*.png # keep any committed reference renders
+# keep documentation images (inline comments are NOT valid in .gitignore,
+# so these negations must sit on their own lines or they match nothing)
+!docs/**/*.png
+# keep any committed reference renders
+!tasks/**/expected_*.png
 # 3D viewer meshes (#11): pipeline-generated from SUBMITTED artifacts by
 # makerbench/viewer_export.py and committed so the stdlib-only Pages build can
 # serve them. Never oracle geometry. Regenerate with `python -m makerbench.viewer_export`.

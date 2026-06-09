@@ -116,7 +116,17 @@ def _replace_block(readme: Path, table: str) -> None:
             r"(?=\n\n_Perception-track|\n\n### First-round findings|\n\n## )",
             re.DOTALL,
         )
-        text = pattern.sub(replacement, text)
+        text, n = pattern.subn(replacement, text)
+        if n == 0:
+            # The README task-score table was retired in favour of the
+            # interactive GitHub Pages leaderboard. With no markers and no
+            # legacy table to replace, leave the README untouched rather than
+            # silently rewriting it.
+            print(
+                "update_leaderboard: no LEADERBOARD markers in README — table "
+                "retired for the GitHub Pages leaderboard; skipping README update."
+            )
+            return
     readme.write_text(text, encoding="utf-8")
 
 
