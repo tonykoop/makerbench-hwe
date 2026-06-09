@@ -1,0 +1,35 @@
+# MakerBench grading/dev environment lock.
+#
+# This file intentionally pins the geometry/scoring stack used by CI and public
+# regrade so score reproduction does not drift with upstream resolver changes.
+# Keep these pins compatible with the supported Python matrix (3.10-3.12).
+#
+# Install for development/CI:
+#   python -m pip install -r requirements.lock
+#   python -m pip install --no-deps -e ".[dev]"
+
+annotated-doc==0.0.4
+annotated-types==0.7.0
+colorama==0.4.6; sys_platform == "win32"
+iniconfig==2.3.0
+manifold3d==3.5.1
+markdown-it-py==4.2.0
+mdurl==0.1.2
+networkx==3.4.2
+numpy==2.2.6
+packaging==26.2
+pluggy==1.6.0
+pydantic==2.13.4
+pydantic-core==2.46.4
+pygments==2.20.0
+pytest==9.0.3
+rich==15.0.0
+rtree==1.4.1
+ruff==0.15.16
+scipy==1.15.3
+shapely==2.1.2
+shellingham==1.5.4
+trimesh==4.12.2
+typer==0.26.7
+typing-extensions==4.15.0
+typing-inspection==0.4.2

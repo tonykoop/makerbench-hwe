@@ -275,8 +275,8 @@ def _sheet_l_mesh(legA, legB, width, t, r):
     profile = unary_union([
         box(R, 0, legA, t),
         box(0, R, t, legB),
-        Point(R, R).buffer(R, resolution=64)
-            .difference(Point(R, R).buffer(r, resolution=64))
+        Point(R, R).buffer(R, quad_segs=64)
+            .difference(Point(R, R).buffer(r, quad_segs=64))
             .intersection(box(0, 0, R, R)),
     ])
     return trimesh.creation.extrude_polygon(profile, height=width)
