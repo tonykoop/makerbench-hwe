@@ -84,20 +84,38 @@
   // ---- leaderboard table --------------------------------------------------
   function familyList() { return DATA.task_families; }
 
+  function efficiencyMetric(tr, key) {
+    var efficiency = tr.efficiency || {};
+    if (key === "score_per_dollar" || key === "score_per_million_tokens") {
+      return ((efficiency.normalized || {})[key]) || {};
+    }
+    return ((efficiency.metrics || {})[key]) || {};
+  }
+
+  function metricValue(tr, key) {
+    var metric = efficiencyMetric(tr, key);
+    return metric.value == null ? null : Number(metric.value);
+  }
+
   // Numeric value used for sorting a given column key on the current track.
   function sortValue(model, key) {
     var tr = model.tracks[TRACK];
-    if (!tr) return -1;
-    if (key === "overall") return tr.overall_mean == null ? -1 : tr.overall_mean;
+    if (!tr) return null;
+    if (key === "overall") return tr.overall_mean == null ? null : tr.overall_mean;
     if (key === "model") return modelText(model);
-    if (key === "runtime") return tr.mean_wall_time_s == null ? -1 : tr.mean_wall_time_s;
-    if (key === "tokens") {
-      var usage = tr.token_usage || {};
-      return usage.mean_total_tokens == null ? -1 : usage.mean_total_tokens;
+    if (key === "runtime") return metricValue(tr, "time");
+    if (key === "tokens") return metricValue(tr, "tokens");
+    if (key === "cost") return metricValue(tr, "cost");
+    if (key === "score_per_dollar" || key === "score_per_million_tokens") {
+      return metricValue(tr, key);
     }
-    if (key === "cost") return tr.mean_cost_usd == null ? -1 : tr.mean_cost_usd;
     var cell = tr.families[key];
-    return cell && cell.mean_score != null ? cell.mean_score : -1;
+    return cell && cell.mean_score != null ? cell.mean_score : null;
+  }
+
+  function defaultSortDir(key) {
+    // For resource columns lower is better; for score and normalized score higher is better.
+    return (key === "model" || key === "runtime" || key === "tokens" || key === "cost") ? 1 : -1;
   }
 
   function hasTelemetry(models) {
@@ -132,6 +150,14 @@
     if (cost == null) return null;
     if (cost < 0.01) return "$" + cost.toFixed(4);
     return "$" + cost.toFixed(2);
+  }
+
+  function formatRate(value) {
+    if (value == null) return null;
+    if (value >= 1000) return Math.round(value).toLocaleString();
+    if (value >= 100) return value.toFixed(0);
+    if (value >= 10) return value.toFixed(1);
+    return value.toFixed(2);
   }
 
   var EFFICIENCY_METRICS = {
@@ -173,6 +199,30 @@
         return value == null ? null : Number(value).toFixed(value % 1 ? 1 : 0);
       },
       sourceLabel: function () { return "runtime agent call count"; },
+    },
+    score_per_dollar: {
+      label: "Score per dollar",
+      shortLabel: "score/$",
+      format: formatRate,
+      higherBetter: true,
+      sourceLabel: function (metric) {
+        if (!metric || !metric.source) return "unavailable";
+        if (metric.source === "actual_cost") return "score divided by actual measured cost";
+        if (metric.source === "api_equivalent_estimate") return "score divided by API-equivalent estimate";
+        return metric.source;
+      },
+    },
+    score_per_million_tokens: {
+      label: "Score per 1M tokens",
+      shortLabel: "score/1M tokens",
+      format: formatRate,
+      higherBetter: true,
+      sourceLabel: function (metric) {
+        if (!metric || !metric.source) return "unavailable";
+        if (metric.source === "measured_tokens") return "score divided by measured tokens";
+        if (metric.source === "local_log_tokens") return "score divided by local-log tokens";
+        return metric.source;
+      },
     },
   };
 
@@ -229,6 +279,24 @@
     return metricCell(null, "Mean estimated cost", "not available");
   }
 
+  function normalizedScoreCell(tr, key) {
+    var metric = efficiencyMetric(tr, key);
+    var label = key === "score_per_dollar" ? "Score per dollar" : "Score per 1M tokens";
+    if (!metric.available || metric.value == null) {
+      return metricCell(null, label + " unavailable", usageMissingReason(tr));
+    }
+    var title = label + " = overall score divided by " +
+      (key === "score_per_dollar" ? "mean cost" : "mean tokens / 1,000,000") +
+      " · source: " + (metric.source || "unknown");
+    var shown = formatRate(Number(metric.value));
+    if (metric.estimated) {
+      var estLabel = metric.source === "api_equivalent_estimate" ?
+        "API-equiv. est" : "est · local logs";
+      return estimateCell(shown, title, estLabel);
+    }
+    return metricCell(shown, title, "not available");
+  }
+
   function usageMissingReason(track) {
     var reporting = (track && track.usage_reporting) || {};
     if (reporting.n_subscription_opaque) return "opaque";
@@ -269,6 +337,9 @@
     models = models.slice().sort(function (a, b) {
       if (a.is_control !== b.is_control) return a.is_control ? 1 : -1;
       var av = sortValue(a, SORT.key), bv = sortValue(b, SORT.key);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
       if (typeof av === "string") return SORT.dir * av.localeCompare(bv);
       return SORT.dir * (av - bv);
     });
@@ -290,6 +361,10 @@
       html += '<th data-key="runtime">Runtime' + arrow("runtime") + "</th>";
       html += '<th data-key="tokens">Tokens' + arrow("tokens") + "</th>";
       html += '<th data-key="cost">Cost' + arrow("cost") + "</th>";
+      html += '<th data-key="score_per_dollar" title="Overall score divided by mean cost">Score/$' +
+        arrow("score_per_dollar") + "</th>";
+      html += '<th data-key="score_per_million_tokens" title="Overall score divided by mean tokens / 1,000,000">Score/1M tok' +
+        arrow("score_per_million_tokens") + "</th>";
     }
     html += "</tr></thead><tbody>";
 
@@ -315,6 +390,10 @@
         var oTip = (tr.n_seeds_total || 0) + " seeds across " +
           (tr.n_families_scored || 0) + " famil" + ((tr.n_families_scored === 1) ? "y" : "ies");
         if (tr.overall_mean_stderr != null) oTip += " · stderr ±" + tr.overall_mean_stderr.toFixed(2);
+        if (tr.overall_score_ci95_low != null && tr.overall_score_ci95_high != null) {
+          oTip += " · 95% CI " + tr.overall_score_ci95_low.toFixed(2) +
+            "–" + tr.overall_score_ci95_high.toFixed(2);
+        }
         html += '<td class="cell-overall" title="' + escapeHTML(oTip) + '"><span class="score ' + oc + '">' +
           tr.overall_mean.toFixed(2) +
           '<span class="bar"><i style="width:' + pct + '%"></i></span></span></td>';
@@ -323,6 +402,8 @@
         html += metricCell(formatDuration(tr.mean_wall_time_s), "Mean wall-clock runtime", "unknown");
         html += tokenCell(tr);
         html += costCell(tr);
+        html += normalizedScoreCell(tr, "score_per_dollar");
+        html += normalizedScoreCell(tr, "score_per_million_tokens");
       }
       html += "</tr>";
     });
@@ -334,7 +415,7 @@
       th.addEventListener("click", function () {
         var key = th.getAttribute("data-key");
         if (SORT.key === key) { SORT.dir *= -1; }
-        else { SORT.key = key; SORT.dir = key === "model" ? 1 : -1; }
+        else { SORT.key = key; SORT.dir = defaultSortDir(key); }
         renderTable();
       });
     });
@@ -353,6 +434,10 @@
   function spreadTip(cell) {
     var parts = ["n=" + (cell.n_seeds || 0) + " seed" + ((cell.n_seeds === 1) ? "" : "s")];
     if (cell.mean_score != null) parts.push("mean " + cell.mean_score.toFixed(2));
+    if (cell.score_ci95_low != null && cell.score_ci95_high != null) {
+      parts.push("95% CI " + cell.score_ci95_low.toFixed(2) + "–" +
+        cell.score_ci95_high.toFixed(2));
+    }
     if (cell.score_std != null) parts.push("sd ±" + cell.score_std.toFixed(2));
     else if (cell.n_seeds === 1) parts.push("sd n/a (1 seed)");
     if (cell.score_min != null && cell.score_max != null) {
@@ -428,7 +513,7 @@
   function efficiencyPoint(model, index, metricKey) {
     var tr = model.tracks[TRACK] || {};
     var efficiency = tr.efficiency || {};
-    var metric = ((efficiency.metrics || {})[metricKey]) || {};
+    var metric = efficiencyMetric(tr, metricKey);
     var score = efficiency.score_mean != null ? efficiency.score_mean : tr.overall_mean;
     if (score == null || metric.value == null) return null;
     return {
@@ -442,25 +527,33 @@
     };
   }
 
-  function isDominated(point, points) {
+  function isDominated(point, points, higherBetter) {
     return points.some(function (other) {
       if (other === point) return false;
-      var noWorse = other.x <= point.x && other.y >= point.y;
-      var strictlyBetter = other.x < point.x || other.y > point.y;
+      var noWorse = higherBetter ?
+        (other.x >= point.x && other.y >= point.y) :
+        (other.x <= point.x && other.y >= point.y);
+      var strictlyBetter = higherBetter ?
+        (other.x > point.x || other.y > point.y) :
+        (other.x < point.x || other.y > point.y);
       return noWorse && strictlyBetter;
     });
   }
 
-  function frontierPoints(points) {
+  function frontierPoints(points, higherBetter) {
     return points.filter(function (p) {
-      return !isDominated(p, points);
+      return !isDominated(p, points, higherBetter);
     }).sort(function (a, b) {
-      return b.x - a.x || a.y - b.y;
+      return higherBetter ? (a.x - b.x || a.y - b.y) : (b.x - a.x || a.y - b.y);
     });
   }
 
   function scoreSpreadText(efficiency) {
     var parts = [];
+    if (efficiency.score_ci95_low != null && efficiency.score_ci95_high != null) {
+      parts.push("95% CI " + Number(efficiency.score_ci95_low).toFixed(2) +
+        "–" + Number(efficiency.score_ci95_high).toFixed(2));
+    }
     if (efficiency.score_stderr != null) {
       parts.push("stderr ±" + Number(efficiency.score_stderr).toFixed(2));
     }
@@ -507,7 +600,8 @@
       return;
     }
 
-    var frontier = frontierPoints(points);
+    var higherBetter = Boolean(metricDef.higherBetter);
+    var frontier = frontierPoints(points, higherBetter);
     // Connect a single model's effort / thinking-level variants with a line
     // (e.g. gpt-5.5 medium -> high), like the DeepSWE cost/score trajectory.
     var byBase = {};
@@ -609,8 +703,12 @@
         },
         scales: {
           x: {
-            reverse: true,
-            title: { display: true, text: metricDef.label + " (lower is better)", color: cssVar("--text-soft") },
+            reverse: !higherBetter,
+            title: {
+              display: true,
+              text: metricDef.label + (higherBetter ? " (higher is better)" : " (lower is better)"),
+              color: cssVar("--text-soft"),
+            },
             ticks: {
               color: cssVar("--text-soft"),
               font: { size: 11 },
@@ -634,7 +732,7 @@
       note.textContent = points.length + " charted · " + omitted +
         " unavailable for " + metricDef.shortLabel +
         (estimates ? " · " + estimates + " estimate-labeled point(s)" : "") +
-        ". Frontier uses lower " + metricDef.shortLabel +
+        ". Frontier uses " + (higherBetter ? "higher " : "lower ") + metricDef.shortLabel +
         " and higher score. Efficiency comparisons keep disclosed harness/adapter rows separate.";
     }
   }

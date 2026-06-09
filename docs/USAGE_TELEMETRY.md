@@ -107,6 +107,20 @@ an actual billed cost." Likewise the Tokens column shows local-log tokens with a
 "est · local logs" sub-label rather than as authoritative measured tokens.
 Authoritative measured tokens and actual cost always take precedence when present.
 
+## Score-normalized efficiency metrics
+
+The public leaderboard also derives two sortable efficiency metrics from the
+same telemetry provenance:
+
+| Field | Meaning | Estimate behavior |
+| --- | --- | --- |
+| `efficiency.normalized.score_per_dollar` | `overall_mean / mean cost` | Uses actual `mean_cost_usd` when available; otherwise uses `mean_api_equivalent_usd` and carries `estimated=true`, `source="api_equivalent_estimate"`. |
+| `efficiency.normalized.score_per_million_tokens` | `overall_mean / (mean tokens / 1,000,000)` | Uses measured tokens when available; otherwise uses local-log tokens and carries `estimated=true`, `source="local_log_tokens"`. |
+
+Missing denominators stay unavailable (`value=null`, `available=false`) and are
+never treated as zero or infinity. These metrics are display/ranking aids only;
+they never affect scores, levels, regrade reconstruction, or badge scores.
+
 ## Privacy rules for local usage logs
 
 Local usage logs can contain sensitive material. The contract for any code that
