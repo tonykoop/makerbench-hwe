@@ -31,7 +31,7 @@ def test_builtin_manifest_is_valid_and_describes_parts_search():
 
 
 def test_example_manifest_file_matches_builtin():
-    data = json.loads((ROOT / "examples" / "tool_manifest.example.json").read_text())
+    data = json.loads((ROOT / "examples" / "tool_manifest.example.json").read_text(encoding="utf-8"))
     manifest = ToolManifest.model_validate(data)
 
     assert validate_tool_manifest(manifest) == []

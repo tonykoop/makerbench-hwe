@@ -37,7 +37,7 @@ def load_catalog() -> dict[str, Any]:
     first = True
     for fname in _CATALOG_FILES:
         try:
-            with pkg.joinpath(fname).open() as fh:
+            with pkg.joinpath(fname).open(encoding="utf-8") as fh:
                 data = json.load(fh)
         except (FileNotFoundError, ModuleNotFoundError):
             continue
