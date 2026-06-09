@@ -89,7 +89,8 @@ fi
 
 PYTHON="$VENV_DIR/bin/python"
 echo "Installing MakerBench into $VENV_DIR"
-"$PYTHON" -m pip install -e '.[dev]'
+"$PYTHON" -m pip install -r requirements.lock
+"$PYTHON" -m pip install --no-deps -e '.[dev]'
 
 out_dir="results/$MODEL_ID"
 mkdir -p "$out_dir"

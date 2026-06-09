@@ -3,6 +3,24 @@
 MakerBench is benchmark data. Contributions are welcome, but result submissions
 need stricter hygiene than ordinary code changes so the leaderboard stays useful.
 
+## Contribution License (DCO)
+
+By contributing, you certify that you have the right to submit your contribution
+under the project's Apache-2.0 license and agree to the terms of the
+[Developer Certificate of Origin v1.1](https://developercertificate.org/).
+
+Add a `Signed-off-by` line to your commits:
+
+```bash
+git commit -s -m "your message"
+```
+
+Or add manually:
+
+```text
+Signed-off-by: Your Name <your@email>
+```
+
 ## Benchmark Integrity
 
 By submitting benchmark results, task packs, or site data, you agree to the

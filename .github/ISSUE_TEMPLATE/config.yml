@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security or benchmark-integrity report (canary recall, leaked oracle, grader exploit)
+    url: https://github.com/tonykoop/makerbench-hwe/security/advisories/new
+    about: Please report privately via GitHub Security Advisories — see SECURITY.md. Do not open a public issue.
+  - name: Submit a community result to the leaderboard
+    url: https://github.com/tonykoop/makerbench-hwe/blob/main/docs/COMMUNITY_SUBMISSION.md
+    about: Results are submitted as a pull request that adds a bundle under results/. Start here.
+  - name: Contributing guide
+    url: https://github.com/tonykoop/makerbench-hwe/blob/main/CONTRIBUTING.md
+    about: How to contribute harness code, task packs, and results.
