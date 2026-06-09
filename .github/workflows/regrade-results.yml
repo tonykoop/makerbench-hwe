@@ -1,4 +1,4 @@
-name: makerbench-regrade-results
+name: makerbench-submission-attestations
 
 on:
   pull_request:
@@ -13,8 +13,12 @@ on:
       - ".github/workflows/regrade-results.yml"
 
 jobs:
-  regrade-results:
+  verify-attestations:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,9 +29,6 @@ jobs:
         if: github.event_name == 'pull_request'
         run: git fetch origin "${{ github.base_ref }}" --depth=1
 
-      - name: Install OpenSCAD
-        run: sudo apt-get update && sudo apt-get install -y openscad
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -37,5 +38,12 @@ jobs:
           python -m pip install -r requirements.lock
           python -m pip install --no-deps -e ".[dev]"
 
-      - name: Regrade changed result bundles
-        run: makerbench regrade-results --base "origin/${{ github.base_ref }}"
+      - name: Verify private regrade attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          makerbench verify-attestations \
+            --base "origin/${{ github.base_ref }}" \
+            --repo "${{ github.repository }}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --require-verified

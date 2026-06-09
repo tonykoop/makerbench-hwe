@@ -2,3 +2,7 @@
 	path = private/oracles
 	url = git@github.com:tonykoop/makerbench-oracles.git
 	branch = main
+[submodule "private/submissions"]
+	path = private/submissions
+	url = git@github.com:tonykoop/makerbench-submissions.git
+	branch = main

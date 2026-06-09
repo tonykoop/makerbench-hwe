@@ -306,7 +306,7 @@ def test_regrade_fails_artifact_only_tampering(tmp_path, monkeypatch):
     assert "source artifact sha256 mismatch" in report.failures[0].message
 
 
-def test_regrade_fails_missing_source_file(tmp_path, monkeypatch):
+def test_regrade_fails_missing_source_file_without_private_archive(tmp_path, monkeypatch):
     _stub_public_grader(monkeypatch)
     result_path = _write_bundle(tmp_path)
     (tmp_path / "results/example-model/artifacts/vented_plate_seed0_blind.scad").unlink()
@@ -315,6 +315,28 @@ def test_regrade_fails_missing_source_file(tmp_path, monkeypatch):
 
     assert not report.ok
     assert "source artifact does not exist" in report.failures[0].message
+
+
+def test_regrade_uses_private_artifact_root_for_zero_public_exposure(tmp_path, monkeypatch):
+    _stub_public_grader(monkeypatch)
+    result_path = _write_bundle(tmp_path)
+    public_artifact = tmp_path / "results/example-model/artifacts/vented_plate_seed0_blind.scad"
+    private_root = tmp_path / "private-submissions" / "incoming" / "hwe-pr-123"
+    private_artifact = private_root / "results/example-model/artifacts/vented_plate_seed0_blind.scad"
+    private_artifact.parent.mkdir(parents=True)
+    private_artifact.write_text(public_artifact.read_text(encoding="utf-8"), encoding="utf-8")
+    public_artifact.unlink()
+
+    report = regrade_result_files(
+        [result_path],
+        repo_root=tmp_path,
+        private_artifact_root=private_root,
+    )
+
+    assert report.ok, [f.message for f in report.failures]
+    assert report.checked_rows == 1
+    assert report.private_rows == 1
+    assert report.source_artifacts[0].source_origin == "private"
 
 
 def test_regrade_rejects_source_artifact_symlink(tmp_path, monkeypatch):
