@@ -40,6 +40,20 @@ def test_compare_flags_a_regression():
     assert any("level 4" in d for d in diffs)
 
 
+def test_reproduce_demo_missing_openscad_is_friendly(monkeypatch):
+    """Missing OpenSCAD yields a concise message + exit 1, not a Python traceback."""
+    from typer.testing import CliRunner
+
+    import makerbench.render as render
+    from makerbench.cli import app
+
+    monkeypatch.setattr(render, "openscad_available", lambda: False)
+    result = CliRunner().invoke(app, ["reproduce-demo"])
+    assert result.exit_code == 1
+    assert "OpenSCAD not found" in result.output
+    assert "Traceback" not in result.output
+
+
 @pytest.mark.skipif(shutil.which("openscad") is None, reason="openscad not available")
 def test_reproduce_demo_passes_without_private_oracle():
     """End-to-end: regenerate the public gold, grade it, reproduce the reference."""

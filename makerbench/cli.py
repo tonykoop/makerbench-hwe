@@ -348,6 +348,17 @@ def reproduce_demo_cmd(
     reference and the harness is trustworthy on your machine.
     """
     from .reproduce import DEMO_FAMILY, DEMO_SEED, run_reproduce_demo, write_expected
+    from .render import OPENSCAD_BIN, openscad_available
+
+    if not openscad_available():
+        console.print(
+            f"[red]OpenSCAD not found[/] (looked for '{OPENSCAD_BIN}' on PATH). "
+            "reproduce-demo compiles a reference model, so it needs OpenSCAD:")
+        console.print("  macOS:   brew install --cask openscad")
+        console.print("  Ubuntu:  sudo apt-get install openscad")
+        console.print("  Windows: winget install OpenSCAD.OpenSCAD")
+        console.print("Then re-run, or set OPENSCAD_BIN to the binary's full path.")
+        raise typer.Exit(1)
 
     if update_expected:
         path = write_expected(expected)
