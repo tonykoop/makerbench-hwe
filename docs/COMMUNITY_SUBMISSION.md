@@ -66,9 +66,10 @@ does **not** recompute scores — that is the regrade's job.
 
 ## What public regrade can and cannot prove
 
-Public regrade (`makerbench regrade-results`) recompiles the submitted source with
-the public grader and compares the recomputed score, level pass/fail, artifact
-hash, and dossier scores to the claim.
+Public regrade (`makerbench regrade-results`) recompiles the submitted source
+with the public grader in the locked Python grading environment from
+`requirements.lock`, then compares the recomputed score, level pass/fail,
+artifact hash, and dossier scores to the claim.
 
 **It can prove:**
 
