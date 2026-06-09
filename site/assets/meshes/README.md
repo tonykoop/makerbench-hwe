@@ -11,7 +11,7 @@ Each mesh is exported from a specific result row in `results/` by
 or resembling oracle/private-submodule geometry.
 
 Per-file provenance (model, task, seed, score, SHA-256 of source artifact) is
-recorded in [`site/data/meshes.json`](../data/meshes.json).
+recorded in [`site/data/meshes.json`](../../data/meshes.json).
 
 | File | Task | Model | Track | Seed | Score |
 |------|------|-------|-------|------|-------|
