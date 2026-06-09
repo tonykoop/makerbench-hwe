@@ -69,7 +69,17 @@ jobs:
           persist-credentials: false
 
       - name: Fetch base ref
-        run: git fetch origin "${{ steps.pr.outputs.base }}" --depth=1
+        # checkout ran with persist-credentials:false (no token left in
+        # .git/config for PR-authored harness code to read), so authenticate
+        # this one fetch inline with an in-memory token. Works whether the repo
+        # is private (pre-launch) or public.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth}" \
+            fetch origin "${{ steps.pr.outputs.base }}" --depth=1
 
       - name: Install OpenSCAD
         run: sudo apt-get update && sudo apt-get install -y openscad
