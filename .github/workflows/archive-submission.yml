@@ -32,7 +32,18 @@ jobs:
     env:
       SUBMISSIONS_DEPLOY_KEY: ${{ secrets.SUBMISSIONS_DEPLOY_KEY }}
       GH_TOKEN: ${{ github.token }}
+      # Bind the maintainer-entered input to an env var once, then reference it as
+      # "$PR" (shell data) rather than re-interpolating ${{ inputs.pr }} into each
+      # run block, so the input can never be expanded as shell code.
+      PR: ${{ inputs.pr }}
     steps:
+      - name: Validate PR input
+        run: |
+          if ! [[ "$PR" =~ ^[0-9]+$ ]]; then
+            echo "::error::pr input must be a positive integer (got '$PR')."
+            exit 1
+          fi
+
       - name: Guard on deploy key
         if: env.SUBMISSIONS_DEPLOY_KEY == ''
         run: |
@@ -44,7 +55,7 @@ jobs:
         id: pr
         run: |
           set -euo pipefail
-          sha=$(gh pr view "${{ inputs.pr }}" --repo "${{ github.repository }}" --json headRefOid --jq .headRefOid)
+          sha=$(gh pr view "$PR" --repo "${{ github.repository }}" --json headRefOid --jq .headRefOid)
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       - name: Check out the PR's artifact tree (no code executed)
@@ -82,7 +93,7 @@ jobs:
             cp "$f" "$dest/source.${name##*.}"
             sha=$(sha256sum "$f" | cut -d' ' -f1)
             printf '{\n  "model_id": "%s",\n  "source_file": "%s",\n  "sha256": "%s",\n  "source_pr": "#%s",\n  "source_commit": "%s"\n}\n' \
-              "$model" "$name" "$sha" "${{ inputs.pr }}" "${{ steps.pr.outputs.sha }}" > "$dest/meta.json"
+              "$model" "$name" "$sha" "$PR" "${{ steps.pr.outputs.sha }}" > "$dest/meta.json"
           done
 
           cd _archive
@@ -92,7 +103,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "::notice::Archive already up to date."
           else
-            git commit -m "archive: submission artifacts from makerbench-hwe#${{ inputs.pr }} (${{ steps.pr.outputs.sha }})"
+            git commit -m "archive: submission artifacts from makerbench-hwe#${PR} (${{ steps.pr.outputs.sha }})"
             git push origin main
           fi
           echo "archived=${#artifacts[@]}" >> "$GITHUB_ENV"
@@ -100,5 +111,5 @@ jobs:
       - name: Comment on the PR
         if: env.SUBMISSIONS_DEPLOY_KEY != '' && env.archived != '0'
         run: |
-          gh pr comment "${{ inputs.pr }}" --repo "${{ github.repository }}" --body \
+          gh pr comment "$PR" --repo "${{ github.repository }}" --body \
             "Archived ${archived} source artifact(s) to the private \`makerbench-submissions\` store. You can now remove \`results/**/artifacts/*\` from this PR so it merges metadata-only (the public artifact audit blocks them until removed)."
