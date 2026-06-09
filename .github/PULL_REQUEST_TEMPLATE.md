@@ -21,8 +21,9 @@
 
 ## Result submissions only
 
-Submitted source artifacts are **never retained in public history** — they are
-staged transiently for regrade, archived privately, then removed. Full flow:
+Submitted source artifacts are **never retained in the merged `main`** (they are
+transiently visible on the PR branch until removed — durable-history containment,
+not zero public exposure): staged for regrade, archived privately, then removed. Full flow:
 [`docs/COMMUNITY_SUBMISSION.md`](../docs/COMMUNITY_SUBMISSION.md) /
 [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 

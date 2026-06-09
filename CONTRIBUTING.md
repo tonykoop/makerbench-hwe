@@ -100,7 +100,10 @@ so maintainers can reproduce or re-grade a row. The submission flow:
    artifacts into the private archive and comments on the PR.
 4. Once archived, remove `results/**/artifacts/*` from the PR. The audit turns
    green and the PR merges **metadata-only** — squash-merge takes the final,
-   artifact-free tree, so public history never contains the sources.
+   artifact-free tree, so the merged `main` never contains the sources. (While
+   staged they are transiently visible on the PR branch until you remove them;
+   this guarantees durable-history containment, not zero public exposure — see
+   [`docs/BENCHMARK_DATA_POLICY.md`](docs/BENCHMARK_DATA_POLICY.md).)
 
 Each result row's `dossier.artifacts[]` entry records the artifact `path` and
 `sha256`; the archived copy carries the same `sha256` so a maintainer can verify

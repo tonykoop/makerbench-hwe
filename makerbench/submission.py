@@ -115,6 +115,14 @@ def verification_status_from_regrade(report: "RegradeReport") -> VerificationSta
     here.
     """
     if report.ok:
+        # `public-regrade-verified` requires the grader to have actually recompiled
+        # and reproduced the rows. If any row was archived-skipped (its source was
+        # pushed to the private store and removed, issue #13), this run did not
+        # reproduce it, so it stays `unverified` — verification is earned by the
+        # staging regrade while the source is still present, not by the final
+        # metadata-only state.
+        if getattr(report, "archived_rows", 0):
+            return "unverified"
         return "public-regrade-verified"
     kinds = {failure.kind for failure in report.failures}
     if kinds & {"submission", "mismatch"}:
