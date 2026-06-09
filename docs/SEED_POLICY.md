@@ -55,11 +55,15 @@ newer cells — which is exactly what the per-cell reporting below makes visible
 | `n_seeds` | gradable (non-infra) seeds that fed the mean |
 | `score_std` | sample standard deviation (`n−1`); `null` when `n_seeds < 2` |
 | `score_stderr` | `score_std / √n`; `null` when `n_seeds < 2` |
+| `score_ci95_low`, `score_ci95_high` | bounded two-sided 95% Student-t confidence interval for the cell mean; `null` when `n_seeds < 2` |
+| `score_ci95_margin` | half-width of that 95% interval before bounding to the 0–4 score range |
 | `score_min`, `score_max` | observed score range |
 | `n_infra` | infra/agent-error seeds, excluded from the mean and spread |
 
 and per `tracks[track]`: `n_seeds_total`, `n_families_scored`, and `overall_mean_stderr`
-(stderr across the per-family means; `null` with fewer than two scored families).
+(stderr across the per-family means; `null` with fewer than two scored families), plus
+`overall_score_ci95_low` / `overall_score_ci95_high` using the same bounded interval
+logic over the scored capability-axis means.
 
 Spread is computed over exactly the non-infra scores that feed the mean — infra/agent-error
 rows are excluded identically (`is_infra_error`). A single seed reports `score_std = null`
@@ -74,5 +78,6 @@ sections are never read, so those families can never enter any N, mean, or sprea
 ## UI
 
 Each scored cell shows a faint `nN` sample-size chip and a hover tooltip
-(`n=N · mean · sd ± · range min–max · +k infra excluded`); the overall cell tooltip reports
-total seeds across families and the headline stderr. The main table is otherwise unchanged.
+(`n=N · mean · 95% CI · sd ± · range min–max · +k infra excluded`); the overall cell
+tooltip reports total seeds across families, headline stderr, and the headline 95% CI.
+The main table is otherwise unchanged.

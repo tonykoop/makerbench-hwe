@@ -430,26 +430,87 @@ def _mean(values: list[float], places: int = 2) -> float | None:
     return _round(sum(values) / len(values), places) if values else None
 
 
+_T_CRITICAL_95 = {
+    1: 12.706,
+    2: 4.303,
+    3: 3.182,
+    4: 2.776,
+    5: 2.571,
+    6: 2.447,
+    7: 2.365,
+    8: 2.306,
+    9: 2.262,
+    10: 2.228,
+    11: 2.201,
+    12: 2.179,
+    13: 2.160,
+    14: 2.145,
+    15: 2.131,
+    16: 2.120,
+    17: 2.110,
+    18: 2.101,
+    19: 2.093,
+    20: 2.086,
+    21: 2.080,
+    22: 2.074,
+    23: 2.069,
+    24: 2.064,
+    25: 2.060,
+    26: 2.056,
+    27: 2.052,
+    28: 2.048,
+    29: 2.045,
+    30: 2.042,
+}
+
+
+def _t_critical_95(degrees_of_freedom: int) -> float:
+    """Two-sided 95% Student-t critical value, with normal fallback for large n."""
+    if degrees_of_freedom in _T_CRITICAL_95:
+        return _T_CRITICAL_95[degrees_of_freedom]
+    if degrees_of_freedom <= 40:
+        return 2.021
+    if degrees_of_freedom <= 60:
+        return 2.000
+    if degrees_of_freedom <= 120:
+        return 1.980
+    return 1.960
+
+
 def _score_spread(scores: list[float]) -> dict:
     """Honest spread of a cell's per-seed scores (stdlib only, no numpy).
 
-    Returns sample standard deviation and standard error (``None`` when fewer than two
-    seeds — a single sample has no estimable spread, and implying ``0`` would read as
-    false certainty), plus the min/max range. Callers pass only non-infra scores, so
-    spread is computed over exactly the gradable seeds that feed the mean.
+    Returns sample standard deviation, standard error, a bounded 95% confidence
+    interval for the mean, and the min/max range. A single sample has no
+    estimable spread, and implying ``0`` would read as false certainty, so spread
+    and CI fields are ``None`` when fewer than two seeds are present. Callers pass
+    only non-infra scores, so spread is computed over exactly the gradable seeds
+    that feed the mean.
     """
     n = len(scores)
     score_min = _round(min(scores)) if scores else None
     score_max = _round(max(scores)) if scores else None
     if n < 2:
-        return {"score_std": None, "score_stderr": None,
-                "score_min": score_min, "score_max": score_max}
+        return {
+            "score_std": None,
+            "score_stderr": None,
+            "score_ci95_low": None,
+            "score_ci95_high": None,
+            "score_ci95_margin": None,
+            "score_min": score_min,
+            "score_max": score_max,
+        }
     mean = sum(scores) / n
     variance = sum((s - mean) ** 2 for s in scores) / (n - 1)  # sample (n-1)
     std = variance ** 0.5
+    stderr = std / (n ** 0.5)
+    ci_margin = _t_critical_95(n - 1) * stderr
     return {
         "score_std": _round(std),
-        "score_stderr": _round(std / (n ** 0.5)),
+        "score_stderr": _round(stderr),
+        "score_ci95_low": _round(max(0.0, mean - ci_margin)),
+        "score_ci95_high": _round(min(4.0, mean + ci_margin)),
+        "score_ci95_margin": _round(ci_margin),
         "score_min": score_min,
         "score_max": score_max,
     }
@@ -541,6 +602,20 @@ def _efficiency_metric(value: float | None, source: str | None, estimated: bool 
     }
 
 
+def _normalized_efficiency_metric(
+    score: float | None,
+    denominator: float | None,
+    source: str | None,
+    estimated: bool = False,
+    scale: float = 1.0,
+) -> dict:
+    if score is None or denominator is None or denominator <= 0:
+        return _efficiency_metric(None, None)
+    metric = _efficiency_metric(_round((score * scale) / denominator, 2), source, estimated)
+    metric["denominator"] = _round(denominator, 4)
+    return metric
+
+
 def _efficiency_summary(track: dict, meta: dict) -> dict:
     """Static-site-ready score-vs-efficiency point metadata.
 
@@ -574,10 +649,14 @@ def _efficiency_summary(track: dict, meta: dict) -> dict:
     else:
         cost_metric = _efficiency_metric(None, None)
 
+    score_mean = track.get("overall_mean")
     return {
-        "score_mean": track.get("overall_mean"),
+        "score_mean": score_mean,
         "score_stderr": track.get("overall_mean_stderr"),
         "score_std": track.get("overall_score_std"),
+        "score_ci95_low": track.get("overall_score_ci95_low"),
+        "score_ci95_high": track.get("overall_score_ci95_high"),
+        "score_ci95_margin": track.get("overall_score_ci95_margin"),
         "score_min": track.get("overall_score_min"),
         "score_max": track.get("overall_score_max"),
         "n_seeds": track.get("n_seeds_total", 0),
@@ -592,6 +671,21 @@ def _efficiency_summary(track: dict, meta: dict) -> dict:
             "tokens": token_metric,
             "attempts": _efficiency_metric(
                 track.get("mean_agent_call_count"), "runtime.agent_call_count"
+            ),
+        },
+        "normalized": {
+            "score_per_dollar": _normalized_efficiency_metric(
+                score_mean,
+                cost_metric["value"],
+                cost_metric["source"],
+                cost_metric["estimated"],
+            ),
+            "score_per_million_tokens": _normalized_efficiency_metric(
+                score_mean,
+                token_metric["value"],
+                token_metric["source"],
+                token_metric["estimated"],
+                scale=1_000_000,
             ),
         },
     }
@@ -805,6 +899,9 @@ def build_payload(results_dir: Path, registry_path: Path) -> dict:
                 "overall_mean": overall,
                 "overall_mean_stderr": overall_spread["score_stderr"],
                 "overall_score_std": overall_spread["score_std"],
+                "overall_score_ci95_low": overall_spread["score_ci95_low"],
+                "overall_score_ci95_high": overall_spread["score_ci95_high"],
+                "overall_score_ci95_margin": overall_spread["score_ci95_margin"],
                 "overall_score_min": overall_spread["score_min"],
                 "overall_score_max": overall_spread["score_max"],
                 "n_seeds_total": n_seeds_total,
