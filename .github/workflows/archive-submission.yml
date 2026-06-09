@@ -1,0 +1,104 @@
+name: archive-submission
+
+# Push a submission PR's source artifacts into the PRIVATE makerbench-submissions
+# archive, so public history can stay metadata-only (issue #13).
+#
+# SECURITY: this is maintainer-initiated (`workflow_dispatch`), never triggered by
+# untrusted PR code. Community PRs come from forks, where `pull_request` workflows
+# cannot read secrets; `pull_request_target` *can* but would run with the deploy
+# key in the repo context — too risky. So a maintainer reviews the PR, then runs
+# this workflow against the PR's head ref. It only *copies* the artifact files
+# (it never executes anything from the PR) and pushes them to the archive.
+#
+# Requires the `SUBMISSIONS_DEPLOY_KEY` secret: an SSH private key whose public
+# half is a write deploy key on tonykoop/makerbench-submissions. Until that secret
+# exists the job no-ops with a notice (so this is safe to merge before it's set).
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Submission PR number (used to resolve the head ref + comment)."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    env:
+      SUBMISSIONS_DEPLOY_KEY: ${{ secrets.SUBMISSIONS_DEPLOY_KEY }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Guard on deploy key
+        if: env.SUBMISSIONS_DEPLOY_KEY == ''
+        run: |
+          echo "::warning::SUBMISSIONS_DEPLOY_KEY is not set — archive step skipped. " \
+               "Add the deploy-key secret to enable submission archival (see CONTRIBUTING.md)."
+
+      - name: Resolve PR head
+        if: env.SUBMISSIONS_DEPLOY_KEY != ''
+        id: pr
+        run: |
+          set -euo pipefail
+          sha=$(gh pr view "${{ inputs.pr }}" --repo "${{ github.repository }}" --json headRefOid --jq .headRefOid)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the PR's artifact tree (no code executed)
+        if: env.SUBMISSIONS_DEPLOY_KEY != ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.sha }}
+          submodules: false
+          persist-credentials: false
+
+      - name: Archive artifacts to the private store
+        if: env.SUBMISSIONS_DEPLOY_KEY != ''
+        run: |
+          set -euo pipefail
+          mapfile -t artifacts < <(git ls-files -- 'results/' | grep -E '^results/[^/]+/artifacts/[^/]+$' || true)
+          if [ "${#artifacts[@]}" -eq 0 ]; then
+            echo "::notice::No results/**/artifacts/* files on this PR head — nothing to archive."
+            echo "archived=0" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SUBMISSIONS_DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes"
+
+          git clone --depth 1 git@github.com:${{ github.repository_owner }}/makerbench-submissions.git _archive
+          for f in "${artifacts[@]}"; do
+            # results/<model>/artifacts/<name> -> submissions/<model>/<name>
+            model=$(echo "$f" | sed -E 's#^results/([^/]+)/artifacts/.*#\1#')
+            name=$(basename "$f")
+            dest="_archive/submissions/$model/${name%.*}"
+            mkdir -p "$dest"
+            cp "$f" "$dest/source.${name##*.}"
+            sha=$(sha256sum "$f" | cut -d' ' -f1)
+            printf '{\n  "model_id": "%s",\n  "source_file": "%s",\n  "sha256": "%s",\n  "source_pr": "#%s",\n  "source_commit": "%s"\n}\n' \
+              "$model" "$name" "$sha" "${{ inputs.pr }}" "${{ steps.pr.outputs.sha }}" > "$dest/meta.json"
+          done
+
+          cd _archive
+          git config user.name "makerbench-archive-bot"
+          git config user.email "noreply@github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "::notice::Archive already up to date."
+          else
+            git commit -m "archive: submission artifacts from makerbench-hwe#${{ inputs.pr }} (${{ steps.pr.outputs.sha }})"
+            git push origin main
+          fi
+          echo "archived=${#artifacts[@]}" >> "$GITHUB_ENV"
+
+      - name: Comment on the PR
+        if: env.SUBMISSIONS_DEPLOY_KEY != '' && env.archived != '0'
+        run: |
+          gh pr comment "${{ inputs.pr }}" --repo "${{ github.repository }}" --body \
+            "Archived ${archived} source artifact(s) to the private \`makerbench-submissions\` store. You can now remove \`results/**/artifacts/*\` from this PR so it merges metadata-only (the public artifact audit blocks them until removed)."
