@@ -74,7 +74,7 @@ def test_design_dossier_round_trips():
 
 
 def test_example_results_schema_is_valid():
-    payload = json.loads((ROOT / "examples" / "results.example.json").read_text())
+    payload = json.loads((ROOT / "examples" / "results.example.json").read_text(encoding="utf-8"))
     parsed = RunResults.model_validate(payload)
 
     assert parsed.benchmark_profile == "core"
