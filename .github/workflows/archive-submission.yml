@@ -78,8 +78,12 @@ jobs:
         run: |
           set -euo pipefail
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          # Full history (not --depth=1): the regrade discovers changed bundles
+          # with `git diff <base>...HEAD`, whose merge-base must be present. This
+          # job checks out the PR head sha directly (no pull_request merge ref),
+          # so a shallow base has no common ancestor with HEAD and the diff fails.
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth}" \
-            fetch origin "${{ steps.pr.outputs.base }}" --depth=1
+            fetch origin "${{ steps.pr.outputs.base }}"
 
       - name: Install OpenSCAD
         run: sudo apt-get update && sudo apt-get install -y openscad
