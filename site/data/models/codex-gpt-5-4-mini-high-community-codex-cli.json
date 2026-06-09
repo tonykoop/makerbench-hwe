@@ -790,7 +790,8 @@
           "n_subscription_opaque": 6
         }
       }
-    }
+    },
+    "verification_status": "unverified"
   },
   "task_families": [
     {

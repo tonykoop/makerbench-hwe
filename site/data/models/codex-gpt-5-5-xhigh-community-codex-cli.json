@@ -881,7 +881,8 @@
           "n_subscription_opaque": 25
         }
       }
-    }
+    },
+    "verification_status": "unverified"
   },
   "task_families": [
     {
