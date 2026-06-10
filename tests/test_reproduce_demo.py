@@ -51,7 +51,44 @@ def test_reproduce_demo_missing_openscad_is_friendly(monkeypatch):
     result = CliRunner().invoke(app, ["reproduce-demo"])
     assert result.exit_code == 1
     assert "OpenSCAD not found" in result.output
+    assert "openscad@snapshot" in result.output
+    assert "install-rosetta" in result.output
     assert "Traceback" not in result.output
+
+
+def test_reproduce_demo_warns_on_non_reference_openscad(monkeypatch):
+    """A newer native macOS snapshot is allowed but disclosed before PASS."""
+    from typer.testing import CliRunner
+
+    import makerbench.cli as cli
+    import makerbench.render as render
+    import makerbench.reproduce as reproduce
+
+    def fake_run(expected_path=None):
+        return (
+            True,
+            {"score": 4, "levels": {"1": True}},
+            {"score": 4, "levels": {"1": True}},
+            [],
+        )
+
+    monkeypatch.setattr(render, "openscad_available", lambda: True)
+    monkeypatch.setattr(
+        cli,
+        "openscad_reference_status",
+        lambda: {
+            "openscad": "2026.06.08",
+            "openscad_reference": "2021.01",
+            "openscad_comparability": "non_reference",
+        },
+    )
+    monkeypatch.setattr(reproduce, "run_reproduce_demo", fake_run)
+
+    result = CliRunner().invoke(cli.app, ["reproduce-demo"])
+
+    assert result.exit_code == 0
+    assert "local 2026.06.08 differs from the reference 2021.01" in result.output
+    assert "PASS" in result.output
 
 
 @pytest.mark.skipif(shutil.which("openscad") is None, reason="openscad not available")
