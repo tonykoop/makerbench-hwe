@@ -1,148 +1,147 @@
-# Strategic positioning memo — MakerBench-HWE vs. the field
+# Public strategy note — MakerBench-HWE in the field
 
 *2026-06-10 sweep. Companion to [LANDSCAPE.md](LANDSCAPE.md) /
-[landscape.yaml](landscape.yaml); every factual claim below was verified
-against primary sources on that date. This is the internal read — the
-public-facing framing stays in LANDSCAPE.md.*
+[landscape.yaml](landscape.yaml). Every factual claim below was checked
+against primary sources on that date. This note is intentionally public: it
+states where MakerBench-HWE is strong, where it should improve, and where
+collaboration with adjacent benchmarks would help the field.*
 
-## Where MakerBench is genuinely unique (verified, not asserted)
+## Positioning We Can Defend
 
-1. **Deterministic process-DFM grading.** MUSE — the nearest neighbour on
-   framing — scores manufacturability with a rubric VLM judge. Hephaestus-CCX
-   is deterministic but grades *structural physics* (FEA), not process rules.
-   Nobody else measures bend allowance, kerf, min-wall, or
-   fastener-thread-vs-wall engagement deterministically for agents.
-2. **Multi-process coverage.** Every verified neighbour grades zero
-   fabrication processes; BenDFM covers exactly one (sheet-metal bending) and
-   is a supervised-learning dataset, not an agent benchmark.
-3. **Anti-memorization.** Verified absence across the entire field: not one
-   neighbour claims contamination controls or parametric task generation.
-   Hephaestus-CCX's "scrub pass" is the closest thing, and it's informal.
-4. **Integrity tooling.** Only CADGenBench has anything comparable (a manual
-   `unvalidated`→`validated` review tier). Canary + oracle split +
-   regrade-attestation remains a field-unique stack.
-5. **The blind-vs-perception gap as a headline metric.** No neighbour runs a
-   two-track design; agentic neighbours (CADSmith, Physics-in-the-Loop,
-   Hephaestus) build the loop into the *method*, not the *measurement*.
+MakerBench-HWE is not trying to be the largest CAD-shape dataset or the deepest
+solver benchmark. Its strongest defensible position is narrower and more useful:
+**deterministic, multi-process manufacturability evaluation for hardware-design
+agents.**
 
-**Strongest claim (per the GPT-5.5 brief's question):** not "CAD generation"
-(crowded), not "private verified grading" (necessary but not sufficient) —
-it's **"deterministic, multi-process manufacturability evaluation for
-agents."** Avoid leading with: dataset scale, B-rep/STEP depth, multimodal
-input, or physics/FEA depth — others verifiably do each better today.
+That phrase matters:
 
-## Where MakerBench is behind / exposed (honest list)
+1. **Deterministic process-DFM grading.** MUSE, the nearest neighbour on
+   manufacturability framing, uses a rubric VLM judge for design-intent
+   alignment. Hephaestus-CCX is deterministic, but grades structural physics
+   with FEA rather than shop-process rules. MakerBench measures bend allowance,
+   kerf, min-wall, mass targets, and fastener-thread-vs-wall engagement with
+   objective geometry checks.
+2. **Multi-process coverage.** MakerBench covers 3D-print-style geometry,
+   sheet metal, laser / 2D vector output, catalog assembly, and
+   reverse-engineering tasks. BenDFM is highly relevant, but covers one process
+   family as a supervised-learning dataset rather than an agent benchmark.
+3. **Parametric anti-memorization.** Tasks are templates with randomized
+   parameters, and graders derive pass criteria from the same parameters. Across
+   the sweep, no neighbouring benchmark made an equivalent contamination-control
+   claim.
+4. **Benchmark integrity.** The contamination canary, public/private oracle
+   split, and maintainer regrade-attestation flow give MakerBench an auditable
+   leaderboard story. CADGenBench's `unvalidated` -> `validated` review tier is
+   the closest comparable mechanism.
+5. **Blind-vs-perception as a measurement.** MakerBench reports both the blind
+   result and the perception-loop result. Agentic neighbours often build the
+   loop into a method; MakerBench measures the value of giving the agent
+   feedback.
 
-- **No image/drawing input.** CADBench, BenchCAD, 3DCodeBench, UniCAD, and
-  CADGenBench all take images or drawings. The blind track is text-only.
-- **Scale optics.** 18k (CADBench) / 17.9k (BenchCAD) / 20k (BenDFM) vs. ~12
-  task families. Parametric infinity is the better argument but loses the
-  table-stakes comparison at a glance.
-- **STEP/B-rep maturity.** CADGenBench gates on watertight B-rep and grades
-  Betti-number topology; Hephaestus demands assembled multi-part STEP. Our
-  brep-build123d profile is proof-of-life.
-- **Physics depth.** Hephaestus runs gmsh+CalculiX against typed requirements.
-  Our Level-3 is volumetric/mass-style. "Physics" in our four-level ladder
-  over-promises relative to what an FEA-literate reader expects.
-- **Single code-CAD substrate** (OpenSCAD) while the field converges on
-  CadQuery/build123d (BenchCAD, CADSmith, Text-to-CadQuery, CADGenBench
-  baseline) and STEP exchange.
-- **Assemblies.** MUSE grades B-rep assemblies; ArtiCAD does articulated
-  assemblies with URDF. Our assembly story is catalog-fastening, not
-  multi-body mates.
+## Where MakerBench Should Improve
 
-## White space MakerBench owns outright
+- **Image and drawing input.** CADBench, BenchCAD, 3DCodeBench, UniCAD, and
+  CADGenBench all accept image or drawing inputs. MakerBench's blind track is
+  text-only today; the reverse-engineering family is the natural first place to
+  close that gap.
+- **STEP/B-rep maturity.** CADGenBench gates on watertight B-rep and topology;
+  Hephaestus-CCX requires assembled multi-part STEP. MakerBench's
+  `brep-build123d` profile is currently a proof of life, not yet a full task
+  family.
+- **Physics depth.** Hephaestus-CCX runs gmsh + CalculiX against typed
+  requirements. MakerBench's current Level 3 is closer to mass, volume, and
+  physical-constraint checks. The public ladder should either name that
+  precisely or grow into a real FEA pack.
+- **Dataset-scale optics.** CADBench, BenchCAD, and BenDFM are much larger as
+  static datasets. MakerBench's parametric task generation is the stronger
+  technical argument, but the public presentation should make that contrast
+  explicit.
+- **Assemblies and mates.** MUSE grades B-rep assemblies, ArtiCAD targets
+  articulated assemblies, and Hephaestus-CCX demands assembled STEP. MakerBench
+  has catalog-fastening and BOM realism; adding explicit mate or assembly-graph
+  checks would make that strength easier to compare.
+- **Substrate breadth.** OpenSCAD remains useful for transparent, runnable
+  geometry, but the broader field is converging around CadQuery/build123d,
+  FeatureScript, and STEP exchange. MakerBench needs bridges, not a substrate
+  monoculture.
 
-Bend-allowance / kerf / thread-engagement DFM for agents; catalog/BOM realism
-(real part selection with geometric consequences); maker-handoff dossier
-(BOM + process plan + assembly sequence); reverse-engineering as a graded
-agent task (note: GenCAD-3D's 51 laser-scanned parts would make an excellent
-shared fixture set); cost/repeatability accounting per run.
+## Open White Space
 
-## Top threats, ranked
+MakerBench still has unusually strong terrain in:
 
-1. **Hephaestus-CCX trajectory** (2605.17448, SNU). Deterministic,
-   solver-graded, assembled-STEP-from-brief, with brutal frontier-agent
-   headroom (zero strict passes). It shares our grading philosophy and beats
-   our physics level. If its authors add process-DFM rules, they converge on
-   MakerBench from above. *Window: it's "work in progress" with no public
-   release URL yet.*
-2. **CADGenBench adding manufacturability components.** HF distribution, live
-   leaderboard (14 entries), tool-agnostic STEP, validation tiers. Their "CAD
-   Score is a weighted combination of component scores" design means a DFM
-   component is one PR away. Distribution beats differentiation if this
-   happens.
-3. **MUSE going deterministic.** Its stage 1–2 checks are already
-   deterministic-style; only design-intent/manufacturability sits with the VLM
-   judge. A v2 that swaps rule-based DFM in would directly erase claim #1.
-4. **Field standardizing on STEP-in/STEP-out** (CADGenBench's contract,
-   Hephaestus's output), leaving an OpenSCAD-substrate benchmark looking
-   niche regardless of grading quality.
+- deterministic bend-allowance, kerf, min-wall, and thread-engagement checks;
+- catalog/BOM realism where part selection has geometric consequences;
+- maker handoff artifacts such as BOMs, process plans, assembly sequence, and
+  self-verification;
+- reverse-engineering as a graded hardware-agent task;
+- run-cost and repeatability accounting.
 
-## Collaboration plays
+These are the parts of the project worth making easier to cite, easier to
+rerun, and easier for neighbouring projects to adopt.
 
-- **CADGenBench / Hugging Face** — the build123d bridge is real: their
-  reference baseline is the same stack as our brep profile, and they're
-  tool-agnostic STEP. Concrete asks: cross-listing, a shared STEP task-format
-  note, and submitting a MakerBench-style DFM component score as a candidate
-  CADGenBench metric. Contact path exists (maintainer email in their
-  validation doc). **Correction from this sweep: drop all "Mecado" references
-  — no primary source supports the affiliation.**
-- **Hephaestus-CCX authors (SNU/OneLineAI)** — complementary deterministic
-  layers (their FEA, our DFM); a joint "deterministic hardware-agent eval"
-  framing helps both against judge-based benchmarks.
-- **BenDFM (Ghent)** — adopt their manufacturability-metric taxonomy
-  vocabulary for our sheet-metal graders; cite them, invite cross-reference.
-- **GenCAD-3D (MIT)** — their 51 scanned physical parts ↔ our
-  reverse-engineering family.
+## Collaboration Opportunities
 
-## Ranked roadmap moves (protect differentiation first)
+- **CADGenBench / Hugging Face.** CADGenBench is tool-agnostic STEP-in/STEP-out,
+  and its reference baseline uses build123d, the same stack as MakerBench's
+  B-rep profile. Good collaboration targets include cross-submission,
+  task-format alignment, and a deterministic DFM component score.
+- **Hephaestus-CCX authors.** Their FEA layer and MakerBench's process-DFM layer
+  are complementary. A shared "deterministic hardware-agent evaluation" framing
+  would help distinguish solver- and rule-checked evaluation from judge-only
+  benchmarks.
+- **BenDFM.** Its manufacturability taxonomy is a useful vocabulary for
+  MakerBench's sheet-metal rules. Adopting that language would make comparison
+  easier and give appropriate credit to adjacent work.
+- **GenCAD-3D.** Its planned scanned physical-part set is directly relevant to
+  MakerBench's reverse-engineering family.
 
-1. **Ship one runnable brep-build123d task family with private gold STEP**
-   (extends the landed proof-of-life; answers the STEP-maturity exposure and
-   makes the CADGenBench bridge concrete instead of aspirational).
-2. **Publish the DFM rule catalog as a citable artifact** (the bend-allowance
-   / kerf / thread-engagement rules with formulas + tolerances, BenDFM
-   taxonomy vocabulary). This stakes the white-space claim *before* a
-   well-funded entrant writes it — cheap, defensible, citable.
-3. **Image/drawing input via the reverse-engineering family** (assets
-   plumbing already exists in `makerbench/assets.py`; closes the loudest
-   modality gap on our own differentiated turf rather than chasing CADBench).
-4. **Rename/harden Level 3 toward real physics, or re-label it** — and put the
-   `simulation-fea` expert pack on a date. Hephaestus made "physics" mean
-   CalculiX; we shouldn't invite the comparison un-armed.
-5. **Broader model coverage on the existing board** (the cheapest credibility
-   signal; CADGenBench's 14 rows set the bar).
+## Roadmap Implications
 
-## Distribution: how these benchmarks actually get traction
+1. **Ship one runnable `brep-build123d` task family with private gold STEP.**
+   This is the bridge from proof-of-life B-rep support to a credible
+   STEP-compatible benchmark slice.
+2. **Publish the DFM rule catalog as a citable artifact.** A compact document
+   that lists formulas, thresholds, process vocabulary, grader references, and
+   citations would make MakerBench's strongest claim much easier to evaluate.
+3. **Add image/drawing input through reverse engineering.** This closes the
+   loudest modality gap while staying on MakerBench's differentiated turf.
+4. **Clarify or harden Level 3 physics.** Either rename the current level to
+   reflect mass/volume/physical-constraint checks, or put the `simulation-fea`
+   expert pack on a visible path.
+5. **Broaden model coverage on the leaderboard.** More rows are an inexpensive
+   credibility signal, and the blind-vs-perception gap is a distinctive result
+   no neighbouring board currently foregrounds.
+6. **Add assembly/mate checks.** A small static assembly task can strengthen the
+   catalog/BOM story before reaching for articulated assemblies or URDF.
 
-Verified pattern: arXiv paper + open dataset + live leaderboard + project
-page (3DCodeBench: site + human-preference arena; CADGenBench: HF Space +
-submissions dataset; EngDesign: NeurIPS D&B track). MakerBench has the
-GitHub Pages board but no arXiv anchor and no HF presence.
+## Distribution Plan
 
-**Lowest-effort visibility wins, in order:** (1) submit a MakerBench-run
-model's STEP outputs to CADGenBench — instant presence on the field's only
-live leaderboard, and we already run frontier models; (2) mirror the
-leaderboard as an HF Space (static embed is fine); (3) a short arXiv tech
-report (the four-level ladder + parametric anti-memorization + the
-blind-vs-perception gap is a paper-shaped contribution already).
+The visible pattern across neighbouring benchmarks is: paper or technical
+report, open dataset, live leaderboard, project page, and a clear submission
+contract. MakerBench already has a GitHub Pages leaderboard and a growing
+submission/regrade story. The next public-distribution steps are:
 
-## Risk register: claims to avoid in public copy
+1. Cross-submit a MakerBench-run model to CADGenBench where the output format
+   overlaps.
+2. Mirror the leaderboard into a Hugging Face Space so benchmark users can find
+   it in the same venue as related leaderboards.
+3. Write a short arXiv technical report around the four-level failure ladder,
+   parametric anti-memorization, blind-vs-perception results, and deterministic
+   DFM rules.
 
-- Don't say "only benchmark with manufacturability evaluation" — MUSE claims
-  manufacturability (judge-graded) and BenDFM measures it (non-agent). Say
-  "only *deterministic, multi-process* manufacturability evaluation *for
-  agents*."
-- Don't say CADGenBench is "HF × Mecado" (unverified) or restricts substrates
-  to "build123d/Onshape/Autodesk" (false — tool-agnostic, build123d is a
-  baseline).
-- Don't cite CADSmith as a VLM-judged *evaluation* — the judge is in its
-  repair loop; its eval metrics are deterministic.
-- Don't call "Toward Engineering AGI" a position paper — it's the EngDesign
-  benchmark (NeurIPS 2025 D&B).
-- Several neighbours' releases are promised-not-shipped (UniCAD,
-  Physics-in-the-Loop, Hephaestus, GenCAD-3D) — fine to note, but date-stamp
-  it; this changes monthly.
-- All adjudications in this sweep are abstract/README-level; re-verify before
-  quoting numbers in anything outward-facing.
+## Public Claim Guardrails
+
+- Say "deterministic, multi-process manufacturability evaluation for agents,"
+  not "the only benchmark with manufacturability evaluation." MUSE and BenDFM
+  both make relevant manufacturability claims in different evaluation modes.
+- Do not describe CADGenBench as "HF x Mecado"; no fetched primary source
+  confirmed that affiliation during the sweep.
+- Do not imply CADGenBench is limited to build123d, Onshape, or Autodesk. It is
+  tool-agnostic; build123d is an optional reference baseline.
+- Do not cite CADSmith as a VLM-judged evaluation. Its VLM judge is part of the
+  method's repair loop; its reported metrics are deterministic.
+- Treat promised-but-not-shipped releases as dated observations, not permanent
+  facts. UniCAD, Physics-in-the-Loop, Hephaestus-CCX, and GenCAD-3D may change
+  quickly.
+- Re-check leaderboard counts, top scores, validation policies, and release
+  links before quoting them in outreach or papers.

@@ -4,7 +4,7 @@
 primary sources (arXiv abstract pages, repos, HF Spaces) on that date; if you
 spot an error or a missing project, please open an issue or PR. A
 machine-readable version of this table lives in
-[`landscape.yaml`](landscape.yaml); the internal positioning analysis lives in
+[`landscape.yaml`](landscape.yaml); the public strategy note lives in
 [`STRATEGY_MEMO.md`](STRATEGY_MEMO.md).*
 
 AI-for-CAD evaluation is moving fast — a wave of benchmarks landed in early
