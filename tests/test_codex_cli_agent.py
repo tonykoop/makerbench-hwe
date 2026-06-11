@@ -161,3 +161,25 @@ def test_agent_flows_local_log_usage_and_cost(monkeypatch):
     assert attempt.cost.source == "not_available"
     assert attempt.cost.total_cost_usd is None
     assert attempt.cost.api_equivalent_usd is not None and attempt.cost.api_equivalent_usd > 0
+
+
+def test_call_codex_closes_stdin(monkeypatch):
+    """codex exec blocks reading stdin from a non-TTY pipe; the adapter must
+    pass stdin=DEVNULL so headless/CI/background runs cannot hang."""
+    import subprocess
+
+    captured = {}
+
+    class FakeResult:
+        returncode = 0
+        stdout = _STREAM
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        captured.update(kwargs)
+        return FakeResult()
+
+    monkeypatch.setattr(codex.subprocess, "run", fake_run)
+    text, usage = codex._call_codex("build a cube")
+    assert captured["stdin"] == subprocess.DEVNULL
+    assert "cube([1,2,3])" in text

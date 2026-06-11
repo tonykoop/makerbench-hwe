@@ -200,6 +200,11 @@ def _call_codex(prompt: str, retries: int = 1) -> tuple[str, list[dict]]:
             text=True,
             timeout=TIMEOUT_S,
             cwd=_CLI_CWD,
+            # `codex exec` blocks on "Reading additional input from stdin..."
+            # whenever stdin is a non-TTY pipe (headless runners, CI, background
+            # shells). The prompt is always passed as an argv argument, so close
+            # stdin explicitly.
+            stdin=subprocess.DEVNULL,
         )
     except FileNotFoundError as exc:
         raise RuntimeError(
