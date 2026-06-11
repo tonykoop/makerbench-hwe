@@ -23,6 +23,7 @@ collaborate than compete.
 | **CADBench** ([2605.10873](https://arxiv.org/abs/2605.10873)) 🆕 | Benchmark | "Unified benchmark for multimodal CAD program generation" — recovering *editable* CAD programs from images or 3D observations; 18,000 samples from six dataset families | meshes (clean/noisy), single-view / photorealistic / multi-view renders → CAD programs | Deterministic: six metrics on geometric fidelity, executability, program compactness; STEP families stratified by B-rep face count |
 | **BenchCAD** ([2605.10865](https://arxiv.org/abs/2605.10865)) 🆕 | Benchmark | "Unified benchmark for industrial CAD reasoning" — 17,900 execution-verified CadQuery programs across 106 industrial part families | images / text / existing code → CadQuery; four tasks (visual QA, code QA, image-to-code, instruction-guided editing) | Executability + perception/parametric-abstraction analysis; no physics or DFM grading claimed |
 | **Text2CAD-Bench** ([2605.18430](https://arxiv.org/abs/2605.18430)) 🆕 | Benchmark | "First benchmark systematically evaluating text-to-CAD across geometric complexity and application diversity" — 600 human-curated examples, four levels (L1–L4) | text only (dual-style prompts: non-expert + expert procedural) → parametric CAD | Geometric |
+| **CADTestBench** ([2605.07807](https://arxiv.org/abs/2605.07807) · [repo](https://github.com/dimitrismallis/CADTestBench)) 🆕 | Benchmark | "The first **test-based** benchmark for Text-to-CAD" — executable software tests (CADTests) verify whether a generated model "satisfies the geometric and topological requirements of the input prompt"; 200 CADPrompt-sourced programs × 2 prompt variants (abstract + detailed) | text → CadQuery programs | Deterministic: executable per-prompt CADTests (requirement-derived, not reference-geometry similarity); MIT code + HF dataset released |
 | **MUSE** ([2605.28579](https://arxiv.org/abs/2605.28579)) 🆕 | Benchmark | Text-to-CAD for "complex, editable B-rep **assemblies**" with manufacturability / functionality / assemblability scoring | text → B-rep multi-part assemblies | Three-stage: code check + geometric check (deterministic-style), then design-intent alignment via **rubric-based VLM judge** validated by human annotation |
 | **CADGenBench** ([HF Space](https://huggingface.co/spaces/HuggingAI4Engineering/CADGenBench) · [repo](https://github.com/huggingface/cadgenbench), Hugging Face) | Leaderboard | "Measures how well AI systems produce correct 3D mechanical parts" — drawing→3D generation **and** STEP editing; **tool-agnostic** (build123d ships as an optional reference baseline) | engineering drawing / textual-or-visual description, or STEP + edit instruction → STEP | Automatic: validity gate (watertight B-rep) + shape similarity + interface matching + topology correctness (Betti numbers); live leaderboard (14 entries as of 2026-06-10, top aggregate 0.4514); two-tier `unvalidated`→`validated` maintainer review |
 | **3DCodeBench** ([2606.01057](https://arxiv.org/abs/2606.01057)) 🆕 | Benchmark | VLMs as "procedural 3D modelers" translating text and image references into procedural code for 3D modeling software (12 VLMs evaluated; [3dcodebench.com](https://3dcodebench.com)) | text + image → procedural code → 3D | Automated metrics **plus** 3DCodeArena, a pairwise human-preference ranking platform |
@@ -53,6 +54,8 @@ knowing about.
 | --- | --- | --- |
 | **GenCAD** ([2409.16294](https://arxiv.org/abs/2409.16294), MIT) | Method | Image → parametric CAD command sequences via contrastive representation + diffusion priors; also image-query CAD retrieval. [Code released](https://github.com/ferdous-alam/GenCAD) |
 | **GenCAD-3D** ([2509.15246](https://arxiv.org/abs/2509.15246), MIT, ASME JMD) | Method + datasets | Point clouds / meshes → CAD programs, "streamlining reverse engineering"; releases SynthBal augmentation data **and a 51-part 3D-printed + laser-scanned physical test set** — notable for reverse-engineering evaluation |
+| **CADFS** ([2605.01925](https://arxiv.org/abs/2605.01925) · [project page](https://voyleg.github.io/cadfs/), CVPR 2026) 🆕 | Method + dataset | "Data-centric framework that enables large vision-language models to generate complex CAD design histories" — a **FeatureScript** representation plus **450k real-world CAD models** spanning 15 modeling operations (revolve, sweep, loft, fillet, chamfer, shell, booleans, patterns), reconstructed as executable programs from Onshape. [Code](https://github.com/VladPyatov/CADFS) + [dataset](https://huggingface.co/datasets/VladPyatov/CADFS) released — the largest CAD-program dataset in this table, and a new substrate axis (FeatureScript) |
+| **CADFit** ([2605.01171](https://arxiv.org/abs/2605.01171)) 🆕 | Method | Hybrid-optimization mesh→CAD reconstruction: incrementally fits and validates parametric operations (extrusions, revolutions, fillets, chamfers) using geometric feedback; adds a multimodal pipeline for image-based reconstruction. Self-framed as "a practical foundation for … CAD reverse engineering" — context for MakerBench's reverse-engineering family. [Code released](https://github.com/ghadinehme/CADFit) |
 | **CADSmith** ([2603.26512](https://arxiv.org/abs/2603.26512)) 🆕 | Method | Multi-agent text→CadQuery with programmatic geometric validation. Its VLM judge sits **inside the iterative repair loop**; its reported *evaluation* is deterministic (execution rate, F1, IoU, Chamfer) on a custom 100-prompt set (release not stated) |
 | **Text-to-CadQuery** ([2505.06507](https://arxiv.org/abs/2505.06507)) | Method + dataset | Fine-tunes LLMs to emit CadQuery directly; augments Text2CAD with 170k CadQuery annotations. [Code released](https://github.com/Text-to-CadQuery/Text-to-CadQuery) |
 | **ArtiCAD** ([2604.10992](https://arxiv.org/abs/2604.10992)) 🆕 | Method + benchmark (ArtiCAD-Bench) | "First training-free multi-agent system generating editable, **articulated CAD assemblies** directly from text or images" (incl. URDF export) |
@@ -108,9 +111,9 @@ assembled STEP from free-form briefs).
 - **Input modality:** CADBench, BenchCAD, 3DCodeBench, UniCAD, and CADGenBench
   all take image or drawing input; MakerBench's blind track is text-only today
   (the reverse-engineering family is the natural place this changes).
-- **Dataset scale:** CADBench (18k), BenchCAD (17.9k), BenDFM (20k) dwarf
-  MakerBench's task-family count — parametric generation narrows but does not
-  erase the optics gap.
+- **Dataset scale:** CADBench (18k), BenchCAD (17.9k), BenDFM (20k) — and
+  CADFS's 450k-program dataset — dwarf MakerBench's task-family count;
+  parametric generation narrows but does not erase the optics gap.
 - **STEP/B-rep maturity:** CADGenBench gates on watertight B-rep and grades
   topology; Hephaestus-CCX demands assembled multi-part STEP. MakerBench's
   `brep-build123d` profile is at proof-of-life
@@ -179,6 +182,24 @@ Corrections to the previous version of this page:
   implementation (IDETC 2026); it grades workflow/task completion, not CAD
   geometry or DFM.
 
+Addendum (2026-06-10, follow-up pass for issue #55) — three more May-2026
+neighbours verified against primary sources and added:
+
+- **CADTestBench** (2605.07807, v1 May 8) — "the first test-based benchmark
+  for Text-to-CAD": executable CADTests grade requirement satisfaction
+  deterministically; MIT code + HF dataset shipped.
+- **CADFS** (2605.01925, v1 May 3, CVPR 2026) — method + 450k-model
+  FeatureScript dataset; the largest CAD-program dataset in this table and a
+  new substrate axis. A method+dataset, not a benchmark.
+- **CADFit** (2605.01171, v1 May 2) — hybrid-optimization mesh→CAD
+  reconstruction method, self-framed as a foundation for CAD reverse
+  engineering. A method, not a benchmark.
+
+All three arXiv IDs resolved to the papers claimed. Primary-source evidence
+for sweep additions is now preserved per sweep date under
+[`landscape-evidence/`](landscape-evidence/), starting with
+[`landscape-evidence/2026-06-10.yaml`](landscape-evidence/2026-06-10.yaml).
+
 Verification caveats for this sweep: adjudications are abstract-/README-level
 (paper bodies may add detail); UniCAD, Physics-in-the-Loop, GenCAD-3D, and
 Hephaestus-CCX releases were *promised but not yet downloadable* at
@@ -186,5 +207,8 @@ verification time; mecado.com served no fetchable body content (JS-rendered),
 so Mecado's absence is "unverifiable", not "disproven".
 
 *To re-run this sweep quarterly: re-verify every row against its primary
-source, hunt anything newer than the date above, diff
-[`landscape.yaml`](landscape.yaml), and append to this section.*
+source, hunt anything newer than the date above, record your fetches (URLs,
+fetch date, short supporting excerpts, volatility notes) in a **new**
+`landscape-evidence/<sweep-date>.yaml` file — before editing this page or
+[`landscape.yaml`](landscape.yaml) — then diff
+[`landscape.yaml`](landscape.yaml) and append to this section.*
