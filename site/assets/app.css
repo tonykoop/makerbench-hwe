@@ -188,6 +188,11 @@ table.lb tbody tr:hover td.model-col { background: var(--bg-soft); }
   background: var(--bg-soft); color: var(--text-soft); border: 1px solid var(--border);
 }
 .badge-harness.badge-legacy { color: var(--text-faint); border-style: dashed; }
+.badge-openscad {
+  background: color-mix(in srgb, var(--mid) 14%, transparent);
+  color: var(--mid);
+  border: 1px solid color-mix(in srgb, var(--mid) 30%, var(--border));
+}
 tr.is-control td.model-col { border-left: 3px solid var(--control); }
 tr.is-official td.model-col { border-left: 3px solid var(--good); }
 

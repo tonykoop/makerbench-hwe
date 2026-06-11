@@ -240,7 +240,9 @@
       </p>
 
       <pre class="code"><span class="c"># 1. System dep (not pip-installable): OpenSCAD</span>
-<span class="c">#    macOS:  brew install --cask openscad</span>
+<span class="c">#    macOS Apple Silicon native: brew install --cask openscad@snapshot</span>
+<span class="c">#    macOS reference 2021.01:    softwareupdate --install-rosetta --agree-to-license</span>
+<span class="c">#                                brew install --cask openscad</span>
 <span class="c">#    Ubuntu: sudo apt-get install openscad</span>
 <span class="c">#    Win:    winget install OpenSCAD.OpenSCAD</span>
 
