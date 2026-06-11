@@ -475,7 +475,8 @@ def reproduce_demo_cmd(
         console.print(
             f"[red]OpenSCAD not found[/] (looked for '{OPENSCAD_BIN}' on PATH). "
             "reproduce-demo compiles a reference model, so it needs OpenSCAD:")
-        console.print("  macOS:   brew install --cask openscad")
+        console.print("  macOS:   brew install --cask openscad   "
+                      "(Intel build; Apple Silicon needs Rosetta 2 — see README)")
         console.print("  Ubuntu:  sudo apt-get install openscad")
         console.print("  Windows: winget install OpenSCAD.OpenSCAD")
         console.print("Then re-run, or set OPENSCAD_BIN to the binary's full path.")
