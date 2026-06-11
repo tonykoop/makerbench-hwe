@@ -4,6 +4,7 @@
     "agent_identifier": "legacy_unknown",
     "badge_endpoint": "data/badges/baseline-v0-default-community.json",
     "badge_slug": "baseline-v0-default-community",
+    "grader_environment": {},
     "hardware_environment": {
       "os": "Windows",
       "python": "3.11.9"
