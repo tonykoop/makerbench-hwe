@@ -175,6 +175,69 @@ def test_call_openrouter_sends_reasoning_effort_when_set(monkeypatch):
     assert captured["body"]["reasoning"] == {"effort": "high"}
 
 
+def test_call_openrouter_pins_provider_order_when_set(monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "choices": [{"message": {"content": "ok"}}],
+            }).encode("utf-8")
+
+    def fake_urlopen(req, timeout):
+        captured["body"] = json.loads(req.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
+    monkeypatch.setattr(openrouter.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(openrouter, "PROVIDER_ORDER", ["deepseek"])
+    monkeypatch.setattr(openrouter, "ALLOW_FALLBACKS", False)
+
+    openrouter._call_openrouter("hello")
+    assert captured["body"]["provider"] == {"order": ["deepseek"], "allow_fallbacks": False}
+
+
+def test_call_openrouter_omits_provider_block_by_default(monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "choices": [{"message": {"content": "ok"}}],
+            }).encode("utf-8")
+
+    def fake_urlopen(req, timeout):
+        captured["body"] = json.loads(req.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
+    monkeypatch.setattr(openrouter.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(openrouter, "PROVIDER_ORDER", [])
+
+    openrouter._call_openrouter("hello")
+    assert "provider" not in captured["body"]
+
+
+def test_upstream_family_mapping():
+    assert openrouter._upstream_family("deepseek/deepseek-v4-pro") == "deepseek"
+    assert openrouter._upstream_family("qwen/qwen3-max") == "qwen"
+    assert openrouter._upstream_family("moonshotai/kimi-k2.6") == "moonshot"
+    assert openrouter._upstream_family("x-ai/grok-4.3") == "xai"
+    assert openrouter._upstream_family("somelab/new-model") == "somelab"
+
+
 def test_call_openrouter_surfaces_http_error(monkeypatch):
     class ErrorBody:
         def read(self):
@@ -253,4 +316,5 @@ def test_agent_records_gateway_trace_and_response_cost(monkeypatch):
     assert attempt.cost.total_cost_usd == 0.00187
     assert attempt.trace[0]["gateway"] == "openrouter"
     assert attempt.trace[0]["served_by"] == "Novita"
+    assert attempt.trace[0]["upstream_family"] == "deepseek"
     assert attempt.trace[0]["api_surface"] == "openrouter_chat_completions"
