@@ -88,10 +88,12 @@ def step_topology_summary(step_path: str | Path) -> dict[str, Any]:
     """Deterministic OCCT/build123d topology summary of a STEP file.
 
     The first real B-rep query from docs/BREP_PROFILE.md's roadmap: solid count,
-    face count, cylindrical (hole-like) face count, and the bounding-box size in
-    mm. Like the rest of this module it is *optional-local* — when build123d is
-    not installed it returns an ``unavailable`` status dict instead of raising, so
-    public CI exercises the no-dependency path safely.
+    face count, cylindrical (hole-like) face count, a watertight flag (every
+    solid passes the OCCT validity check and the shape encloses positive
+    volume), and the bounding-box size in mm. Like the rest of this module it is
+    *optional-local* — when build123d is not installed it returns an
+    ``unavailable`` status dict instead of raising, so public CI exercises the
+    no-dependency path safely.
     """
     availability = build123d_availability()
     if not availability.available:
@@ -114,9 +116,16 @@ def step_topology_summary(step_path: str | Path) -> dict[str, Any]:
     try:  # pragma: no cover - exercised only with the optional build123d wheels
         part = import_step(str(step_path))
         faces = list(part.faces())
+        solids = list(part.solids())
 
         def _is_cylinder(face: Any) -> bool:
             return str(getattr(face, "geom_type", "")).upper().endswith("CYLINDER")
+
+        def _is_valid(solid: Any) -> bool:
+            # build123d's Shape.is_valid changed from method to property across
+            # releases; accept either so the summary is wheel-version-agnostic.
+            flag = getattr(solid, "is_valid", False)
+            return bool(flag() if callable(flag) else flag)
 
         box = part.bounding_box()
         size = getattr(box, "size", None)
@@ -125,13 +134,19 @@ def step_topology_summary(step_path: str | Path) -> dict[str, Any]:
             if size is not None
             else None
         )
+        watertight = (
+            bool(solids)
+            and all(_is_valid(solid) for solid in solids)
+            and float(getattr(part, "volume", 0.0)) > 0.0
+        )
         return {
             "status": "summarized",
             "available": True,
             "path": str(step_path),
-            "solid_count": len(list(part.solids())),
+            "solid_count": len(solids),
             "face_count": len(faces),
             "cylindrical_face_count": sum(1 for face in faces if _is_cylinder(face)),
+            "watertight": watertight,
             "bbox_mm": bbox_mm,
         }
     except Exception as exc:  # pragma: no cover - depends on optional local wheels
@@ -153,14 +168,14 @@ def grade_topology(
 
     Deliberately dependency-free so CI can test the grading logic without the
     optional build123d wheels. Only the keys present in ``expected`` are checked
-    (``solid_count``, ``cylindrical_face_count``, ``face_count``, ``bbox_mm``),
-    so a task can grade just the topology it cares about. This is a separate
-    optional-local signal and does NOT touch ``GradeResult.compute_score`` or the
-    core L1-L4 leaderboard.
+    (``solid_count``, ``cylindrical_face_count``, ``face_count``, ``watertight``,
+    ``bbox_mm``), so a task can grade just the topology it cares about. This is a
+    separate optional-local signal and does NOT touch ``GradeResult.compute_score``
+    or the core L1-L4 leaderboard.
     """
     checks: dict[str, Any] = {}
 
-    for key in ("solid_count", "cylindrical_face_count", "face_count"):
+    for key in ("solid_count", "cylindrical_face_count", "face_count", "watertight"):
         if key in expected:
             observed = summary.get(key)
             checks[key] = {
