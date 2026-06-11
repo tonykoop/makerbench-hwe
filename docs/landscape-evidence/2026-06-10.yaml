@@ -1,0 +1,111 @@
+# Primary-source evidence sidecar for the 2026-06-10 landscape sweep.
+#
+# Purpose: make "verified" auditable. One file per sweep date
+# (landscape-evidence/<YYYY-MM-DD>.yaml). Future sweeps must ADD a new file
+# for their sweep date — never rewrite a previous sweep's evidence — and
+# should record fetches here BEFORE editing docs/LANDSCAPE.md or
+# docs/landscape.yaml, so reviewers can diff claims against the evidence
+# that backs them.
+#
+# Fields per entry:
+#   name:        must match the `name` of an entry in docs/landscape.yaml
+#   sources:     list of URLs actually fetched (primary sources only)
+#   fetched_on:  YYYY-MM-DD the sources were fetched
+#   supports:    landscape.yaml field names this evidence backs
+#   claims:      short claim notes or VERY short excerpts (a sentence or two,
+#                primary-source only — never full abstracts; keep excerpts
+#                brief to avoid copyright and rumor-chain drift)
+#   volatility:  notes on anything likely to change (release status, live
+#                leaderboard counts/scores, maintainer contacts, validation
+#                policies), each with its as-of date
+#
+# Backfill note: entries verified in the main 2026-06-10 sweep pass
+# (CADBench, BenchCAD, Text2CAD-Bench, MUSE, CADGenBench, 3DCodeBench,
+# UniCAD, Hephaestus-CCX, EngDesign, FEABench, FEM-Bench,
+# Physics-in-the-Loop, the methods/datasets rows, and the CADGenBench
+# attribution corrections) predate this sidecar and can be backfilled from
+# the original sweep sources. The entries below cover the issue #55
+# follow-up pass.
+
+sweep_date: 2026-06-10
+
+entries:
+  - name: CADTestBench
+    sources:
+      - https://arxiv.org/abs/2605.07807
+      - https://github.com/dimitrismallis/CADTestBench
+    fetched_on: 2026-06-10
+    supports: [name, type, source, source_alt, date, recent, framing_own,
+               input_modality, output_representation, grading, grading_detail,
+               anti_memorization, openness, dataset_scale]
+    claims:
+      - 'Paper "Text-to-CAD Evaluation with CADTests" (Mallis, Wang,
+         Karadeniz, Ricci, Kacem, Aouada), arXiv v1 2026-05-08.'
+      - 'Abstract: "We propose CADTestBench, the first test-based benchmark
+         for Text-to-CAD, based on CADTests, executable software tests that
+         verify whether a generated CAD model satisfies the geometric and
+         topological requirements of the input prompt." — proves benchmark
+         (not method) framing and deterministic grading.'
+      - 'Abstract also states CADTests "can also guide CAD model generation,
+         yielding simple baselines that surpass performance of current
+         methods", and that code/data are on GitHub and a HF dataset.'
+      - 'Repo README: 200 CAD programs sourced from CADPrompt; two prompt
+         variants per program (abstract + detailed); generated models are
+         CadQuery Python programs; MIT license; HF dataset
+         dimitrismallis/CADTestBench.'
+    volatility:
+      - 'Browser viewer (cadtestbench-viewer.vercel.app) shows paper
+         baselines (GPT-5.2, Claude 4.6 Sonnet) only — no competitive
+         leaderboard as of 2026-06-10; could change.'
+
+  - name: CADFS
+    sources:
+      - https://arxiv.org/abs/2605.01925
+      - https://voyleg.github.io/cadfs/
+    fetched_on: 2026-06-10
+    supports: [name, type, source, source_alt, date, recent, framing_own,
+               input_modality, output_representation, scope, openness,
+               dataset_scale]
+    claims:
+      - 'Paper "CADFS: A Big CAD Program Dataset and Framework for
+         Computer-Aided Design with Large Language Models" (Pyatov et al.),
+         arXiv v1 2026-05-03; accepted to CVPR 2026.'
+      - 'Abstract: "We introduce CADFS, a data-centric framework that enables
+         large vision-language models to generate complex CAD design
+         histories." — proves method+dataset (not benchmark) framing.'
+      - 'Abstract: "introducing a FeatureScript-based representation and
+         constructing a dataset of 450k real-world CAD models spanning 15
+         modeling operations" — backs substrate and dataset_scale.'
+      - 'Project page: code at github.com/VladPyatov/CADFS, dataset at
+         huggingface.co/datasets/VladPyatov/CADFS; operations include
+         revolve, sweep, loft, fillet, chamfer, shell, booleans, patterns;
+         programs reconstructed from Onshape.'
+    volatility:
+      - 'No license stated on the project page as of 2026-06-10; re-check
+         the GitHub/HF artifacts before quoting openness terms.'
+
+  - name: CADFit
+    sources:
+      - https://arxiv.org/abs/2605.01171
+      - https://github.com/ghadinehme/CADFit
+    fetched_on: 2026-06-10
+    supports: [name, type, source, source_alt, date, recent, framing_own,
+               input_modality, output_representation, scope, openness]
+    claims:
+      - 'Paper "CADFit: Precise Mesh-to-CAD Program Generation with Hybrid
+         Optimization" (Nehme, Whalen, Ahmed), arXiv v1 2026-05-02, v2
+         2026-06-02, v3 2026-06-07.'
+      - 'Abstract: "We introduce CADFit, a hybrid optimization-based CAD
+         reconstruction framework that recovers complex, editable CAD
+         construction sequences from meshes by incrementally fitting and
+         validating parametric operations using geometric feedback." —
+         proves method (not benchmark) framing.'
+      - 'Abstract: supports "a rich set of operations, including extrusions,
+         revolutions, fillets, and chamfers"; self-eval reports volumetric
+         IoU, Chamfer Distance, Invalid Ratio on existing CAD benchmarks;
+         multimodal image pipeline; "a practical foundation for ...
+         advancing future learning-based approaches to CAD reverse
+         engineering". Code link in abstract: github.com/ghadinehme/CADFit.'
+    volatility:
+      - 'Paper revised twice within five weeks of v1 (latest v3 2026-06-07);
+         re-check framing and metrics next sweep.'

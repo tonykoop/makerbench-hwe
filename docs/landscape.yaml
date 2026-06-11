@@ -1,11 +1,14 @@
 # Machine-readable companion to LANDSCAPE.md.
 # One entry per project, scored on the comparison axes used for positioning.
-# Re-verify each entry against `source` on every quarterly sweep and bump
-# `verified` accordingly. `recent` = v1 (or major revision) within 90 days of
-# the sweep date.
+# Re-verify each entry against `source` on every quarterly sweep, update
+# `sweep.date` below, and record the fetches that back each change in a NEW
+# evidence file at landscape-evidence/<sweep-date>.yaml (one file per sweep;
+# never rewrite a previous sweep's evidence). `recent` = v1 (or major
+# revision) within 90 days of the sweep date.
 #
 # Axis vocabulary:
-#   type:        benchmark | leaderboard | method | method+benchmark | dataset | benchmark+method
+#   type:        benchmark | leaderboard | method | method+benchmark |
+#                dataset | benchmark+method | method+dataset
 #   grading:     deterministic-geometric | executability | simulation-fea |
 #                vlm-judge | llm-judge | human-preference | task-completion | mixed
 #   scope:       shape | shape+editability | physics | manufacturability | workflow | knowledge-qa
@@ -98,6 +101,31 @@ entries:
     backing: academic
     integrity: none claimed
     dataset_scale: 600 human-curated examples / 4 complexity levels (L1-L4)
+
+  - name: CADTestBench
+    type: benchmark
+    source: https://arxiv.org/abs/2605.07807
+    source_alt: https://github.com/dimitrismallis/CADTestBench
+    date: 2026-05-08
+    recent: true
+    framing_own: >
+      "The first test-based benchmark for Text-to-CAD, based on CADTests,
+      executable software tests that verify whether a generated CAD model
+      satisfies the geometric and topological requirements of the input
+      prompt."
+    input_modality: [text]
+    output_representation: [cadquery]
+    grading: deterministic-geometric
+    grading_detail: executable per-prompt CADTests (geometric/topological requirement checks) run against generated CadQuery programs; the tests can also guide generation (test-guided baselines surpass prior methods)
+    scope: shape
+    fab_processes: []
+    agentic: single-shot
+    anti_memorization: none claimed (programs sourced from the existing CADPrompt dataset)
+    openness: MIT; code on GitHub (dimitrismallis/CADTestBench) + HF dataset (dimitrismallis/CADTestBench); browser viewer with paper baselines
+    backing: academic
+    integrity: none claimed
+    dataset_scale: 200 CAD programs (sourced from CADPrompt) x 2 prompt variants (abstract + detailed)
+    note: kindred deterministic-grading philosophy - requirement-derived executable tests rather than reference-geometry similarity; shape-only, no DFM/physics
 
   - name: MUSE
     type: benchmark
@@ -305,6 +333,53 @@ entries:
     openness: datasets + code promised, incl. 51-part 3D-printed + laser-scanned physical test set
     backing: MIT
     note: the 51 scanned-part set is directly relevant to reverse-engineering evaluation
+
+  - name: CADFS
+    type: method+dataset
+    source: https://arxiv.org/abs/2605.01925
+    source_alt: https://voyleg.github.io/cadfs/
+    date: 2026-05-03 (CVPR 2026)
+    recent: true
+    framing_own: >
+      "Data-centric framework that enables large vision-language models to
+      generate complex CAD design histories" - FeatureScript-based
+      representation + 450k real-world CAD model dataset spanning 15 modeling
+      operations.
+    input_modality: [text, image]
+    output_representation: [featurescript]
+    grading: n/a (method; deterministic comparative self-eval on text-conditioned generation and image-based reconstruction)
+    scope: shape
+    openness: code (github.com/VladPyatov/CADFS) + dataset (huggingface.co/datasets/VladPyatov/CADFS) released; license not stated on project page
+    backing: academic
+    dataset_scale: 450k real-world CAD models / 15 modeling operations (revolve, sweep, loft, fillet, chamfer, shell, booleans, patterns), reconstructed as executable FeatureScript from Onshape
+    note: >
+      First large FeatureScript substrate exposure and the largest
+      CAD-program dataset verified in this sweep - a method+dataset, NOT a
+      benchmark. Confirms the multi-substrate convergence already flagged in
+      STRATEGY_MEMO.md.
+
+  - name: CADFit
+    type: method
+    source: https://arxiv.org/abs/2605.01171
+    source_alt: https://github.com/ghadinehme/CADFit
+    date: 2026-05-02 (v3 2026-06-07)
+    recent: true
+    framing_own: >
+      Hybrid optimization-based CAD reconstruction - recovers complex,
+      editable CAD construction sequences from meshes by incrementally
+      fitting and validating parametric operations using geometric feedback;
+      plus a multimodal pipeline for image-based reconstruction.
+    input_modality: [mesh, image-via-pipeline]
+    output_representation: [parametric-command-sequences]
+    grading: n/a (method; deterministic self-eval - volumetric IoU, Chamfer Distance, Invalid Ratio - on existing CAD benchmarks)
+    scope: shape
+    openness: code released (github.com/ghadinehme/CADFit)
+    backing: academic
+    note: >
+      Rich operation set (extrusions, revolutions, fillets, chamfers);
+      self-framed as "a practical foundation for ... CAD reverse
+      engineering" - context for MakerBench's reverse-engineering family,
+      not a benchmark.
 
   - name: CADSmith
     type: method
