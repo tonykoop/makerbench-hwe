@@ -286,11 +286,20 @@ def _write_source_artifact(
     "scad" for the OpenSCAD path, or "svg"/"dxf" for a native-vector task. It is
     recorded on the dossier's source ArtifactFile (and used to de-dupe a prior
     source of the same format), so a vector cut file is not mislabelled as scad.
+
+    The caller's `source_artifact_path` is computed before the run, when the
+    actual format is unknown (the CLI defaults its suffix to ".scad"). The
+    on-disk filename must agree with the recorded format — the private-regrade
+    contract rejects vector sources without a .svg/.dxf suffix — so the suffix
+    is normalized here, where the detected format is authoritative (#68).
     """
     if not source_artifact_path:
         return attempt.dossier
 
     artifact_path = Path(source_artifact_path)
+    suffix = "." + artifact_format.lower().lstrip(".")
+    if artifact_path.suffix.lower() != suffix:
+        artifact_path = artifact_path.with_suffix(suffix)
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     # Write the exact bytes the sha256 is computed over. write_text() in text mode
     # translates "\n" -> "\r\n" on Windows, which would make the on-disk artifact
