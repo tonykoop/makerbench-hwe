@@ -138,8 +138,18 @@ jobs:
             mkdir -p "$dest"
             cp "$f" "$dest/source.$ext"
             sha=$(sha256sum "$f" | cut -d' ' -f1)
-            printf '{\n  "model_id": "%s",\n  "source_file": "%s",\n  "sha256": "%s",\n  "source_pr": "#%s",\n  "source_commit": "%s",\n  "incoming_path": "%s"\n}\n' \
-              "$model" "$name" "$sha" "$PR" "${{ steps.pr.outputs.sha }}" "$rel" > "$dest/meta.json"
+            # Emit the full v2 meta.json contract directly (filename-derived
+            # task/seed/track/source_ext + public grade fields). The submissions
+            # repo validates these with scripts/validate_archive.py; this removes
+            # the need for a post-archive backfill_meta.py bridge.
+            python scripts/emit_submission_meta.py \
+              --model "$model" \
+              --source-file "$name" \
+              --sha256 "$sha" \
+              --pr "$PR" \
+              --source-commit "${{ steps.pr.outputs.sha }}" \
+              --incoming-path "$rel" \
+              --results-root results > "$dest/meta.json"
           done
 
           cd _submissions
