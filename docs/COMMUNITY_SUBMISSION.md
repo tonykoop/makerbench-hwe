@@ -36,7 +36,10 @@ A maintainer runs the `verify-private-submission` workflow. It regrades the
 public JSON against those private sources, archives them canonically, and posts a
 trusted attestation comment on the PR. Public CI then verifies the metadata-only
 PR against that comment; it never reads or checks out private source artifacts.
-See [`../CONTRIBUTING.md`](../CONTRIBUTING.md) for the step-by-step flow.
+See [`../CONTRIBUTING.md`](../CONTRIBUTING.md) for the contributor-side flow, and
+[`ATTESTATION_RUNBOOK.md`](ATTESTATION_RUNBOOK.md) for the **maintainer
+operational runbook** — staging sources, dispatching the workflow, diagnosing and
+correcting failures, flipping the attested rows, and confirming success.
 
 The bundle carries (most fields already exist; see `SUBMISSION_CONTRACT.md`):
 
