@@ -284,6 +284,90 @@ def test_call_openrouter_rejects_embedded_error_payload(monkeypatch):
         openrouter._call_openrouter("hello")
 
 
+def test_call_openrouter_retries_transient_then_succeeds(monkeypatch):
+    """A truncated/empty body is a transient transport failure: retry, don't fail."""
+    calls = {"n": 0}
+
+    class GoodResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "model": "moonshotai/kimi-k2.6",
+                "choices": [{"message": {"content": "```scad\ncube(1);\n```"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 2},
+            }).encode("utf-8")
+
+    class EmptyResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            # Reasoning-only / truncated: no text content.
+            return json.dumps({"choices": [{"message": {"content": ""}}]}).encode("utf-8")
+
+    def fake_urlopen(req, timeout):
+        calls["n"] += 1
+        return EmptyResponse() if calls["n"] == 1 else GoodResponse()
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
+    monkeypatch.setattr(openrouter.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(openrouter.time, "sleep", lambda *_: None)
+
+    text, raw = openrouter._call_openrouter("hello")
+    assert "cube(1)" in text
+    assert calls["n"] == 2  # one transient empty, then success
+
+
+def test_call_openrouter_exhausts_retries_then_raises(monkeypatch):
+    """Persistent transient failures eventually surface as a hard agent error."""
+    calls = {"n": 0}
+
+    def fake_urlopen(req, timeout):
+        calls["n"] += 1
+        raise openrouter.http.client.IncompleteRead(b"partial")
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
+    monkeypatch.setattr(openrouter.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(openrouter.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(openrouter, "MAX_TRANSIENT_RETRIES", 2)
+
+    with pytest.raises(RuntimeError, match="OpenRouter API request failed"):
+        openrouter._call_openrouter("hello")
+    assert calls["n"] == 3  # initial + 2 retries
+
+
+def test_call_openrouter_does_not_retry_permanent_http_error(monkeypatch):
+    """A 402 is permanent — fail immediately, no retries."""
+    calls = {"n": 0}
+
+    class ErrorBody:
+        def read(self):
+            return b'{"error":{"message":"pay"}}'
+
+        def close(self):
+            pass
+
+    def fake_urlopen(_req, timeout):
+        calls["n"] += 1
+        raise HTTPError("u", 402, "Payment Required", {}, ErrorBody())
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
+    monkeypatch.setattr(openrouter.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(openrouter.time, "sleep", lambda *_: None)
+
+    with pytest.raises(RuntimeError, match="OpenRouter API error 402"):
+        openrouter._call_openrouter("hello")
+    assert calls["n"] == 1  # no retry on permanent error
+
+
 def test_agent_records_gateway_trace_and_response_cost(monkeypatch):
     def fake_call(prompt):
         return (
