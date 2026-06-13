@@ -992,7 +992,7 @@
         }
       }
     },
-    "verification_status": "public-regrade-verified"
+    "verification_status": "unverified"
   },
   "task_families": [
     {
