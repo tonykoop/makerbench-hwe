@@ -115,8 +115,17 @@ foreach ($trk in $tracks) {
 }
 
 # Additive leaderboard rebuild: scan every result bundle so no model is dropped.
+# Windows PowerShell 5.1 does not stop on native nonzero exits even under
+# $ErrorActionPreference = "Stop", so check $LASTEXITCODE explicitly or the
+# script would report success after a failed rebuild.
 & $python scripts/update_leaderboard.py 'results/**/*.json'
+if ($LASTEXITCODE -ne 0) {
+    throw "update_leaderboard.py failed (exit $LASTEXITCODE); leaderboard NOT updated."
+}
 & $python site/build_data.py
+if ($LASTEXITCODE -ne 0) {
+    throw "site/build_data.py failed (exit $LASTEXITCODE); site data NOT updated."
+}
 
 Write-Host ""
 Write-Host "Updated README leaderboard and site data with $ModelId results."
