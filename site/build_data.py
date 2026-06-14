@@ -74,6 +74,23 @@ _LEAGUE_BY_HARNESS: dict[str, dict] = {lg["harness_class"]: lg for lg in LEAGUES
 # restated here rather than imported.
 WORKFLOW_VERIFICATION_CEILING = "public-regrade-verified"
 
+# Identifier prefix for the human / expert-machinist calibration line (issue #24).
+# Like a control row, a human-baseline row is a *reference*, not a competitor: it
+# anchors where the four failure levels sit, so it is pinned out of the ranked
+# field, excluded from the "best model" headline/OG leader, and rendered with its
+# own marker. See docs/HUMAN_BASELINE.md.
+HUMAN_BASELINE_PREFIX = "human-baseline"
+
+
+def is_human_baseline_identifier(identifier: object) -> bool:
+    """True for a human/expert calibration row (issue #24), keyed off the id prefix."""
+    return str(identifier or "").startswith(HUMAN_BASELINE_PREFIX)
+
+
+def is_reference_row(model: dict) -> bool:
+    """A non-competitor reference row: deterministic control OR human baseline."""
+    return bool(model.get("is_control") or model.get("is_human_baseline"))
+
 
 def league_for_harness(harness_class: str | None) -> str:
     """Map a `harness_class` onto its league id (defaults to the autonomous league)."""
@@ -1057,14 +1074,17 @@ def build_payload(results_dir: Path, registry_path: Path) -> dict:
                 "hardware_environment": meta.get("hardware_environment", {}),
                 "grader_environment": meta.get("grader_environment", {}),
                 "is_control": meta["identifier"].startswith("baseline"),
+                "is_human_baseline": is_human_baseline_identifier(meta["identifier"]),
                 "tracks": per_track,
             }
         )
 
     # Sort: league first (autonomous before workflows) so rows NEVER rank across
-    # leagues, then control rows last within a league, then by blind overall mean
-    # descending, then name. Autonomous-only payloads keep league_rank 0 for every
-    # row, so the legacy ordering is byte-identical.
+    # leagues, then reference rows last within a league (human-baseline then
+    # control), then by blind overall mean descending, then name. Autonomous-only
+    # payloads with no reference rows keep reference_rank 0 for every competitor,
+    # and a control row keeps rank 2 (> any competitor's 0) exactly as the old
+    # is_control bool did, so the legacy ordering is byte-identical.
     def sort_key(m: dict):
         league = _LEAGUE_BY_HARNESS.get(m.get("harness_class") or "autonomous")
         league_rank = league["order"] if league else 0
@@ -1072,9 +1092,10 @@ def build_payload(results_dir: Path, registry_path: Path) -> dict:
         overall = blind.get("overall_mean")
         overall = overall if overall is not None else -1.0
         provenance_rank = 0 if m.get("result_provenance") == "official" else 1
+        reference_rank = 2 if m["is_control"] else (1 if m.get("is_human_baseline") else 0)
         return (
             league_rank,
-            m["is_control"],
+            reference_rank,
             provenance_rank,
             -overall,
             m["identifier"],
@@ -1111,7 +1132,7 @@ def build_saturation_profile(models: list[dict], families: list[dict], cells: di
     top_models = [
         model
         for model in models
-        if not model.get("is_control")
+        if not is_reference_row(model)
         and model.get("tracks", {}).get("blind", {}).get("overall_mean") is not None
     ][:SATURATION_TOP_MODEL_COUNT]
     task_families = [
@@ -1496,7 +1517,7 @@ def make_headline(models: list[dict], families: list[dict]) -> str:
     non_control = [
         m
         for m in models
-        if not m["is_control"]
+        if not is_reference_row(m)
         and m["tracks"].get("blind", {}).get("overall_mean") is not None
     ]
     n_fam = len(families)
@@ -1714,7 +1735,7 @@ def write_adoption_artifacts(
 def leaderboard_og_svg(payload: dict) -> str:
     headline = payload.get("headline") or "MakerBench leaderboard"
     version = str(payload.get("benchmark_version") or "0.1")
-    models = [m for m in payload["models"] if not m.get("is_control")]
+    models = [m for m in payload["models"] if not is_reference_row(m)]
     leader = models[0] if models else None
     leader_text = (
         f"Leader: {display_model_full(leader)} - {score_message(leader)}"
@@ -2119,6 +2140,8 @@ def model_page_html(
         badges.append(_chip(f"harness: {agent}"))
     if model.get("is_control"):
         badges.append(_chip("control"))
+    if model.get("is_human_baseline"):
+        badges.append(_chip("human baseline"))
 
     sections = [
         _model_track_section(
