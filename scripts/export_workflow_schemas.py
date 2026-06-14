@@ -27,9 +27,14 @@ from pathlib import Path
 
 from makerbench.certificate import MbcCertificate
 from makerbench.schema import (
+    AlphaBuild,
+    BetaInspection,
     ComponentVersion,
     DesignDossier,
+    FabricationEvidence,
     HumanInterventionIndex,
+    PhysicalVerificationTrack,
+    ProductionMaster,
     StackDescriptor,
     WorkflowManifest,
     WorkflowMetrics,
@@ -64,6 +69,38 @@ def _example_manifest() -> WorkflowManifest:
             task_id="vented_plate",
             seed=0,
             fabrication_domain="enclosure",
+        ),
+        physical_verification=PhysicalVerificationTrack(
+            task_id="vented_plate",
+            seed=0,
+            alpha=AlphaBuild(
+                process="fdm",
+                tool_matrix=["Prusa MK4", "Bambu X1C"],
+                makerspace_optimized=True,
+                evidence=[
+                    FabricationEvidence(
+                        stage="alpha",
+                        role="assembly_photo",
+                        format="png",
+                        evidence_sha256="c" * 64,
+                        description="Printed plate seated in the test fixture.",
+                    ),
+                ],
+            ),
+            beta=BetaInspection(
+                vendor="xometry",
+                process="cnc_milling",
+                dimensional_conformance={"bore_dia": 0.012},
+                evidence=[
+                    FabricationEvidence(
+                        stage="beta",
+                        role="cmm_report",
+                        format="pdf",
+                        evidence_url="https://example.com/inspection/vented_plate.pdf",
+                        description="Vendor CMM readout for the milled part.",
+                    ),
+                ],
+            ),
         ),
     )
 

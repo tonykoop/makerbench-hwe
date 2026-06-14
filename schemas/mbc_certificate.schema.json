@@ -65,6 +65,32 @@
           "title": "Checks",
           "type": "array"
         },
+        "fabrication_multiplier": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Leaderboard fabrication multiplier (>= 1.0) the stage earns; None if unbuilt.",
+          "title": "Fabrication Multiplier"
+        },
+        "fabrication_stage": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Highest evidenced PVT stage (alpha|beta|production), or None if unbuilt.",
+          "title": "Fabrication Stage"
+        },
         "hii_highest_level": {
           "anyOf": [
             {

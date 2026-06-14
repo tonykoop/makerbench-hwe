@@ -77,6 +77,17 @@ class MbcPayload(BaseModel):
     hii_highest_level: Optional[str] = Field(
         default=None, description="Heaviest HII tier observed (L0|L1|L2)."
     )
+    # Physical Verification Track credit (carried from PhysicalVerificationTrack, mb#112).
+    # Signing these makes the fabrication multiplier tamper-evident: a public surface
+    # can trust the credited stage without re-deriving it from raw evidence.
+    fabrication_stage: Optional[str] = Field(
+        default=None,
+        description="Highest evidenced PVT stage (alpha|beta|production), or None if unbuilt.",
+    )
+    fabrication_multiplier: Optional[float] = Field(
+        default=None,
+        description="Leaderboard fabrication multiplier (>= 1.0) the stage earns; None if unbuilt.",
+    )
     # Reproducibility + freshness.
     toolchain_versions: dict[str, str] = Field(
         default_factory=dict,
