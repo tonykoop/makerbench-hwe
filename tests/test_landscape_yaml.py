@@ -41,6 +41,7 @@ ALLOWED_TYPES = {
     "dataset",
     "benchmark+method",
     "method+dataset",
+    "product",
 }
 
 # Documented `grading` vocabulary. The data also uses descriptive free text

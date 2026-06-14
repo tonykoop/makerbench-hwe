@@ -1,9 +1,10 @@
 # Where MakerBench-HWE sits in the CAD / hardware-AI benchmark landscape
 
-*Last updated: 2026-06-10. Entries below were individually verified against their
-primary sources (arXiv abstract pages, repos, HF Spaces) on that date; if you
-spot an error or a missing project, please open an issue or PR. A
-machine-readable version of this table lives in
+*Last full sweep: 2026-06-10; SOLIDWORKS AI Virtual Companions addendum:
+2026-06-14. Full-sweep entries below were individually verified against their
+primary sources (arXiv abstract pages, repos, HF Spaces) on the sweep date;
+addendum rows carry their own dated evidence sidecar. If you spot an error or a
+missing project, please open an issue or PR. A machine-readable version lives in
 [`landscape.yaml`](landscape.yaml); the public strategy note lives in
 [`STRATEGY_MEMO.md`](STRATEGY_MEMO.md).*
 
@@ -15,6 +16,26 @@ newer, smaller wave asks **"does the design satisfy physics?"** MakerBench-HWE
 asks the question between them: **"can an agent produce *maker-ready*,
 *manufacturable* hardware?"** The three are complementary, and we'd rather
 collaborate than compete.
+
+## Embedded CAD copilots and incumbent products
+
+The landscape is no longer just papers and public leaderboards. Large CAD
+incumbents are now shipping embedded AI companions directly inside commercial
+design seats, which matters strategically even when those systems are not
+publicly benchmarked.
+
+| Product | Type | What it does (their framing) | Benchmark relevance |
+| --- | --- | --- | --- |
+| **SOLIDWORKS AI Virtual Companions (LEO / AURA / MARIE)** ([SOLIDWORKS](https://www.solidworks.com/product/solidworks-design/ai-companions) · [DEVELOP3D](https://develop3d.com/cad/new-solidworks-ai-agents-added-at-3dexperience-world/) · [Engineering.com](https://www.engineering.com/a-tale-of-three-chatbots-aura-leo-and-marie/)) 🆕 | Proprietary embedded CAD copilot family | AURA explores enterprise/web knowledge; LEO is the engineering companion for validation, manufacturing, assembly structure, STEP/image-to-geometry work, simulation, and design-error repair; MARIE focuses on materials/science research. SOLIDWORKS says AURA and LEO are available in beta through SOLIDWORKS Design; trade coverage reports a 3DEXPERIENCE World 2026 launch, Mistral AI / Outscale architecture, LEO around mid-2026, and MARIE later in 2026. | Not a public benchmark. It validates the same inline DFM / assembly / simulation-assistance problem space that MakerBench measures, but inside one proprietary CAD seat with no reproducible public scoring protocol. |
+
+**Positioning note:** LEO is the clearest incumbent signal so far that
+manufacturability feedback is moving into the modeling loop itself. That is
+complementary to MakerBench-HWE rather than a substitute for it: SOLIDWORKS can
+make an embedded copilot feel native to one CAD workflow, while MakerBench keeps
+the cross-tool referee layer open, deterministic, vendor-neutral, and auditable.
+The useful comparison is not "does LEO look helpful?" but "when an inline DFM
+copilot says a design is manufacturable, does the resulting artifact pass an
+independent geometry/process check?"
 
 ## The neighbours: CAD generation benchmarks
 
@@ -201,6 +222,13 @@ All three arXiv IDs resolved to the papers claimed. Primary-source evidence
 for sweep additions is now preserved per sweep date under
 [`landscape-evidence/`](landscape-evidence/), starting with
 [`landscape-evidence/2026-06-10.yaml`](landscape-evidence/2026-06-10.yaml).
+
+Addendum (2026-06-14, issue #84) — added **SOLIDWORKS AI Virtual Companions
+(LEO / AURA / MARIE)** as the first incumbent embedded-CAD-copilot product row,
+with positioning that treats inline DFM as validation of MakerBench's problem
+space while preserving the open/deterministic/vendor-neutral boundary.
+Evidence is recorded in
+[`landscape-evidence/2026-06-14.yaml`](landscape-evidence/2026-06-14.yaml).
 
 Verification caveats for this sweep: adjudications are abstract-/README-level
 (paper bodies may add detail); UniCAD, Physics-in-the-Loop, GenCAD-3D, and

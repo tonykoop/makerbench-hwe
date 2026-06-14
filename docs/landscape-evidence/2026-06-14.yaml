@@ -1,0 +1,40 @@
+# Evidence sidecar for the 2026-06-14 SOLIDWORKS AI Virtual Companions
+# landscape addendum (issue #84). This file is additive; do not rewrite older
+# sweep evidence files.
+
+sweep_date: 2026-06-14
+
+entries:
+  - name: SOLIDWORKS AI Virtual Companions (LEO / AURA / MARIE)
+    sources:
+      - https://www.solidworks.com/product/solidworks-design/ai-companions
+      - https://develop3d.com/cad/new-solidworks-ai-agents-added-at-3dexperience-world/
+      - https://www.engineering.com/a-tale-of-three-chatbots-aura-leo-and-marie/
+    fetched_on: 2026-06-14
+    supports: [name, type, source, source_alt, date, recent, framing_own,
+               input_modality, output_representation, grading, grading_detail,
+               scope, fab_processes, agentic, anti_memorization, openness,
+               backing, integrity, dataset_scale, note]
+    claims:
+      - 'SOLIDWORKS product page describes AI Virtual Companions as embedded
+         directly in SOLIDWORKS and says SOLIDWORKS Design includes beta
+         access to AURA and LEO as of this fetch.'
+      - 'SOLIDWORKS page frames AURA as enterprise/web knowledge assistance,
+         LEO as engineering, validation, manufacturing, assembly, STEP/image
+         conversion, simulation, and design-error assistance, and MARIE as
+         materials/science research support.'
+      - 'DEVELOP3D coverage of the 3DEXPERIENCE World 2026 announcement
+         reports LEO, AURA, and MARIE; reports a Mistral AI foundation model
+         running on Dassault Systemes Outscale cloud; and reports LEO planned
+         for mid-2026 with MARIE later in 2026.'
+      - 'Engineering.com follow-up reports the companions share an underlying
+         AI with different persona/context constraints, describes LEO as the
+         manufacturability-focused engineering persona, and reports July LEO
+         and September MARIE timing plus consumption-based licensing.'
+    volatility:
+      - 'Availability, licensing, and named skill/competency lists are product
+         facts likely to change quickly; re-check SOLIDWORKS release pages
+         before quoting after 2026-06-14.'
+      - 'Mistral/Outscale architecture and exact launch months are currently
+         from trade coverage rather than the fetched SOLIDWORKS product page;
+         treat as reported, not independently benchmark-verified.'
