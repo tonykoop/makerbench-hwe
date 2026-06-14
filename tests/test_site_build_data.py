@@ -34,6 +34,7 @@ def _write_run(
     row_fields=None,
     agent_identifier=None,
     grader_environment=None,
+    run_fields=None,
 ):
     row = {
         "task_id": "vented_plate",
@@ -62,6 +63,8 @@ def _write_run(
         payload["agent_identifier"] = agent_identifier
     if grader_environment is not None:
         payload["grader_environment"] = grader_environment
+    if run_fields:
+        payload.update(run_fields)
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
@@ -407,6 +410,85 @@ def test_site_groups_different_harnesses_separately(tmp_path):
     # Known harnesses extend the share slug so badge/page URLs stay distinct.
     assert rows[0]["badge_slug"] == "same-model-high-community-anthropic-api"
     assert rows[1]["badge_slug"] == "same-model-high-community-claude-cli"
+
+
+def test_site_partitions_autonomous_and_workflow_into_separate_leagues(tmp_path):
+    """Same model produced by an autonomous run vs an assisted-workflow stack
+    becomes two distinct rows in two distinct, never-cross-ranked leagues."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    _write_run(results_dir / "auto.json", "same-model", None, 4)
+    _write_run(
+        results_dir / "wf.json", "same-model", None, 1,
+        run_fields={
+            "harness_class": "assisted-workflow",
+            "harness_subclass": "gui-injected-copilot",
+        },
+    )
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    payload = build_data.build_payload(results_dir, registry)
+
+    # The two leagues are advertised at the top level for the site to render.
+    assert [lg["id"] for lg in payload["leagues"]] == ["autonomous", "workflows"]
+
+    by_league = {row["league"]: row for row in payload["models"]}
+    assert set(by_league) == {"autonomous", "workflows"}
+    assert by_league["autonomous"]["harness_class"] == "autonomous"
+    assert by_league["autonomous"]["harness_subclass"] is None
+    assert by_league["workflows"]["harness_class"] == "assisted-workflow"
+    assert by_league["workflows"]["harness_subclass"] == "gui-injected-copilot"
+    # Scores are never conflated across leagues; distinct rows, distinct row_ids.
+    assert by_league["autonomous"]["row_id"] != by_league["workflows"]["row_id"]
+    assert by_league["autonomous"]["tracks"]["blind"]["overall_mean"] == 4.0
+    assert by_league["workflows"]["tracks"]["blind"]["overall_mean"] == 1.0
+    # Autonomous league is ordered ahead of the workflow league — rows never rank
+    # across leagues even though the workflow row scores lower.
+    leagues_in_order = [row["league"] for row in payload["models"]]
+    assert leagues_in_order.index("autonomous") < leagues_in_order.index("workflows")
+
+
+def test_site_caps_workflow_rows_at_artifact_verified(tmp_path):
+    """An assisted-workflow row claiming official-heldout-verified is structurally
+    impossible — build_data clamps it to public-regrade-verified."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    _write_run(
+        results_dir / "wf.json", "wf-model", None, 3,
+        run_fields={
+            "harness_class": "assisted-workflow",
+            "verification_status": "official-heldout-verified",
+        },
+    )
+    # An autonomous run keeps the full ladder — same claim survives.
+    _write_run(
+        results_dir / "auto.json", "auto-model", None, 3,
+        run_fields={"verification_status": "official-heldout-verified"},
+    )
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    payload = build_data.build_payload(results_dir, registry)
+    by_id = {row["identifier"]: row for row in payload["models"]}
+    assert by_id["wf-model"]["verification_status"] == "public-regrade-verified"
+    assert by_id["auto-model"]["verification_status"] == "official-heldout-verified"
+
+
+def test_site_autonomous_rows_unchanged_by_dual_league(tmp_path):
+    """A legacy autonomous bundle (no harness_class) keeps its original row_id and
+    lands in the autonomous league — the dual-league change is additive for it."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    _write_run(results_dir / "auto.json", "legacy-model", "high", 4)
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    row = build_data.build_payload(results_dir, registry)["models"][0]
+    assert row["harness_class"] == "autonomous"
+    assert row["league"] == "autonomous"
+    # row_id carries no harness_class segment — byte-identical to the pre-#90 key.
+    assert row["row_id"] == '["legacy-model","high","community","legacy_unknown"]'
 
 
 def test_site_payload_includes_delta_dossier_without_changing_scores(tmp_path):

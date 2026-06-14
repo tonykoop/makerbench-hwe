@@ -9,8 +9,11 @@
       "os": "Windows",
       "python": "3.11.9"
     },
+    "harness_class": "autonomous",
+    "harness_subclass": null,
     "identifier": "baseline-v0",
     "is_control": true,
+    "league": "autonomous",
     "model_family": "Baseline",
     "model_page": "models/baseline-v0-default-community/",
     "og_image": "assets/og/models/baseline-v0-default-community.svg",

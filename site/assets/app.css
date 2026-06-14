@@ -141,6 +141,15 @@ section .lede { color: var(--text-soft); margin: 0 0 26px; max-width: 680px; }
   border: 1px solid var(--border); background: var(--bg); color: var(--text);
 }
 
+/* ---- dual-league headers (mb#90) ---- */
+/* Each league renders its own ranked table; the header separates the two so a
+   reader never mistakes the board for a single cross-league ranking. */
+.league-head { margin: 22px 0 8px; }
+.league-head:first-child { margin-top: 4px; }
+.league-title { display: flex; align-items: baseline; gap: 9px; margin: 0; font-size: 1.02rem; }
+.league-count { font-size: 0.72rem; font-weight: 500; color: var(--text-soft); }
+.league-blurb { margin: 3px 0 0; font-size: 0.78rem; color: var(--text-soft); max-width: 60ch; }
+
 /* ---- table ---- */
 .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
 table.lb { border-collapse: collapse; width: 100%; min-width: 0; font-size: 0.84rem; background: var(--bg-elev); }
