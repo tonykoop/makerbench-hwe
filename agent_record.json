@@ -1,0 +1,27 @@
+{
+  "persona": "iris",
+  "side": "B",
+  "round": "R1",
+  "branch": "iris/b-r1-logger-sdk",
+  "issue_refs": ["mb#92"],
+  "contract": "READ-ONLY handoff; no qmd; implement makerbench-logger SDK",
+  "qmd_used": false,
+  "primary_artifacts": [
+    "makerbench_logger/",
+    "tests/test_makerbench_logger.py",
+    "makerbench/cli.py",
+    "pyproject.toml",
+    "skill_findings.md"
+  ],
+  "validation": {
+    "passed": [
+      "pure build_manifest/emit_manifest smoke",
+      "python -m compileall makerbench_logger tests/test_makerbench_logger.py",
+      "PYTHONPATH=. pytest tests/test_makerbench_logger.py (2 passed, 2 skipped)"
+    ],
+    "blocked_by_environment": [
+      "python -m makerbench_logger --help: ModuleNotFoundError: No module named 'typer'",
+      "CLI tests skipped locally because typer is not installed"
+    ]
+  }
+}
