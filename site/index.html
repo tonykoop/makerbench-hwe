@@ -18,7 +18,7 @@
   <!-- MakerBench is evaluation data: discoverable to search, opted out of AI training.
        This per-page signal is mirrored across every published HTML page. See site/robots.txt + ../CANARY.md. -->
   <meta name="robots" content="index, follow, noai, noimageai" />
-  <link rel="stylesheet" href="assets/app.css?v=2026-06-02-telemetry" />
+  <link rel="stylesheet" href="assets/app.css?v=2026-06-14-ecosystem" />
   <!-- Set theme before paint to avoid a flash. -->
   <script>
     (function () {
@@ -39,6 +39,7 @@
         <a href="#leaderboard">Leaderboard</a>
         <a href="#charts">Charts</a>
         <a href="#tasks">Tasks</a>
+        <a href="#ecosystem">Ecosystem</a>
         <a href="#methodology">Methodology</a>
         <a href="blog/">Blog</a>
         <a href="#run">Run it</a>
@@ -182,6 +183,27 @@
     </div>
   </section>
 
+  <!-- ================= ECOSYSTEM ================= -->
+  <section id="ecosystem">
+    <div class="wrap">
+      <div class="eyebrow">The bigger picture</div>
+      <h2>The MakerBench ecosystem</h2>
+      <p class="lede" id="ecosystem-intro">
+        MakerBench is a family of repos, not one leaderboard. The harness and
+        deterministic graders are the referee; private integrity repos keep the
+        scores honest; sibling capability repos and an interactive Space extend
+        the surface. See the full positioning in
+        <a href="https://github.com/tonykoop/makerbench-hwe/blob/main/docs/LANDSCAPE.md"
+           rel="noopener">docs/LANDSCAPE.md</a>.
+      </p>
+      <figure class="eco-map" id="eco-map">
+        <!-- Themeable + responsive hub-and-spoke SVG injected by app.js. -->
+      </figure>
+      <div class="eco-legend" id="eco-legend"></div>
+      <div class="eco-grid" id="ecosystem-grid"></div>
+    </div>
+  </section>
+
   <!-- ================= METHODOLOGY ================= -->
   <section id="methodology">
     <div class="wrap">
@@ -284,6 +306,6 @@ makerbench selftest --all</pre>
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="assets/app.js?v=2026-06-09-p2-credibility"></script>
+  <script src="assets/app.js?v=2026-06-14-ecosystem"></script>
 </body>
 </html>
