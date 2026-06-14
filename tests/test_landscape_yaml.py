@@ -218,3 +218,59 @@ def test_evidence_sidecars_parse_and_reference_real_entries():
                 f"{path.name}: {name}: `supports` names unknown landscape.yaml "
                 f"fields {sorted(unknown)}"
             )
+
+
+def _entry_by_name(name: str) -> dict:
+    for entry in _entries():
+        if entry["name"] == name:
+            return entry
+    raise AssertionError(f"no landscape.yaml entry named {name!r}")
+
+
+def test_marb_entry_is_assembly_integrity_neighbour():
+    """MARB/CADCLAW (issue #77) is the macro-assembly neighbour: it must be
+    typed as an assembly-integrity, deterministic, MIT-licensed entry so it is
+    not silently miscategorised as a process-DFM competitor."""
+    marb = _entry_by_name("MARB / CADCLAW")
+
+    assert marb["scope"] == "assembly-integrity", (
+        "MARB grades macro-assembly/system integrity, not micro process-DFM; "
+        "scope must be assembly-integrity to keep the boundary explicit"
+    )
+    assert marb["type"] == "benchmark+method"
+    assert marb["grading"] == "deterministic-geometric"
+    assert marb["recent"] is True
+    # CADCLAW is the open-source engine; the openness note must record MIT.
+    assert "MIT" in str(marb["openness"])
+    # Both primary sources (landing page + engine repo) must be captured.
+    assert str(marb["source"]).startswith("https://")
+    assert str(marb["source_alt"]).startswith("https://")
+
+
+def test_marb_scope_token_is_documented_in_header():
+    """The `assembly-integrity` scope token MARB introduces must be listed in
+    the landscape.yaml header vocabulary, so the data and its documented
+    vocabulary stay in sync."""
+    header = LANDSCAPE_YAML.read_text(encoding="utf-8").split("entries:", 1)[0]
+    assert "assembly-integrity" in header, (
+        "scope token `assembly-integrity` is used but not documented in the "
+        "landscape.yaml header `scope:` vocabulary"
+    )
+
+
+def test_marb_has_dated_primary_source_evidence():
+    """Acceptance criterion for #77: the MARB entry ships with a dated evidence
+    sidecar citing the fetched primary sources."""
+    evidence_files = sorted(EVIDENCE_DIR.glob("*.yaml"))
+    marb_evidence = []
+    for path in evidence_files:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for item in data["entries"]:
+            if item["name"] == "MARB / CADCLAW":
+                marb_evidence.append((path, item))
+
+    assert marb_evidence, "no evidence sidecar entry for 'MARB / CADCLAW'"
+    _, item = marb_evidence[0]
+    hosts = " ".join(item["sources"])
+    assert "marb.cadclaw.io" in hosts, "evidence must cite the MARB landing page"
+    assert "CADCLAW" in hosts, "evidence must cite the CADCLAW engine repo"
