@@ -25,7 +25,10 @@ cut-area accuracy, catalog fit).
 
 This document is the citable anchor for the claim "deterministic, multi-process
 manufacturability evaluation for agents" (see [LANDSCAPE.md](LANDSCAPE.md) and
-the [public strategy note](STRATEGY_MEMO.md)).
+the [public strategy note](STRATEGY_MEMO.md)). The companion
+[`LEO_DFM_COMPARISON.md`](LEO_DFM_COMPARISON.md) maps this catalog against
+SOLIDWORKS LEO's reported real-time manufacturability checks and states why a
+SOLIDWORKS-output channel is optional-local only.
 
 ## Taxonomy vocabulary (after BenDFM)
 

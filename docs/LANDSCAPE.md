@@ -35,7 +35,9 @@ make an embedded copilot feel native to one CAD workflow, while MakerBench keeps
 the cross-tool referee layer open, deterministic, vendor-neutral, and auditable.
 The useful comparison is not "does LEO look helpful?" but "when an inline DFM
 copilot says a design is manufacturable, does the resulting artifact pass an
-independent geometry/process check?"
+independent geometry/process check?" See
+[`LEO_DFM_COMPARISON.md`](LEO_DFM_COMPARISON.md) for the rule-by-rule mapping
+and optional-local SOLIDWORKS-output channel decision.
 
 ## The neighbours: CAD generation benchmarks
 
