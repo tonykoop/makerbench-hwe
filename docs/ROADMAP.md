@@ -70,6 +70,9 @@ heavy for everyone.
 - `cam-cnc`: toolpath collision, workholding, stock setup, minimum cutter radius.
 - `cetol-tolerance`: tolerance stackups, datum strategy, worst-case fits.
 - `fusion-local`: optional local Fusion API track for parametric CAD workflows.
+- `solidworks-leo-local`: optional local SOLIDWORKS/LEO-assisted output channel
+  for exported STEP/component-score comparisons; never a core dependency (see
+  [`LEO_DFM_COMPARISON.md`](LEO_DFM_COMPARISON.md)).
 - `blender-organic`: organic meshes, acoustic horns, ergonomic surfaces, complex
   sculpted forms.
 
