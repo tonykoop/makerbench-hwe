@@ -119,6 +119,42 @@ code, kbd, pre { font-family: var(--mono); font-size: 0.86em; }
 .btn-ghost { background: var(--bg-elev); border-color: var(--border); color: var(--text); }
 .btn-ghost:hover { border-color: var(--border-strong); text-decoration: none; }
 
+/* ---- hero stat strip (data-driven from build_data.py) ---- */
+.stat-strip {
+  margin: 34px 0 0; display: grid; gap: 1px; background: var(--border);
+  border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+  grid-template-columns: repeat(5, 1fr);
+}
+.stat-strip .stat { background: var(--bg-elev); padding: 16px 18px; }
+.stat-strip dt.stat-val {
+  margin: 0; font-size: clamp(1.4rem, 2.4vw, 1.9rem); font-weight: 800;
+  letter-spacing: -0.02em; color: var(--accent); font-variant-numeric: tabular-nums;
+}
+.stat-strip dd.stat-label {
+  margin: 4px 0 0; font-size: 0.82rem; font-weight: 600; color: var(--text);
+}
+.stat-strip .stat-detail {
+  display: block; margin-top: 2px; font-size: 0.72rem; font-weight: 400;
+  color: var(--text-soft);
+}
+
+/* ---- why-different value-prop grid ---- */
+.why-grid {
+  display: grid; gap: 14px; grid-template-columns: repeat(3, 1fr);
+}
+.why-card {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-elev); padding: 16px 18px; box-shadow: var(--shadow);
+}
+.why-card h3 {
+  margin: 0 0 6px; font-size: 1rem; letter-spacing: -0.01em;
+}
+.why-card p { margin: 0; color: var(--text-soft); font-size: 0.9rem; line-height: 1.5; }
+.why-card code {
+  background: var(--bg-soft); border: 1px solid var(--border); border-radius: 5px;
+  padding: 1px 5px; font-size: 0.85em;
+}
+
 /* ---- sections ---- */
 section { padding: 52px 0; border-bottom: 1px solid var(--border); }
 section h2 {
@@ -451,8 +487,14 @@ table.dt td.seedlist { font-variant-numeric: tabular-nums; color: var(--text-sof
 .gallery-card .tracks a.chip:hover { border-color: var(--accent); }
 
 /* ---- responsive ---- */
+@media (max-width: 980px) {
+  .why-grid { grid-template-columns: repeat(2, 1fr); }
+  .stat-strip { grid-template-columns: repeat(3, 1fr); }
+}
 @media (max-width: 760px) {
   .chart-grid, .profile-grid, .task-grid, .cols2 { grid-template-columns: 1fr; }
+  .why-grid { grid-template-columns: 1fr; }
+  .stat-strip { grid-template-columns: repeat(2, 1fr); }
   .chart-card-head { display: block; }
   .chart-card-head .seg { margin-top: 12px; max-width: 100%; overflow-x: auto; }
   .chart-box-frontier { height: 320px; }
