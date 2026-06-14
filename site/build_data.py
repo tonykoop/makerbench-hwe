@@ -2929,6 +2929,111 @@ def write_explorer_context(
     return out
 
 
+# --- "What we've learned" findings teasers (mb#172) -------------------------
+# The landing page's findings section is derived, never hand-copied. The single
+# source of truth is a JSON front-matter block embedded in site/blog/index.html
+# (<script type="application/json" id="mb-findings">). We extract it here, verify
+# every blog link target exists on disk, and resolve each finding's optional
+# failure-gallery thumbnail against the curated site/data/failure_gallery.json
+# bundle. Output feeds site/data/findings.json, which app.js renders. If the
+# front-matter (or the blog dir) is absent the build stays green and simply emits
+# no findings file — the landing section hides itself.
+FINDINGS_SCRIPT_RE = re.compile(
+    r'<script[^>]*\bid=["\']mb-findings["\'][^>]*>(.*?)</script>',
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def extract_findings_frontmatter(blog_index_html: str) -> dict | None:
+    """Return the parsed ``mb-findings`` JSON front-matter, or None if absent.
+
+    The block is raw JSON inside ``<script type="application/json">`` — browsers
+    hand ``JSON.parse`` the literal text (no HTML-entity decoding), so we parse it
+    the same way rather than unescaping.
+    """
+    match = FINDINGS_SCRIPT_RE.search(blog_index_html)
+    if not match:
+        return None
+    raw = match.group(1).strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"mb-findings front-matter is not valid JSON: {exc}") from exc
+
+
+def _resolve_gallery_thumb(gallery_id: str, gallery_examples: dict) -> dict:
+    """Resolve a finding's gallery_id to its first artifact as a thumbnail."""
+    example = gallery_examples.get(gallery_id)
+    if example is None:
+        raise ValueError(f"finding references unknown gallery_id {gallery_id!r}")
+    artifacts = example.get("artifacts") or []
+    if not artifacts:
+        raise ValueError(f"gallery example {gallery_id!r} has no artifact thumbnail")
+    artifact = artifacts[0]
+    return {
+        "src": artifact.get("path"),
+        "alt": artifact.get("label") or example.get("title") or gallery_id,
+        "gallery_id": gallery_id,
+        "gallery_title": example.get("title"),
+    }
+
+
+def build_findings(blog_dir: Path, gallery_path: Path) -> dict | None:
+    """Build the landing-page findings payload from blog front-matter.
+
+    Returns None when there is nothing to publish (no blog index, or no
+    front-matter block). Raises ValueError on malformed front-matter, a broken
+    blog link, or an unresolvable gallery thumbnail — drift should fail loudly.
+    """
+    index_path = blog_dir / "index.html"
+    if not index_path.exists():
+        return None
+    front = extract_findings_frontmatter(index_path.read_text(encoding="utf-8"))
+    if not front:
+        return None
+    findings_in = front.get("findings")
+    if not isinstance(findings_in, list) or not findings_in:
+        raise ValueError("mb-findings front-matter has no non-empty 'findings' list")
+
+    gallery_examples: dict = {}
+    if gallery_path.exists():
+        gallery = json.loads(gallery_path.read_text(encoding="utf-8"))
+        for example in gallery.get("examples", []):
+            if isinstance(example, dict) and example.get("id"):
+                gallery_examples[example["id"]] = example
+
+    findings_out: list[dict] = []
+    for raw in findings_in:
+        key, headline, post = raw.get("key"), raw.get("headline"), raw.get("post")
+        if not key or not headline or not post:
+            raise ValueError(f"finding missing key/headline/post: {raw!r}")
+        if not (blog_dir / post).exists():
+            raise ValueError(f"finding {key!r} links to missing blog post {post!r}")
+        anchor = raw.get("anchor") or ""
+        entry = {
+            "key": key,
+            "stat": raw.get("stat"),
+            "headline": headline,
+            "detail": raw.get("detail", ""),
+            "post": post,
+            "href": "blog/" + post + (("#" + anchor) if anchor else ""),
+        }
+        gallery_id = raw.get("gallery_id")
+        if gallery_id:
+            entry["thumb"] = _resolve_gallery_thumb(gallery_id, gallery_examples)
+        findings_out.append(entry)
+
+    section = front.get("section") or {}
+    return {
+        "section": {
+            "eyebrow": section.get("eyebrow", "Findings"),
+            "title": section.get("title", "What we've learned"),
+            "lede": section.get("lede", ""),
+        },
+        "findings": findings_out,
+    }
+
+
 def main() -> None:
     script_dir = Path(__file__).resolve().parent
     repo_root = script_dir.parent
@@ -2999,6 +3104,25 @@ def main() -> None:
         default=DEFAULT_SITE_BASE_URL,
         help=f"Absolute Pages base URL for share links (default: {DEFAULT_SITE_BASE_URL}).",
     )
+    parser.add_argument(
+        "--blog-dir",
+        type=Path,
+        default=script_dir / "blog",
+        help="Blog directory holding the findings front-matter (default: site/blog).",
+    )
+    parser.add_argument(
+        "--gallery",
+        type=Path,
+        default=script_dir / "data" / "failure_gallery.json",
+        help="Failure gallery bundle for findings thumbnails "
+        "(default: site/data/failure_gallery.json).",
+    )
+    parser.add_argument(
+        "--findings-out",
+        type=Path,
+        default=script_dir / "data" / "findings.json",
+        help="Findings teaser output path (default: site/data/findings.json).",
+    )
     args = parser.parse_args()
 
     payload = build_payload(args.results_dir, args.registry)
@@ -3030,13 +3154,19 @@ def main() -> None:
     # data; absent inputs degrade to scaffolds so this never blocks the build.
     explorer_registry = _load_json_or_empty(args.registry)
     write_explorer_context(payload, explorer_registry, args.out.parent)
+    # Landing-page findings teasers, derived from the blog front-matter (mb#172).
+    findings = build_findings(args.blog_dir, args.gallery)
+    if findings is not None:
+        args.findings_out.parent.mkdir(parents=True, exist_ok=True)
+        write_json(args.findings_out, findings)
     n_models = len(payload["models"])
     archived = (
         f", archived v{archive_entry['benchmark_version']}" if archive_entry else ""
     )
+    n_findings = len(findings["findings"]) if findings else 0
     print(
         f"Wrote {args.out} ({n_models} models, tracks={payload['tracks']}) "
-        f"and adoption artifacts{archived}."
+        f"and adoption artifacts{archived} ({n_findings} findings)."
     )
 
 

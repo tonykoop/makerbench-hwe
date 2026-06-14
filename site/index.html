@@ -44,6 +44,7 @@
         <a href="#tasks">Tasks</a>
         <a href="#ecosystem">Ecosystem</a>
         <a href="opportunity-matrix.html">Matrix</a>
+        <a href="#findings">Findings</a>
         <a href="#methodology">Methodology</a>
         <a href="blog/">Blog</a>
         <a href="#run">Run it</a>
@@ -287,6 +288,19 @@
       </figure>
       <div class="eco-legend" id="eco-legend"></div>
       <div class="eco-grid" id="ecosystem-grid"></div>
+    </div>
+  </section>
+
+  <!-- ============ WHAT WE'VE LEARNED (findings teasers) ============ -->
+  <!-- Cards are derived from blog front-matter via site/build_data.py
+       (data/findings.json). The section starts hidden and unhides only when that
+       data loads, so it degrades cleanly when the file is absent or blocked. -->
+  <section id="findings" hidden>
+    <div class="wrap">
+      <div class="eyebrow" id="findings-eyebrow">Findings</div>
+      <h2 id="findings-title">What we&rsquo;ve learned</h2>
+      <p class="lede" id="findings-lede"></p>
+      <div class="task-grid" id="findings-grid"></div>
     </div>
   </section>
 

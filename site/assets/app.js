@@ -1300,6 +1300,44 @@
     }).join("");
   }
 
+  // ---- "What we've learned" findings teasers ------------------------------
+  // Blog-derived data (data/findings.json), independent of the per-version
+  // leaderboard payload. The section stays hidden unless real findings load, so
+  // a missing file or a file:// fetch block degrades to nothing showing.
+  function findingCardHTML(f) {
+    var thumb = f.thumb && f.thumb.src
+      ? '<img class="gallery-img" src="' + escapeHTML(f.thumb.src) + '" alt="' +
+        escapeHTML(f.thumb.alt || "") + '" loading="lazy" />'
+      : "";
+    var stat = f.stat
+      ? '<span class="tier finding-stat">' + escapeHTML(f.stat) + "</span>" : "";
+    return '<a class="task finding-card" href="' + escapeHTML(f.href) + '">' +
+      thumb +
+      '<div class="top"><div><h3>' + escapeHTML(f.headline) + "</h3></div>" +
+      stat + "</div>" +
+      "<p>" + escapeHTML(f.detail || "") + "</p>" +
+      '<div class="tracks"><span class="chip">read the writeup &rarr;</span></div></a>';
+  }
+
+  function renderFindings() {
+    var section = document.getElementById("findings");
+    var grid = document.getElementById("findings-grid");
+    if (!section || !grid) return;
+    fetch("data/findings.json", { cache: "no-cache" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        var findings = data && data.findings;
+        if (!findings || !findings.length) return;  // leave the section hidden
+        var sec = data.section || {};
+        if (sec.eyebrow) document.getElementById("findings-eyebrow").textContent = sec.eyebrow;
+        if (sec.title) document.getElementById("findings-title").textContent = sec.title;
+        document.getElementById("findings-lede").textContent = sec.lede || "";
+        grid.innerHTML = findings.map(findingCardHTML).join("");
+        section.hidden = false;
+      })
+      .catch(function () { /* leave the section hidden on any error */ });
+  }
+
   // ---- model picker -------------------------------------------------------
   function fillHistPicker() {
     var sel = document.getElementById("hist-model");
@@ -1426,6 +1464,7 @@
 
     applyData(data);
     initVersionPicker();
+    renderFindings();
   }
 
   fetch("data/leaderboard.json", { cache: "no-cache" })

@@ -4,6 +4,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
@@ -1809,3 +1811,124 @@ def test_track_explainer_excludes_reference_rows_from_live_status(tmp_path):
     assert payload["models"][0]["is_control"] is True
     assert autonomous["row_count"] == 0
     assert autonomous["status"] == "upcoming"
+
+
+_FINDINGS_INDEX_TEMPLATE = """<!doctype html><html><head>
+  <meta name="robots" content="index, follow, noai, noimageai" />
+  <script type="application/json" id="mb-findings">
+  {{
+    "section": {{"eyebrow": "Findings", "title": "What we've learned", "lede": "Lede."}},
+    "findings": {findings_json}
+  }}
+  </script>
+</head><body></body></html>
+"""
+
+_GALLERY_FIXTURE = {
+    "version": "0.1.0",
+    "examples": [
+        {
+            "id": "welded-lid-enclosure-01",
+            "title": "Welded lid",
+            "artifacts": [
+                {"role": "render", "label": "iso render", "path": "assets/failure-gallery/placeholder.svg"}
+            ],
+        }
+    ],
+}
+
+
+def _make_blog(tmp_path, findings, posts=("post-a.html",), gallery=_GALLERY_FIXTURE):
+    blog_dir = tmp_path / "blog"
+    blog_dir.mkdir()
+    (blog_dir / "index.html").write_text(
+        _FINDINGS_INDEX_TEMPLATE.format(findings_json=json.dumps(findings)),
+        encoding="utf-8",
+    )
+    for post in posts:
+        (blog_dir / post).write_text("<html></html>", encoding="utf-8")
+    gallery_path = tmp_path / "failure_gallery.json"
+    if gallery is not None:
+        gallery_path.write_text(json.dumps(gallery), encoding="utf-8")
+    return blog_dir, gallery_path
+
+
+def test_build_findings_extracts_and_resolves_thumbnail(tmp_path):
+    blog_dir, gallery_path = _make_blog(
+        tmp_path,
+        [{
+            "key": "welded-assembly",
+            "stat": "welded",
+            "headline": "Welded bodies",
+            "detail": "One fused solid.",
+            "post": "post-a.html",
+            "gallery_id": "welded-lid-enclosure-01",
+        }],
+    )
+    out = build_data.build_findings(blog_dir, gallery_path)
+    assert out["section"]["title"] == "What we've learned"
+    (finding,) = out["findings"]
+    assert finding["href"] == "blog/post-a.html"
+    assert finding["thumb"]["src"] == "assets/failure-gallery/placeholder.svg"
+    assert finding["thumb"]["gallery_id"] == "welded-lid-enclosure-01"
+    assert finding["thumb"]["alt"]  # label carried through as alt text
+
+
+def test_build_findings_anchor_builds_fragment_href(tmp_path):
+    blog_dir, gallery_path = _make_blog(
+        tmp_path,
+        [{"key": "k", "headline": "H", "post": "post-a.html", "anchor": "sec"}],
+    )
+    out = build_data.build_findings(blog_dir, gallery_path)
+    assert out["findings"][0]["href"] == "blog/post-a.html#sec"
+
+
+def test_build_findings_thumbnail_optional(tmp_path):
+    blog_dir, gallery_path = _make_blog(
+        tmp_path,
+        [{"key": "token-cost-gap", "headline": "Cost gap", "post": "post-a.html"}],
+    )
+    out = build_data.build_findings(blog_dir, gallery_path)
+    assert "thumb" not in out["findings"][0]
+
+
+def test_build_findings_none_without_frontmatter(tmp_path):
+    blog_dir = tmp_path / "blog"
+    blog_dir.mkdir()
+    (blog_dir / "index.html").write_text("<html><head></head></html>", encoding="utf-8")
+    assert build_data.build_findings(blog_dir, tmp_path / "missing.json") is None
+
+
+def test_build_findings_none_without_blog_index(tmp_path):
+    assert build_data.build_findings(tmp_path / "nope", tmp_path / "g.json") is None
+
+
+def test_build_findings_rejects_missing_post(tmp_path):
+    blog_dir, gallery_path = _make_blog(
+        tmp_path,
+        [{"key": "k", "headline": "H", "post": "does-not-exist.html"}],
+    )
+    with pytest.raises(ValueError, match="missing blog post"):
+        build_data.build_findings(blog_dir, gallery_path)
+
+
+def test_build_findings_rejects_unknown_gallery_id(tmp_path):
+    blog_dir, gallery_path = _make_blog(
+        tmp_path,
+        [{"key": "k", "headline": "H", "post": "post-a.html", "gallery_id": "nope"}],
+    )
+    with pytest.raises(ValueError, match="unknown gallery_id"):
+        build_data.build_findings(blog_dir, gallery_path)
+
+
+def test_committed_findings_frontmatter_resolves_against_real_data():
+    """The shipped blog front-matter must build and every link/thumb must resolve."""
+    site = ROOT / "site"
+    out = build_data.build_findings(site / "blog", site / "data" / "failure_gallery.json")
+    assert out is not None and out["findings"]
+    for finding in out["findings"]:
+        assert (site / "blog" / finding["post"]).exists()
+        assert finding["href"].startswith("blog/")
+        if "thumb" in finding:
+            assert finding["thumb"]["src"].startswith("assets/failure-gallery/")
+            assert (site / finding["thumb"]["src"]).exists()

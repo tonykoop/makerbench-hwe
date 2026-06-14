@@ -514,6 +514,11 @@ table.dt td.seedlist { font-variant-numeric: tabular-nums; color: var(--text-sof
 .gallery-card .tracks a.chip { color: var(--accent); text-decoration: none; }
 .gallery-card .tracks a.chip:hover { border-color: var(--accent); }
 
+/* ---- "What we've learned" findings teasers (mb#172) ---- */
+.finding-card { overflow: hidden; }
+.finding-card .gallery-img { margin-bottom: 12px; }
+.finding-stat { color: var(--accent); border-color: var(--accent); }
+
 /* ---- responsive ---- */
 @media (max-width: 980px) {
   .why-grid { grid-template-columns: repeat(2, 1fr); }
