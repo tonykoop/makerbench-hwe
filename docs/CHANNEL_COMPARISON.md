@@ -90,9 +90,12 @@ script creates these directories.
   `measurement_authority="local_log"`, `measurement_tool="ccusage"`, and
   `measurement_source="claude"` (from a source-specific export such as `ccusage
   claude daily` — never an all-sources aggregate). The same `local_log` contract
-  is source-agnostic: a future Codex or Gemini subscription channel would use
-  `measurement_source="codex"` / `"gemini"`. **Actual cost stays null/opaque —
-  never `$0`.** A public-rate what-if, if computed, goes only in
+  is source-agnostic: Codex uses `measurement_source="codex"`, and a future Gemini
+  subscription channel with a real source-specific export would use
+  `measurement_source="gemini"`. This does **not** apply to today's antigravity
+  `agy` adapter, which has no local per-run token source and stays
+  `subscription_opaque`. **Actual cost stays null/opaque — never `$0`.** A
+  public-rate what-if, if computed, goes only in
   `cost.api_equivalent_usd`, never `cost.total_cost_usd`.
 - **Direct API (`anthropic_api`)** — authoritative `usage.source="measured"` from
   the adapter's reported usage, `measurement_authority="api_billing"` where

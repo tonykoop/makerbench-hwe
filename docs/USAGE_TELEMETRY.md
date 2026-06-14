@@ -80,7 +80,9 @@ time — no separate log-scrape needed when the harness drives the CLI:
   **no** per-run token counts locally (neither in its conversation stores nor a usage
   log), so these rows stay `subscription_opaque` with null tokens. This is a known
   limitation, not a bug: there is currently no honest local token source for it, and
-  a fuzzy estimate is deliberately avoided.
+  a fuzzy estimate is deliberately avoided. Account-level Google billing can
+  reconcile aggregate spend, but it cannot attribute tokens or cost to one
+  MakerBench row; do not convert it into row-level usage.
 
 ## Why `cost_usd` stays null for subscription runs
 
