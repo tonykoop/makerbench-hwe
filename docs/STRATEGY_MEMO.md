@@ -82,6 +82,9 @@ rerun, and easier for neighbouring projects to adopt.
 
 ## Collaboration Opportunities
 
+- **Outreach packet.** Copy/paste-ready notes for the target communities below
+  live in [OUTREACH_PACKET.md](OUTREACH_PACKET.md). They include public-claim
+  guardrails and should be refreshed against live project pages before sending.
 - **CADGenBench / Hugging Face.** CADGenBench is tool-agnostic STEP-in/STEP-out,
   and its reference baseline uses build123d, the same stack as MakerBench's
   B-rep profile. Good collaboration targets include cross-submission,
