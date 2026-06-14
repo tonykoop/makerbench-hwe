@@ -95,6 +95,21 @@ rerun, and easier for neighbouring projects to adopt.
   easier and give appropriate credit to adjacent work.
 - **GenCAD-3D.** Its planned scanned physical-part set is directly relevant to
   MakerBench's reverse-engineering family.
+- **MARB / CADCLAW (Sunnyday Technologies).** The closest neighbour yet to
+  MakerBench's level-based framing, and MIT-licensed. MARB grades macro-assembly
+  / system integrity (placement, collision, connectivity) on an L0–L7 ladder
+  mapped to TRL/MRL/IRL; MakerBench grades micro process-DFM on each part. The
+  two are complementary, not competitive: **MakerBench is the per-part "is this
+  buildable?" gate that fills the space between a MARB L1 *placed* assembly and
+  an L3/L5 mechanically-valid, *manufacturable* machine** — a design can clear
+  CADCLAW's Interference/Floating gates and still fail MakerBench DFM on an
+  un-manufacturable bend radius or non-catalog thread. Both are deterministic,
+  tool-agnostic, STEP-in graders that keep effort (time/tokens/attempts) out of
+  the artifact score — a shared discipline worth aligning on. Good first targets:
+  a shared "deterministic hardware-agent evaluation" framing and grading one STEP
+  artifact through both gates. Outreach is tracked in #74; adapter work in #76.
+  Credit MARB's L0–L7 ladder explicitly and avoid asserting any head-to-head
+  neither project has run.
 
 ## Roadmap Implications
 
