@@ -64,7 +64,11 @@ def test_cli_writes_three_surfaces(tmp_path):
     cube = json.loads(out_json.read_text(encoding="utf-8"))
     assert cube["schema"] == "makerbench-opportunity-matrix-v1"
     assert cube["counts"]["coordinates"] > 0
-    assert "<table class='heat'>" in out_html.read_text(encoding="utf-8")
+    html_out = out_html.read_text(encoding="utf-8")
+    assert "<table class='heat'>" in html_out
+    # Published site pages must carry the per-page noai robots signal (enforced by
+    # test_site_build_data::test_published_site_pages_carry_noai_meta).
+    assert '<meta name="robots" content="index, follow, noai, noimageai" />' in html_out
     assert "Top plugin vacancies" in out_report.read_text(encoding="utf-8")
 
 
