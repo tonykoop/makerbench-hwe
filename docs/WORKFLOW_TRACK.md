@@ -340,6 +340,9 @@ Tracked under epic #100:
 
 ## See also
 
+- [`CLOSED_LOOP_INSTRUMENT_DEMO.md`](CLOSED_LOOP_INSTRUMENT_DEMO.md) — the #83
+  code-CAD instrument pilot: Adam/Fable-style workflow disclosure routed through
+  the public `acoustics_scale_length` MakerBench gate.
 - [`COMMUNITY_SUBMISSION.md`](COMMUNITY_SUBMISSION.md) — the verification states
   and grouping this RFC extends.
 - [`SUBMISSION_CONTRACT.md`](SUBMISSION_CONTRACT.md) — the result payload,
