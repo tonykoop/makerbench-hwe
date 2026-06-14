@@ -535,6 +535,75 @@ def test_site_caps_workflow_rows_at_artifact_verified(tmp_path):
     assert by_id["auto-model"]["verification_status"] == "official-heldout-verified"
 
 
+def test_site_payload_emits_hii_badge_metadata_from_workflow_manifest(tmp_path):
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    _write_run(
+        results_dir / "l0.json",
+        "workflow-model",
+        "high",
+        4,
+        row_fields={
+            "workflow_manifest": {
+                "hii": {
+                    "highest_level": "L0",
+                    "autonomy_ratio": 1.0,
+                }
+            }
+        },
+        run_fields={"harness_class": "assisted-workflow"},
+    )
+    _write_run(
+        results_dir / "l2.json",
+        "workflow-model",
+        "high",
+        3,
+        row_fields={
+            "workflow_manifest": {
+                "hii": {
+                    "highest_level": "L2",
+                    "autonomy_ratio": 0.25,
+                }
+            }
+        },
+        run_fields={"harness_class": "assisted-workflow"},
+    )
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    row = build_data.build_payload(results_dir, registry)["models"][0]
+
+    assert row["hii_badge"] == {
+        "level": "L2",
+        "title": "Master Triage",
+        "label": "L2 Master Triage",
+        "criteria": "Heavy copilot or manual geometry-edit intervention was disclosed.",
+    }
+    assert row["tracks"]["blind"]["overall_mean"] == 3.5
+
+
+def test_site_payload_accepts_legacy_human_intervention_index_badge(tmp_path):
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    _write_run(
+        results_dir / "legacy_hii.json",
+        "workflow-model",
+        "high",
+        4,
+        row_fields={"workflow_manifest": {"human_intervention_index": "L1"}},
+        run_fields={"harness_class": "assisted-workflow"},
+    )
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    row = build_data.build_payload(results_dir, registry)["models"][0]
+
+    assert row["hii_badge"]["label"] == "L1 Elite Copilot"
+    assert row["hii_badge"]["criteria"] == (
+        "Light natural-language steering, with no manual geometry editing disclosed."
+    )
+
+
 def test_site_autonomous_rows_unchanged_by_dual_league(tmp_path):
     """A legacy autonomous bundle (no harness_class) keeps its original row_id and
     lands in the autonomous league — the dual-league change is additive for it."""
@@ -547,6 +616,7 @@ def test_site_autonomous_rows_unchanged_by_dual_league(tmp_path):
     row = build_data.build_payload(results_dir, registry)["models"][0]
     assert row["harness_class"] == "autonomous"
     assert row["league"] == "autonomous"
+    assert "hii_badge" not in row
     # row_id carries no harness_class segment — byte-identical to the pre-#90 key.
     assert row["row_id"] == '["legacy-model","high","community","legacy_unknown"]'
 
