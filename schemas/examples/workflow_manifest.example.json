@@ -28,6 +28,7 @@
     "tool_calls_count": 37,
     "wall_clock_seconds": 412.5
   },
+  "physical_verification": null,
   "provenance_trace": {
     "session_recording_hash": null,
     "tool_call_log_url": null
