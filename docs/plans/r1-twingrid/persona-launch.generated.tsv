@@ -1,0 +1,19 @@
+# persona	runtime	work_dir	team	model	effort	prompt_file
+alice	claude	/home/tony/hwe-wt/alice-a	sprint-hwe	opus	high	/home/tony/hwe-wt/_kit/docs/plans/r1-twingrid/handoffs/sprint-alice-A.md
+alice	codex	/home/tony/hwe-wt/alice-b	sprint-hwe	gpt-5.5	high	/home/tony/hwe-wt/_kit/docs/plans/r1-twingrid/handoffs/sprint-alice-B.md
+bob	claude	/home/tony/hwe-wt/bob-a	sprint-hwe	opus	high	/home/tony/hwe-wt/_kit/docs/plans/r1-twingrid/handoffs/sprint-bob-A.md
+bob	codex	/home/tony/hwe-wt/bob-b	sprint-hwe	gpt-5.5	high	/home/tony/hwe-wt/_kit/docs/plans/r1-twingrid/handoffs/sprint-bob-B.md
+cindy	claude	/home/tony/hwe-wt/cindy-a	sprint-hwe	opus	high	/home/tony/hwe-wt/_kit/docs/plans/r1-twingrid/handoffs/sprint-cindy-A.md
+cindy	codex	/home/tony/hwe-wt/cindy-b	sprint-hwe	gpt-5.5	high	/home/tony/hwe-wt/_kit/docs/plans/r1-twingrid/handoffs/sprint-cindy-B.md
+dan	claude	/home/tony/hwe-wt/dan-a	sprint-hwe	opus	high	/home/tony/hwe-wt/_kit/docs/plans/r1-twingrid/handoffs/sprint-dan-A.md
+dan	codex	/home/tony/hwe-wt/dan-b	sprint-hwe	gpt-5.5	high	/home/tony/hwe-wt/_kit/docs/plans/r1-twingrid/handoffs/sprint-dan-B.md
+elsa	claude	/home/tony/hwe-wt/elsa-a	sprint-hwe	opus	high	/home/tony/hwe-wt/_kit/docs/plans/r1-twingrid/handoffs/sprint-elsa-A.md
+elsa	codex	/home/tony/hwe-wt/elsa-b	sprint-hwe	gpt-5.5	high	/home/tony/hwe-wt/_kit/docs/plans/r1-twingrid/handoffs/sprint-elsa-B.md
+frank	claude	/home/tony/hwe-wt/frank-a	sprint-hwe	opus	high	/home/tony/hwe-wt/_kit/docs/plans/r1-twingrid/handoffs/sprint-frank-A.md
+frank	codex	/home/tony/hwe-wt/frank-b	sprint-hwe	gpt-5.5	high	/home/tony/hwe-wt/_kit/docs/plans/r1-twingrid/handoffs/sprint-frank-B.md
+gina	claude	/home/tony/hwe-wt/gina-a	sprint-hwe	opus	high	/home/tony/hwe-wt/_kit/docs/plans/r1-twingrid/handoffs/sprint-gina-A.md
+gina	codex	/home/tony/hwe-wt/gina-b	sprint-hwe	gpt-5.5	high	/home/tony/hwe-wt/_kit/docs/plans/r1-twingrid/handoffs/sprint-gina-B.md
+henry	claude	/home/tony/hwe-wt/henry-a	sprint-hwe	opus	high	/home/tony/hwe-wt/_kit/docs/plans/r1-twingrid/handoffs/sprint-henry-A.md
+henry	codex	/home/tony/hwe-wt/henry-b	sprint-hwe	gpt-5.5	high	/home/tony/hwe-wt/_kit/docs/plans/r1-twingrid/handoffs/sprint-henry-B.md
+iris	claude	/home/tony/hwe-wt/iris-a	sprint-hwe	opus	high	/home/tony/hwe-wt/_kit/docs/plans/r1-twingrid/handoffs/sprint-iris-A.md
+iris	codex	/home/tony/hwe-wt/iris-b	sprint-hwe	gpt-5.5	high	/home/tony/hwe-wt/_kit/docs/plans/r1-twingrid/handoffs/sprint-iris-B.md
