@@ -2447,6 +2447,242 @@ def write_entity_pages(
         )
 
 
+# ---------------------------------------------------------------------------
+# explorer.html v2.0.0 — Spatial Visualizer Sandbox context (mb#165)
+#
+# The v2 explorer is a 3-pane spatial sandbox (Data Matrix · Spatial Viewport ·
+# Parametric Engine) whose front-end (site/explorer.html + site/assets/explorer.js)
+# is fully data-driven from this manifest. Everything here is derived ONLY from
+# already-public site data — the leaderboard payload, the committed opportunity
+# matrix (mb#120), the submission-only mesh manifest (mb#107), and the public
+# task registry. No oracle geometry, no held-out seeds, no source artifacts are
+# ever read or surfaced. Slots with no live data (e.g. the Arbor hypothesis-tree
+# log, mb#162) degrade to a "pending" note rather than inventing values.
+# ---------------------------------------------------------------------------
+
+EXPLORER_SCHEMA = "makerbench-explorer-v2"
+EXPLORER_VERSION = "2.0.0"
+
+# The cross-repo context modes the v2 template swaps between (issue #165). Only
+# `makerbench` is wired to live data in this repo; the others ship as declarative
+# scaffolds so the shared template can be adopted by sibling repos without code
+# changes — each just supplies its own data source + viewport layers.
+EXPLORER_SCAFFOLD_CONTEXTS = [
+    {
+        "id": "instrument",
+        "label": "Instrument Repo",
+        "repo": "instrument-maker",
+        "scaffold": True,
+        "summary": "Surflo / World-Tracing mesh + force test — parametric "
+        "acoustic parts with a force-conditioned digital twin.",
+        "viewport": {"layers": ["mesh", "force"], "default_layer": "mesh"},
+        "data_sources": ["instruments/registry.yaml", "build packets", "force test logs"],
+    },
+    {
+        "id": "studiopipeline",
+        "label": "StudioPipeline",
+        "repo": "studiopipeline",
+        "scaffold": True,
+        "summary": "Flex4DHuman multi-angle + AnchorWorld FPV — exogenous 4D "
+        "splat capture with a first-person viewport toggle.",
+        "viewport": {"layers": ["mesh", "fpv"], "default_layer": "fpv"},
+        "data_sources": ["multi-angle capture", "AnchorWorld FPV", "4D splat export"],
+    },
+    {
+        "id": "wrfcoin",
+        "label": "WRFCoin",
+        "repo": "wrfcoin",
+        "scaffold": True,
+        "summary": "MoVerse 360° + wind tensor — environmental sensor field "
+        "rendered as a force overlay over a 360° scene.",
+        "viewport": {"layers": ["mesh", "force", "fpv"], "default_layer": "force"},
+        "data_sources": ["MoVerse 360°", "barometer/GPS feeds", "wind tensor"],
+    },
+]
+
+
+def _explorer_telemetry(payload: dict, track: str = "blind", limit: int = 12) -> list[dict]:
+    """Compact per-model telemetry feed for the Data Matrix pane.
+
+    Pulls only public leaderboard aggregates (score + deployment telemetry) for
+    scored, non-control models on ``track``. Missing telemetry stays ``None`` —
+    never coerced to zero — mirroring the leaderboard's own honesty rule.
+    """
+    rows: list[dict] = []
+    for model in payload.get("models", []):
+        if model.get("is_control"):
+            continue
+        trk = (model.get("tracks", {}) or {}).get(track, {}) or {}
+        if not trk.get("has_data"):
+            continue
+        tokens = trk.get("token_usage") or {}
+        rows.append({
+            "identifier": model.get("identifier"),
+            "reasoning_level": model.get("reasoning_level", ""),
+            "league": model.get("league", ""),
+            "overall_mean": trk.get("overall_mean"),
+            "n_families_scored": trk.get("n_families_scored"),
+            "mean_wall_time_s": trk.get("mean_wall_time_s"),
+            "mean_cost_usd": trk.get("mean_cost_usd"),
+            "mean_total_tokens": tokens.get("mean_total_tokens") or tokens.get("mean_total"),
+        })
+    rows.sort(key=lambda r: (r["overall_mean"] is None, -(r["overall_mean"] or 0)))
+    return rows[:limit]
+
+
+def _explorer_assets(meshes: dict, limit: int = 80) -> list[dict]:
+    """Submission-only 3D assets the viewport can load, from the mesh manifest.
+
+    Geometry here is produced by makerbench/viewer_export.py from agent
+    submissions in results/ — never oracle/private geometry (the manifest
+    enforces this upstream). We pass through only the public fields the viewport
+    and asset tree need.
+    """
+    out: list[dict] = []
+    for entry in (meshes.get("meshes") or [])[:limit]:
+        if not isinstance(entry, dict):
+            continue
+        out.append({
+            "task_id": entry.get("task_id"),
+            "model_identifier": entry.get("model_identifier"),
+            "reasoning_level": entry.get("reasoning_level", ""),
+            "track": entry.get("track"),
+            "seed": entry.get("seed"),
+            "score": entry.get("score"),
+            "mesh": entry.get("mesh"),
+            "face_count": entry.get("face_count"),
+            "quality": entry.get("quality") or {},
+            "source_sha256": entry.get("source_sha256"),
+        })
+    return out
+
+
+def _explorer_coordinates(opp: dict) -> dict:
+    """The 4D opportunity-matrix coordinates (model × CAD × plugin × domain).
+
+    Pass-through of the public mb#120 matrix: axis labels, counts, weights, and
+    the ranked proven/vacancy tips. A compact per-coordinate list lets the Data
+    Matrix pane build the 4D tree without shipping the full scoring detail.
+    """
+    if not isinstance(opp, dict) or not opp.get("coordinates"):
+        return {}
+    coords = [
+        {
+            "model": c.get("model"),
+            "cad": c.get("cad"),
+            "plugin": c.get("plugin"),
+            "domain": c.get("domain"),
+            "score": c.get("score"),
+            "is_vacancy": c.get("is_vacancy"),
+            "n_runs": c.get("n_runs"),
+        }
+        for c in opp.get("coordinates", [])
+        if isinstance(c, dict)
+    ]
+    return {
+        "axes": opp.get("axes", {}),
+        "counts": opp.get("counts", {}),
+        "weights": opp.get("weights", {}),
+        "with_domain": opp.get("with_domain", False),
+        "top_vacancies": opp.get("top_vacancies", [])[:8],
+        "top_proven": opp.get("top_proven", [])[:8],
+        "coordinates": coords,
+    }
+
+
+def _explorer_feature_tree(registry: dict) -> list[dict]:
+    """The Parametric Engine's extracted feature tree, from the task registry.
+
+    Each capability axis becomes a feature branch listing its task families —
+    the public parametric scaffolding, never realized seed parameters.
+    """
+    tree: list[dict] = []
+    for axis in registry.get("capability_axes", []):
+        if not isinstance(axis, dict):
+            continue
+        tree.append({
+            "id": axis.get("id"),
+            "title": axis.get("title"),
+            "summary": axis.get("summary", ""),
+            "scoring_categories": axis.get("scoring_categories", []),
+            "task_families": axis.get("task_families", []),
+        })
+    return tree
+
+
+def build_explorer_context(
+    payload: dict, registry: dict, opp: dict, meshes: dict
+) -> dict:
+    """Assemble the explorer.html v2 context manifest (mb#165).
+
+    Pure: takes already-loaded public data and returns the manifest dict. The
+    live ``makerbench`` context is populated from results-derived aggregates;
+    the cross-repo contexts ship as declarative scaffolds (see
+    ``EXPLORER_SCAFFOLD_CONTEXTS``).
+    """
+    makerbench_ctx = {
+        "id": "makerbench",
+        "label": "MakerBench HWE",
+        "repo": "makerbench-hwe",
+        "scaffold": False,
+        "summary": "Submitted maker parts as force-conditioned digital twins — "
+        "the leaderboard's geometry, telemetry, and 4D opportunity coordinates "
+        "under one spatial layout.",
+        "viewport": {"layers": ["mesh", "force", "fpv"], "default_layer": "mesh"},
+        "data_matrix": {
+            "telemetry": _explorer_telemetry(payload),
+            "assets": _explorer_assets(meshes),
+            "coordinates": _explorer_coordinates(opp),
+        },
+        "parametric_engine": {
+            "feature_tree": _explorer_feature_tree(registry),
+            # mb#162 Arbor hypothesis-tree runner + render-diff land in later
+            # lanes; until then these slots render a "pending" note, not a value.
+            "arbor_log": None,
+            "render_diff": None,
+        },
+    }
+    return {
+        "_generated": "Built by site/build_data.py for explorer.html v2 (mb#165). "
+        "Derived only from public leaderboard data, the opportunity matrix "
+        "(mb#120), submission-only meshes (mb#107), and the task registry. "
+        "No oracle geometry or held-out seeds are ever surfaced.",
+        "schema": EXPLORER_SCHEMA,
+        "version": EXPLORER_VERSION,
+        "benchmark_version": payload.get("benchmark_version"),
+        "active_context": "makerbench",
+        "contexts": [makerbench_ctx, *EXPLORER_SCAFFOLD_CONTEXTS],
+    }
+
+
+def _load_json_or_empty(path: Path) -> dict:
+    """Read a JSON object, returning ``{}`` when missing/unreadable (additive)."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_explorer_context(
+    payload: dict, registry: dict, data_dir: Path, registry_for_axes: dict | None = None
+) -> Path:
+    """Write site/data/explorer.json from already-built public data.
+
+    Reads the committed opportunity matrix + mesh manifest from ``data_dir``
+    defensively (absent → empty, page still renders its scaffolds), then emits
+    the explorer context next to the other site data.
+    """
+    opp = _load_json_or_empty(data_dir / "opportunity-matrix.json")
+    meshes = _load_json_or_empty(data_dir / "meshes.json")
+    context = build_explorer_context(
+        payload, registry_for_axes or registry, opp, meshes
+    )
+    out = data_dir / "explorer.json"
+    write_json(out, context)
+    return out
+
+
 def main() -> None:
     script_dir = Path(__file__).resolve().parent
     repo_root = script_dir.parent
@@ -2544,6 +2780,10 @@ def main() -> None:
     )
     archive_dir = args.archive_dir or (args.out.parent / "archive")
     archive_entry = write_archive(payload, archive_dir)
+    # explorer.html v2 context (mb#165) — additive, reads the just-written site
+    # data; absent inputs degrade to scaffolds so this never blocks the build.
+    explorer_registry = _load_json_or_empty(args.registry)
+    write_explorer_context(payload, explorer_registry, args.out.parent)
     n_models = len(payload["models"])
     archived = (
         f", archived v{archive_entry['benchmark_version']}" if archive_entry else ""
