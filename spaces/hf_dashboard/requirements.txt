@@ -1,0 +1,7 @@
+# Pip dependencies for the MakerBench HWE dual-league Space (#98).
+# The headless STEP/B-Rep reader (pythonocc-core) is conda-only and is installed
+# in the Dockerfile via micromamba, not here.
+fastapi>=0.110
+uvicorn[standard]>=0.29
+trimesh>=4.0          # glTF export for tessellated STEP meshes
+numpy>=1.24
