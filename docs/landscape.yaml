@@ -1,9 +1,9 @@
 # Machine-readable companion to LANDSCAPE.md.
 # One entry per project, scored on the comparison axes used for positioning.
-# Re-verify each entry against `source` on every quarterly sweep, update
-# `sweep.date` below, and record the fetches that back each change in a NEW
-# evidence file at landscape-evidence/<sweep-date>.yaml (one file per sweep;
-# never rewrite a previous sweep's evidence). `recent` = v1 (or major
+# Re-verify each entry against `source` on every quarterly sweep, update the
+# `sweep` metadata below, and record the fetches that back each change in a
+# NEW evidence file at landscape-evidence/<sweep-date>.yaml (one file per
+# sweep; never rewrite a previous sweep's evidence). `recent` = v1 (or major
 # revision) within 90 days of the sweep date.
 #
 # Axis vocabulary:
@@ -18,6 +18,28 @@
 
 sweep:
   date: 2026-06-10
+  next_due: 2026-09-10
+  cadence: quarterly
+  process_doc: docs/LANDSCAPE_SWEEP.md
+  evidence_template: docs/landscape-evidence/<YYYY-MM-DD>.yaml
+  required_checks:
+    - reverify_sources
+    - hunt_new_entries
+    - flag_recent_entries
+    - refresh_promised_releases
+    - refresh_cadgenbench_leaderboard
+    - refresh_muse_grading
+    - diff_landscape_yaml
+    - append_what_changed
+    - refresh_strategy_rankings
+    - verify_benchmark_vs_method_labels
+  volatile_watchlist:
+    - UniCAD
+    - Physics-in-the-Loop
+    - Hephaestus-CCX
+    - GenCAD-3D
+    - CADGenBench
+    - MUSE
   method: >
     Primary-source verification (arXiv abstract pages, GitHub READMEs, HF Space
     cards/datasets) via fetch + quote; adversarial 3-vote verification for the

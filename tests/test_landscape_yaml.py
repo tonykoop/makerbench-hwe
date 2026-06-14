@@ -30,6 +30,7 @@ yaml = pytest.importorskip(
 ROOT = Path(__file__).resolve().parents[1]
 LANDSCAPE_YAML = ROOT / "docs" / "landscape.yaml"
 LANDSCAPE_MD = ROOT / "docs" / "LANDSCAPE.md"
+LANDSCAPE_SWEEP_MD = ROOT / "docs" / "LANDSCAPE_SWEEP.md"
 EVIDENCE_DIR = ROOT / "docs" / "landscape-evidence"
 
 # Documented in the landscape.yaml header. `type` is strictly enumerated.
@@ -78,6 +79,28 @@ REQUIRED_FIELDS = {
     "backing",
 }
 
+REQUIRED_SWEEP_CHECKS = {
+    "reverify_sources",
+    "hunt_new_entries",
+    "flag_recent_entries",
+    "refresh_promised_releases",
+    "refresh_cadgenbench_leaderboard",
+    "refresh_muse_grading",
+    "diff_landscape_yaml",
+    "append_what_changed",
+    "refresh_strategy_rankings",
+    "verify_benchmark_vs_method_labels",
+}
+
+REQUIRED_VOLATILE_WATCHLIST = {
+    "UniCAD",
+    "Physics-in-the-Loop",
+    "Hephaestus-CCX",
+    "GenCAD-3D",
+    "CADGenBench",
+    "MUSE",
+}
+
 # LANDSCAPE.md table rows whose display name differs from the YAML `name`.
 MD_TO_YAML_NAME = {
     "GD&T mapping": "GD&T drawing-annotation mapping",
@@ -105,6 +128,49 @@ def test_top_level_structure():
     assert isinstance(
         sweep_date, _dt.date
     ), "sweep.date must be a YYYY-MM-DD date (YAML date scalar)"
+
+
+def test_quarterly_sweep_process_metadata():
+    data = _load_landscape()
+    sweep = data["sweep"]
+    sweep_date = sweep["date"]
+    next_due = sweep.get("next_due")
+
+    assert isinstance(
+        next_due, _dt.date
+    ), "sweep.next_due must be a YYYY-MM-DD date (YAML date scalar)"
+    assert next_due > sweep_date, "sweep.next_due must be after sweep.date"
+    assert 80 <= (next_due - sweep_date).days <= 110, (
+        "sweep.next_due should remain roughly quarterly after sweep.date"
+    )
+    assert sweep.get("cadence") == "quarterly"
+    assert sweep.get("process_doc") == "docs/LANDSCAPE_SWEEP.md"
+    assert sweep.get("evidence_template") == (
+        "docs/landscape-evidence/<YYYY-MM-DD>.yaml"
+    )
+    assert REQUIRED_SWEEP_CHECKS <= set(sweep.get("required_checks", []))
+    assert REQUIRED_VOLATILE_WATCHLIST <= set(sweep.get("volatile_watchlist", []))
+
+
+def test_quarterly_watchlist_names_are_landscape_entries():
+    data = _load_landscape()
+    entry_names = {entry["name"] for entry in data["entries"]}
+    watchlist = set(data["sweep"].get("volatile_watchlist", []))
+
+    assert watchlist
+    assert watchlist <= entry_names, (
+        f"sweep.volatile_watchlist contains names with no entry: "
+        f"{sorted(watchlist - entry_names)}"
+    )
+
+
+def test_landscape_markdown_links_quarterly_runbook():
+    md_text = LANDSCAPE_MD.read_text(encoding="utf-8")
+    runbook_text = LANDSCAPE_SWEEP_MD.read_text(encoding="utf-8")
+
+    assert "[`LANDSCAPE_SWEEP.md`](LANDSCAPE_SWEEP.md)" in md_text
+    assert "Next full sweep due: 2026-09-10" in runbook_text
+    assert "python -m pytest tests/test_landscape_yaml.py" in runbook_text
 
 
 def test_every_entry_has_required_fields():
