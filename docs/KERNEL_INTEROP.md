@@ -286,3 +286,6 @@ in-repo and stdlib; producers live entirely behind the seam.
 - [`DESIGN.md`](DESIGN.md) — grade-the-export, deterministic-grader rationale.
 - [`DOMAIN_MATRIX.md`](DOMAIN_MATRIX.md) — where B-rep / topology sits on the
   roadmap.
+- [`MESH_GEOMETRY_COMPILER.md`](MESH_GEOMETRY_COMPILER.md) — the same
+  producer/consumer seam applied one level upstream, to a generative
+  (text/image/scan → mesh) front end.
