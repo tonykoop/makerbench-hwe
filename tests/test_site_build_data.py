@@ -14,6 +14,16 @@ build_data = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(build_data)
 
 
+def test_published_site_pages_carry_noai_meta():
+    """Every committed public HTML page carries the same per-page robots signal."""
+    missing = [
+        path.relative_to(ROOT).as_posix()
+        for path in sorted((ROOT / "site").glob("**/*.html"))
+        if build_data.ROBOTS_META_TAG not in path.read_text(encoding="utf-8")
+    ]
+    assert missing == []
+
+
 def _write_run(
     path,
     model,
