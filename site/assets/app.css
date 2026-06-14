@@ -444,3 +444,77 @@ table.dt td.seedlist { font-variant-numeric: tabular-nums; color: var(--text-sof
 .mb-metric .l { font-size: 0.7rem; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.04em; }
 .mb-metric .v { font-weight: 700; font-variant-numeric: tabular-nums; }
 .mb-viewer-note { padding: 16px; color: var(--text-soft); font-size: 0.88rem; }
+
+/* ---- roadmap & status (issue #175) ------------------------------------- */
+.status-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin: 0 0 8px;
+}
+.status-cell {
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow);
+}
+.status-cell .n {
+  font-size: 1.5rem; font-weight: 800; color: var(--accent);
+  font-variant-numeric: tabular-nums; line-height: 1.1;
+}
+.status-cell .l {
+  font-size: 0.74rem; color: var(--text-faint); text-transform: uppercase;
+  letter-spacing: 0.04em; margin-top: 4px;
+}
+.pack-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 14px;
+}
+.pack-card {
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow);
+}
+.pack-card.pack-live { border-left: 3px solid var(--accent); }
+.pack-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.pack-top h4 { margin: 0 0 2px; font-size: 0.98rem; }
+.pack-card p { color: var(--text-soft); font-size: 0.86rem; margin: 6px 0 10px; }
+.pack-state {
+  font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em;
+  font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+}
+.pack-state.is-live { background: var(--accent-soft); color: var(--accent); }
+.pack-state.is-planned {
+  background: var(--bg-soft); color: var(--text-faint); border: 1px solid var(--border);
+}
+.pack-fam { font-size: 0.76rem; color: var(--text-faint); font-family: var(--mono); }
+.phase-rail { display: grid; gap: 0; margin: 6px 0 8px; }
+.phase { display: grid; grid-template-columns: 22px 1fr; gap: 14px; padding-bottom: 18px; position: relative; }
+.phase:not(:last-child)::before {
+  content: ""; position: absolute; left: 10px; top: 16px; bottom: -2px;
+  width: 2px; background: var(--border);
+}
+.phase-dot {
+  width: 14px; height: 14px; margin-top: 4px; border-radius: 4px;
+  background: var(--accent); transform: rotate(45deg); position: relative; z-index: 1;
+}
+.phase-body h4 { margin: 0 0 4px; font-size: 0.98rem; }
+.phase-body p { margin: 0; color: var(--text-soft); font-size: 0.9rem; }
+.horizon-list { margin: 4px 0 14px; padding-left: 0; list-style: none; display: grid; gap: 8px; }
+.horizon-list li { color: var(--text-soft); font-size: 0.92rem; }
+.horizon-tier { background: var(--accent-soft); color: var(--accent); }
+
+/* ---- about / cite (issue #175) ----------------------------------------- */
+.canary-line {
+  font-family: var(--mono); font-size: 0.78rem; color: var(--text-soft);
+  background: var(--bg-soft); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; word-break: break-all;
+}
+.cite-block {
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow);
+}
+.cite-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.cite-label {
+  font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em;
+  font-weight: 700; color: var(--accent);
+}
+.cite-bibtex { margin: 0; white-space: pre; overflow-x: auto; }
+.cite-apa { margin: 12px 0 0; color: var(--text-soft); font-size: 0.86rem; }

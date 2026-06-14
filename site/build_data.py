@@ -848,6 +848,208 @@ def build_extended_families(results_dir: Path, registry_path: Path) -> list[dict
     return out
 
 
+# Curated phased trajectory, mirroring docs/DESIGN.md §6 ("Roadmap (phased,
+# modular)"). The live status strip beside it is derived from registry data (see
+# build_roadmap); these labels state ambition on the front door without
+# duplicating the full design doc, which stays the source of truth.
+ROADMAP_PHASES = [
+    {
+        "id": "v0",
+        "title": "v0 — the digital maker",
+        "summary": "Parametric 3D-print geometry, an off-the-shelf parts "
+        "catalog, and sheet-metal flat patterns, graded by deterministic math.",
+    },
+    {
+        "id": "v0.1",
+        "title": "v0.1 — core hardening",
+        "summary": "Geometry↔BOM cross-checks, more task families, the design "
+        "dossier, and difficulty tiers via parameter ranges.",
+    },
+    {
+        "id": "beta",
+        "title": "Beta — physical assembly",
+        "summary": "Multi-material matching, a larger parts catalog (bearings, "
+        "standoffs, structural tube), and assembly sequencing.",
+    },
+    {
+        "id": "v1",
+        "title": "v1 — the expert fabricator",
+        "summary": "Laser / 2D-vector nesting and kerf, organic / acoustic "
+        "geometry via headless Blender, and FEA stress / deflection.",
+    },
+]
+
+
+def _parse_horizon_entry(text: object) -> dict:
+    """Split a registry roadmap line like ``tier_3: native laser ...`` into a
+    tier number plus its description (tier ``None`` when no prefix is present)."""
+    match = re.match(r"\s*tier[_ ]?(\d+)\s*:\s*(.+)", str(text), re.IGNORECASE)
+    if match:
+        return {"tier": int(match.group(1)), "text": match.group(2).strip()}
+    return {"tier": None, "text": str(text).strip()}
+
+
+def build_roadmap(registry_path: Path) -> dict:
+    """Data-driven roadmap & status block for the landing page (issue #175).
+
+    Live status (version, profile, counts, and which task packs are live vs.
+    planned) is read straight from ``tasks/registry.json`` so the front door
+    never drifts from the registry. The phased narrative is the curated
+    ``ROADMAP_PHASES`` mirror of docs/DESIGN.md; the forward horizon is the
+    registry's own ``roadmap`` list, parsed into tiers.
+    """
+    data = json.loads(registry_path.read_text(encoding="utf-8"))
+    families = data.get("task_families", [])
+    live_family_ids = {f["id"] for f in families}
+
+    packs = []
+    for pack in data.get("task_packs", []):
+        pack_families = pack.get("task_families", []) or []
+        n_live = sum(1 for fid in pack_families if fid in live_family_ids)
+        packs.append(
+            {
+                "id": pack.get("id"),
+                "title": pack.get("title", pack.get("id")),
+                "status": pack.get("status", "planned"),
+                "summary": pack.get("summary", ""),
+                "profile": pack.get("profile", ""),
+                "n_families": n_live,
+                "live": n_live > 0,
+            }
+        )
+    # Live packs first (most families first), then planned packs, each group
+    # stable by title — deterministic byte-for-byte for a fixed registry.
+    packs.sort(key=lambda p: (not p["live"], -p["n_families"], str(p["title"])))
+
+    horizon = [_parse_horizon_entry(item) for item in data.get("roadmap", [])]
+
+    status = {
+        "benchmark_version": data.get("benchmark_version"),
+        "benchmark_profile": data.get("benchmark_profile"),
+        "n_task_families": len(families),
+        "n_packs": len(packs),
+        "n_packs_live": sum(1 for p in packs if p["live"]),
+        "n_capability_axes": len(data.get("capability_axes", [])),
+        "n_scoring_categories": len(data.get("scoring_categories", [])),
+    }
+    return {
+        "status": status,
+        "phases": ROADMAP_PHASES,
+        "packs": packs,
+        "horizon": horizon,
+        "design_doc": "docs/DESIGN.md",
+        "roadmap_doc": "docs/ROADMAP.md",
+    }
+
+
+def _cff_unquote(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return value
+
+
+def parse_citation_cff(path: Path) -> dict:
+    """Minimal stdlib reader for the CITATION.cff fields the site cites.
+
+    Not a general YAML parser — it handles exactly the flat ``key: value`` lines,
+    the folded ``abstract: >-`` block scalar, and the ``authors:`` list
+    (family-names / given-names) that CITATION.cff uses. Missing/unreadable file
+    yields an empty dict so the site stays byte-stable when it is absent.
+    """
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    fields: dict = {}
+    authors: list[dict] = []
+    in_authors = False
+    index = 0
+    while index < len(lines):
+        raw = lines[index]
+        index += 1
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip())
+        stripped = raw.strip()
+        if indent == 0:
+            in_authors = stripped == "authors:"
+            if in_authors:
+                continue
+            match = re.match(r"^([\w.-]+):\s*(.*)$", stripped)
+            if not match:
+                continue
+            key, value = match.group(1), match.group(2)
+            if value in (">-", ">", "|", "|-"):
+                block: list[str] = []
+                while index < len(lines) and (
+                    not lines[index].strip()
+                    or (len(lines[index]) - len(lines[index].lstrip())) > 0
+                ):
+                    if lines[index].strip():
+                        block.append(lines[index].strip())
+                    index += 1
+                fields[key] = " ".join(block)
+            else:
+                fields[key] = _cff_unquote(value)
+        elif in_authors:
+            match = re.match(r"^-?\s*([\w-]+):\s*(.*)$", stripped)
+            if not match:
+                continue
+            if stripped.startswith("-"):
+                authors.append({})
+            if authors:
+                authors[-1][match.group(1)] = _cff_unquote(match.group(2))
+    if authors:
+        fields["authors"] = authors
+    return fields
+
+
+def build_citation(cff: dict, site_base_url: str = DEFAULT_SITE_BASE_URL) -> dict:
+    """Render parsed CITATION.cff metadata into display-ready citation strings."""
+
+    def full_name(author: dict) -> str:
+        family = author.get("family-names", "").strip()
+        given = author.get("given-names", "").strip()
+        if family and given:
+            return f"{family}, {given}"
+        return family or given
+
+    author_names = [full_name(a) for a in cff.get("authors", []) if full_name(a)]
+    if not author_names:
+        author_names = ["MakerBench contributors"]
+    title = cff.get("title") or "MakerBench HWE"
+    version = cff.get("version") or ""
+    year = (cff.get("date-released") or "")[:4]
+    url = cff.get("url") or cff.get("repository-code") or site_base_url
+    version_part = f" (Version {version})" if version else ""
+    year_part = f"({year}). " if year else ""
+    apa = f"{'; '.join(author_names)}. {year_part}{title}{version_part} [Software]. {url}"
+    bibtex_lines = [
+        "@software{makerbench_hwe,",
+        f"  title   = {{{title}}},",
+        f"  author  = {{{' and '.join(author_names)}}},",
+    ]
+    if year:
+        bibtex_lines.append(f"  year    = {{{year}}},")
+    if version:
+        bibtex_lines.append(f"  version = {{{version}}},")
+    bibtex_lines.append(f"  url     = {{{url}}}")
+    bibtex_lines.append("}")
+    return {
+        "title": title,
+        "authors": author_names,
+        "version": version,
+        "year": year,
+        "url": url,
+        "repository_code": cff.get("repository-code"),
+        "license": cff.get("license"),
+        "abstract": cff.get("abstract"),
+        "apa": apa,
+        "bibtex": "\n".join(bibtex_lines),
+    }
+
+
 def build_payload(results_dir: Path, registry_path: Path) -> dict:
     registry = load_registry(registry_path)
     families = registry["task_families"]
@@ -1109,10 +1311,19 @@ def build_payload(results_dir: Path, registry_path: Path) -> dict:
     headline = make_headline(models_out, families)
     saturation = build_saturation_profile(models_out, families, cells)
     delta_dossier = build_delta_dossier(results_dir)
+    roadmap = build_roadmap(registry_path)
+    # CITATION.cff lives at the repo root (registry is <repo>/tasks/registry.json).
+    citation = build_citation(
+        parse_citation_cff(registry_path.resolve().parents[1] / "CITATION.cff")
+    )
+    # The registry's declared profile (e.g. "core"); distinct from the per-run
+    # benchmark_version folded out of results above.
+    benchmark_profile = roadmap["status"].get("benchmark_profile")
 
     return {
         "_generated": "Built by site/build_data.py from results/. Do not edit by hand.",
         "benchmark_version": scan["benchmark_version"],
+        "benchmark_profile": benchmark_profile,
         "tracks": tracks_present,
         "task_families": families,
         "extended_families": extended,
@@ -1124,6 +1335,8 @@ def build_payload(results_dir: Path, registry_path: Path) -> dict:
         "headline": headline,
         "saturation": saturation,
         "delta_dossier": delta_dossier,
+        "roadmap": roadmap,
+        "citation": citation,
     }
 
 

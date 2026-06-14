@@ -1140,6 +1140,90 @@
     }).join("");
   }
 
+  // ---- roadmap & status (issue #175) --------------------------------------
+  function renderRoadmap() {
+    var roadmap = DATA.roadmap;
+    if (!roadmap) return;
+    var status = roadmap.status || {};
+
+    var strip = document.getElementById("status-strip");
+    if (strip) {
+      var stats = [
+        [status.benchmark_version ? "v" + status.benchmark_version : "—", "version"],
+        [status.benchmark_profile || "—", "profile"],
+        [status.n_task_families, "live task families"],
+        [status.n_packs_live + " / " + status.n_packs, "packs live"],
+        [status.n_capability_axes, "capability axes"],
+        [status.n_scoring_categories, "scoring categories"]
+      ];
+      strip.innerHTML = stats.map(function (s) {
+        return '<div class="status-cell"><div class="n">' + escapeHTML(s[0]) +
+          '</div><div class="l">' + escapeHTML(s[1]) + "</div></div>";
+      }).join("");
+    }
+
+    var packGrid = document.getElementById("pack-grid");
+    if (packGrid) {
+      packGrid.innerHTML = (roadmap.packs || []).map(function (p) {
+        var live = p.live;
+        var state = '<span class="pack-state ' + (live ? "is-live" : "is-planned") +
+          '">' + (live ? "live" : "planned") + "</span>";
+        var fam = live
+          ? '<span class="pack-fam">' + p.n_families + " famil" +
+            (p.n_families === 1 ? "y" : "ies") + "</span>"
+          : '<span class="pack-fam muted-note">scaffolded · ' + escapeHTML(p.status) + "</span>";
+        return '<div class="pack-card' + (live ? " pack-live" : "") + '">' +
+          '<div class="pack-top"><h4>' + escapeHTML(p.title) + "</h4>" + state + "</div>" +
+          "<p>" + escapeHTML(p.summary) + "</p>" + fam + "</div>";
+      }).join("");
+    }
+
+    var rail = document.getElementById("phase-rail");
+    if (rail) {
+      rail.innerHTML = (roadmap.phases || []).map(function (ph) {
+        return '<div class="phase"><div class="phase-dot"></div>' +
+          '<div class="phase-body"><h4>' + escapeHTML(ph.title) + "</h4>" +
+          "<p>" + escapeHTML(ph.summary) + "</p></div></div>";
+      }).join("");
+    }
+
+    var horizon = document.getElementById("horizon-list");
+    if (horizon) {
+      horizon.innerHTML = (roadmap.horizon || []).map(function (h) {
+        var tier = h.tier != null
+          ? '<span class="chip horizon-tier">tier ' + h.tier + "</span> "
+          : "";
+        return "<li>" + tier + escapeHTML(h.text) + "</li>";
+      }).join("");
+    }
+
+    var docs = document.getElementById("roadmap-docs");
+    if (docs) {
+      var base = "https://github.com/tonykoop/makerbench-hwe/blob/main/";
+      docs.innerHTML = "Full plan: " +
+        '<a href="' + base + roadmap.design_doc + '">' + escapeHTML(roadmap.design_doc) + "</a> · " +
+        '<a href="' + base + roadmap.roadmap_doc + '">' + escapeHTML(roadmap.roadmap_doc) + "</a>.";
+    }
+  }
+
+  // ---- about / cite (issue #175) ------------------------------------------
+  function renderCitation() {
+    var cite = DATA.citation;
+    if (!cite) return;
+    var bib = document.getElementById("cite-bibtex");
+    if (bib) bib.textContent = cite.bibtex || "";
+    var apa = document.getElementById("cite-apa");
+    if (apa) apa.textContent = cite.apa || "";
+    var summary = document.getElementById("cite-summary");
+    if (summary) {
+      var bits = [];
+      if (cite.version) bits.push("v" + cite.version);
+      if (cite.license) bits.push(cite.license + " licensed");
+      summary.textContent = "If you report results on the leaderboard, please cite MakerBench" +
+        (bits.length ? " (" + bits.join(" · ") + ")" : "") + ".";
+    }
+  }
+
   // ---- model picker -------------------------------------------------------
   function fillHistPicker() {
     var sel = document.getElementById("hist-model");
@@ -1180,6 +1264,8 @@
     }
     renderTasks();
     renderExtended();
+    renderRoadmap();
+    renderCitation();
     setTrack(TRACK);
   }
 
