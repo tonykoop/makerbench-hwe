@@ -375,6 +375,34 @@ tr.is-official td.model-col { border-left: 3px solid var(--good); }
 .tracks { margin-top: 12px; display: flex; gap: 6px; }
 .chip { font-size: 0.72rem; padding: 2px 9px; border-radius: 999px; background: var(--bg-soft); color: var(--text-soft); border: 1px solid var(--border); }
 
+/* ---- tracks & leagues explainer (mb#171) ---- */
+.track-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+.track-card {
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 18px 20px; box-shadow: var(--shadow); display: flex; flex-direction: column;
+}
+.track-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.track-head h3 { margin: 0; font-size: 1.1rem; }
+.track-badge {
+  font-size: 0.64rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 2px 8px; border-radius: 999px;
+}
+.track-badge.is-live { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
+.track-badge.is-upcoming { background: var(--bg-soft); color: var(--text-faint); border: 1px solid var(--border); }
+.track-rows { font-size: 0.72rem; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.track-tagline { color: var(--text); font-weight: 600; margin: 12px 0 10px; font-size: 0.95rem; }
+.track-variable { color: var(--text-soft); font-size: 0.86rem; margin: 0 0 10px; }
+.track-vk {
+  display: inline-block; font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--accent); margin-right: 6px;
+}
+.track-detail { color: var(--text-soft); font-size: 0.88rem; margin: 0 0 12px; }
+.track-highlights { margin: 0 0 14px; padding-left: 18px; color: var(--text-soft); font-size: 0.85rem; }
+.track-highlights li { margin: 3px 0; }
+.track-links { margin-top: auto; display: flex; flex-wrap: wrap; gap: 8px 16px; padding-top: 4px; }
+.track-link { font-size: 0.84rem; font-weight: 600; }
+.track-link.track-board { color: var(--accent); }
+
 /* ---- methodology ladder ---- */
 .ladder { display: grid; gap: 10px; margin: 6px 0 22px; }
 .rung { display: grid; grid-template-columns: 44px 150px 1fr; gap: 14px; align-items: center;
@@ -492,7 +520,7 @@ table.dt td.seedlist { font-variant-numeric: tabular-nums; color: var(--text-sof
   .stat-strip { grid-template-columns: repeat(3, 1fr); }
 }
 @media (max-width: 760px) {
-  .chart-grid, .profile-grid, .task-grid, .cols2 { grid-template-columns: 1fr; }
+  .chart-grid, .profile-grid, .task-grid, .track-grid, .cols2 { grid-template-columns: 1fr; }
   .why-grid { grid-template-columns: 1fr; }
   .stat-strip { grid-template-columns: repeat(2, 1fr); }
   .chart-card-head { display: block; }

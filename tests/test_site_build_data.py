@@ -1746,3 +1746,66 @@ def test_site_hero_stats_present_without_perception(tmp_path):
     assert by_key["perception_lift"]["display"] == "—"
     assert by_key["perception_lift"]["value"] is None
     assert by_key["models"]["value"] == 1
+
+
+def test_track_explainer_lists_every_track_with_links(tmp_path):
+    """The tracks/leagues explainer (mb#171) surfaces all four arenas, each with a
+    tagline + deep links, and carries the never-cross-rank guardrail line."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    _write_run(results_dir / "model.json", "real-model", "high", 4)
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    explainer = build_data.build_payload(results_dir, registry)["track_explainer"]
+    ids = [track["id"] for track in explainer["tracks"]]
+    assert ids == ["autonomous", "workflows", "physical_verification", "moonshot"]
+    assert "cross-rank" in explainer["guardrail"]
+    for track in explainer["tracks"]:
+        assert track["tagline"] and track["variable"] and track["detail"]
+        assert track["highlights"]
+        # Every track deep-links to at least one doc/issue surface.
+        assert track["docs"] and all(doc["href"] for doc in track["docs"])
+
+
+def test_track_explainer_status_is_derived_from_real_league_rows(tmp_path):
+    """A track that maps onto a data league only reads `live` once real competitor
+    rows back it; autonomous goes live off a single run, workflows stays upcoming
+    until an assisted-workflow row exists. Roadmap tracks stay statically upcoming."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    _write_run(results_dir / "model.json", "real-model", "high", 4)
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    by_id = {
+        track["id"]: track
+        for track in build_data.build_payload(results_dir, registry)["track_explainer"]["tracks"]
+    }
+    assert by_id["autonomous"]["status"] == "live"
+    assert by_id["autonomous"]["row_count"] == 1
+    # No assisted-workflow rows submitted yet → the league can't claim to be live.
+    assert by_id["workflows"]["status"] == "upcoming"
+    assert by_id["workflows"]["row_count"] == 0
+    # Roadmap tracks with no data league are statically upcoming.
+    assert by_id["physical_verification"]["status"] == "upcoming"
+    assert by_id["moonshot"]["status"] == "upcoming"
+
+
+def test_track_explainer_excludes_reference_rows_from_live_status(tmp_path):
+    """A league backed only by reference rows (a deterministic control) is not
+    `live` — live status tracks real competitor submissions, not calibration rows."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    # The only autonomous row is the deterministic control reference.
+    _write_run(results_dir / "control.json", "baseline-v0", "high", 4)
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    payload = build_data.build_payload(results_dir, registry)
+    autonomous = next(
+        track for track in payload["track_explainer"]["tracks"] if track["id"] == "autonomous"
+    )
+    assert payload["models"][0]["is_control"] is True
+    assert autonomous["row_count"] == 0
+    assert autonomous["status"] == "upcoming"
