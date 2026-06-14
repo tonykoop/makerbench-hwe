@@ -15,6 +15,7 @@ from scripts.coverage_report import (
     is_infra_error,
     iter_result_bundles,
     model_key,
+    perception_backlog,
     registry_version,
     scan,
     track_overall,
@@ -120,6 +121,65 @@ def test_gap_rows_compute_perception_minus_blind():
     assert gap_rows(cells)[0]["model"] == "m2"
 
 
+# --- perception backlog ----------------------------------------------------
+
+
+def test_perception_backlog_lists_blind_only_models_cheapest_first():
+    bundles = [
+        # blind-only, 2 families run -> top of backlog (least work left)
+        _bundle("a", "blind-rich", None, [
+            _row("vented_plate", "blind", 3),
+            _row("enclosure_fastened", "blind", 2),
+        ]),
+        # blind-only, 1 family run -> below blind-rich
+        _bundle("a", "blind-thin", None, [
+            _row("vented_plate", "blind", 1),
+        ]),
+        # ran both tracks -> excluded from backlog
+        _bundle("a", "complete", None, [
+            _row("vented_plate", "blind", 2),
+            _row("vented_plate", "perception", 3),
+        ]),
+        # perception-only -> not a blind backlog item
+        _bundle("a", "perc-only", None, [
+            _row("vented_plate", "perception", 4),
+        ]),
+    ]
+    cells = scan(bundles, CORE)["cells"]
+    backlog = perception_backlog(gap_rows(cells))
+    assert [r["model"] for r in backlog] == ["blind-rich", "blind-thin"]
+    assert backlog[0]["families_blind"] == 2
+
+
+def test_perception_backlog_empty_when_all_have_both_tracks():
+    bundles = [
+        _bundle("a", "m", None, [
+            _row("vented_plate", "blind", 2),
+            _row("vented_plate", "perception", 3),
+        ]),
+    ]
+    cells = scan(bundles, CORE)["cells"]
+    assert perception_backlog(gap_rows(cells)) == []
+
+
+def test_format_markdown_includes_backlog_section():
+    bundles = [
+        _bundle("a", "blind-only", None, [_row("vented_plate", "blind", 2)]),
+    ]
+    gaps = gap_rows(scan(bundles, CORE)["cells"])
+    md = format_markdown([], gaps, current_version="0.1.0")
+    assert "Perception backlog" in md
+    assert "blind-only" in md
+    # The empty-state line shows when nothing is outstanding.
+    full = gap_rows(scan([
+        _bundle("a", "m", None, [
+            _row("vented_plate", "blind", 2),
+            _row("vented_plate", "perception", 3),
+        ]),
+    ], CORE)["cells"])
+    assert "every blind-scored model" in format_markdown([], full, current_version="0.1.0")
+
+
 # --- inventory -------------------------------------------------------------
 
 
@@ -194,6 +254,10 @@ def test_build_report_on_committed_results():
     # The gap report has rows, and at least one model ran both tracks.
     both = [r for r in report["blind_vs_perception"] if r["gap"] is not None]
     assert both, "expected at least one model with blind+perception coverage"
+    # Backlog is the blind-only subset: present in the payload and never overlaps
+    # the both-tracks set.
+    backlog_models = {r["model"] for r in report["perception_backlog"]}
+    assert backlog_models.isdisjoint({r["model"] for r in both})
 
 
 def test_core_family_ids_and_version_load_from_registry():
