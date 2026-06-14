@@ -63,6 +63,14 @@ code, kbd, pre { font-family: var(--mono); font-size: 0.86em; }
 
 .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 20px; }
 
+/* ---- skip link (keyboard a11y) ---- */
+.skip-link {
+  position: absolute; left: 8px; top: -48px; z-index: 100;
+  background: var(--accent); color: #fff; padding: 8px 14px; border-radius: 8px;
+  font-size: 0.9rem; transition: top 0.15s ease;
+}
+.skip-link:focus { top: 8px; text-decoration: none; outline: 2px solid var(--text); }
+
 /* ---- nav ---- */
 .nav {
   position: sticky; top: 0; z-index: 50;
@@ -366,6 +374,25 @@ footer { padding: 34px 0 60px; color: var(--text-faint); font-size: 0.85rem; }
 footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 footer .canary { margin-top: 14px; font-family: var(--mono); font-size: 0.7rem; color: var(--text-faint); word-break: break-all; }
 
+/* ---- footer site-map (#174) ---- */
+.sitemap {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 26px; width: 100%; padding: 4px 0 26px; margin-bottom: 22px;
+  border-bottom: 1px solid var(--border);
+}
+.sitemap .sm-col h3 {
+  margin: 0 0 12px; font-size: 0.72rem; text-transform: uppercase;
+  letter-spacing: 0.09em; color: var(--text-soft); font-weight: 700;
+}
+.sitemap ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+.sitemap a { color: var(--text-faint); font-size: 0.85rem; display: inline-flex; align-items: center; gap: 7px; }
+.sitemap a:hover { color: var(--text); text-decoration: none; }
+.sitemap .soon {
+  font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-soft); background: var(--bg-soft);
+  border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; font-weight: 600;
+}
+
 /* ---- clickable leaderboard links (#10) ---- */
 .model-name { color: var(--text); }
 .model-name:hover { color: var(--accent); text-decoration: underline; }
@@ -431,7 +458,15 @@ table.dt td.seedlist { font-variant-numeric: tabular-nums; color: var(--text-sof
   .chart-box-frontier { height: 320px; }
   .rung { grid-template-columns: 36px 1fr; }
   .rung .desc { grid-column: 1 / -1; }
-  .nav-links { display: none; }
+  /* Keep the nav reachable on small screens: scroll the links horizontally
+     instead of hiding them outright. Sticky header + keyboard focus preserved. */
+  .nav-links {
+    flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; -ms-overflow-style: none; gap: 2px;
+  }
+  .nav-links::-webkit-scrollbar { display: none; }
+  .nav-links a { white-space: nowrap; padding: 6px 8px; }
+  .sitemap { grid-template-columns: repeat(2, 1fr); gap: 20px; }
   .hero { padding: 44px 0 32px; }
   .detail table.dt { display: block; overflow-x: auto; white-space: nowrap; }
 }
