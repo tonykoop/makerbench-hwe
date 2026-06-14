@@ -1140,6 +1140,119 @@
     }).join("");
   }
 
+  // ---- ecosystem: the repo family (mb#170) --------------------------------
+  // Themeable + responsive: the SVG carries no hard-coded colors — every fill
+  // and stroke is a CSS class resolved against the [data-theme] tokens, so the
+  // diagram tracks the theme toggle with no JS re-render. The grid cards below
+  // are the accessible, link-bearing source of truth; the map is the picture.
+  function ecoKindLabel(kind) {
+    return { harness: "Harness", integrity: "Private integrity",
+      satellite: "Capability repo", surface: "Interactive surface" }[kind] || kind;
+  }
+
+  function buildEcosystemMap(nodes) {
+    var fig = document.getElementById("eco-map");
+    if (!fig) return;
+    var hub = nodes.filter(function (n) { return n.kind === "harness"; })[0];
+    var spokes = nodes.filter(function (n) { return n.kind !== "harness"; });
+    if (!hub) { fig.innerHTML = ""; return; }
+
+    var W = 920, H = 480, cx = W / 2, cy = H / 2;
+    var rx = 332, ry = 168;
+    var bw = 176, bh = 48, hubW = 212, hubH = 80;
+    var edges = "", boxes = "";
+
+    spokes.forEach(function (n, i) {
+      // Distribute on an ellipse, starting at the top and going clockwise.
+      var a = -Math.PI / 2 + (i + 0.5) / spokes.length * Math.PI * 2;
+      var x = cx + rx * Math.cos(a), y = cy + ry * Math.sin(a);
+      var ecls = "eco-edge" + (n.private ? " private" : "");
+      edges += '<line class="' + ecls + '" x1="' + cx + '" y1="' + cy +
+        '" x2="' + x.toFixed(1) + '" y2="' + y.toFixed(1) + '" />';
+      var bcls = "eco-box eco-box-" + n.kind + (n.private ? " integrity" : "");
+      boxes += '<g>' +
+        '<rect class="' + bcls + '" x="' + (x - bw / 2).toFixed(1) + '" y="' +
+        (y - bh / 2).toFixed(1) + '" width="' + bw + '" height="' + bh +
+        '" rx="9" />' +
+        '<text class="eco-label" x="' + x.toFixed(1) + '" y="' + (y - 3).toFixed(1) +
+        '" text-anchor="middle">' + escapeHTML(n.name) + '</text>' +
+        '<text class="eco-sub" x="' + x.toFixed(1) + '" y="' + (y + 12).toFixed(1) +
+        '" text-anchor="middle">' + escapeHTML(n.role) + '</text>' +
+        '</g>';
+    });
+
+    var statLine = (hub.stats || []).map(function (s) {
+      return s.value + " " + s.label;
+    }).join("  ·  ");
+    var hub_g = '<g>' +
+      '<rect class="eco-box hub" x="' + (cx - hubW / 2) + '" y="' + (cy - hubH / 2) +
+      '" width="' + hubW + '" height="' + hubH + '" rx="11" />' +
+      '<text class="eco-label hub-label" x="' + cx + '" y="' + (cy - 6) +
+      '" text-anchor="middle">' + escapeHTML(hub.name) + '</text>' +
+      '<text class="eco-sub" x="' + cx + '" y="' + (cy + 10) +
+      '" text-anchor="middle">' + escapeHTML(hub.role) + '</text>' +
+      (statLine ? '<text class="eco-stat" x="' + cx + '" y="' + (cy + 26) +
+        '" text-anchor="middle">' + escapeHTML(statLine) + '</text>' : '') +
+      '</g>';
+
+    fig.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" ' +
+      'aria-label="MakerBench repo family: the makerbench-hwe harness at the ' +
+      'centre, connected to its private integrity repos, sibling capability ' +
+      'repos, and an interactive Space.">' +
+      '<desc>Hub-and-spoke diagram of the MakerBench repo family.</desc>' +
+      edges + boxes + hub_g + '</svg>';
+  }
+
+  function renderEcosystem() {
+    var data = DATA.ecosystem;
+    var grid = document.getElementById("ecosystem-grid");
+    if (!grid) return;
+    if (!data || !data.nodes || !data.nodes.length) {
+      grid.innerHTML = '<p class="muted-note">No ecosystem data.</p>';
+      return;
+    }
+    if (data.intro) {
+      var intro = document.getElementById("ecosystem-intro");
+      if (intro) {
+        intro.innerHTML = escapeHTML(data.intro) + ' See the full positioning in ' +
+          '<a href="https://github.com/tonykoop/makerbench-hwe/blob/main/docs/LANDSCAPE.md" ' +
+          'rel="noopener">docs/LANDSCAPE.md</a>.';
+      }
+    }
+
+    buildEcosystemMap(data.nodes);
+
+    // Legend, one entry per kind actually present, in canonical order.
+    var legend = document.getElementById("eco-legend");
+    if (legend) {
+      var kinds = [];
+      ["harness", "satellite", "surface", "integrity"].forEach(function (k) {
+        if (data.nodes.some(function (n) { return n.kind === k; })) kinds.push(k);
+      });
+      legend.innerHTML = kinds.map(function (k) {
+        return '<span class="eco-key"><span class="eco-sw eco-sw-' + k +
+          '"></span>' + escapeHTML(ecoKindLabel(k)) + '</span>';
+      }).join("");
+    }
+
+    grid.innerHTML = data.nodes.map(function (n) {
+      var tags = "";
+      if (n.private) tags += '<span class="eco-tag private" title="Access-gated; ' +
+        'contents never reach the sandbox or this site">private</span>';
+      if (n.status === "planned") tags += '<span class="eco-tag planned">planned</span>';
+      var stats = (n.stats || []).map(function (s) {
+        return '<span class="eco-stat-chip"><strong>' + escapeHTML(String(s.value)) +
+          '</strong> ' + escapeHTML(s.label) + '</span>';
+      }).join("");
+      return '<a class="eco-node eco-node-' + n.kind + '" href="' + escapeHTML(n.url) +
+        '" rel="noopener"><div class="eco-top"><h3>' + escapeHTML(n.name) + '</h3>' +
+        tags + '</div>' +
+        '<span class="eco-role">' + escapeHTML(n.role) + '</span>' +
+        '<p>' + escapeHTML(n.blurb) + '</p>' +
+        (stats ? '<div class="eco-stats">' + stats + '</div>' : '') + '</a>';
+    }).join("");
+  }
+
   // ---- model picker -------------------------------------------------------
   function fillHistPicker() {
     var sel = document.getElementById("hist-model");
@@ -1180,6 +1293,7 @@
     }
     renderTasks();
     renderExtended();
+    renderEcosystem();
     setTrack(TRACK);
   }
 
