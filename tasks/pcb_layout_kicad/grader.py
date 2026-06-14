@@ -219,7 +219,7 @@ def parse_board(source: str) -> Board:
 def _parse_nets(source: str) -> dict[int, str]:
     out: dict[int, str] = {}
     for form in _forms(source, "net"):
-        m = re.search(rf"\(net\s+(\d+)\s+\"([^\"]+)\"", form)
+        m = re.search(r"\(net\s+(\d+)\s+\"([^\"]+)\"", form)
         if m:
             out[int(m.group(1))] = m.group(2)
     return out
