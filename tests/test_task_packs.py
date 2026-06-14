@@ -53,6 +53,8 @@ def test_builtin_discovery_returns_pack_manifests():
     assert by_id["brep-build123d"].status == "planned"
     assert by_id["brep-build123d"].profile == "brep-build123d"
     assert by_id["brep-build123d"].task_families == []
+    assert by_id["injection-molding"].status == "planned"
+    assert by_id["injection-molding"].task_families == []
     assert by_id["reverse-engineering"].status == "planned"
 
 
