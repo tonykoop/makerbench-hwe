@@ -26,13 +26,18 @@ import hashlib
 import hmac
 import json
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
 MBC_KIND = "makerbench_certificate"
 MBC_SCHEMA_VERSION = "0.1"
 MBC_SIGNATURE_ALG = "HMAC-SHA256"
+
+MbcKind = Literal["makerbench_certificate"]
+MbcSchemaVersion = Literal["0.1"]
+MbcSignatureAlg = Literal["HMAC-SHA256"]
+HiiLevel = Literal["L0", "L1", "L2"]
 
 
 class MbcCheckResult(BaseModel):
@@ -52,12 +57,16 @@ class MbcPayload(BaseModel):
     a timestamp, and the server-issued ``nonce`` the signature is bound to.
     """
 
-    schema_version: str = MBC_SCHEMA_VERSION
-    kind: str = MBC_KIND
+    schema_version: MbcSchemaVersion = MBC_SCHEMA_VERSION
+    kind: MbcKind = MBC_KIND
     task_id: str
     seed: int
     # Graded outcome.
-    score: int = Field(description="Geometry score (highest contiguous L1-L4 level passed).")
+    score: int = Field(
+        ge=0,
+        le=4,
+        description="Geometry score (highest contiguous L1-L4 level passed).",
+    )
     passed: bool = Field(description="True if the run met the pass bar for the task.")
     checks: list[MbcCheckResult] = Field(default_factory=list)
     # What the verdict was computed over.
@@ -72,9 +81,9 @@ class MbcPayload(BaseModel):
     )
     # Disclosed process signals (carried from the WorkflowManifest).
     autonomy_ratio: Optional[float] = Field(
-        default=None, description="HII autonomy ratio (0..1) for the run."
+        default=None, ge=0.0, le=1.0, description="HII autonomy ratio (0..1) for the run."
     )
-    hii_highest_level: Optional[str] = Field(
+    hii_highest_level: Optional[HiiLevel] = Field(
         default=None, description="Heaviest HII tier observed (L0|L1|L2)."
     )
     # Reproducibility + freshness.
@@ -92,7 +101,7 @@ class MbcCertificate(BaseModel):
     """The signed envelope written to a `.mbc` file: payload + detached signature."""
 
     payload: MbcPayload
-    signature_alg: str = MBC_SIGNATURE_ALG
+    signature_alg: MbcSignatureAlg = MBC_SIGNATURE_ALG
     signature: str = Field(description="Hex HMAC of the canonical payload bytes.")
 
 
