@@ -1187,6 +1187,190 @@ def build_ecosystem(families: list[dict], models: list[dict]) -> dict:
     return {"intro": ECOSYSTEM_INTRO, "nodes": nodes}
 
 
+ROADMAP_PHASES = [
+    {
+        "id": "v0",
+        "title": "v0 — the digital maker",
+        "summary": "Parametric 3D-print geometry, off-the-shelf parts, sheet-metal "
+        "flat patterns, and laser geometry graded by deterministic math.",
+    },
+    {
+        "id": "v0.1",
+        "title": "v0.1 — core hardening",
+        "summary": "Geometry-to-BOM checks, design dossiers, perception traces, "
+        "difficulty tiers, and richer public result metadata.",
+    },
+    {
+        "id": "beta",
+        "title": "Beta — physical assembly",
+        "summary": "Multi-material matching, larger catalog coverage, assembly "
+        "sequencing, and workflow-track provenance.",
+    },
+    {
+        "id": "v1",
+        "title": "v1 — expert fabrication",
+        "summary": "Scan-to-B-rep, simulation, acoustics, shop-floor process "
+        "planning, and physical verification loops.",
+    },
+]
+
+
+def _parse_horizon_entry(text: object) -> dict:
+    """Split ``tier_3: native laser ...`` into a tier number and description."""
+    match = re.match(r"\s*tier[_ ]?(\d+)\s*:\s*(.+)", str(text), re.IGNORECASE)
+    if match:
+        return {"tier": int(match.group(1)), "text": match.group(2).strip()}
+    return {"tier": None, "text": str(text).strip()}
+
+
+def build_roadmap(registry_path: Path) -> dict:
+    """Data-driven roadmap/status block for the landing page (issue #185).
+
+    Counts and live/planned pack state come from ``tasks/registry.json`` so the
+    site cannot drift from the registry. The phased plan is curated public copy
+    that points readers to the full design docs.
+    """
+    data = json.loads(registry_path.read_text(encoding="utf-8"))
+    families = data.get("task_families", [])
+    live_family_ids = {family["id"] for family in families}
+
+    packs = []
+    for pack in data.get("task_packs", []):
+        pack_families = pack.get("task_families", []) or []
+        n_live = sum(1 for family_id in pack_families if family_id in live_family_ids)
+        packs.append(
+            {
+                "id": pack.get("id"),
+                "title": pack.get("title", pack.get("id")),
+                "status": pack.get("status", "planned"),
+                "summary": pack.get("summary", ""),
+                "profile": pack.get("profile", ""),
+                "n_families": n_live,
+                "live": n_live > 0,
+            }
+        )
+    packs.sort(key=lambda pack: (not pack["live"], -pack["n_families"], str(pack["title"])))
+
+    return {
+        "status": {
+            "benchmark_version": data.get("benchmark_version"),
+            "benchmark_profile": data.get("benchmark_profile"),
+            "n_task_families": len(families),
+            "n_packs": len(packs),
+            "n_packs_live": sum(1 for pack in packs if pack["live"]),
+            "n_capability_axes": len(data.get("capability_axes", [])),
+            "n_scoring_categories": len(data.get("scoring_categories", [])),
+        },
+        "phases": ROADMAP_PHASES,
+        "packs": packs,
+        "horizon": [_parse_horizon_entry(item) for item in data.get("roadmap", [])],
+        "design_doc": "docs/DESIGN.md",
+        "roadmap_doc": "docs/ROADMAP.md",
+    }
+
+
+def _cff_unquote(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return value
+
+
+def parse_citation_cff(path: Path) -> dict:
+    """Minimal stdlib reader for the flat fields used by this repo's CITATION.cff."""
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    fields: dict = {}
+    authors: list[dict] = []
+    in_authors = False
+    index = 0
+    while index < len(lines):
+        raw = lines[index]
+        index += 1
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip())
+        stripped = raw.strip()
+        if indent == 0:
+            in_authors = stripped == "authors:"
+            if in_authors:
+                continue
+            match = re.match(r"^([\w.-]+):\s*(.*)$", stripped)
+            if not match:
+                continue
+            key, value = match.group(1), match.group(2)
+            if value in (">-", ">", "|", "|-"):
+                block = []
+                while index < len(lines) and (
+                    not lines[index].strip()
+                    or (len(lines[index]) - len(lines[index].lstrip())) > 0
+                ):
+                    if lines[index].strip():
+                        block.append(lines[index].strip())
+                    index += 1
+                fields[key] = " ".join(block)
+            else:
+                fields[key] = _cff_unquote(value)
+        elif in_authors:
+            match = re.match(r"^-?\s*([\w-]+):\s*(.*)$", stripped)
+            if not match:
+                continue
+            if stripped.startswith("-"):
+                authors.append({})
+            if authors:
+                authors[-1][match.group(1)] = _cff_unquote(match.group(2))
+    if authors:
+        fields["authors"] = authors
+    return fields
+
+
+def build_citation(cff: dict, site_base_url: str = DEFAULT_SITE_BASE_URL) -> dict:
+    """Render CITATION.cff metadata into display-ready citation strings."""
+
+    def full_name(author: dict) -> str:
+        family = author.get("family-names", "").strip()
+        given = author.get("given-names", "").strip()
+        if family and given:
+            return f"{family}, {given}"
+        return family or given
+
+    author_names = [full_name(author) for author in cff.get("authors", []) if full_name(author)]
+    if not author_names:
+        author_names = ["MakerBench contributors"]
+    title = cff.get("title") or "MakerBench HWE"
+    version = cff.get("version") or ""
+    year = (cff.get("date-released") or "")[:4]
+    url = cff.get("url") or cff.get("repository-code") or site_base_url
+    version_part = f" (Version {version})" if version else ""
+    year_part = f"({year}). " if year else ""
+    apa = f"{'; '.join(author_names)}. {year_part}{title}{version_part} [Software]. {url}"
+    bibtex_lines = [
+        "@software{makerbench_hwe,",
+        f"  title   = {{{title}}},",
+        f"  author  = {{{' and '.join(author_names)}}},",
+    ]
+    if year:
+        bibtex_lines.append(f"  year    = {{{year}}},")
+    if version:
+        bibtex_lines.append(f"  version = {{{version}}},")
+    bibtex_lines.append(f"  url     = {{{url}}}")
+    bibtex_lines.append("}")
+    return {
+        "title": title,
+        "authors": author_names,
+        "version": version,
+        "year": year,
+        "url": url,
+        "repository_code": cff.get("repository-code"),
+        "license": cff.get("license"),
+        "abstract": cff.get("abstract"),
+        "apa": apa,
+        "bibtex": "\n".join(bibtex_lines),
+    }
+
+
 def build_payload(results_dir: Path, registry_path: Path) -> dict:
     registry = load_registry(registry_path)
     families = registry["task_families"]
@@ -1450,10 +1634,15 @@ def build_payload(results_dir: Path, registry_path: Path) -> dict:
     saturation = build_saturation_profile(models_out, families, cells)
     track_explainer = build_track_explainer(models_out)
     delta_dossier = build_delta_dossier(results_dir)
+    roadmap = build_roadmap(registry_path)
+    citation = build_citation(
+        parse_citation_cff(registry_path.resolve().parents[1] / "CITATION.cff")
+    )
 
     return {
         "_generated": "Built by site/build_data.py from results/. Do not edit by hand.",
         "benchmark_version": scan["benchmark_version"],
+        "benchmark_profile": roadmap["status"].get("benchmark_profile"),
         "tracks": tracks_present,
         "task_families": families,
         "extended_families": extended,
@@ -1472,6 +1661,8 @@ def build_payload(results_dir: Path, registry_path: Path) -> dict:
         "hero_stats": hero_stats,
         "saturation": saturation,
         "delta_dossier": delta_dossier,
+        "roadmap": roadmap,
+        "citation": citation,
     }
 
 

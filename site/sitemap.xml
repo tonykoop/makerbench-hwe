@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Stable top-level entry points for the MakerBench HWE leaderboard site.
+     Generated per-model/per-task pages are reachable from these and are left
+     out so this file stays hand-maintainable. See site/robots.txt. -->
+<urlset xmlns="http://www.sitemap.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://tonykoop.github.io/makerbench-hwe/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://tonykoop.github.io/makerbench-hwe/opportunity-matrix.html</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://tonykoop.github.io/makerbench-hwe/blog/</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://tonykoop.github.io/makerbench-hwe/blog/what-makerbench-measures.html</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://tonykoop.github.io/makerbench-hwe/blog/methodology-and-findings.html</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://tonykoop.github.io/makerbench-hwe/blog/failure-gallery.html</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+</urlset>
