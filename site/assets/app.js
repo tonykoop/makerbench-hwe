@@ -1271,6 +1271,25 @@
     }
   }
 
+  // ---- hero stat strip ----------------------------------------------------
+  // Data-driven headline numbers (DATA.hero_stats). Hidden when absent so older
+  // archived payloads — which predate the field — degrade cleanly.
+  function renderHeroStats() {
+    var el = document.getElementById("hero-stats");
+    if (!el) return;
+    var hs = DATA.hero_stats;
+    var stats = hs && hs.stats;
+    if (!stats || !stats.length) { el.hidden = true; el.innerHTML = ""; return; }
+    el.hidden = false;
+    el.innerHTML = stats.map(function (s) {
+      return '<div class="stat">' +
+        '<dt class="stat-val">' + escapeHTML(s.display) + "</dt>" +
+        '<dd class="stat-label">' + escapeHTML(s.label) +
+        (s.detail ? '<span class="stat-detail">' + escapeHTML(s.detail) + "</span>" : "") +
+        "</dd></div>";
+    }).join("");
+  }
+
   // ---- track toggle -------------------------------------------------------
   function setTrack(track) {
     TRACK = track;
@@ -1288,6 +1307,7 @@
   function applyData(data) {
     DATA = data;
     document.getElementById("headline").textContent = data.headline || "";
+    renderHeroStats();
     if (data.benchmark_version) {
       document.getElementById("bench-version").textContent = "v" + data.benchmark_version;
     }

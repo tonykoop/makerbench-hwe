@@ -1692,3 +1692,57 @@ def test_explorer_context_degrades_without_optional_inputs():
     assert dm["assets"] == []
     assert dm["coordinates"] == {}
     assert [t["identifier"] for t in dm["telemetry"]] == ["demo-model"]
+def test_site_builds_data_driven_hero_stats(tmp_path):
+    """The hero stat strip (issue #168) is derived from the same model rows that
+    feed the leaderboard — never hardcoded — so the front page can't drift. It
+    reports model count, family count, the hardest-tier (Level 4 / DFM) pass rate
+    over blind runs, the top blind score, and the blind→perception lift."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    # Model A aces both tracks; Model B is weak blind but self-corrects to 4 with
+    # perception. Reference rows must not count toward the hero figures.
+    _write_multi_seed_run(results_dir / "a_blind.json", "model-a", [4, 4], track="blind")
+    _write_multi_seed_run(results_dir / "a_perc.json", "model-a", [4, 4], track="perception")
+    _write_multi_seed_run(results_dir / "b_blind.json", "model-b", [2, 2], track="blind")
+    _write_multi_seed_run(results_dir / "b_perc.json", "model-b", [4, 4], track="perception")
+    _write_multi_seed_run(results_dir / "ctrl.json", "baseline-v0", [4, 4], track="blind")
+
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    payload = build_data.build_payload(results_dir, registry)
+    hero = payload["hero_stats"]
+    by_key = {s["key"]: s for s in hero["stats"]}
+
+    # Two real models counted; the deterministic control is excluded.
+    assert by_key["models"]["value"] == 2
+    assert by_key["families"]["value"] == 1
+
+    # Hardest-tier pass: 2 of A's 4 blind seeds hit Level 4 (B's 4 do not) → 50%.
+    assert by_key["dfm_pass_rate"]["value"] == 0.5
+    assert by_key["dfm_pass_rate"]["display"] == "50%"
+
+    # Top blind score is Model A's 4.00 — never the control's.
+    assert by_key["top_score"]["display"] == "4.00/4"
+    assert "baseline-v0" not in by_key["top_score"]["detail"]
+
+    # Blind→perception lift averaged per model: A +0.0, B +2.0 → +1.00.
+    assert by_key["perception_lift"]["value"] == 1.0
+    assert by_key["perception_lift"]["display"] == "+1.00"
+
+
+def test_site_hero_stats_present_without_perception(tmp_path):
+    """With no perception runs, the lift stat degrades to an em-dash rather than
+    fabricating a number, and the rest of the strip still populates."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    _write_multi_seed_run(results_dir / "blind.json", "model-a", [3, 3], track="blind")
+
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    payload = build_data.build_payload(results_dir, registry)
+    by_key = {s["key"]: s for s in payload["hero_stats"]["stats"]}
+    assert by_key["perception_lift"]["display"] == "—"
+    assert by_key["perception_lift"]["value"] is None
+    assert by_key["models"]["value"] == 1
