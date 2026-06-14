@@ -33,7 +33,7 @@ from dataclasses import asdict, dataclass, field
 import json
 import os
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping
 
 from makerbench_core import score_file as _default_score_file
 
