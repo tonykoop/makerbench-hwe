@@ -104,14 +104,15 @@ the site can never collapse a workflow cell into an autonomous one:
               →  + harness_class
 ```
 
-> **Implementation note for the site lane (#90).** Today's grouping key lives in
-> `viewer_export._row_id` and the mirror in `build_data.py`. Extending it is a
-> *site-side* change and is intentionally **not** part of this schema/CLI PR
-> (keeping that diff tight and avoiding a site-data regeneration). The contract:
-> append `harness_class` to the key, and — to keep every legacy `autonomous`
-> row's id byte-identical — omit it from the key string when it equals
-> `autonomous`. See [`COMMUNITY_SUBMISSION.md`](COMMUNITY_SUBMISSION.md) for the
-> grouping and verification semantics this extends.
+> **Implementation note for the site lane (#90, implemented).** `build_data.py`
+> appends `harness_class` to the grouping key — and, to keep every legacy
+> `autonomous` row's id byte-identical, omits it from the key string when it
+> equals `autonomous`. Each model row carries a `league` id (`autonomous` /
+> `workflows`); the payload advertises both leagues under a top-level `leagues`
+> list, and the model sort partitions by league first so rows **never rank across
+> leagues**. The site renders one ranked sub-table per league. See
+> [`COMMUNITY_SUBMISSION.md`](COMMUNITY_SUBMISSION.md) for the grouping and
+> verification semantics this extends.
 
 > `harness_class` is **orthogonal** to the existing axes. `track`
 > (`blind`/`perception`) is *what feedback the agent saw*; `result_provenance`
