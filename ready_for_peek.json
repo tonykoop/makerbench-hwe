@@ -1,0 +1,16 @@
+{
+  "persona": "cindy",
+  "side": "B",
+  "status": "ready",
+  "branch": "cindy/b-r1-deliverable-packet",
+  "primary_artifacts": [
+    "makerbench/schema.py",
+    "makerbench/dossier_scoring.py",
+    "docs/DELIVERABLE_PACKET.md",
+    "docs/SUBMISSION_CONTRACT.md",
+    "tests/test_dossier_scoring.py",
+    "tests/test_schema.py",
+    "skill_findings.md",
+    "agent_record.json"
+  ]
+}

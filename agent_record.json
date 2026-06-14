@@ -1,0 +1,29 @@
+{
+  "persona": "cindy",
+  "side": "B",
+  "round": "R1",
+  "branch": "cindy/b-r1-deliverable-packet",
+  "issue": "mb#103",
+  "status": "implemented",
+  "qmd_used": false,
+  "summary": "Added optional DesignDossier deliverable packet schema, scorer hooks, documentation, and focused tests.",
+  "validation": [
+    {
+      "command": "python -m pytest tests/test_dossier_scoring.py tests/test_schema.py",
+      "status": "passed"
+    },
+    {
+      "command": "python -m compileall makerbench tests/test_dossier_scoring.py tests/test_schema.py",
+      "status": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "status": "passed"
+    },
+    {
+      "command": "python -m pytest tests/test_task_packs.py tests/test_site_build_data.py tests/test_dossier_scoring.py tests/test_schema.py",
+      "status": "blocked",
+      "detail": "Local environment missing typer during tests/test_task_packs.py collection."
+    }
+  ]
+}
