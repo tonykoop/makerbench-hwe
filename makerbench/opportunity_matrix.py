@@ -360,8 +360,6 @@ def build_cube(
     }
     evidence = load_manifest_evidence(runs_root, catalog, with_domain=with_domain)
 
-    cad_by_id = {c["id"]: c for c in catalog.cad_hosts}
-    plugin_by_id = {p["id"]: p for p in catalog.plugins}
     domain_iter = catalog.domains if with_domain else [None]
 
     coordinates: list[dict] = []
