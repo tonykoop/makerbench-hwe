@@ -16,6 +16,9 @@ human_baseline/
 /results.json
 /r_*.json
 /smoke.json
+# PR-local batch scratch (queue logs, throwaway validators) — never commit;
+# reusable tooling belongs in scripts/, parameterized and path-free.
+results/_*
 results/**/artifacts/*.scad
 results/**/artifacts/*.dxf
 results/**/artifacts/*.svg
