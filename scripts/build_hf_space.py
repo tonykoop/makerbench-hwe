@@ -29,6 +29,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SITE_DIR = REPO_ROOT / "site"
 DEFAULT_OUT_DIR = REPO_ROOT / "dist" / "hf_space"
+DEFAULT_SPACE_ID = "tonykoop/makerbench-hwe-leaderboard"
 
 # Repo-only files that must not ship to the Space.
 EXCLUDE_TOP_LEVEL = {
@@ -128,6 +129,11 @@ def main() -> None:
         action="store_true",
         help="reuse committed site/data instead of running site/build_data.py",
     )
+    parser.add_argument(
+        "--space-id",
+        default=DEFAULT_SPACE_ID,
+        help=f"Hugging Face Space id for the printed upload command (default: {DEFAULT_SPACE_ID})",
+    )
     args = parser.parse_args()
 
     if not args.skip_build:
@@ -138,7 +144,7 @@ def main() -> None:
     print("Smoke-test locally:")
     print(f"  cd {args.out} && python -m http.server 8000")
     print("Manual upload (maintainer action — see docs/PUBLICATION_PLAN.md):")
-    print(f"  hf upload <user-or-org>/<space-name> {args.out} . --repo-type space")
+    print(f"  hf upload {args.space_id} {args.out} . --repo-type space")
 
 
 if __name__ == "__main__":
