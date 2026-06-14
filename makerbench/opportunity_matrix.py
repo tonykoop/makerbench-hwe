@@ -11,11 +11,17 @@ files (for *demonstrated* coordinates), and folds them onto a curated axis catal
 No pydantic / numpy import, so the cube regenerates in any bare Python and the
 website / HF Space (#98) can consume the emitted JSON directly.
 
-Axes (3D, with an optional 4th):
+Axes (3D, with a pluggable optional 4th):
   A — LLM model            (StackDescriptor.orchestrator)
   B — CAD/geometry host    (StackDescriptor.host_application)
   C — plugin / bridge      (StackDescriptor.execution_bridge; absence = vacancy)
   D — domain / field       (optional; off by default to keep the cube tractable)
+  D' — fabrication process (optional alternative 4th axis; the explicit *craft* —
+                            wood_turning, stave_joinery, cnc_router, laser_cut,
+                            cnc_plasma, sheet_metal_brake, hand_power_tools — that
+                            #183 calls out, where "best combo per craft" lives;
+                            ``dossier.fabrication_process``). Mutually exclusive
+                            with axis D.
 
 Scoring — each coordinate gets four 0..1 sub-scores combined by ``WEIGHTS``:
   capability      best demonstrated workflow-artifact score on that stack (/4).
@@ -129,6 +135,31 @@ DOMAINS: list[dict] = [
     {"id": "instruments", "label": "Instruments / acoustics", "demand": 0.6},
 ]
 
+# Optional Axis D' — fabrication *process* / craft. The explicit process dimension
+# called out in #183: a combo's power is process-dependent (a stack great at
+# code-CAD laser nesting is not automatically great at lathe wood-turning), so this
+# is the axis where "best combo per craft" surfaces. Mutually exclusive with the
+# generic ``domain`` axis — it is the same 4th slot, narrowed from field to craft.
+# ``domain`` rolls each process up to its parent ``DOMAINS`` id (for cross-linking
+# the two views); ``demand`` is the per-craft value weight; ``match`` tokens let a
+# manifest's ``dossier.fabrication_process`` resolve to a catalog id by substring.
+PROCESSES: list[dict] = [
+    {"id": "wood_turning", "label": "Wood turning (lathe)", "domain": "woodworking",
+     "demand": 0.7, "match": ["wood_turning", "wood-turning", "turning", "lathe"]},
+    {"id": "stave_joinery", "label": "Stave / joinery", "domain": "woodworking",
+     "demand": 0.7, "match": ["stave_joinery", "stave", "joinery", "cooperage"]},
+    {"id": "cnc_router", "label": "CNC router", "domain": "woodworking",
+     "demand": 0.8, "match": ["cnc_router", "cnc-router", "router"]},
+    {"id": "laser_cut", "label": "Laser cut", "domain": "laser-2d",
+     "demand": 0.8, "match": ["laser_cut", "laser-cut", "laser"]},
+    {"id": "cnc_plasma", "label": "CNC plasma", "domain": "sheet-metal",
+     "demand": 0.8, "match": ["cnc_plasma", "cnc-plasma", "plasma"]},
+    {"id": "sheet_metal_brake", "label": "Sheet-metal brake / forming", "domain": "sheet-metal",
+     "demand": 0.8, "match": ["sheet_metal_brake", "sheet-metal-brake", "brake", "forming", "bending"]},
+    {"id": "hand_power_tools", "label": "Hand / power tools", "domain": "woodworking",
+     "demand": 0.6, "match": ["hand_power_tools", "hand-power-tools", "hand_tools", "power_tools", "handtool"]},
+]
+
 
 @dataclass(frozen=True)
 class Catalog:
@@ -137,6 +168,7 @@ class Catalog:
     cad_hosts: list[dict] = field(default_factory=lambda: [dict(c) for c in CAD_HOSTS])
     plugins: list[dict] = field(default_factory=lambda: [dict(p) for p in PLUGINS])
     domains: list[dict] = field(default_factory=lambda: [dict(d) for d in DOMAINS])
+    processes: list[dict] = field(default_factory=lambda: [dict(p) for p in PROCESSES])
 
 
 def _clamp01(value: float) -> float:
@@ -228,12 +260,15 @@ class Evidence:
     sources: list[str]
 
 
-def _coord_key(model: str, cad: str, plugin: str, domain: Optional[str]) -> tuple:
-    return (model, cad, plugin, domain)
+def _coord_key(
+    model: str, cad: str, plugin: str, domain: Optional[str], process: Optional[str] = None
+) -> tuple:
+    return (model, cad, plugin, domain, process)
 
 
 def load_manifest_evidence(
-    runs_root: Optional[Path], catalog: Optional[Catalog] = None, *, with_domain: bool = False
+    runs_root: Optional[Path], catalog: Optional[Catalog] = None,
+    *, with_domain: bool = False, with_process: bool = False,
 ) -> dict[tuple, Evidence]:
     """Scan committed ``WorkflowManifest`` JSON for demonstrated coordinates.
 
@@ -267,13 +302,19 @@ def load_manifest_evidence(
         if not (model and cad and plugin):
             continue
         domain = None
+        process = None
         if with_domain:
             dossier = manifest.get("dossier") or {}
             domain = _match_axis(catalog.domains, dossier.get("fabrication_domain"))
+        if with_process:
+            dossier = manifest.get("dossier") or {}
+            process = _match_axis(
+                catalog.processes, dossier.get("fabrication_process"), by_match=True
+            )
 
         score = _manifest_capability(manifest)
         autonomy = _manifest_autonomy(manifest)
-        key = _coord_key(model, cad, plugin, domain)
+        key = _coord_key(model, cad, plugin, domain, process)
         bucket = raw.setdefault(key, {"cap": [], "aut": [], "src": []})
         if score is not None:
             bucket["cap"].append(score)
@@ -348,19 +389,38 @@ def build_cube(
     *,
     catalog: Optional[Catalog] = None,
     with_domain: bool = False,
+    with_process: bool = False,
 ) -> dict:
     """Assemble the scored opportunity cube over the compatible coordinate space.
 
     Returns a JSON-ready dict with the catalog, weights, every scored coordinate,
     and the ranked plugin-vacancy backlog. Deterministic for fixed inputs.
+
+    The optional 4th axis is pluggable: ``with_domain`` adds the generic field axis,
+    ``with_process`` adds the explicit fabrication-process / craft axis (#183). They
+    are the *same* slot narrowed two different ways, so they are mutually exclusive;
+    passing both raises ``ValueError``. When ``with_process`` is set the cube also
+    carries a ``per_process`` summary — the winning combo and top vacancy per craft.
     """
+    if with_domain and with_process:
+        raise ValueError(
+            "with_domain and with_process are mutually exclusive 4th axes "
+            "(process is the domain slot narrowed from field to craft)"
+        )
     catalog = catalog or Catalog()
     capability_prior = load_model_capability(results_dir, catalog) if results_dir else {
         m["id"]: _clamp01(float(m.get("capability_prior", 0.0))) for m in catalog.models
     }
-    evidence = load_manifest_evidence(runs_root, catalog, with_domain=with_domain)
+    evidence = load_manifest_evidence(
+        runs_root, catalog, with_domain=with_domain, with_process=with_process
+    )
 
-    domain_iter = catalog.domains if with_domain else [None]
+    if with_process:
+        facet_iter: list = catalog.processes
+    elif with_domain:
+        facet_iter = catalog.domains
+    else:
+        facet_iter = [None]
 
     coordinates: list[dict] = []
     for model in catalog.models:
@@ -372,10 +432,23 @@ def build_cube(
                 openness = _stack_openness(cad, plugin)
                 ease = _stack_ease(cad, plugin)
                 affinity = plugin["autonomy_affinity"]
-                for domain in domain_iter:
-                    domain_id = domain["id"] if domain else None
-                    demand = domain["demand"] if domain else 1.0
-                    key = _coord_key(model["id"], cad["id"], plugin["id"], domain_id)
+                for facet in facet_iter:
+                    domain_id = None
+                    process_id = None
+                    if facet is None:
+                        demand = 1.0
+                    elif with_process:
+                        process_id = facet["id"]
+                        domain_id = facet.get("domain")  # parent-domain rollup
+                        demand = facet["demand"]
+                    else:
+                        domain_id = facet["id"]
+                        demand = facet["demand"]
+                    # The key's domain slot is the *identity* domain (None in
+                    # process mode, where the rollup domain_id is metadata only),
+                    # matching how load_manifest_evidence builds its keys.
+                    key = _coord_key(model["id"], cad["id"], plugin["id"],
+                                     None if with_process else domain_id, process_id)
                     ev = evidence.get(key)
 
                     potential = _clamp01(
@@ -386,6 +459,7 @@ def build_cube(
                         "cad": cad["id"],
                         "plugin": plugin["id"],
                         "domain": domain_id,
+                        "process": process_id,
                         "openness": _round(openness),
                         "ease": _round(ease),
                         "capability_prior": _round(cap_prior),
@@ -422,17 +496,22 @@ def build_cube(
     proven = [c for c in coordinates if c["has_evidence"]]
     proven.sort(key=lambda c: (-(c["opportunity_score"] or 0.0), c["model"], c["cad"], c["plugin"]))
 
-    return {
+    cube = {
         "schema": SCHEMA,
         "weights": dict(WEIGHTS),
         "max_artifact_score": MAX_ARTIFACT_SCORE,
         "with_domain": with_domain,
+        "with_process": with_process,
         "axes": {
             "model": [{"id": m["id"], "label": m["label"]} for m in catalog.models],
             "cad": [{"id": c["id"], "label": c["label"]} for c in catalog.cad_hosts],
             "plugin": [{"id": p["id"], "label": p["label"]} for p in catalog.plugins],
             "domain": [{"id": d["id"], "label": d["label"]} for d in catalog.domains]
             if with_domain else [],
+            "process": [
+                {"id": p["id"], "label": p["label"], "domain": p["domain"]}
+                for p in catalog.processes
+            ] if with_process else [],
         },
         "counts": {
             "coordinates": len(coordinates),
@@ -443,6 +522,49 @@ def build_cube(
         "top_proven": proven[:20],
         "top_vacancies": vacancies[:20],
     }
+    if with_process:
+        cube["per_process"] = summarize_per_process(coordinates, catalog)
+    return cube
+
+
+def summarize_per_process(
+    coordinates: list[dict], catalog: Optional[Catalog] = None
+) -> list[dict]:
+    """Per-craft strength / vacancy roll-up — the "best combo per craft" surface.
+
+    For each fabrication process present in ``coordinates``, returns the winning
+    proven combo (highest ``opportunity_score``) and the highest-potential empty
+    coordinate (the per-craft build vacancy). This is the #183 narrowing of the
+    Opportunity Matrix down to Tony's favorite crafts.
+    """
+    catalog = catalog or Catalog()
+    order = {p["id"]: i for i, p in enumerate(catalog.processes)}
+    by_proc: dict[str, list[dict]] = defaultdict(list)
+    for coord in coordinates:
+        pid = coord.get("process")
+        if pid:
+            by_proc[pid].append(coord)
+
+    summary: list[dict] = []
+    for pid, coords in by_proc.items():
+        proven = sorted(
+            (c for c in coords if c["has_evidence"]),
+            key=lambda c: (-(c["opportunity_score"] or 0.0), c["model"], c["cad"], c["plugin"]),
+        )
+        vacant = sorted(
+            (c for c in coords if not c["has_evidence"]),
+            key=lambda c: (-(c["potential_score"] or 0.0), c["model"], c["cad"], c["plugin"]),
+        )
+        summary.append({
+            "process": pid,
+            "domain": coords[0].get("domain"),
+            "n_proven": len(proven),
+            "n_vacancies": len(vacant),
+            "winner": proven[0] if proven else None,
+            "top_vacancy": vacant[0] if vacant else None,
+        })
+    summary.sort(key=lambda r: order.get(r["process"], len(order)))
+    return summary
 
 
 def rank_vacancies(coordinates: list[dict]) -> list[dict]:
