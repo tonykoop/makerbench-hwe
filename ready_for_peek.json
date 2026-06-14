@@ -1,0 +1,13 @@
+{
+  "persona": "bob",
+  "side": "B",
+  "status": "ready",
+  "branch": "bob/b-r1-manifest-hii",
+  "primary_artifacts": [
+    "makerbench/schema.py",
+    "tests/test_schema.py",
+    "skill_findings.md",
+    "agent_record.json",
+    "ready_for_peek.json"
+  ]
+}

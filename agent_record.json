@@ -1,0 +1,42 @@
+{
+  "persona": "bob",
+  "side": "B",
+  "round": "R1",
+  "runtime": "Codex",
+  "model": "gpt-5.5",
+  "repo": "tonykoop/makerbench-hwe",
+  "worktree": "/home/tony/hwe-wt/bob-b",
+  "branch": "bob/b-r1-manifest-hii",
+  "issues": ["mb#89", "mb#109"],
+  "qmd_used": false,
+  "implementation_summary": [
+    "Added WorkflowManifest, WorkflowStack, WorkflowMetrics, and HumanInterventionIndex schema models.",
+    "Added .mbc certificate payload/envelope models plus write_mbc() and verify_mbc().",
+    "Added workflow_manifest_json_schema() for external validation.",
+    "Extended Attempt and TaskResult with optional workflow_manifest fields.",
+    "Added schema tests covering round-trip, JSON Schema export, certificate verification, and tamper detection."
+  ],
+  "validation": [
+    {
+      "command": "python3 -m pytest tests/test_schema.py",
+      "status": "passed"
+    },
+    {
+      "command": "pytest tests/test_schema.py",
+      "status": "failed_before_collection",
+      "note": "ModuleNotFoundError: No module named 'makerbench'; retried successfully via python3 -m pytest."
+    },
+    {
+      "command": "python3 -m pytest tests/test_schema.py tests/test_submission.py tests/test_attestation.py tests/test_regrade.py",
+      "status": "blocked_before_adjacent_collection",
+      "note": "Missing local dev/runtime dependencies: typer and shapely. tests/test_schema.py had already passed."
+    }
+  ],
+  "primary_artifacts": [
+    "makerbench/schema.py",
+    "tests/test_schema.py",
+    "skill_findings.md",
+    "agent_record.json",
+    "ready_for_peek.json"
+  ]
+}
