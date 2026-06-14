@@ -90,12 +90,10 @@ def test_logger_emits_schema_shaped_manifest(tmp_path):
     assert data["metrics"]["wall_clock_seconds"] is not None
 
 
-def test_validate_with_schema_is_lenient_when_schema_absent():
-    # In this branch makerbench.schema has no WorkflowManifest, so validation is a
-    # best-effort pass — the SDK is designed to run standalone.
+def test_validate_with_schema_rejects_invalid_manifest_when_schema_present():
     ok, reason = validate_with_schema({"anything": True})
-    assert ok is True
-    assert reason is None
+    assert ok is False
+    assert reason is not None
 
 
 def test_standalone_import_does_not_require_makerbench():
