@@ -52,5 +52,6 @@
       "version": "0.1.0"
     }
   },
+  "structural_claims": [],
   "task_id": "vented_plate"
 }
