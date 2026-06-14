@@ -1,0 +1,8 @@
+{
+  "schema": "makerbench-workflows-v1",
+  "league": "assisted-workflow",
+  "never_cross_ranks_with": "autonomous",
+  "verification_cap": "public-regrade-verified",
+  "count": 0,
+  "rows": []
+}

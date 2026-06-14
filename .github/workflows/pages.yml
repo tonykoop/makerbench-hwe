@@ -40,6 +40,11 @@ jobs:
       - name: Regenerate leaderboard site data
         run: python site/build_data.py
 
+      - name: Regenerate workflow-track site (dual league + matrix + badges)
+        # Stdlib-only, walled off from build_data.py. With no committed workflow
+        # runs root it emits the honest empty-state hub + full-coverage matrix.
+        run: python site/build_workflow_site.py
+
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
         with:
