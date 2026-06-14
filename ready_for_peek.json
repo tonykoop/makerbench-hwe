@@ -1,0 +1,17 @@
+{
+  "persona": "alice",
+  "side": "B",
+  "status": "ready",
+  "branch": "alice/b-r1-contracts-core",
+  "primary_artifacts": [
+    "docs/WORKFLOW_TRACK.md",
+    "makerbench/schema.py",
+    "makerbench/cli.py",
+    "tests/test_schema.py",
+    "site/build_data.py",
+    "makerbench/viewer_export.py",
+    "tests/test_site_build_data.py",
+    "skill_findings.md",
+    "agent_record.json"
+  ]
+}

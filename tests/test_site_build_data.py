@@ -33,6 +33,8 @@ def _write_run(
     dossier_scores=None,
     row_fields=None,
     agent_identifier=None,
+    harness_class=None,
+    harness_subclass=None,
     grader_environment=None,
 ):
     row = {
@@ -60,6 +62,10 @@ def _write_run(
     }
     if agent_identifier is not None:
         payload["agent_identifier"] = agent_identifier
+    if harness_class is not None:
+        payload["harness_class"] = harness_class
+    if harness_subclass is not None:
+        payload["harness_subclass"] = harness_subclass
     if grader_environment is not None:
         payload["grader_environment"] = grader_environment
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -407,6 +413,41 @@ def test_site_groups_different_harnesses_separately(tmp_path):
     # Known harnesses extend the share slug so badge/page URLs stay distinct.
     assert rows[0]["badge_slug"] == "same-model-high-community-anthropic-api"
     assert rows[1]["badge_slug"] == "same-model-high-community-claude-cli"
+
+
+def test_site_groups_different_harness_classes_separately(tmp_path):
+    """Assisted workflow rows never collapse into autonomous rows."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    _write_run(
+        results_dir / "auto.json",
+        "same-model",
+        "high",
+        4,
+        agent_identifier="codex_cli",
+    )
+    _write_run(
+        results_dir / "assisted.json",
+        "same-model",
+        "high",
+        1,
+        agent_identifier="codex_cli",
+        harness_class="assisted-workflow",
+        harness_subclass="gui-injected-copilot",
+    )
+
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    payload = build_data.build_payload(results_dir, registry)
+    rows = sorted(payload["models"], key=lambda row: row["harness_class"])
+
+    assert [row["harness_class"] for row in rows] == ["assisted-workflow", "autonomous"]
+    assert rows[0]["harness_subclass"] == "gui-injected-copilot"
+    assert rows[0]["row_id"] != rows[1]["row_id"]
+    assert {row["tracks"]["blind"]["overall_mean"] for row in rows} == {4.0, 1.0}
+    assert rows[0]["badge_slug"] == "same-model-high-community-codex-cli-assisted-workflow"
+    assert rows[1]["badge_slug"] == "same-model-high-community-codex-cli"
 
 
 def test_site_marks_missing_harness_as_legacy_unknown(tmp_path):

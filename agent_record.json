@@ -1,0 +1,20 @@
+{
+  "persona": "alice",
+  "side": "B",
+  "round": "R1",
+  "branch": "alice/b-r1-contracts-core",
+  "worktree": "/home/tony/hwe-wt/alice-b",
+  "issues": ["mb#87", "mb#88"],
+  "qmd_run": false,
+  "summary": "Added workflow-track harness class metadata to RunResults, wired makerbench run --harness-class, documented league separation, and recorded Step-0 findings.",
+  "primary_artifacts": [
+    "docs/WORKFLOW_TRACK.md",
+    "makerbench/schema.py",
+    "makerbench/cli.py",
+    "tests/test_schema.py",
+    "site/build_data.py",
+    "makerbench/viewer_export.py",
+    "tests/test_site_build_data.py",
+    "skill_findings.md"
+  ]
+}

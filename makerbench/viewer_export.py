@@ -81,12 +81,18 @@ def assert_submission_source(path: str | os.PathLike, *,
     return str(resolved)
 
 
-def _row_id(model: str, reasoning_level, provenance: str, agent_identifier: str) -> str:
+def _row_id(
+    model: str,
+    reasoning_level,
+    provenance: str,
+    agent_identifier: str,
+    harness_class: str,
+) -> str:
     """Reproduce ``build_data.py``'s model row key so pages can be matched exactly."""
-    return json.dumps(
-        [model, reasoning_level or None, provenance, agent_identifier],
-        separators=(",", ":"),
-    )
+    parts = [model, reasoning_level or None, provenance, agent_identifier]
+    if harness_class != "autonomous":
+        parts.append(harness_class)
+    return json.dumps(parts, separators=(",", ":"))
 
 
 def iter_submissions(results_dir: Path):
@@ -108,6 +114,7 @@ def iter_submissions(results_dir: Path):
         reasoning_level = run.get("reasoning_level") or None
         provenance = run.get("result_provenance") or "community"
         agent_identifier = run.get("agent_identifier") or "legacy_unknown"
+        harness_class = run.get("harness_class") or "autonomous"
 
         for row in run.get("results", []):
             dossier = row.get("dossier") or {}
@@ -132,7 +139,10 @@ def iter_submissions(results_dir: Path):
                 "reasoning_level": reasoning_level,
                 "result_provenance": provenance,
                 "agent_identifier": agent_identifier,
-                "row_id": _row_id(model, reasoning_level, provenance, agent_identifier),
+                "harness_class": harness_class,
+                "row_id": _row_id(
+                    model, reasoning_level, provenance, agent_identifier, harness_class
+                ),
                 "source_path": source["path"],
                 "source_sha256": source.get("sha256"),
                 "score": grade.get("score"),
@@ -179,11 +189,12 @@ def export_submission_mesh(source_path: str, out_path: Path, *,
     Decimates only if a quadric backend is installed; the parametric parts here are
     naturally low-poly, and a hard triangle budget rejects pathological meshes.
     """
+    safe_source = assert_submission_source(source_path, submission_root=submission_root)
+
     import tempfile
 
     import trimesh
 
-    safe_source = assert_submission_source(source_path, submission_root=submission_root)
     source_text = Path(safe_source).read_text(encoding="utf-8")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -239,6 +250,7 @@ def build(results_dir: Path, site_dir: Path, *, max_per_family: int = 1,
             "reasoning_level": sub["reasoning_level"],
             "result_provenance": sub["result_provenance"],
             "agent_identifier": sub["agent_identifier"],
+            "harness_class": sub["harness_class"],
             "seed": sub["seed"],
             "track": sub["track"],
             "score": sub["score"],
