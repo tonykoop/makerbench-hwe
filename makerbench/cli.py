@@ -27,6 +27,7 @@ from .attestation import (
     verify_result_attestations,
 )
 from .evaluator import evaluate
+from makerbench_core import score_file
 from .parts import PartsLibrary
 from .provenance import (
     OPENSCAD_COMPARABILITY_NON_REFERENCE,
@@ -230,6 +231,39 @@ def brep_grade_cmd(
         console.print("[yellow]SKIP[/] build123d unavailable; install it to grade locally.")
         raise typer.Exit(code=0)
     raise typer.Exit(code=0 if result.get("passed") else 1)
+
+
+@app.command(name="dfm-score")
+def dfm_score_cmd(
+        artifact: str = typer.Argument(
+            ...,
+            help="Path to a STEP/STL/OBJ/OFF/SCAD/SVG/DXF artifact.",
+        ),
+        json_out: bool = typer.Option(
+            False,
+            "--json",
+            help="Emit the full structured JSON result.",
+        ),
+        fail_under: Optional[float] = typer.Option(
+            None,
+            "--fail-under",
+            help="Exit non-zero when makerbench_dfm_score is below this percentage.",
+        )):
+    """Score a CAD exchange artifact with the lightweight makerbench-core component."""
+    result = score_file(artifact)
+    if json_out:
+        console.print_json(result.to_json())
+    else:
+        console.print(f"makerbench_dfm_score: {result.makerbench_dfm_score:.1f}%")
+        console.print(f"profile: {result.profile}")
+        console.print(f"sha256: {result.input.get('sha256') or 'n/a'}")
+        failed = [rule for rule in result.rules if not rule.passed]
+        if failed:
+            console.print("failed_rules:")
+            for rule in failed:
+                console.print(f"  - {rule.id}: {rule.detail}")
+    if fail_under is not None and result.makerbench_dfm_score < fail_under:
+        raise typer.Exit(code=1)
 
 
 @list_app.command("tasks")
