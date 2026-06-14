@@ -1,0 +1,23 @@
+{
+  "persona": "henry",
+  "side": "B",
+  "round": "R1",
+  "branch": "henry/b-r1-docs",
+  "repo": "tonykoop/makerbench-hwe",
+  "contract": "/home/tony/hwe-wt/_kit/docs/plans/r1-twingrid/handoffs/sprint-henry-B.md",
+  "qmd": "not_run_per_user_and_handoff_oom_warning",
+  "scope": "docs_and_issue_templates_only",
+  "issues": ["111", "94", "95"],
+  "primary_artifacts": [
+    "docs/REASONING_BUCKETS.md",
+    "docs/CHALLENGE_SPEC.md",
+    ".github/ISSUE_TEMPLATE/experiment_submission.md",
+    ".github/ISSUE_TEMPLATE/new_evaluation_seed.md",
+    "skill_findings.md",
+    "ready_for_peek.json"
+  ],
+  "validation": [
+    "python3 frontmatter/json/markdown sanity check",
+    "git diff --check"
+  ]
+}

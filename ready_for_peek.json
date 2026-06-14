@@ -1,0 +1,13 @@
+{
+  "persona": "henry",
+  "side": "B",
+  "status": "ready",
+  "branch": "henry/b-r1-docs",
+  "primary_artifacts": [
+    "docs/REASONING_BUCKETS.md",
+    "docs/CHALLENGE_SPEC.md",
+    ".github/ISSUE_TEMPLATE/experiment_submission.md",
+    ".github/ISSUE_TEMPLATE/new_evaluation_seed.md",
+    "skill_findings.md"
+  ]
+}
