@@ -315,6 +315,29 @@ def test_registry_records_assembly_alpha():
     assert "assembly_pillow_block_shaft" not in axis_family_ids
 
 
+def test_domain_matrix_records_issue_110_verticals():
+    """#110: the domain matrix tracks the new scaffold-only verticals."""
+    matrix = open("docs/DOMAIN_MATRIX.md", encoding="utf-8").read()
+    roadmap = open("docs/ROADMAP.md", encoding="utf-8").read()
+
+    for heading in (
+        "**Casting / foundry molds** — *scaffold needed* (#110).",
+        "**Robotics / mechatronic assemblies** — *scaffold needed* (#110).",
+        "**Glass / ceramics** — *scaffold needed* (#110).",
+    ):
+        assert heading in matrix
+
+    for term in (
+        "trapped-volume",
+        "motor-face hole alignment",
+        "thermal-stress concentration heuristics",
+    ):
+        assert term in matrix
+
+    for pack_id in ("`casting`", "`robotics`", "`glass-ceramics`"):
+        assert pack_id in roadmap
+
+
 def test_input_modalities_default_to_text():
     registry = TaskRegistry.model_validate(_minimal_registry())
     assert registry.task_families[0].input_modalities == ["text"]

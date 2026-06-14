@@ -36,6 +36,10 @@ heavy for everyone.
 
 - `woodworking`: grain direction, joinery, tool radius, sheet yield, CNC router
   constraints.
+- `casting`: draft, shrinkage compensation, gating/risers, venting, and trapped-
+  volume checks for moldable parts.
+- `robotics`: motor-face interfaces, bearing/shaft alignment, fastener clearance,
+  sheet-metal bend allowance, and simple kinematic envelopes.
 - `brep-build123d`: optional-local build123d / OCCT profile for STEP exports and
   topology diagnostics; see [`BREP_PROFILE.md`](BREP_PROFILE.md).
 - `sewing-softgoods`: pattern topology, seam length matching, allowance, fold
@@ -43,7 +47,8 @@ heavy for everyone.
 - `thermoforming`: draft, draw ratio, trim flange, mold release, sheet thinning.
 - `injection-molding`: draft, wall thickness, ribs, bosses, undercuts, parting
   line plausibility.
-- `ceramics`: shrinkage, wall thickness, support, glaze-contact exclusions.
+- `glass-ceramics`: hollow lofted geometry, shrinkage, wall thickness, support/
+  contact exclusions, and thermal-stress heuristics.
 - `adhesives`: material compatibility, bond area, cure process, load path.
 
 ## Expert packs
