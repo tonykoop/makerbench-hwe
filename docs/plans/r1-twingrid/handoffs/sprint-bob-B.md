@@ -23,7 +23,7 @@ You are one side of a **TwinGrid blind A/B**: a partner agent is solving this SA
 If your lane consumes one of these, read that issue body for the schema and **stub the import** — alignment happens at merge.
 
 **Rules (all personas):**
-1. **qmd Step-0:** before authoring, run `qmd query "<topic>"` and `qmd search -c makerbench` (collection may be absent — fall back to `qmd query`). Summarize findings in `skill_findings.md`.
+1. **Step-0 (NO qmd):** do NOT run `qmd` — it OOMs the box. Ground yourself by reading/grepping existing files directly (`rg`, `git ls-files`, read the issue body + neighboring docs). Summarize findings in `skill_findings.md`.
 2. **Plan first:** post a short plan (files/tests/PR scope) and WAIT for manager approval before editing.
 3. **Commit + push EARLY and OFTEN** to your branch (this sprint already lost a round to a crash with uncommitted work). Push after your first real change.
 4. **Worktree isolation:** work ONLY inside your assigned worktree.
