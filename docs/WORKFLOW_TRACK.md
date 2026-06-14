@@ -210,8 +210,11 @@ but two cheap deterrents protect the board's authority:
 2. **Community spot-check / "show your work."** Every workflow row enters
    `unverified` and must pass the deterministic gate. To hold a **top-N** position
    as verified, the submitter publishes a short session recording or an
-   un-redacted log to the challenge's pinned discussion. The social, show-off
-   nature of the track is itself the enforcement.
+   un-redacted log to the challenge's pinned discussion. The recording follows the
+   structured `video_evidence` contract and its 3-part protocol — see
+   [`VIDEO_EVIDENCE.md`](VIDEO_EVIDENCE.md) (#105), which `WorkflowManifest`
+   carries alongside `provenance_trace.session_recording_hash`. The social,
+   show-off nature of the track is itself the enforcement.
 
 This composes with the existing tamper-evidence: artifact `sha256` and the
 trusted regrade attestation still bind the public row to its archived source.
