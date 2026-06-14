@@ -40,12 +40,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from .base import BaseAdapter
+from .base import BaseAdapter as BaseAdapter
 from .cadclaw import (
-    AssemblyPart,
-    AssemblySubGrade,
-    CADCLAWAdapter,
-    PartComponentReport,
+    AssemblyPart as AssemblyPart,
+    AssemblySubGrade as AssemblySubGrade,
+    CADCLAWAdapter as CADCLAWAdapter,
+    PartComponentReport as PartComponentReport,
 )
 
 ArtifactKind = Literal["step", "scad", "vector", "feature_metrics"]
