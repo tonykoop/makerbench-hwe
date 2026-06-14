@@ -1041,6 +1041,111 @@
       "title": "VerificationReport",
       "type": "object"
     },
+    "VideoEvidence": {
+      "description": "A hosted recording of a workflow-track session (mb#105).\n\nThe ``video_evidence`` role: a hosted URL the reviewer can watch, a ``sha256``\nof the downloaded file so the bytes are pinned, the ``duration_seconds`` and\n``capture_mode``, and the ``segments`` markers describing the 3-part protocol.\nEvery field except the hosted URL and capture mode is Optional, matching the\nhonesty rule the rest of the workflow contracts follow \u2014 a run discloses what\nit has and leaves the rest None. Disclosure-grade: the markers are validated\nfor length/order by ``makerbench.video_evidence.assess_video_protocol``, which\nnever passes or fails a grading level.",
+      "properties": {
+        "capture_mode": {
+          "description": "How the frames were captured: screen | viewport | composited.",
+          "enum": [
+            "screen",
+            "viewport",
+            "composited"
+          ],
+          "title": "Capture Mode",
+          "type": "string"
+        },
+        "duration_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Total recording duration in seconds, when known.",
+          "title": "Duration Seconds"
+        },
+        "hosted_url": {
+          "description": "URL where the recording is hosted (not a repo path).",
+          "title": "Hosted Url",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "segments": {
+          "description": "Declared 3-part protocol markers (prompt_init, timelapse_core, deterministic_verdict), in order.",
+          "items": {
+            "$ref": "#/$defs/VideoSegment"
+          },
+          "title": "Segments",
+          "type": "array"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Checksum of the downloaded recording file, for integrity pinning.",
+          "title": "Sha256"
+        }
+      },
+      "required": [
+        "hosted_url",
+        "capture_mode"
+      ],
+      "title": "VideoEvidence",
+      "type": "object"
+    },
+    "VideoSegment": {
+      "description": "One declared phase of the 3-part recording protocol with its time window.\n\nMarkers are *disclosed*, lightly validated by length/order, never reproduced:\nthe recording is hosted off-repo and a reviewer spot-checks it. ``marker`` is\nan optional human chapter label (e.g. 'export STEP + run grader').",
+      "properties": {
+        "end_seconds": {
+          "description": "Segment end offset in seconds.",
+          "minimum": 0.0,
+          "title": "End Seconds",
+          "type": "number"
+        },
+        "marker": {
+          "default": "",
+          "description": "Optional human chapter label for the segment.",
+          "title": "Marker",
+          "type": "string"
+        },
+        "phase": {
+          "enum": [
+            "prompt_init",
+            "timelapse_core",
+            "deterministic_verdict"
+          ],
+          "title": "Phase",
+          "type": "string"
+        },
+        "start_seconds": {
+          "description": "Segment start offset in seconds.",
+          "minimum": 0.0,
+          "title": "Start Seconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "phase",
+        "start_seconds",
+        "end_seconds"
+      ],
+      "title": "VideoSegment",
+      "type": "object"
+    },
     "WorkflowMetrics": {
       "description": "Cost/effort accounting for one workflow-track run.\n\nAll fields are Optional: a run discloses what it can measure and leaves the\nrest None (never coerced to zero), matching the honesty rule UsageReport\nfollows. ``estimated_cost_usd`` is explicitly a *what-if* / disclosed estimate,\nnever authoritative billing.",
       "properties": {
@@ -1164,6 +1269,18 @@
     "task_id": {
       "title": "Task Id",
       "type": "string"
+    },
+    "video_evidence": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/VideoEvidence"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Hosted session recording (mb#105). Disclosure-grade evidence the provenance_trace.session_recording_hash points at; never a score input, but required to reach top-N Official Verified status."
     }
   },
   "required": [

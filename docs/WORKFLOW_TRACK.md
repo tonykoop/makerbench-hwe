@@ -275,7 +275,9 @@ social, show-off nature of the track is the enforcement for that gap. The protoc
    competing for a published position. The rule: to **hold a top-N rank** (default
    **N = 10** per challenge × track × `harness_class`/`harness_subclass` cell) the
    submitter must publish, to the challenge's **pinned GitHub Discussion**, one of:
-   - a short **session recording** of the stack producing the artifact, or
+   - a short **session recording** of the stack producing the artifact, disclosed
+     via the structured `video_evidence` role and its 3-part protocol — see
+     [`VIDEO_EVIDENCE.md`](VIDEO_EVIDENCE.md) (#105), or
    - an **un-redacted tool-call / session log** whose hash matches the manifest's
      `provenance_trace` (`tool_call_log_url` + `session_recording_hash`).
    The published evidence must let a reader reconcile the `StructuralClaim`s and
