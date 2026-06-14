@@ -409,6 +409,58 @@ def test_site_groups_different_harnesses_separately(tmp_path):
     assert rows[1]["badge_slug"] == "same-model-high-community-claude-cli"
 
 
+def test_site_payload_includes_delta_dossier_without_changing_scores(tmp_path):
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    manifest = {
+        "stack": {
+            "orchestrator": "Codex GPT-5.5",
+            "framework": "makerbench-logger",
+        },
+        "human_intervention_index": "L1",
+        "metrics": {"wall_clock_seconds": 100, "tool_calls_count": 8},
+    }
+    _write_run(
+        results_dir / "rev1.json",
+        "same-model",
+        "high",
+        3,
+        row_fields={
+            "workflow_manifest": {
+                **manifest,
+                "human_intervention_index": "L2",
+                "metrics": {"wall_clock_seconds": 120, "tool_calls_count": 10},
+            },
+            "certificate_history": [{"revision": 1, "issued_at": "2026-06-01T00:00:00Z"}],
+        },
+        agent_identifier="codex_cli",
+    )
+    _write_run(
+        results_dir / "rev2.json",
+        "same-model",
+        "high",
+        4,
+        row_fields={
+            "workflow_manifest": manifest,
+            "certificate_history": [{"revision": 2, "issued_at": "2026-06-02T00:00:00Z"}],
+        },
+        agent_identifier="codex_cli",
+    )
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    payload = build_data.build_payload(results_dir, registry)
+    row = payload["models"][0]
+    series = payload["delta_dossier"]["stacks"][0]["series"][0]
+
+    assert row["tracks"]["blind"]["overall_mean"] == 3.5
+    assert payload["delta_dossier"]["score_impact"] == "none"
+    assert series["delta"]["score_trend"] == "improved"
+    assert series["delta"]["wall_time_reduction_pct"] == 16.67
+    assert series["delta"]["tool_call_trend"] == "improved"
+    assert series["delta"]["hii_trend"] == "down"
+
+
 def test_site_marks_missing_harness_as_legacy_unknown(tmp_path):
     """A bundle without agent_identifier is disclosed as legacy_unknown, not guessed."""
     results_dir = tmp_path / "results"

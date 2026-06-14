@@ -1,0 +1,51 @@
+# Delta-Dossier Regression Tracker
+
+The Delta-Dossier is an additive workflow-track view. It does not change
+geometry scores, dossier scores, ranking, verification status, or public regrade
+semantics. It answers one question: when the same stack reruns the same
+task/track/seed over time, did the workflow become easier?
+
+`makerbench.delta_dossier.build_delta_dossier(results_dir)` scans public
+`RunResults` JSON and groups rows by:
+
+- disclosed stack identity (`model_identifier`, `agent_identifier`,
+  `harness_class`, `harness_subclass`, and any `workflow_manifest.stack` fields);
+- `task_id`;
+- `track`;
+- seed, used only for grouping.
+
+The emitted payload deliberately exposes `seed_ordinal`, not the raw seed value,
+so future official/held-out rows do not gain a new seed leak surface.
+
+## Metrics
+
+For each comparable series (two or more revisions), the tracker reports baseline,
+latest, and delta values for:
+
+- geometry score (`grade.score`);
+- wall-clock time (`runtime.wall_time_s` or `workflow_manifest.metrics.wall_clock_seconds`);
+- tool calls (`workflow_manifest.metrics.tool_calls_count` or compatible aliases);
+- Human Intervention Index (`workflow_manifest.human_intervention_index`);
+- optional deterministic dossier score (`dossier_scores.score`).
+
+Lower wall time, fewer tool calls, and lower HII are improvements. Higher geometry
+and dossier scores are improvements. Missing metrics are reported as `unknown`
+trends rather than coerced to zero.
+
+## Revision Ordering
+
+Revision identity and order are read from public metadata when present:
+
+- row/run `revision_id`, `run_revision`, or `revision_index`;
+- `workflow_manifest` revision fields;
+- `.mbc`-style `certificate` or latest `certificate_history` entry;
+- timestamps such as `runtime.finished_at`, manifest `created_at`, or
+  certificate `issued_at`.
+
+If none exist, the result path and row index provide a deterministic fallback.
+
+## Site Contract
+
+`site/build_data.py` includes the tracker under top-level `delta_dossier`.
+Its `score_impact` is always `"none"`; consumers must treat it as an ergonomics
+regression aid, not a leaderboard score input.
