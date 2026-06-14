@@ -415,6 +415,17 @@ def run_tree(
     for node in coordinator.pending_hypotheses():
         if coordinator.budget.exhausted:
             break
+        # Stop before an attempt we cannot afford: once we've observed at least
+        # one attempt, estimate the next one's cost from the running average and
+        # bail if the remaining budget can't cover it. Without this the loop only
+        # halts *after* overspending, so a budget that fits one attempt would
+        # wrongly run a second.
+        if tested > 0:
+            avg_tokens = coordinator.budget.tokens_spent / tested
+            avg_seconds = coordinator.budget.runtime_spent_seconds / tested
+            if (coordinator.budget.tokens_remaining < avg_tokens
+                    or coordinator.budget.seconds_remaining < avg_seconds):
+                break
         if max_hypotheses is not None and tested >= max_hypotheses:
             break
         node.status = "running"
@@ -424,11 +435,15 @@ def run_tree(
         if node.status == "failed":
             coordinator.backpropagate(node.id)
             continue
-        # Dev pass: run the held-out gate (if any) and apply the promotion policy.
+        # Dev pass: run the held-out gate (if any) and record the result. The
+        # first node to clear both gates becomes the current best and holds it —
+        # later passes don't displace it (promotes_first semantics).
         heldout = None
         if heldout_evaluator is not None:
             heldout = bool(heldout_evaluator(coordinator.contract, node))
-        coordinator.promote(node.id, heldout_passed=heldout)
+        node.heldout_passed = heldout
+        if coordinator.best_node_id is None:
+            coordinator.promote(node.id, heldout_passed=heldout)
     return coordinator.report()
 
 
