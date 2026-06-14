@@ -242,7 +242,7 @@ _PART_BOM_SOURCES = ("fabricated", "stock_material")
 
 def assess_packet_completeness(
     dossier: DesignDossier | None,
-    spec: TaskSpec,
+    spec: TaskSpec | None = None,
 ) -> DossierCategoryResult:
     """Disclosure-grade completeness check for a deliverable packet (#103).
 
