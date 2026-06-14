@@ -39,6 +39,7 @@ SATURATION_THRESHOLDS = {
     "perfect_model_track_rate_high": 0.60,
     "blind_perception_gap_low": 0.25,
 }
+ROBOTS_META_TAG = '<meta name="robots" content="index, follow, noai, noimageai" />'
 
 
 def is_infra_error(grade: dict) -> bool:
@@ -1813,6 +1814,7 @@ def _detail_document(
         '  <meta name="viewport" content="width=device-width, initial-scale=1" />',
         f"  <title>{_esc(title)}</title>",
         f'  <meta name="description" content="{_esc(description)}" />',
+        f"  {ROBOTS_META_TAG}",
         f'  <meta property="og:title" content="{_esc(title)}" />',
         f'  <meta property="og:description" content="{_esc(description)}" />',
         '  <meta property="og:type" content="website" />',
