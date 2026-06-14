@@ -83,6 +83,20 @@ def test_manifest_round_trips_through_json():
     assert restored.stack.execution_bridge.version is None
 
 
+def test_manifest_accepts_plain_string_stack_components():
+    m = WorkflowManifest.model_validate({
+        "task_id": "vented_plate",
+        "seed": 0,
+        "stack": {
+            "framework": "makerbench-logger",
+            "execution_bridge": "blender-mcp",
+        },
+    })
+
+    assert m.stack.framework == ComponentVersion(name="makerbench-logger")
+    assert m.stack.execution_bridge == ComponentVersion(name="blender-mcp")
+
+
 # --- Human Intervention Index ----------------------------------------------
 
 

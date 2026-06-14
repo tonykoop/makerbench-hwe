@@ -4,6 +4,7 @@
     "assumptions": [],
     "bom": [],
     "fabrication_domain": "enclosure",
+    "packet": null,
     "process_plan": null,
     "risk_flags": [],
     "schema_version": "0.1",
