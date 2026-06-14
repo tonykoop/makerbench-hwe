@@ -24,6 +24,8 @@ none are required and any absent slot degrades to "pending".
 
 Usage:
     python3 generate_run_explorer.py <run_dir> [--output <path>]
+
+See docs/RUN_NAVIGATION.md for the runs-root layout and the cross-run library.
 """
 from __future__ import annotations
 

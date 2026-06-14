@@ -28,6 +28,8 @@
 # <meta name="robots" content="index, follow, noai, noimageai"> directive on
 # every published HTML page. Treat this as belt, not armor.
 
+Sitemap: https://tonykoop.github.io/makerbench-hwe/sitemap.xml
+
 # General search crawlers: indexing the public leaderboard is fine.
 User-agent: *
 Allow: /
