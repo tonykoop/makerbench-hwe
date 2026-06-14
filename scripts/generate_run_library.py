@@ -15,6 +15,8 @@ harness_class / domain / HII / verification / score-band, searchable by stack+se
 Usage:
     python3 generate_run_library.py <runs_root> \
         [--output-html <path>] [--output-manifest <path>] [--make-explorers]
+
+See docs/RUN_NAVIGATION.md for the runs-root layout and the runs-manifest schema.
 """
 from __future__ import annotations
 
