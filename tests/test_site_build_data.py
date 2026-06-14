@@ -620,8 +620,8 @@ def test_site_adds_badge_and_share_paths(tmp_path):
 
     badge = build_data.build_badge_payload(row)
     assert badge["schemaVersion"] == 1
-    assert badge["label"] == "MakerBench"
-    assert badge["message"] == "4.00/4 blind"
+    assert badge["label"] == "Built with MakerBench"
+    assert badge["message"] == "100/100 blind"
     assert badge["color"] == "brightgreen"
 
 
@@ -668,12 +668,23 @@ def test_write_adoption_artifacts(tmp_path):
         encoding="utf-8"
     )
 
-    assert badge["message"] == "2.00/4 blind"
+    assert badge["message"] == "50/100 blind"
     assert badge_index["models"][0]["badge_url"] == (
         f"https://example.test/makerbench/data/badges/{slug}.json"
     )
     assert "https%3A%2F%2Fexample.test%2Fmakerbench%2Fdata%2Fbadges" in (
         badge_index["models"][0]["shields_url"]
+    )
+    assert badge_index["models"][0]["model_page_url"] == (
+        f"https://example.test/makerbench/models/{slug}/"
+    )
+    assert badge_index["models"][0]["markdown"] == (
+        "[![Built with MakerBench]("
+        "https://img.shields.io/endpoint?url="
+        f"https%3A%2F%2Fexample.test%2Fmakerbench%2Fdata%2Fbadges%2F{slug}.json"
+        ")]("
+        f"https://example.test/makerbench/models/{slug}/"
+        ")"
     )
     assert (tmp_path / "site" / "assets" / "og" / "leaderboard.svg").exists()
     assert (tmp_path / "site" / "assets" / "og" / "models" / f"{slug}.svg").exists()

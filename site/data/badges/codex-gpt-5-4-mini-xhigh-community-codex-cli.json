@@ -1,8 +1,8 @@
 {
   "color": "brightgreen",
-  "label": "MakerBench",
+  "label": "Built with MakerBench",
   "labelColor": "15181d",
-  "message": "3.60/4 blind",
+  "message": "90/100 blind",
   "namedLogo": "opensourcehardware",
   "schemaVersion": 1
 }

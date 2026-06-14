@@ -1450,11 +1450,19 @@ def blind_score(model: dict) -> float | None:
     return blind.get("overall_mean")
 
 
-def score_message(model: dict) -> str:
+def score_percent(model: dict) -> int | None:
+    """Convert MakerBench's 0-4 headline score to a README-friendly 0-100."""
     score = blind_score(model)
     if score is None:
+        return None
+    return max(0, min(100, int((score * 25) + 0.5)))
+
+
+def score_message(model: dict) -> str:
+    percent = score_percent(model)
+    if percent is None:
         return "blind score pending"
-    return f"{score:.2f}/4 blind"
+    return f"{percent}/100 blind"
 
 
 def badge_color(score: float | None) -> str:
@@ -1471,7 +1479,7 @@ def build_badge_payload(model: dict) -> dict:
     score = blind_score(model)
     return {
         "schemaVersion": 1,
-        "label": "MakerBench",
+        "label": "Built with MakerBench",
         "message": score_message(model),
         "color": badge_color(score),
         "namedLogo": "opensourcehardware",
@@ -1613,6 +1621,15 @@ def write_adoption_artifacts(
                 "shields_url": "https://img.shields.io/endpoint?url="
                 + quote(absolute_url(site_base_url, model["badge_endpoint"]), safe=""),
                 "model_page": model["model_page"],
+                "model_page_url": absolute_url(site_base_url, model["model_page"]),
+                "markdown": (
+                    "[![Built with MakerBench]("
+                    "https://img.shields.io/endpoint?url="
+                    + quote(absolute_url(site_base_url, model["badge_endpoint"]), safe="")
+                    + ")]("
+                    + absolute_url(site_base_url, model["model_page"])
+                    + ")"
+                ),
             }
         )
 

@@ -269,7 +269,7 @@ Tracked under epic #100:
 3. **Challenges** — `CHALLENGE_SPEC.md` (#95); Scan-to-B-Rep moonshot (#96);
    acoustics + topology (#97).
 4. **Showcase & distribution** — HF Space dual-league dashboard (#98); MCP
-   registry / community / badge (#99).
+   registry / community / badge (#99, see [`DISTRIBUTION.md`](DISTRIBUTION.md)).
 
 ## See also
 
