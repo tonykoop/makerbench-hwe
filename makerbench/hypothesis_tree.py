@@ -443,7 +443,6 @@ def dashboard_summary(report: ResearchReport) -> dict:
     hypotheses = [n for n in report.root.walk() if n.kind == "hypothesis"]
     tested = [n for n in hypotheses if n.evidence is not None]
     passed = [n for n in hypotheses if n.dev_passed]
-    best = report.root and report.best_node_id
     best_node = None
     if report.best_node_id is not None:
         best_node = next(
