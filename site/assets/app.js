@@ -1445,6 +1445,79 @@
   }
 
   // ---- boot ---------------------------------------------------------------
+  // ---- Get-started hub (#173) ----
+  // Progressive enhancement: the panels render stacked in plain HTML. JS turns
+  // them into a tabbed view, wires copy buttons, and fills status/links from
+  // data/get_started.json (fetched separately so the leaderboard payload is
+  // untouched). Everything degrades to the static markup if JS or data is absent.
+  function showGetStartedPanel(id) {
+    Array.prototype.forEach.call(document.querySelectorAll("#gs-tabs button"), function (b) {
+      b.setAttribute("aria-pressed", String(b.getAttribute("data-panel") === id));
+    });
+    Array.prototype.forEach.call(document.querySelectorAll(".gs-panel"), function (p) {
+      p.hidden = p.getAttribute("data-panel") !== id;
+    });
+  }
+
+  function initGetStarted() {
+    var tabs = document.getElementById("gs-tabs");
+    if (tabs) {
+      tabs.setAttribute("data-enhanced", "true");
+      Array.prototype.forEach.call(tabs.querySelectorAll("button"), function (b) {
+        b.addEventListener("click", function () {
+          showGetStartedPanel(b.getAttribute("data-panel"));
+        });
+      });
+      var active = tabs.querySelector('button[aria-pressed="true"]');
+      showGetStartedPanel(active ? active.getAttribute("data-panel") : "cli");
+    }
+    // Copy-to-clipboard on every code block.
+    Array.prototype.forEach.call(document.querySelectorAll(".code-wrap .copy-btn"), function (btn) {
+      btn.addEventListener("click", function () {
+        var pre = btn.parentNode.querySelector("pre.code");
+        if (!pre || !navigator.clipboard) return;
+        navigator.clipboard.writeText(pre.innerText).then(function () {
+          var original = btn.textContent;
+          btn.textContent = "Copied";
+          btn.classList.add("is-copied");
+          setTimeout(function () {
+            btn.textContent = original;
+            btn.classList.remove("is-copied");
+          }, 1400);
+        }).catch(function () {});
+      });
+    });
+  }
+
+  function renderGetStarted(data) {
+    if (!data) return;
+    if (data.repo_url) {
+      var nav = document.getElementById("repo-link");
+      if (nav) nav.href = data.repo_url;
+    }
+    (data.paths || []).forEach(function (path) {
+      var badge = document.querySelector('[data-gs-status="' + path.id + '"]');
+      if (badge) {
+        badge.textContent = path.status_label || path.status || "";
+        badge.className = "gs-status is-" + (path.status || "available");
+      }
+      var links = document.querySelector('[data-gs-links="' + path.id + '"]');
+      if (links) {
+        links.innerHTML = (path.links || []).map(function (l) {
+          return '<a href="' + escapeHTML(l.href) + '" rel="noopener">' +
+            escapeHTML(l.label) + "</a>";
+        }).join("");
+      }
+    });
+  }
+
+  function loadGetStarted() {
+    fetch("data/get_started.json", { cache: "no-cache" })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(renderGetStarted)
+      .catch(function () { /* static markup already covers the no-data case */ });
+  }
+
   function boot(data) {
     // One-time listeners (they read DATA/TRACK dynamically, so they survive a
     // version switch without rebinding).
@@ -1466,6 +1539,11 @@
     initVersionPicker();
     renderFindings();
   }
+
+  // The get-started hub is independent of the leaderboard payload, so wire it up
+  // unconditionally — it must work even if leaderboard.json fails to load.
+  initGetStarted();
+  loadGetStarted();
 
   fetch("data/leaderboard.json", { cache: "no-cache" })
     .then(function (r) {

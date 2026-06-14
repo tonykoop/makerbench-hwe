@@ -433,6 +433,53 @@ pre.code .c { color: var(--text-faint); }
 }
 .steps li strong { color: var(--text); }
 
+/* ---- get-started hub (#173) ---- */
+.gs-tabs { flex-wrap: wrap; margin-bottom: 22px; max-width: 100%; }
+/* JS turns the stacked panels into a tabbed view (it sets [hidden] on inactive
+   panels). Without JS no panel is hidden, so every path renders stacked. */
+.gs-panel { margin-bottom: 26px; }
+.gs-panel[hidden] { display: none; }
+.gs-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 6px; }
+.gs-head h3 { margin: 0; font-size: 1.08rem; }
+.gs-lede { color: var(--text-soft); font-size: 0.95rem; margin: 0 0 14px; max-width: 660px; }
+.gs-fineprint { color: var(--text-faint); font-size: 0.82rem; margin: 10px 0 0; max-width: 660px; }
+.gs-status {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 0.74rem; font-weight: 600; letter-spacing: 0.02em;
+  padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border);
+  color: var(--text-soft); background: var(--bg-soft); text-transform: uppercase;
+}
+.gs-status::before { content: ""; width: 7px; height: 7px; border-radius: 999px; background: currentColor; }
+.gs-status.is-available { color: var(--good); background: color-mix(in srgb, var(--good) 14%, transparent); border-color: color-mix(in srgb, var(--good) 35%, transparent); }
+.gs-status.is-in_progress { color: var(--mid); background: color-mix(in srgb, var(--mid) 14%, transparent); border-color: color-mix(in srgb, var(--mid) 35%, transparent); }
+.gs-status.is-planned { color: var(--text-faint); border-style: dashed; }
+
+/* copy-paste code block with a corner Copy button */
+.code-wrap { position: relative; margin: 0 0 14px; }
+.code-wrap .code { margin: 0; }
+.copy-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 1;
+  font: inherit; font-size: 0.74rem; line-height: 1; cursor: pointer;
+  padding: 6px 10px; border-radius: 8px; color: var(--text-soft);
+  background: var(--bg-elev); border: 1px solid var(--border);
+  opacity: 0; transition: opacity 0.12s ease, color 0.12s ease;
+}
+.code-wrap:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
+.copy-btn:hover { color: var(--text); border-color: var(--border-strong); }
+.copy-btn.is-copied { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, transparent); opacity: 1; }
+@media (hover: none) { .copy-btn { opacity: 1; } }
+
+.gs-note { margin: 0 0 14px; }
+.gs-note > summary { cursor: pointer; color: var(--accent); font-size: 0.9rem; padding: 4px 0; }
+.gs-note > p { color: var(--text-soft); font-size: 0.9rem; margin: 8px 0 12px; max-width: 660px; }
+
+.gs-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.gs-links a {
+  font-size: 0.82rem; padding: 5px 11px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--text-soft); background: var(--bg-soft);
+}
+.gs-links a:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+
 /* ---- footer ---- */
 footer { padding: 34px 0 60px; color: var(--text-faint); font-size: 0.85rem; }
 footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
