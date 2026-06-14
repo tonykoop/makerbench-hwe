@@ -15,6 +15,7 @@
   --mid: #c79100;
   --bad: #c4453a;
   --control: #6b46c1;
+  --human: #b45309;
   --shadow: 0 1px 2px rgba(20, 24, 29, 0.05), 0 4px 16px rgba(20, 24, 29, 0.04);
   --radius: 12px;
   --maxw: 1080px;
@@ -38,6 +39,7 @@ html[data-theme="dark"] {
   --mid: #d9b13e;
   --bad: #e0695e;
   --control: #a78bfa;
+  --human: #f59e0b;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 18px rgba(0, 0, 0, 0.28);
 }
 
@@ -186,6 +188,7 @@ table.lb tbody tr:hover td.model-col { background: var(--bg-soft); }
   letter-spacing: 0.04em; padding: 2px 7px; border-radius: 999px; vertical-align: middle; margin-left: 7px;
 }
 .badge-control { background: color-mix(in srgb, var(--control) 16%, transparent); color: var(--control); }
+.badge-human { background: color-mix(in srgb, var(--human) 16%, transparent); color: var(--human); }
 .badge-effort { background: var(--accent-soft); color: var(--accent); }
 .badge-provenance { background: var(--bg-soft); color: var(--text-soft); border: 1px solid var(--border); }
 .badge-official { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }

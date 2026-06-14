@@ -342,10 +342,12 @@
       return;
     }
 
-    // Sort. Control rows are a reference, not a competitor — always pin them to
-    // the bottom regardless of the active column, then sort the rest.
+    // Sort. Reference rows (deterministic control + human/expert baseline, #24)
+    // are anchors, not competitors — always pin them to the bottom regardless of
+    // the active column (human baseline above control), then sort the rest.
+    function refRank(m) { return m.is_control ? 2 : (m.is_human_baseline ? 1 : 0); }
     models = models.slice().sort(function (a, b) {
-      if (a.is_control !== b.is_control) return a.is_control ? 1 : -1;
+      if (refRank(a) !== refRank(b)) return refRank(a) - refRank(b);
       var av = sortValue(a, SORT.key), bv = sortValue(b, SORT.key);
       if (av == null && bv == null) return 0;
       if (av == null) return 1;
@@ -401,11 +403,13 @@
         var tr = m.tracks[TRACK];
         var classes = [];
         if (m.is_control) classes.push("is-control");
+        if (m.is_human_baseline) classes.push("is-human");
         if (m.result_provenance === "official") classes.push("is-official");
         html += "<tr" + (classes.length ? ' class="' + classes.join(" ") + '"' : "") + ">";
         html += '<td class="model-col"><a class="model-name" href="' + m.model_page + '">' +
           modelLabel(m) + "</a>" +
           (m.is_control ? '<span class="badge badge-control">control</span>' : "") +
+          (m.is_human_baseline ? '<span class="badge badge-human">human</span>' : "") +
           "</td>";
         fams.forEach(function (f) {
           html += cellHTML(tr.families[f.id]);
@@ -518,6 +522,7 @@
 
   function modelColor(idx, model) {
     if (model && model.is_control) return cssVar("--control") || "#6b46c1";
+    if (model && model.is_human_baseline) return cssVar("--human") || "#b45309";
     return PALETTE[idx % PALETTE.length];
   }
 
@@ -1142,13 +1147,13 @@
     var prev = sel.value;
     sel.innerHTML = models.map(function (m) {
       return '<option value="' + m.row_id + '">' + modelText(m) +
-        (m.is_control ? " (control)" : "") + "</option>";
+        (m.is_control ? " (control)" : (m.is_human_baseline ? " (human)" : "")) + "</option>";
     }).join("");
-    // keep selection if still valid, else pick first non-control
+    // keep selection if still valid, else pick first non-reference model
     var ids = models.map(function (m) { return m.row_id; });
     if (ids.indexOf(prev) !== -1) { sel.value = prev; }
     else {
-      var firstReal = models.filter(function (m) { return !m.is_control; })[0];
+      var firstReal = models.filter(function (m) { return !m.is_control && !m.is_human_baseline; })[0];
       sel.value = firstReal ? firstReal.row_id : (ids[0] || "");
     }
   }
