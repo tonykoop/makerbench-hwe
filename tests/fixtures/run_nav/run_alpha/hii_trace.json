@@ -1,0 +1,7 @@
+{
+  "human_intervention_index": 0.12,
+  "events": [
+    {"kind": "prompt", "actor": "agent"},
+    {"kind": "approval", "actor": "human"}
+  ]
+}

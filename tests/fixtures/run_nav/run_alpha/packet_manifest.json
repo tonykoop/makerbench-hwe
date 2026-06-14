@@ -1,0 +1,8 @@
+{
+  "schema_version": "0.1",
+  "artifacts": [
+    {"path": "packet/gdt-summary.txt", "role": "gd_and_t", "format": "txt"},
+    {"path": "packet/toolpath-summary.txt", "role": "gcode_summary", "format": "txt"},
+    {"path": "packet/bom.json", "role": "bom", "format": "json"}
+  ]
+}

@@ -1,0 +1,1 @@
+Fixture toolpath summary placeholder. Public metadata only; no CNC program.

@@ -1,0 +1,7 @@
+{
+  "schema_version": "0.1",
+  "deliverables": [
+    {"path": "packet/fabrication-summary.txt", "role": "fabrication_summary", "format": "txt"},
+    {"path": "packet/bom.json", "role": "bom", "format": "json"}
+  ]
+}

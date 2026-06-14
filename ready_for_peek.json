@@ -1,0 +1,14 @@
+{
+  "persona": "dan",
+  "side": "B",
+  "status": "ready",
+  "branch": "dan/b-r1-run-nav",
+  "primary_artifacts": [
+    "scripts/generate_run_explorer.py",
+    "scripts/generate_run_library.py",
+    "library.html",
+    "runs-manifest.json",
+    "tests/fixtures/run_nav",
+    "tests/test_run_navigation.py"
+  ]
+}

@@ -1,0 +1,1 @@
+Fixture fabrication summary placeholder. Public metadata only; no DXF or CAD source.

@@ -1,0 +1,1 @@
+Fixture render summary placeholder. Public metadata only; no mesh.

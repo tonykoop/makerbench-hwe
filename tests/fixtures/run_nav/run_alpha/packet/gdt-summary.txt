@@ -1,0 +1,1 @@
+Fixture GD&T summary placeholder. Public metadata only; no geometry source.
