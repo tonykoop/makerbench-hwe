@@ -1609,3 +1609,86 @@ def test_site_ecosystem_section_is_data_driven_and_safe(tmp_path):
     forbidden = {"seeds", "seed", "oracle", "oracles", "gold", "solution", "solutions"}
     for node in eco["nodes"]:
         assert not (set(node.keys()) & forbidden)
+# --- explorer.html v2 context (mb#165) ------------------------------------
+
+def _explorer_inputs():
+    """Minimal public inputs for the explorer context builder."""
+    payload = {
+        "benchmark_version": "0.1.0",
+        "models": [
+            {
+                "identifier": "demo-model", "reasoning_level": "high",
+                "league": "autonomous", "is_control": False,
+                "tracks": {"blind": {
+                    "has_data": True, "overall_mean": 3.2, "n_families_scored": 5,
+                    "mean_wall_time_s": 120.0, "mean_cost_usd": None,
+                    "token_usage": {"mean_total_tokens": 4000},
+                }},
+            },
+            {"identifier": "ctrl", "is_control": True, "tracks": {}},
+        ],
+    }
+    registry = {"capability_axes": [
+        {"id": "spatial_geometry", "title": "Spatial Geometry",
+         "summary": "s", "scoring_categories": ["structural"],
+         "task_families": ["vented_plate"]},
+    ]}
+    opp = {
+        "axes": {"model": [{"id": "claude-opus", "label": "Claude Opus"}],
+                 "cad": [{"id": "openscad", "label": "OpenSCAD"}],
+                 "plugin": [{"id": "none", "label": "code-first"}], "domain": []},
+        "counts": {"coordinates": 1, "proven": 0, "vacancies": 1},
+        "weights": {"capability": 0.4},
+        "with_domain": False,
+        "top_vacancies": [{"model": "claude-opus", "cad": "openscad",
+                           "plugin": "none", "potential_score": 0.88}],
+        "top_proven": [],
+        "coordinates": [{"model": "claude-opus", "cad": "openscad",
+                         "plugin": "none", "domain": None, "score": 0.88,
+                         "is_vacancy": True, "n_runs": 0}],
+    }
+    meshes = {"meshes": [{
+        "task_id": "enclosure_fastened", "model_identifier": "demo-model",
+        "reasoning_level": "high", "track": "perception", "seed": 1, "score": 4,
+        "mesh": "assets/meshes/enclosure_fastened.stl", "face_count": 2712,
+        "quality": {"mass_g": 34.5}, "source_sha256": "abc",
+    }]}
+    return payload, registry, opp, meshes
+
+
+def test_explorer_context_is_data_driven_and_scaffold_aware():
+    payload, registry, opp, meshes = _explorer_inputs()
+    ctx = build_data.build_explorer_context(payload, registry, opp, meshes)
+
+    assert ctx["schema"] == build_data.EXPLORER_SCHEMA
+    assert ctx["active_context"] == "makerbench"
+    ids = [c["id"] for c in ctx["contexts"]]
+    assert ids == ["makerbench", "instrument", "studiopipeline", "wrfcoin"]
+
+    mb = ctx["contexts"][0]
+    assert mb["scaffold"] is False
+    dm = mb["data_matrix"]
+    # Live data wired from the public inputs.
+    assert [t["identifier"] for t in dm["telemetry"]] == ["demo-model"]  # control excluded
+    assert dm["assets"][0]["task_id"] == "enclosure_fastened"
+    assert dm["coordinates"]["counts"]["coordinates"] == 1
+    assert mb["parametric_engine"]["feature_tree"][0]["id"] == "spatial_geometry"
+    # Pending slots stay null — never invented.
+    assert mb["parametric_engine"]["arbor_log"] is None
+    assert mb["parametric_engine"]["render_diff"] is None
+
+    # Cross-repo contexts ship as declarative scaffolds with no live assets.
+    for scaffold in ctx["contexts"][1:]:
+        assert scaffold["scaffold"] is True
+        assert "data_matrix" not in scaffold
+        assert scaffold["viewport"]["layers"]
+
+
+def test_explorer_context_degrades_without_optional_inputs():
+    """Absent opportunity matrix / mesh manifest must not break the build."""
+    payload, registry, _, _ = _explorer_inputs()
+    ctx = build_data.build_explorer_context(payload, registry, {}, {})
+    dm = ctx["contexts"][0]["data_matrix"]
+    assert dm["assets"] == []
+    assert dm["coordinates"] == {}
+    assert [t["identifier"] for t in dm["telemetry"]] == ["demo-model"]
