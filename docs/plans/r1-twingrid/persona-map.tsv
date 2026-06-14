@@ -1,0 +1,10 @@
+# persona	slug	repo_remote	repo_localdir	issues	title
+alice	contracts-core	tonykoop/makerbench-hwe	makerbench-hwe	mb#87,mb#88	Contracts-Core
+bob	manifest-hii	tonykoop/makerbench-hwe	makerbench-hwe	mb#89,mb#109	Manifest-HII+.mbc
+cindy	deliverable-packet	tonykoop/makerbench-hwe	makerbench-hwe	mb#103	Deliverable-Packet
+dan	run-nav	tonykoop/makerbench-hwe	makerbench-hwe	mb#104	Run-Nav
+elsa	blender-driver	StudioPipeline/hwe	StudioPipeline-hwe	sp#1	Blender-Driver
+frank	session-recorder	StudioPipeline/hwe	StudioPipeline-hwe	sp#2,mb#105	Session-Recorder
+gina	evolution-skill	tonykoop/HWE-Pipeline	HWE-Pipeline	cs#206,mb#112	Evolution-Skill+Alpha
+henry	docs	tonykoop/makerbench-hwe	makerbench-hwe	mb#111,mb#94,mb#95	Docs
+iris	logger-sdk	tonykoop/makerbench-hwe	makerbench-hwe	mb#92	Logger-SDK
