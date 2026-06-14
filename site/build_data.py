@@ -391,6 +391,20 @@ def build_delta_dossier(results_dir: Path) -> dict:
     return module.build_delta_dossier(results_dir)
 
 
+def _load_hii_badges_module():
+    """Load stdlib-only HII badge metadata helpers without importing makerbench deps."""
+    module_path = Path(__file__).resolve().parents[1] / "makerbench" / "hii_badges.py"
+    spec = importlib.util.spec_from_file_location("makerbench_hii_badges", module_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_HII_BADGES = _load_hii_badges_module()
+
+
 def is_infra_error(grade: dict) -> bool:
     """True if a graded cell is an infra/agent failure, not a real attempt.
 
@@ -622,6 +636,7 @@ def scan_results(results_dir: Path) -> dict:
         if harness_class != "autonomous":
             key_fields.append(harness_class)
         model_key = json.dumps(key_fields, separators=(",", ":"))
+        hii_levels = model_meta.get(model_key, {}).get("_hii_levels", [])
         model_meta[model_key] = {
             "identifier": model,
             "reasoning_level": reasoning_level,
@@ -634,6 +649,7 @@ def scan_results(results_dir: Path) -> dict:
             "runner_environment": run.get("runner_environment") or {},
             "hardware_environment": run.get("hardware_environment") or {},
             "grader_environment": run.get("grader_environment") or {},
+            "_hii_levels": hii_levels,
         }
         benchmark_version = benchmark_version or run.get("benchmark_version")
 
@@ -643,6 +659,20 @@ def scan_results(results_dir: Path) -> dict:
             track = row.get("track") or grade.get("track")
             if not task_id or not track:
                 continue
+
+            hii_level = _HII_BADGES.hii_level_from_manifest(
+                row.get("workflow_manifest") or run.get("workflow_manifest")
+            )
+            if hii_level is None:
+                hii_level = _HII_BADGES.hii_level_from_manifest(
+                    {
+                        "hii": row.get("hii") or run.get("hii"),
+                        "human_intervention_index": row.get("human_intervention_index")
+                        or run.get("human_intervention_index"),
+                    }
+                )
+            if hii_level is not None:
+                hii_levels.append(hii_level)
 
             bucket = cells[model_key][track][task_id]
             _add_telemetry(bucket, row)
@@ -1581,26 +1611,29 @@ def build_payload(results_dir: Path, registry_path: Path) -> dict:
                 per_track[track], meta
             )
 
-        models_out.append(
-            {
-                "row_id": model_key,
-                "identifier": meta["identifier"],
-                "model_family": model_family(meta["identifier"]),
-                "reasoning_level": meta.get("reasoning_level"),
-                "result_provenance": meta.get("result_provenance", "community"),
-                "verification_status": meta.get("verification_status", "unverified"),
-                "harness_class": meta.get("harness_class", "autonomous"),
-                "harness_subclass": meta.get("harness_subclass"),
-                "league": meta.get("league", "autonomous"),
-                "agent_identifier": meta.get("agent_identifier", "legacy_unknown"),
-                "runner_environment": meta.get("runner_environment", {}),
-                "hardware_environment": meta.get("hardware_environment", {}),
-                "grader_environment": meta.get("grader_environment", {}),
-                "is_control": meta["identifier"].startswith("baseline"),
-                "is_human_baseline": is_human_baseline_identifier(meta["identifier"]),
-                "tracks": per_track,
-            }
-        )
+        model_row = {
+            "row_id": model_key,
+            "identifier": meta["identifier"],
+            "model_family": model_family(meta["identifier"]),
+            "reasoning_level": meta.get("reasoning_level"),
+            "result_provenance": meta.get("result_provenance", "community"),
+            "verification_status": meta.get("verification_status", "unverified"),
+            "harness_class": meta.get("harness_class", "autonomous"),
+            "harness_subclass": meta.get("harness_subclass"),
+            "league": meta.get("league", "autonomous"),
+            "agent_identifier": meta.get("agent_identifier", "legacy_unknown"),
+            "runner_environment": meta.get("runner_environment", {}),
+            "hardware_environment": meta.get("hardware_environment", {}),
+            "grader_environment": meta.get("grader_environment", {}),
+            "is_control": meta["identifier"].startswith("baseline"),
+            "is_human_baseline": is_human_baseline_identifier(meta["identifier"]),
+            "tracks": per_track,
+        }
+        hii_level = _HII_BADGES.heaviest_hii_level(meta.get("_hii_levels", []))
+        hii_badge = _HII_BADGES.badge_metadata_for_level(hii_level)
+        if hii_badge is not None:
+            model_row["hii_badge"] = hii_badge
+        models_out.append(model_row)
 
     # Sort: league first (autonomous before workflows) so rows NEVER rank across
     # leagues, then reference rows last within a league (human-baseline then
