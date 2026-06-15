@@ -1,0 +1,18 @@
+# Headless Blender + the MakerBench JSON-RPC scene bridge (mb#93).
+#
+# Uses the official linuxserver/blender image, which ships a full Blender with a
+# bundled Python interpreter (so `bpy` is real, not pip-installed). We launch it
+# in --background mode and run the bridge add-on, which listens on :8765.
+FROM lscr.io/linuxserver/blender:4.2.1
+
+# The bridge add-on + headless launcher are mounted at /opt/mb-bridge by compose,
+# but copy them in too so the image is self-contained if run standalone.
+COPY blender_addon/ /opt/mb-bridge/
+
+ENV MB_BRIDGE_HOST=0.0.0.0
+ENV MB_BRIDGE_PORT=8765
+EXPOSE 8765
+
+# `blender` is on PATH in this image. --background gives a GUI-less bpy; --python
+# runs our launcher, which starts the bridge and spins the main-thread queue.
+ENTRYPOINT ["blender", "--background", "--python", "/opt/mb-bridge/headless_launcher.py"]

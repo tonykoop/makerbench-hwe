@@ -24,6 +24,8 @@ from typing import Any, Optional, Union
 
 from .manifest import (
     HII_L0,
+    HII_L1,
+    HII_L2,
     HumanInterventionIndex,
     Metrics,
     ProvenanceTrace,
@@ -168,7 +170,7 @@ class WorkflowLogger:
             created_at=self._created_at,
             stack=self.stack,
             metrics=metrics,
-            human_intervention_index=HumanInterventionIndex.from_calls(self._calls),
+            hii=HumanInterventionIndex.from_calls(self._calls),
             provenance_trace=self._provenance,
             tool_call_log=list(self._calls),
             artifacts=list(self._artifacts),
