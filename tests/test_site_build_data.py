@@ -2134,3 +2134,45 @@ def test_site_delta_dossier_viz_is_wired():
     # Both the definition and the call site must be present.
     assert app.count("renderDeltaDossier(") >= 2
     assert "DATA.delta_dossier" in app
+
+
+# --- generated HTML page-tree + domains drift guard (#224) -------------------
+def test_domains_json_is_a_guarded_top_level_output():
+    """domains.json is build_data output and must be drift-checked (#224)."""
+    assert "domains.json" in check_data_drift.GENERATED_TOP_LEVEL
+
+
+def test_compare_site_pages_passes_for_identical_trees(tmp_path):
+    committed = tmp_path / "committed"
+    generated = tmp_path / "generated"
+    for root in (committed, generated):
+        for tree in ("models", "tasks"):
+            page = root / tree / "m1" / "index.html"
+            page.parent.mkdir(parents=True)
+            page.write_text("<html>same</html>", encoding="utf-8")
+    report = check_data_drift.compare_site_pages(committed, generated)
+    assert not report.has_drift, report.format()
+
+
+def test_compare_site_pages_detects_changed_missing_and_extra(tmp_path):
+    committed = tmp_path / "committed"
+    generated = tmp_path / "generated"
+
+    def _page(root, tree, name, body):
+        p = root / tree / name / "index.html"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body, encoding="utf-8")
+
+    # m1: present in both but content differs -> changed
+    _page(committed, "models", "m1", "<html>old</html>")
+    _page(generated, "models", "m1", "<html>new</html>")
+    # task t_new: only in fresh build -> missing from commit
+    _page(generated, "tasks", "t_new", "<html>x</html>")
+    # task t_stale: only committed -> stale extra
+    _page(committed, "tasks", "t_stale", "<html>x</html>")
+
+    report = check_data_drift.compare_site_pages(committed, generated)
+    assert report.has_drift
+    assert "site/models/m1/index.html" in report.changed
+    assert "site/tasks/t_new/index.html" in report.missing
+    assert "site/tasks/t_stale/index.html" in report.extra
