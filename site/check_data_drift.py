@@ -23,6 +23,7 @@ SITE_DATA_DIR = Path("site/data")
 
 GENERATED_TOP_LEVEL = frozenset(
     {
+        "domains.json",
         "explorer.json",
         "findings.json",
         "get_started.json",
@@ -32,6 +33,13 @@ GENERATED_TOP_LEVEL = frozenset(
 )
 GENERATED_DIRS = ("archive", "badges", "models", "tasks")
 BUILD_DATA_INPUTS = ("meshes.json", "opportunity-matrix.json")
+
+# Generated *HTML page* trees, the source of truth for which is commit-and-check
+# (same as site/data): build_data.py renders one index.html per model and per
+# task, and the committed pages must match a fresh build. Pages.yml rebuilds on
+# deploy, which masks committed staleness — so without this guard the repo (and
+# any non-Pages mirror) can show wrong/missing model+task pages (#224).
+GENERATED_PAGE_TREES = ("models", "tasks")
 
 
 @dataclass(frozen=True)
@@ -46,9 +54,9 @@ class DriftReport:
 
     def format(self) -> str:
         if not self.has_drift:
-            return "site/data is current with site/build_data.py."
+            return "site/data and site/{models,tasks} are current with site/build_data.py."
         lines = [
-            "Committed site/data outputs drifted from site/build_data.py.",
+            "Committed site outputs drifted from site/build_data.py.",
             "Run `python site/build_data.py` and commit the regenerated files.",
         ]
         if self.changed:
@@ -130,24 +138,64 @@ def generated_site_data_files(data_dir: Path) -> set[str]:
     return files
 
 
-def compare_site_data(committed_data: Path, generated_data: Path) -> DriftReport:
-    committed = generated_site_data_files(committed_data)
-    generated = generated_site_data_files(generated_data)
+def _diff_trees(
+    committed_root: Path,
+    generated_root: Path,
+    listing,
+    *,
+    prefix: str,
+) -> tuple[list[str], list[str], list[str]]:
+    """Compare a committed vs freshly-built file set, returning (changed, missing, extra)."""
+    committed = listing(committed_root)
+    generated = listing(generated_root)
     common = committed & generated
-    changed = tuple(
-        sorted(
-            path
-            for path in common
-            if not filecmp.cmp(
-                committed_data / path,
-                generated_data / path,
-                shallow=False,
-            )
-        )
+    changed = [
+        f"{prefix}{path}"
+        for path in common
+        if not filecmp.cmp(committed_root / path, generated_root / path, shallow=False)
+    ]
+    missing = [f"{prefix}{path}" for path in (generated - committed)]
+    extra = [f"{prefix}{path}" for path in (committed - generated)]
+    return changed, missing, extra
+
+
+def _page_tree_files(root: Path) -> set[str]:
+    """Return ``root``-relative HTML page files (one index.html per model/task)."""
+    if not root.exists():
+        return set()
+    return {p.relative_to(root).as_posix() for p in root.rglob("*.html") if p.is_file()}
+
+
+def compare_site_data(committed_data: Path, generated_data: Path) -> DriftReport:
+    changed, missing, extra = _diff_trees(
+        committed_data, generated_data, generated_site_data_files, prefix="site/data/"
     )
-    missing = tuple(sorted(generated - committed))
-    extra = tuple(sorted(committed - generated))
-    return DriftReport(changed=changed, missing=missing, extra=extra)
+    return DriftReport(
+        changed=tuple(sorted(changed)),
+        missing=tuple(sorted(missing)),
+        extra=tuple(sorted(extra)),
+    )
+
+
+def compare_site_pages(committed_site: Path, generated_site: Path) -> DriftReport:
+    changed: list[str] = []
+    missing: list[str] = []
+    extra: list[str] = []
+    for tree in GENERATED_PAGE_TREES:
+        c, m, e = _diff_trees(
+            committed_site / tree,
+            generated_site / tree,
+            _page_tree_files,
+            prefix=f"site/{tree}/",
+        )
+        changed += c
+        missing += m
+        extra += e
+    return DriftReport(
+        changed=tuple(sorted(changed)),
+        missing=tuple(sorted(missing)),
+        extra=tuple(sorted(extra)),
+    )
 
 
 def check_build_data_drift(repo_root: Path = REPO_ROOT) -> DriftReport:
@@ -155,9 +203,15 @@ def check_build_data_drift(repo_root: Path = REPO_ROOT) -> DriftReport:
     with tempfile.TemporaryDirectory(prefix="makerbench-site-data-") as tmp:
         generated_site = Path(tmp) / "site"
         _run_build_data(repo_root, generated_site)
-        return compare_site_data(
+        data = compare_site_data(
             repo_root / SITE_DATA_DIR,
             generated_site / "data",
+        )
+        pages = compare_site_pages(repo_root / "site", generated_site)
+        return DriftReport(
+            changed=tuple(sorted(data.changed + pages.changed)),
+            missing=tuple(sorted(data.missing + pages.missing)),
+            extra=tuple(sorted(data.extra + pages.extra)),
         )
 
 
