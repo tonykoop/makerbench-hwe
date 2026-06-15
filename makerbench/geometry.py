@@ -130,7 +130,12 @@ def any_interference(parts: Iterable[PartMesh], tol_mm3: float = 1.0) -> list[tu
     return hits
 
 
-def estimate_min_wall_mm(mesh: trimesh.Trimesh, samples: int = 4000) -> float:
+def estimate_min_wall_mm(
+    mesh: trimesh.Trimesh,
+    samples: int = 4000,
+    *,
+    seed: int | None = None,
+) -> float:
     """Estimate the thinnest wall via interior ray casting.
 
     For each sampled surface point we shoot a ray along the inward normal and
@@ -139,7 +144,20 @@ def estimate_min_wall_mm(mesh: trimesh.Trimesh, samples: int = 4000) -> float:
     """
     if not mesh.is_watertight:
         return 0.0
-    pts, face_idx = trimesh.sample.sample_surface(mesh, samples)
+    if seed is None:
+        pts, face_idx = trimesh.sample.sample_surface(mesh, samples)
+    else:
+        try:
+            pts, face_idx = trimesh.sample.sample_surface(mesh, samples, seed=int(seed))
+        except TypeError:
+            # Older trimesh releases consume NumPy's global RNG. Keep the
+            # deterministic gate local by restoring the caller's RNG state.
+            state = np.random.get_state()
+            try:
+                np.random.seed(int(seed) % (2**32))
+                pts, face_idx = trimesh.sample.sample_surface(mesh, samples)
+            finally:
+                np.random.set_state(state)
     normals = mesh.face_normals[face_idx]
     origins = pts - normals * 1e-3
     directions = -normals

@@ -129,6 +129,44 @@ def test_canonical_hash_version_marker_is_v2():
     assert geo.CANONICAL_HASH_VERSION == 2
 
 
+def test_estimate_min_wall_seed_makes_sampling_repeatable(monkeypatch):
+    """The ray-cast wall sampler must use the caller's task/run seed."""
+    seen_seeds: list[int | None] = []
+
+    class FakeRay:
+        def intersects_location(self, ray_origins, ray_directions, multiple_hits=False):
+            del multiple_hits
+            distances = np.maximum(ray_origins[:, :1], 0.01)
+            locations = ray_origins + ray_directions * distances
+            return locations, np.arange(len(ray_origins)), np.zeros(len(ray_origins), dtype=int)
+
+    class FakeMesh:
+        is_watertight = True
+        face_normals = np.array([[1.0, 0.0, 0.0]])
+        ray = FakeRay()
+
+    def fake_sample_surface(mesh, samples, *, seed=None):
+        del mesh
+        seen_seeds.append(seed)
+        rng = np.random.default_rng(seed)
+        pts = np.column_stack([
+            rng.uniform(0.25, 2.0, samples),
+            np.zeros(samples),
+            np.zeros(samples),
+        ])
+        return pts, np.zeros(samples, dtype=int)
+
+    monkeypatch.setattr(trimesh.sample, "sample_surface", fake_sample_surface)
+
+    first = geo.estimate_min_wall_mm(FakeMesh(), samples=32, seed=219)
+    np.random.default_rng(999).uniform(size=64)
+    second = geo.estimate_min_wall_mm(FakeMesh(), samples=32, seed=219)
+
+    assert first == second
+    assert first > 0
+    assert seen_seeds == [219, 219]
+
+
 def test_centerline_sections_reveal_internal_cavity():
     """A Z mid-section must expose the enclosed cavity an external render hides.
 
