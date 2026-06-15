@@ -6,9 +6,11 @@ import pytest
 
 from makerbench.pcba_scoring import (
     PROFILE_NAME,
+    PCBADesignVelocity,
     PCBAMetrics,
     PCBAPowerNetRequirement,
     PCBAScoringProfile,
+    PCBAThermalSource,
     score_pcba,
 )
 
@@ -150,3 +152,89 @@ def test_profile_validation_and_metric_validation_fail_closed():
         PCBAPowerNetRequirement("PWR", current_ma=1.0, trace_length_mm=1.0, min_trace_width_mm=0.0)
     with pytest.raises(ValueError, match="max_cost_usd"):
         PCBAScoringProfile(target_cost_usd=10.0, max_cost_usd=10.0)
+    with pytest.raises(ValueError, match="max_design_iterations"):
+        PCBAScoringProfile(target_design_iterations=12, max_design_iterations=12)
+    with pytest.raises(ValueError, match="thermal source ref"):
+        PCBAThermalSource("", power_w=1.0, theta_ja_c_per_w=40.0, max_junction_c=125.0)
+
+
+def test_optional_dimensions_default_to_neutral_and_do_not_change_total():
+    # No thermal sources / no design velocity -> both score 1.0 and the weighted
+    # total is unchanged from the cost+compactness+power baseline.
+    result = score_pcba(_good_metrics())
+    assert result.total_score == 1.0
+    assert result.thermal_score == 1.0
+    assert result.design_velocity_score == 1.0
+    assert result.checks["thermal_sources_declared"] is False
+    assert result.checks["design_velocity_declared"] is False
+
+
+def test_thermal_dimension_scores_junction_headroom_and_flags_overheat():
+    metrics = PCBAMetrics(
+        board_area_mm2=900.0,
+        occupied_area_mm2=180.0,
+        component_count=12,
+        power_nets=(PCBAPowerNetRequirement("3V3", 100.0, 20.0, 0.5, min_clearance_mm=0.3),),
+        thermal_sources=(
+            PCBAThermalSource(
+                "U1_buck", power_w=3.0, theta_ja_c_per_w=60.0, max_junction_c=150.0
+            ),
+        ),
+    )
+    result = score_pcba(metrics)
+    # Tj = 25 + 3*60 = 205 C > 150 C limit.
+    assert result.quality["worst_junction_temp_c"] == 205.0
+    assert result.checks["u1_buck_junction_within_limit"] is False
+    assert result.thermal_score == 0.0
+    assert result.total_score < 1.0
+
+
+def test_thermal_isolation_flags_sensitive_part_next_to_switcher():
+    near = PCBAMetrics(
+        board_area_mm2=900.0,
+        occupied_area_mm2=180.0,
+        component_count=12,
+        power_nets=(PCBAPowerNetRequirement("3V3", 100.0, 20.0, 0.5, min_clearance_mm=0.3),),
+        thermal_sources=(
+            PCBAThermalSource("U1_buck", power_w=1.2, theta_ja_c_per_w=30.0,
+                              max_junction_c=150.0, x_mm=10.0, y_mm=10.0, hot=True),
+            PCBAThermalSource("Y1_xtal", power_w=0.0, theta_ja_c_per_w=200.0,
+                              max_junction_c=85.0, x_mm=12.0, y_mm=10.0, sensitive=True),
+        ),
+    )
+    result = score_pcba(near)
+    assert result.checks["sensitive_parts_thermally_isolated"] is False
+    assert result.quality["min_thermal_isolation_mm"] == 2.0
+
+    far = PCBAMetrics(
+        board_area_mm2=900.0,
+        occupied_area_mm2=180.0,
+        component_count=12,
+        power_nets=(PCBAPowerNetRequirement("3V3", 100.0, 20.0, 0.5, min_clearance_mm=0.3),),
+        thermal_sources=(
+            PCBAThermalSource("U1_buck", power_w=1.2, theta_ja_c_per_w=30.0,
+                              max_junction_c=150.0, x_mm=10.0, y_mm=10.0, hot=True),
+            PCBAThermalSource("Y1_xtal", power_w=0.0, theta_ja_c_per_w=200.0,
+                              max_junction_c=85.0, x_mm=30.0, y_mm=10.0, sensitive=True),
+        ),
+    )
+    assert score_pcba(far).checks["sensitive_parts_thermally_isolated"] is True
+
+
+def test_design_velocity_rewards_fast_convergence_and_penalizes_dirty_boards():
+    fast = score_pcba(PCBAMetrics(
+        board_area_mm2=900.0, occupied_area_mm2=180.0, component_count=12,
+        power_nets=(PCBAPowerNetRequirement("3V3", 100.0, 20.0, 0.5, min_clearance_mm=0.3),),
+        design_velocity=PCBADesignVelocity(iterations_to_clean=2),
+    ))
+    assert fast.design_velocity_score == 1.0
+    assert fast.checks["design_within_iteration_budget"] is True
+
+    never_clean = score_pcba(PCBAMetrics(
+        board_area_mm2=900.0, occupied_area_mm2=180.0, component_count=12,
+        power_nets=(PCBAPowerNetRequirement("3V3", 100.0, 20.0, 0.5, min_clearance_mm=0.3),),
+        design_velocity=PCBADesignVelocity(iterations_to_clean=20, clean_achieved=False),
+    ))
+    assert never_clean.design_velocity_score == 0.0
+    assert never_clean.checks["design_reached_clean"] is False
+    assert never_clean.total_score < 1.0
