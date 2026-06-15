@@ -1,0 +1,21 @@
+{
+  "name": "R_0603",
+  "description": "Generic 0603 chip resistor",
+  "reference_prefix": "R",
+  "pins": [
+    {
+      "number": "1",
+      "name": "~",
+      "type": "passive"
+    },
+    {
+      "number": "2",
+      "name": "~",
+      "type": "passive"
+    }
+  ],
+  "provenance": {
+    "license": "CC-BY-4.0",
+    "source": "first-party"
+  }
+}
