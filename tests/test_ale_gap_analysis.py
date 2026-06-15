@@ -201,6 +201,15 @@ def test_follow_ups_match_gap_categories():
         )
 
 
+def test_each_follow_up_has_a_resolvable_issue_packet():
+    """Every follow-up names a ready-to-file packet that exists on disk (#163)."""
+    for fu in _follow_ups():
+        packet = fu.get("issue_packet")
+        assert packet, f"follow-up {fu['slug']}: issue_packet path required"
+        assert packet == f"docs/ale_followups/{fu['slug']}.md", fu["slug"]
+        assert (ROOT / packet).is_file(), f"missing packet file: {packet}"
+
+
 def test_md_renders_every_category_title():
     md = ALE_MD.read_text(encoding="utf-8")
     for cat in _categories():
