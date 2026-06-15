@@ -247,6 +247,162 @@ def localized_string_tension_deflection(params: dict) -> dict[str, float]:
     return string_tension_bridge_check(params)
 
 
+# Simply-supported rectangular plate under uniform load, ν=0.3 (Timoshenko &
+# Woinowsky-Krieger, Theory of Plates and Shells, 2nd ed., Table 8). Coefficients
+# are tabulated against the inverse aspect ratio x = b/a (b = short side) so that
+# x -> 0 recovers the infinite-strip (one-way bending) limit. ``alpha`` scales
+# central deflection w = alpha·q·b^4/D; ``beta`` scales max stress sigma = beta·q·b^2/t^2.
+_PLATE_X = (0.0, 1.0 / 3.0, 0.5, 1.0 / 1.8, 0.625, 1.0 / 1.4, 1.0 / 1.2, 1.0)
+_PLATE_ALPHA = (0.01302, 0.01223, 0.01013, 0.00931, 0.00830, 0.00705, 0.00564, 0.00406)
+_PLATE_BETA = (0.7500, 0.7134, 0.6102, 0.5688, 0.5172, 0.4530, 0.3762, 0.2874)
+_PLATE_POISSON = 0.3
+
+
+def _interp(x: float, xs: tuple[float, ...], ys: tuple[float, ...]) -> float:
+    """Linear interpolation over monotonically increasing ``xs`` with clamping."""
+    if x <= xs[0]:
+        return ys[0]
+    if x >= xs[-1]:
+        return ys[-1]
+    for i in range(1, len(xs)):
+        if x <= xs[i]:
+            x0, x1 = xs[i - 1], xs[i]
+            y0, y1 = ys[i - 1], ys[i]
+            t = (x - x0) / (x1 - x0) if x1 > x0 else 0.0
+            return y0 + t * (y1 - y0)
+    return ys[-1]
+
+
+def soundboard_panel_deflection_check(params: dict) -> dict[str, float]:
+    """Check a soundboard PANEL's stiffness/strength under string down-bearing.
+
+    Companion to :func:`string_tension_bridge_check` for the soundboard half of
+    issue #131. Where the bridge bar is modelled as a one-dimensional simply
+    supported beam, a soundboard is a thin rectangular *plate*: the string
+    down-bearing is spread as a uniform pressure over the panel area and the panel
+    is modelled as a simply-supported rectangular plate (Kirchhoff theory). This
+    is a deliberately distinct structural model from the beam rung, not a rename.
+
+    Pure params-derived (no mesh, no oracle). The string down-bearing force is the
+    same as the bridge rung (``F = 2·T_total·sin(break/2)``); it is divided over the
+    panel footprint to a pressure ``q = F / (a·b)`` and fed through the classic
+    uniform-load plate deflection/stress relations with ν = 0.3 table coefficients.
+
+    ``params`` keys:
+      - ``material_process`` (str, default ``fdm_pla``): public modulus / allowable
+        bending stress / minimum process wall.
+      - ``string_count`` (int), ``per_string_tension_n`` (float, optional) or
+        ``tension_class`` (light/medium/heavy), ``break_angle_deg`` (float): the
+        same down-bearing inputs as the bridge rung.
+      - ``panel_length_mm`` / ``panel_width_mm`` (float): plate plan dimensions.
+      - ``panel_thickness_mm`` (float): measured/declared panel thickness.
+      - ``load_path_declared`` (bool): agent declares an edge support / load path.
+      - ``deflection_limit_mm`` (float, optional): defaults to short_side / 300.
+      - ``elastic_modulus_mpa``, ``allowable_bending_stress_mpa``, ``min_wall_mm``,
+        ``poisson_ratio`` (optional float overrides).
+
+    Returns measured pressure/deflection/stress terms plus ``min_thickness_under_load_ok``,
+    ``panel_deflection_within_limit``, ``load_path_declared``, and ``feasible``
+    flags (1.0 = yes, 0.0 = no).
+    """
+    material_process = str(params.get("material_process", "fdm_pla"))
+    props = _MATERIAL_PROCESS_PROPS.get(material_process, _MATERIAL_PROCESS_PROPS["fdm_pla"])
+
+    string_count = max(int(params["string_count"]), 0)
+    if "per_string_tension_n" in params:
+        per_string_tension = max(float(params["per_string_tension_n"]), 0.0)
+    else:
+        tension_class = str(params.get("tension_class", "medium")).lower()
+        per_string_tension = _TENSION_CLASS_N.get(tension_class, _TENSION_CLASS_N["medium"])
+
+    break_angle_deg = max(float(params.get("break_angle_deg", 12.0)), 0.0)
+    length = max(float(params["panel_length_mm"]), 0.0)
+    width = max(float(params["panel_width_mm"]), 0.0)
+    thickness = max(float(params["panel_thickness_mm"]), 0.0)
+
+    elastic_modulus = max(
+        float(params.get("elastic_modulus_mpa", props["elastic_modulus_mpa"])), 0.0
+    )
+    allowable_stress = max(
+        float(params.get("allowable_bending_stress_mpa",
+                         props["allowable_bending_stress_mpa"])),
+        0.0,
+    )
+    min_wall = max(float(params.get("min_wall_mm", props["min_wall_mm"])), 0.0)
+    poisson = float(params.get("poisson_ratio", _PLATE_POISSON))
+    load_path_ok = bool(params.get("load_path_declared", False))
+
+    short_side = min(length, width)
+    long_side = max(length, width)
+    deflection_limit = float(params.get("deflection_limit_mm",
+                                        short_side / 300.0 if short_side else 0.0))
+    deflection_limit = max(deflection_limit, 0.0)
+
+    total_tension = string_count * per_string_tension
+    downforce = 2.0 * total_tension * math.sin(math.radians(break_angle_deg) / 2.0)
+    area = length * width
+    pressure = downforce / area if area > 0.0 else float("inf")
+
+    x_ratio = short_side / long_side if long_side > 0.0 else 0.0
+    alpha = _interp(x_ratio, _PLATE_X, _PLATE_ALPHA)
+    beta = _interp(x_ratio, _PLATE_X, _PLATE_BETA)
+
+    rigidity = (
+        elastic_modulus * thickness ** 3 / (12.0 * (1.0 - poisson ** 2))
+        if thickness > 0.0 and poisson ** 2 < 1.0
+        else 0.0
+    )
+    if rigidity > 0.0 and math.isfinite(pressure):
+        max_deflection = alpha * pressure * short_side ** 4 / rigidity
+    else:
+        max_deflection = float("inf")
+    if thickness > 0.0 and math.isfinite(pressure):
+        max_stress = beta * pressure * short_side ** 2 / thickness ** 2
+    else:
+        max_stress = float("inf")
+
+    if allowable_stress > 0.0 and math.isfinite(pressure) and short_side > 0.0:
+        required_stress_thickness = math.sqrt(
+            beta * pressure * short_side ** 2 / allowable_stress
+        )
+    else:
+        required_stress_thickness = float("inf")
+    if (elastic_modulus > 0.0 and deflection_limit > 0.0 and short_side > 0.0
+            and math.isfinite(pressure)):
+        required_deflection_thickness = (
+            alpha * pressure * short_side ** 4 * 12.0 * (1.0 - poisson ** 2)
+            / (elastic_modulus * deflection_limit)
+        ) ** (1.0 / 3.0)
+    else:
+        required_deflection_thickness = float("inf")
+    required_thickness = max(min_wall, required_stress_thickness,
+                             required_deflection_thickness)
+
+    min_thickness_ok = thickness >= max(min_wall, required_stress_thickness)
+    deflection_ok = max_deflection <= deflection_limit
+
+    return {
+        "string_count": float(string_count),
+        "per_string_tension_n": round(per_string_tension, 6),
+        "total_string_tension_n": round(total_tension, 6),
+        "downforce_n": round(downforce, 6),
+        "panel_area_mm2": round(area, 6),
+        "panel_pressure_mpa": round(pressure, 9),
+        "short_side_mm": round(short_side, 6),
+        "aspect_ratio": round(long_side / short_side if short_side else 0.0, 6),
+        "flexural_rigidity_n_mm": round(rigidity, 6),
+        "max_deflection_mm": round(max_deflection, 6),
+        "deflection_limit_mm": round(deflection_limit, 6),
+        "max_bending_stress_mpa": round(max_stress, 6),
+        "allowable_bending_stress_mpa": round(allowable_stress, 6),
+        "required_panel_thickness_mm": round(required_thickness, 6),
+        "min_thickness_under_load_ok": float(min_thickness_ok),
+        "panel_deflection_within_limit": float(deflection_ok),
+        "load_path_declared": float(load_path_ok),
+        "feasible": float(min_thickness_ok and deflection_ok and load_path_ok),
+    }
+
+
 def bore_resonance_check(params: dict) -> dict[str, float]:
     """Check that a wind/idiophone bore's expected fundamental pitch is on target.
 

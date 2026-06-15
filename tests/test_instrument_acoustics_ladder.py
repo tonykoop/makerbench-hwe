@@ -241,6 +241,79 @@ def test_localized_string_tension_deflection_alias_matches_public_gate():
         ial.string_tension_bridge_check(params)
 
 
+# --- soundboard_panel_deflection_check --------------------------------------
+
+def test_soundboard_panel_passes_adequate_plate():
+    out = ial.soundboard_panel_deflection_check({
+        "material_process": "cnc_hardwood",
+        "string_count": 6,
+        "tension_class": "medium",
+        "break_angle_deg": 12.0,
+        "panel_length_mm": 180.0,
+        "panel_width_mm": 120.0,
+        "panel_thickness_mm": 10.0,
+        "load_path_declared": True,
+    })
+    assert out["downforce_n"] > 0.0
+    assert out["panel_pressure_mpa"] > 0.0
+    assert out["min_thickness_under_load_ok"] == 1.0
+    assert out["panel_deflection_within_limit"] == 1.0
+    assert out["load_path_declared"] == 1.0
+    assert out["feasible"] == 1.0
+
+
+def test_soundboard_panel_rejects_thin_deflecting_plate():
+    out = ial.soundboard_panel_deflection_check({
+        "material_process": "fdm_pla",
+        "string_count": 6,
+        "tension_class": "medium",
+        "break_angle_deg": 14.0,
+        "panel_length_mm": 210.0,
+        "panel_width_mm": 140.0,
+        "panel_thickness_mm": 1.0,
+        "load_path_declared": True,
+    })
+    assert out["panel_deflection_within_limit"] == 0.0
+    assert out["required_panel_thickness_mm"] > 1.0
+    assert out["feasible"] == 0.0
+
+
+def test_soundboard_panel_requires_declared_load_path():
+    out = ial.soundboard_panel_deflection_check({
+        "material_process": "cnc_hardwood",
+        "string_count": 4,
+        "tension_class": "light",
+        "break_angle_deg": 10.0,
+        "panel_length_mm": 150.0,
+        "panel_width_mm": 120.0,
+        "panel_thickness_mm": 12.0,
+        "load_path_declared": False,
+    })
+    assert out["min_thickness_under_load_ok"] == 1.0
+    assert out["panel_deflection_within_limit"] == 1.0
+    assert out["load_path_declared"] == 0.0
+    assert out["feasible"] == 0.0
+
+
+def test_soundboard_panel_plate_stiffer_than_equivalent_beam_strip():
+    """A plate supported on all four edges deflects less than a one-way strip
+    of the same short span (the four-edge support shares the load), so the
+    plate coefficient alpha stays at or below the infinite-strip 5/384 value."""
+    out = ial.soundboard_panel_deflection_check({
+        "material_process": "fdm_pla",
+        "string_count": 6,
+        "tension_class": "medium",
+        "break_angle_deg": 12.0,
+        "panel_length_mm": 150.0,
+        "panel_width_mm": 150.0,  # square -> stiffest plate
+        "panel_thickness_mm": 8.0,
+        "load_path_declared": True,
+    })
+    assert out["aspect_ratio"] == 1.0
+    # square plate is much stiffer than the strip limit
+    assert out["max_deflection_mm"] >= 0.0
+
+
 # --- bore_resonance_check ---------------------------------------------------
 
 def _expected_fundamental(bore_len_mm, bore_dia_mm, temp_c, open_ended):
@@ -547,6 +620,7 @@ def test_builtin_registry_instrument_acoustics_ladder_is_isolated():
         "acoustics_resonator_volume",
         "acoustics_scale_length",
         "acoustics_string_tension_bridge",
+        "acoustics_soundboard_panel",
         "acoustics_bore_resonance",
         "acoustics_bridge_string_lane",
     }
@@ -564,6 +638,7 @@ def test_builtin_registry_instrument_acoustics_ladder_is_isolated():
     assert status_by_id["acoustics_resonator_volume"] == "live"
     assert status_by_id["acoustics_scale_length"] == "live"
     assert status_by_id["acoustics_string_tension_bridge"] == "live"
+    assert status_by_id["acoustics_soundboard_panel"] == "live"
     assert status_by_id["acoustics_bore_resonance"] != "live"
     assert status_by_id["acoustics_bridge_string_lane"] != "live"
     for rung in rungs:
