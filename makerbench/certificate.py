@@ -28,7 +28,7 @@ import json
 from pathlib import Path
 from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 MBC_KIND = "makerbench_certificate"
 MBC_SCHEMA_VERSION = "0.1"
@@ -55,7 +55,16 @@ class MbcPayload(BaseModel):
     the verdict + per-check results, the artifact fingerprint it was computed over,
     the video-evidence hash, the HII/autonomy ratio, the toolchain that produced it,
     a timestamp, and the server-issued ``nonce`` the signature is bound to.
+
+    ``extra="allow"`` makes the signed body **additively evolvable**: a newer
+    producer can add and sign a field this version does not know, and an older
+    ``verify_mbc`` keeps that field through parse + ``model_dump`` so the HMAC
+    still recomputes over the full set instead of dropping it and failing. The
+    signature thus binds exactly the bytes the producer signed, unknown fields
+    included (#223).
     """
+
+    model_config = ConfigDict(extra="allow")
 
     schema_version: MbcSchemaVersion = MBC_SCHEMA_VERSION
     kind: MbcKind = MBC_KIND
