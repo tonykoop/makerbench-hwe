@@ -16,8 +16,8 @@ future packs (DXF/SVG, build123d/OCCT, Blender, Fusion/APS) will follow. It does
 **not** change how today's core grading computes a score.
 
 Schema lives in [`makerbench/schema.py`](../makerbench/schema.py) (`EvaluatorSpec`,
-`EvaluatorManifest`); the validator and the (currently empty) first-party registry
-in [`makerbench/evaluators.py`](../makerbench/evaluators.py).
+`EvaluatorManifest`); the validator and the first-party registry live in
+[`makerbench/evaluators.py`](../makerbench/evaluators.py).
 
 ## Why a plugin interface
 
@@ -43,9 +43,9 @@ pack publishes for the exported artifacts it grades.
 - Each `EvaluatorSpec` in it describes one evaluator: the formats it consumes, the
   failure levels and continuous metrics it produces, its dependencies and runtime
   class, and whether it needs a private oracle fixture.
-- `builtin_evaluator_manifest()` returns the **first-party** manifest — empty
-  today, because core's grader is not yet exposed as a registered plugin. The
-  registry exists with nothing in it; packs declare their own evaluators.
+- `builtin_evaluator_manifest()` returns the **first-party** manifest. Core's
+  OpenSCAD grader is not yet exposed as a registered plugin, but optional-local
+  helpers such as KiCad ERC/DRC can be advertised there.
 - `validate_evaluator_manifest()` enforces the public/private boundary and the
   manifest shape so a private helper can never be published as a public evaluator.
 
