@@ -41,8 +41,11 @@ jobs:
       - name: Audit public benchmark artifacts
         run: python scripts/audit_public_artifacts.py
 
+      - name: Check generated site data
+        run: python site/check_data_drift.py
+
       - name: Lint
-        run: ruff check makerbench tasks
+        run: ruff check makerbench tasks site/check_data_drift.py
 
       - name: Unit tests
         run: xvfb-run -a pytest -q
