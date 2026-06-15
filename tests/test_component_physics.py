@@ -7,19 +7,28 @@ import math
 import pytest
 
 from makerbench.component_physics import (
+    DEFAULT_MAX_TRACE_RISE_C,
     ComponentPhysics,
     ElectricalThermalLimits,
+    MaterialPhysics,
     PackageMetadata,
     check_component_limits,
     component_from_mapping,
+    copper_weight_to_thickness_um,
     derated_power_limit_w,
+    material_from_mapping,
     resistor_current_for_power_a,
     resistor_power_w,
     resistor_voltage_for_power_v,
+    thermal_calc,
     thermal_power_limit,
     trace_current_capacity_a,
     trace_required_width_mm,
+    trace_temperature_rise_c,
+    trace_width_calc,
 )
+
+MIL_PER_MM = 39.37007874015748
 
 
 def test_package_metadata_records_public_pcba_shape():
@@ -178,3 +187,96 @@ def test_calculators_never_return_nan_for_valid_boundary_inputs():
     ]
 
     assert all(math.isfinite(value) for value in values)
+
+
+def test_material_physics_records_and_aliases_offtheshelf_block():
+    material = MaterialPhysics(
+        package_material="  epoxy mold compound  ",
+        thermal_conductivity_w_mk=0.9,
+        lead_composition="SAC305",
+        solder_profile="IPC-J-STD-020E lead-free",
+    )
+    assert material.package_material == "epoxy mold compound"
+    assert material.to_dict()["thermal_conductivity_w_mk"] == 0.9
+
+    # offtheshelf physics block uses `recommended_solder_profile`.
+    coerced = material_from_mapping(
+        {"package_material": "alumina", "recommended_solder_profile": "reflow"}
+    )
+    assert coerced.solder_profile == "reflow"
+    assert "solder_profile" in coerced.to_dict()
+    with pytest.raises(ValueError, match="thermal_conductivity_w_mk"):
+        MaterialPhysics(thermal_conductivity_w_mk=0)
+
+
+def test_component_carries_material_in_round_trip():
+    component = component_from_mapping(
+        {
+            "component_id": "U_MCU",
+            "family": "mcu",
+            "package": {"package": "LQFP-64", "pin_count": 64},
+            "material": {"package_material": "EMC", "thermal_conductivity_w_mk": 0.8},
+        }
+    )
+    assert component.material.package_material == "EMC"
+    assert component.to_dict()["material"]["thermal_conductivity_w_mk"] == 0.8
+
+
+def test_trace_temperature_rise_inverts_ipc_capacity():
+    capacity = trace_current_capacity_a(
+        width_mm=0.25, copper_thickness_um=35, temperature_rise_c=10
+    )
+    rise = trace_temperature_rise_c(
+        current_a=capacity, width_mm=0.25, copper_thickness_um=35
+    )
+    assert rise == pytest.approx(10.0, rel=1e-9)
+    # internal traces (half the k) heat more for the same geometry/current.
+    inner = trace_temperature_rise_c(
+        current_a=capacity, width_mm=0.25, copper_thickness_um=35, layer="internal"
+    )
+    assert inner > rise
+
+
+def test_copper_weight_helper_matches_one_ounce_convention():
+    assert copper_weight_to_thickness_um(1.0) == pytest.approx(35.0)
+    assert copper_weight_to_thickness_um(2.0) == pytest.approx(70.0)
+
+
+def test_trace_width_calc_flags_overloaded_thin_trace():
+    # Story fixture: a 3 A net on a 10-mil, 1 oz external trace.
+    report = trace_width_calc(
+        current_a=3.0, width_mm=10 / MIL_PER_MM, copper_weight_oz=1.0
+    )
+    assert report["temperature_rise_c"] > 45.0
+    assert report["passed"] is False
+    assert report["max_temp_rise_c"] == DEFAULT_MAX_TRACE_RISE_C
+    # The reported required width would actually carry 3 A within the limit.
+    healthy = trace_width_calc(
+        current_a=3.0, width_mm=report["required_width_mm"], copper_weight_oz=1.0
+    )
+    assert healthy["temperature_rise_c"] == pytest.approx(DEFAULT_MAX_TRACE_RISE_C, rel=1e-9)
+    assert healthy["passed"] is True
+
+
+def test_thermal_calc_computes_junction_temp_and_verdict():
+    # 5 A through a 50 mOhm Rds(on), theta_ja 62 C/W, 25 C ambient -> 1.25 W.
+    report = thermal_calc(
+        current_a=5.0,
+        r_ds_on_ohm=0.05,
+        thermal_resistance_c_per_w=62,
+        ambient_c=25,
+        max_junction_c=150,
+    )
+    assert report["power_w"] == pytest.approx(1.25)
+    assert report["junction_temp_c"] == pytest.approx(25 + 1.25 * 62)
+    assert report["passed"] is True
+
+    hot = thermal_calc(
+        power_w=3.0, thermal_resistance_c_per_w=62, ambient_c=85, max_junction_c=150
+    )
+    assert hot["junction_temp_c"] == pytest.approx(85 + 3.0 * 62)
+    assert hot["passed"] is False
+    assert hot["margin_c"] < 0
+
+    with pytest.raises(ValueError, match="provide power_w"):
+        thermal_calc(thermal_resistance_c_per_w=62, max_junction_c=150)

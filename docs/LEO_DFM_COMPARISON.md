@@ -33,6 +33,14 @@ that MakerBench does not yet grade.
 | STEP and image-to-geometry workflows | `makerbench-core` STEP envelope checks and optional-local `brep-build123d` topology path | Strong for public-safe exchange-file scoring; deeper topology remains optional-local | LEO/SOLIDWORKS can produce native B-rep with proprietary feature history. MakerBench should grade exported STEP, never require a live SOLIDWORKS seat for core scores. |
 | Simulation assistance | Level 3 physical checks today; future `simulation-fea` expert pack | Limited today | LEO may connect to proprietary simulation workflows. MakerBench should compare only typed, exported requirements once an open solver profile exists. |
 
+A machine-readable version of this table lives in
+[`leo_dfm_mapping.json`](leo_dfm_mapping.json) (`leo-dfm-mapping-v1`): each
+capability lists its MakerBench rule IDs, rule families, a `coverage` level
+(`strong`/`partial`/`limited`), and the gap/comparison question. It carries the
+two hard constraints as flags — `leo_is_a_makerbench_grader: false` and
+`solidworks_is_a_core_dependency: false` — so downstream tooling and tests can
+consume the mapping without re-parsing the prose.
+
 ## SOLIDWORKS-output channel decision
 
 Decision: a SOLIDWORKS/LEO channel fits MakerBench only as an
@@ -90,6 +98,15 @@ oracles.
 5. Keep the example metadata-only unless the artifact itself is public-safe.
    Never include private oracle geometry, held-out seeds, or proprietary
    SOLIDWORKS internals.
+
+## Worked example
+
+A small, public-safe worked comparison ships in
+[`examples/leo_comparison/`](../examples/leo_comparison/): a generic L-bracket
+STEP standing in for a LEO-passed part, scored by the deterministic
+`makerbench-core` path to `makerbench_dfm_score: 100.0%` (the pass/pass row of
+the agreement matrix). It is reproducible from this repo with no SOLIDWORKS
+license; the LEO verdict column is recorded metadata only.
 
 ## Outreach framing
 
