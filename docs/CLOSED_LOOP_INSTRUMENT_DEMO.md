@@ -60,6 +60,30 @@ It is marked `assisted-workflow` / `gui-injected-copilot` and `HII L1`: the
 public artifact is hard-graded, while the proprietary CAD process is disclosed
 rather than reproduced.
 
+## Phase 3b: DFM + manufacturing-cost gate via `run_funnel`
+
+The acoustic gate above proves the design is *musically* correct. A real
+prototyping loop also needs to know the design is *manufacturable* and what a
+prototype costs. Phase 3b routes the same pilot's exported STEP through the
+deflationary prototyping funnel from epic #240 (`makerbench.funnel.run_funnel`):
+
+| Gate | Check | Result |
+| --- | --- | --- |
+| 1 DFM | `makerbench-core` deterministic component score on the exported STEP | `makerbench_dfm_score: 100.0%` |
+| 2 local cost | `makerbench.costing` FDM/PLA prototype estimate (`fdm-pla-v1` preset) | itemized local estimate (USD) |
+| 3 quote | deterministic `StubQuoteAdapter` (offline; no vendor contacted) | normalized quote |
+| 4 approval | human approval request | terminal; `purchase_order_allowed: false` |
+
+So the pilot passes **both** gates: acoustically correct **and**
+manufacturable + costed. The runnable demo is
+[`examples/closed_loop_instrument_funnel_demo.py`](../examples/closed_loop_instrument_funnel_demo.py)
+and the captured, deterministic result is
+[`examples/closed_loop_instrument_funnel_demo.results.json`](../examples/closed_loop_instrument_funnel_demo.results.json)
+(`both_gates_passed: true`). The exported STEP
+([`examples/closed_loop_instrument_bridge.step`](../examples/closed_loop_instrument_bridge.step))
+is public-safe generic geometry; the funnel is deterministic and offline by
+default and never places an order.
+
 ## Current MakerBench checks used
 
 - `scale_length_check`: target scale, tolerance, nut-to-bridge consistency, and

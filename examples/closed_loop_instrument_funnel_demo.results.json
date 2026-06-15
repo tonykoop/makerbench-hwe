@@ -1,0 +1,33 @@
+{
+  "acoustics": {
+    "feasible": 1.0,
+    "intonation_allowance_ok": 1.0,
+    "nut_bridge_consistent": 1.0,
+    "scale_error_mm": 0.0,
+    "scale_length_match": 1.0
+  },
+  "both_gates_passed": true,
+  "dfm": {
+    "passed": true,
+    "profile": "portable-dfm-v1",
+    "score": 100.0
+  },
+  "geometry": "examples/closed_loop_instrument_bridge.step",
+  "manufacturing": {
+    "blocked_at": null,
+    "cost_profile": "fdm-pla-v1",
+    "gates_passed": [
+      "dfm",
+      "local_cost",
+      "quote",
+      "approval_request"
+    ],
+    "local_cost_usd": 5.23,
+    "process": "3d_printing",
+    "purchase_order_allowed": false,
+    "quote_price_usd": 50.74,
+    "quote_status": "quoted",
+    "quote_vendor": "stub"
+  },
+  "pilot": "lyre-kora-bridge"
+}
