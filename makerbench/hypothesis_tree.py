@@ -35,6 +35,11 @@ Report plus a flat dashboard summary suitable for leaderboard comparison.
 
 from __future__ import annotations
 
+import contextlib
+import json
+import os
+import tempfile
+from pathlib import Path
 from typing import Callable, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -445,6 +450,80 @@ def run_tree(
         if coordinator.best_node_id is None:
             coordinator.promote(node.id, heldout_passed=heldout)
     return coordinator.report()
+
+
+# --- isolated scratch runs + persistence -----------------------------------
+
+@contextlib.contextmanager
+def _chdir(path: Path):
+    """Temporarily switch the working directory, restoring it on exit."""
+    previous = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
+
+
+def scratch_run_executor(
+    inner: Executor,
+    *,
+    root_dir: Optional[str | Path] = None,
+    persist_evidence: bool = True,
+) -> Executor:
+    """Wrap an executor so each hypothesis runs in its own isolated scratch dir.
+
+    Realizes Arbor's "short-lived executor in an isolated context" pattern
+    deterministically and offline: each hypothesis gets a fresh
+    ``<root>/<node_id>/`` directory, ``inner`` runs with its working directory set
+    there (so any artifacts it writes land in that scratch dir), and the returned
+    evidence is persisted as ``evidence.json`` with the scratch path appended to
+    its ``artifacts``. ``root_dir`` defaults to a fresh tempdir. Swap ``inner`` for
+    a real worktree/OpenSCAD rollout and the Coordinator/report code is unchanged.
+    """
+    base = Path(root_dir) if root_dir is not None else Path(tempfile.mkdtemp(prefix="arbor_"))
+    base.mkdir(parents=True, exist_ok=True)
+
+    def _wrapped(contract: ResearchContract, node: IdeaNode) -> HypothesisEvidence:
+        scratch = base / node.id
+        scratch.mkdir(parents=True, exist_ok=True)
+        with _chdir(scratch):
+            evidence = inner(contract, node)
+        artifacts = list(evidence.artifacts)
+        if str(scratch) not in artifacts:
+            artifacts.append(str(scratch))
+        if persist_evidence:
+            evidence_path = scratch / "evidence.json"
+            evidence_path.write_text(evidence.model_dump_json(indent=2), encoding="utf-8")
+            artifacts.append(str(evidence_path))
+        return evidence.model_copy(update={"artifacts": artifacts})
+
+    return _wrapped
+
+
+def persist_report(report: ResearchReport, out_dir: str | Path) -> dict[str, str]:
+    """Write the full audit trail to ``out_dir`` and return the file paths.
+
+    Produces ``report.json`` (the serialized :class:`ResearchReport`),
+    ``report.md`` (:func:`render_report_markdown`), and ``dashboard.json``
+    (:func:`dashboard_summary`) — the tree report + dashboard summary the
+    Workflow Track expects. All are public metadata only.
+    """
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    report_json = out / "report.json"
+    report_md = out / "report.md"
+    dashboard_json = out / "dashboard.json"
+    report_json.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    report_md.write_text(render_report_markdown(report), encoding="utf-8")
+    dashboard_json.write_text(
+        json.dumps(dashboard_summary(report), indent=2, sort_keys=True), encoding="utf-8"
+    )
+    return {
+        "report_json": str(report_json),
+        "report_md": str(report_md),
+        "dashboard_json": str(dashboard_json),
+    }
 
 
 # --- reporting -------------------------------------------------------------
