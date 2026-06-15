@@ -168,6 +168,18 @@ def trusted_attestations(comments: list[dict[str, Any]]) -> list[dict[str, Any]]
     return attestations
 
 
+def fetch_pr_author_association(repo: str, pr: int) -> str:
+    """Return the PR author's repository association (OWNER/MEMBER/.../NONE)."""
+    proc = subprocess.run(
+        ["gh", "api", f"repos/{repo}/pulls/{pr}", "--jq", ".author_association"],
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return proc.stdout.strip()
+
+
 def verify_result_attestations(
     result_paths: list[Path],
     *,
@@ -175,8 +187,17 @@ def verify_result_attestations(
     repo: str,
     pr: int,
     require_verified: bool = True,
+    pr_author_association: str | None = None,
 ) -> list[str]:
     problems: list[str] = []
+    # `result_provenance="official"` skips the community attestation requirement
+    # entirely, but it is set purely from committed JSON — so an untrusted PR
+    # could self-declare it to bypass the gate. Honor the bypass only when the PR
+    # author is a trusted association; otherwise it is a violation (#221).
+    official_author_trusted = (
+        pr_author_association is not None
+        and pr_author_association in TRUSTED_AUTHOR_ASSOCIATIONS
+    )
     by_key: dict[tuple[str, str], dict[str, Any]] = {}
     for attestation in trusted_attestations(comments):
         if attestation.get("kind") != ATTESTATION_KIND:
@@ -195,6 +216,13 @@ def verify_result_attestations(
         rel = _public_result_path(path)
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
         if payload.get("result_provenance", "community") == "official":
+            if official_author_trusted:
+                continue
+            problems.append(
+                f"{rel}: result_provenance='official' is maintainer-only; a PR "
+                f"authored by association {pr_author_association or 'UNKNOWN'!r} "
+                "may not self-declare official provenance to bypass attestation"
+            )
             continue
         status = payload.get("verification_status", "unverified")
         if status != "public-regrade-verified":
