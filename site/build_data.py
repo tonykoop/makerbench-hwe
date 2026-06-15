@@ -3579,6 +3579,17 @@ def main() -> None:
         args.out.parent / "inspect.json",
         build_inspect(mesh_manifest, inspect_registry, payload.get("benchmark_version")),
     )
+    # Domain-breadth gallery (issue #169, epic #176) — derives every domain card
+    # from registry.json so the landing page can never drift from what shipped.
+    _dd_spec = importlib.util.spec_from_file_location(
+        "makerbench_domains_data", script_dir / "domains_data.py"
+    )
+    _dd_mod = importlib.util.module_from_spec(_dd_spec)
+    _dd_spec.loader.exec_module(_dd_mod)
+    _dd_mod.write_domains(
+        args.out.parent / "domains.json",
+        _dd_mod.build_domain_gallery(args.registry, args.out.parent / "meshes.json"),
+    )
     # Landing-page findings teasers, derived from the blog front-matter (mb#172).
     findings = build_findings(args.blog_dir, args.gallery)
     if findings is not None:
