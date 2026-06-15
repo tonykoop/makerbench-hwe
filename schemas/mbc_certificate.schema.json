@@ -25,7 +25,8 @@
       "type": "object"
     },
     "MbcPayload": {
-      "description": "The signed body of a `.mbc` certificate.\n\nEverything a public surface needs to trust a local grade without re-running it:\nthe verdict + per-check results, the artifact fingerprint it was computed over,\nthe video-evidence hash, the HII/autonomy ratio, the toolchain that produced it,\na timestamp, and the server-issued ``nonce`` the signature is bound to.",
+      "additionalProperties": true,
+      "description": "The signed body of a `.mbc` certificate.\n\nEverything a public surface needs to trust a local grade without re-running it:\nthe verdict + per-check results, the artifact fingerprint it was computed over,\nthe video-evidence hash, the HII/autonomy ratio, the toolchain that produced it,\na timestamp, and the server-issued ``nonce`` the signature is bound to.\n\n``extra=\"allow\"`` makes the signed body **additively evolvable**: a newer\nproducer can add and sign a field this version does not know, and an older\n``verify_mbc`` keeps that field through parse + ``model_dump`` so the HMAC\nstill recomputes over the full set instead of dropping it and failing. The\nsignature thus binds exactly the bytes the producer signed, unknown fields\nincluded (#223).",
       "properties": {
         "artifact_fingerprint": {
           "description": "Canonical artifact hash (e.g. GradeResult.artifact_sha256).",
