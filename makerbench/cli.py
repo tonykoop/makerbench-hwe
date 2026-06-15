@@ -23,6 +23,7 @@ from rich.table import Table
 from . import __version__
 from .attestation import (
     build_private_regrade_attestation,
+    fetch_pr_author_association,
     load_comments,
     verify_result_attestations,
 )
@@ -554,6 +555,12 @@ def verify_attestations(
             True,
             "--require-verified/--allow-unverified",
             help="Require changed community result files to be maintainer-attested.",
+        ),
+        author_association: Optional[str] = typer.Option(
+            None,
+            "--author-association",
+            help="PR author's repo association; gates the official-provenance "
+                 "bypass. Fetched via gh api when omitted.",
         )):
     """Verify metadata-only community result PRs against trusted private attestations."""
     root = Path(repo_root)
@@ -567,12 +574,15 @@ def verify_attestations(
         repo=repo,
         pr=pr,
     )
+    if author_association is None:
+        author_association = fetch_pr_author_association(repo, pr)
     problems = verify_result_attestations(
         [root / p for p in result_paths],
         comments=comments,
         repo=repo,
         pr=pr,
         require_verified=require_verified,
+        pr_author_association=author_association,
     )
     if problems:
         for problem in problems:
