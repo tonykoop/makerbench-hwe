@@ -172,6 +172,7 @@ def run(task: str = typer.Option(..., help="Task family id."),
                 tr,
                 agent_fn,
                 budget=budget,
+                model_identifier=model_id,
                 source_artifact_path=_source_artifact_path(out, task, seed, tr),
             )
             rows.append(res)
