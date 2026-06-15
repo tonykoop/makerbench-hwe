@@ -42,6 +42,7 @@
         <a href="#tracks-leagues">Tracks</a>
         <a href="#charts">Charts</a>
         <a href="#tasks">Tasks</a>
+        <a href="#delta-dossier">Regressions</a>
         <a href="#ecosystem">Ecosystem</a>
         <a href="opportunity-matrix.html">Matrix</a>
         <a href="#findings">Findings</a>
@@ -269,6 +270,32 @@
         a ranking. Mean is across all models that ran the family (blind track).
       </p>
       <div class="ext-grid" id="extended-grid"></div>
+    </div>
+  </section>
+
+  <!-- ============ DELTA-DOSSIER REGRESSION TRACKER (mb#108) ============ -->
+  <!-- One card per disclosed stack. For each task/track/seed-ordinal series
+       rerun two-or-more times, shows revision count + improved/regressed trend
+       chips for geometry score, wall-clock, tool calls, and HII. Read-only:
+       score_impact is always "none", so this never feeds ranking. Renders the
+       top-level `delta_dossier` payload from data/leaderboard.json. -->
+  <section id="delta-dossier">
+    <div class="wrap">
+      <div class="eyebrow">Regression tracking</div>
+      <h2>Delta-Dossier</h2>
+      <p class="lede">
+        MakerBench as a CI tool: rerun the <em>same</em> stack on the same
+        task/track/seed over time and watch whether the workflow got easier —
+        faster wall-clock, fewer tool calls, less human intervention, steadier
+        geometry. Seeds are shown as ordinals only; this view never changes a
+        score or a ranking.
+      </p>
+      <div class="dd-grid" id="delta-dossier-grid"></div>
+      <p class="muted-note" id="delta-dossier-empty" hidden>
+        No repeated stack runs to compare yet. Submit a second revision of a
+        stack on an identical task/track/seed and its before/after delta appears
+        here.
+      </p>
     </div>
   </section>
 
@@ -638,6 +665,7 @@ log.emit("workflow_manifest.json")</pre>
             <li><a href="#leaderboard">Leaderboard</a></li>
             <li><a href="#charts">Charts</a></li>
             <li><a href="#tasks">Domains &amp; tasks</a></li>
+            <li><a href="#delta-dossier">Delta-Dossier regressions</a></li>
             <li><a href="opportunity-matrix.html">Opportunity Matrix</a></li>
             <li><a href="https://github.com/tonykoop/makerbench-hwe/blob/main/docs/HII_BADGES.md" rel="noopener">Badges</a></li>
           </ul>
