@@ -755,3 +755,297 @@ table.dt td.seedlist { font-variant-numeric: tabular-nums; color: var(--text-sof
 .mb-metric .l { font-size: 0.7rem; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.04em; }
 .mb-metric .v { font-weight: 700; font-variant-numeric: tabular-nums; }
 .mb-viewer-note { padding: 16px; color: var(--text-soft); font-size: 0.88rem; }
+
+/* ---- Inspect-a-Run viewer (#107) ------------------------------------------
+   Mirrors .mb-viewer* idioms. Used on site/inspect.html and embeds.
+   Geometry is SUBMITTED artifact only — never oracle. See inspect-run.js. */
+
+/* -- page layout -- */
+.mb-inspect-page-head {
+  padding: 36px 0 24px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0;
+}
+.mb-inspect-page-title {
+  margin: 0 0 10px;
+  font-size: 1.85rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+.mb-inspect-page-intro {
+  color: var(--text-soft);
+  margin: 0 0 10px;
+  max-width: 68ch;
+}
+.mb-inspect-page-modes {
+  color: var(--text-soft);
+  margin: 0 0 10px;
+  padding-left: 1.4em;
+  max-width: 68ch;
+}
+.mb-inspect-page-note {
+  color: var(--text-faint);
+  font-size: 0.83rem;
+  margin: 0;
+}
+
+/* Two-column layout: rail + detail */
+.mb-inspect-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 0;
+  min-height: 640px;
+  align-items: start;
+  border-bottom: 1px solid var(--border);
+}
+@media (max-width: 720px) {
+  .mb-inspect-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* -- left rail -- */
+.mb-inspect-rail-wrap {
+  border-right: 1px solid var(--border);
+  min-height: 480px;
+  overflow-y: auto;
+  position: sticky;
+  top: 60px;          /* below sticky nav */
+  max-height: calc(100vh - 70px);
+}
+.mb-inspect-rail {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0;
+}
+.mb-rail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-left: 3px solid transparent;
+  padding: 9px 14px;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text);
+  transition: background 0.1s;
+}
+.mb-rail-item:hover {
+  background: var(--bg-soft);
+}
+.mb-rail-item.is-active,
+.mb-rail-item[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+.mb-rail-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.mb-rail-item.is-active .mb-rail-label,
+.mb-rail-item[aria-pressed="true"] .mb-rail-label {
+  color: var(--accent);
+}
+.mb-rail-meta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.mb-rail-model {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 130px;
+}
+.mb-rail-track {
+  font-size: 0.7rem;
+  color: var(--text-faint);
+  text-transform: capitalize;
+}
+.mb-rail-score {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--text-soft);
+  margin-left: auto;
+}
+
+/* -- detail panel -- */
+.mb-inspect-detail {
+  padding: 20px 0 20px 24px;
+  min-width: 0;
+}
+.mb-inspect-header {
+  margin-bottom: 14px;
+}
+.mb-inspect-title {
+  margin: 0 0 4px;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+.mb-inspect-sub {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-faint);
+  font-family: var(--mono);
+}
+
+/* -- .mb-inspect host (mirrors .mb-viewer) -- */
+.mb-inspect {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+  overflow: hidden;
+  margin: 0 0 20px;
+}
+
+/* canvas box */
+.mb-inspect-canvas {
+  width: 100%;
+  min-height: 380px;
+  touch-action: none;
+  cursor: grab;
+}
+.mb-inspect-canvas:active { cursor: grabbing; }
+.mb-inspect-canvas canvas { display: block; }
+
+/* mode button bar */
+.mb-inspect-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 9px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+.mb-inspect-mode {
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-soft);
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 12px;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.mb-inspect-mode[aria-pressed="true"] {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.mb-inspect-mode:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* legend (heat-map colour ramp) */
+.mb-inspect-legend {
+  display: none;              /* hidden until heatmap activates it */
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elev);
+  font-size: 0.78rem;
+  color: var(--text-soft);
+}
+.mb-inspect.is-ready .mb-inspect-legend:not(:empty) {
+  display: flex;
+}
+/* Blue→cyan→yellow→red gradient matching heatColor() in inspect-run.js */
+.mb-legend-bar {
+  display: inline-block;
+  width: 120px;
+  height: 10px;
+  border-radius: 4px;
+  background: linear-gradient(
+    to right,
+    #2a4db3,
+    #1aa9a0,
+    #f2c72e,
+    #d12e1f
+  );
+  flex-shrink: 0;
+}
+.mb-legend-lo { color: var(--text-soft); }
+.mb-legend-hi { color: var(--text-soft); margin-left: auto; }
+
+/* metrics readout (reuses .mb-metric from viewer) */
+.mb-inspect-readout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+
+/* note messages (errors / empty state) */
+.mb-inspect-note {
+  padding: 16px;
+  color: var(--text-soft);
+  font-size: 0.88rem;
+}
+.mb-inspect-empty {
+  max-width: 52ch;
+}
+
+/* verdict panel */
+.mb-inspect-verdict {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+.mb-inspect-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  cursor: default;
+  user-select: none;
+}
+.mb-inspect-check[data-check="no-interference"],
+.mb-inspect-check[data-check="wall-thickness"] {
+  cursor: pointer;           /* these two jump to a mode on click */
+}
+.mb-inspect-check[data-check="no-interference"]:hover,
+.mb-inspect-check[data-check="wall-thickness"]:hover {
+  border-color: var(--accent);
+}
+.mb-inspect-check[data-state="pass"] {
+  background: color-mix(in srgb, var(--good) 12%, transparent);
+  border-color: color-mix(in srgb, var(--good) 35%, transparent);
+  color: var(--good);
+}
+.mb-inspect-check[data-state="fail"] {
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+  border-color: color-mix(in srgb, var(--bad) 35%, transparent);
+  color: var(--bad);
+}
+.mb-inspect-check[data-state="na"] {
+  color: var(--text-faint);
+}
+.mb-check-icon {
+  font-size: 0.85em;
+}
+.mb-check-label {
+  font-weight: 600;
+}
