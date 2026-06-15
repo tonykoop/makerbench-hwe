@@ -1,0 +1,331 @@
+{
+  "name": "MCU_LQFP-64",
+  "description": "Generic LQFP-64 microcontroller, 0.5 mm pitch",
+  "reference_prefix": "U",
+  "pins": [
+    {
+      "number": "1",
+      "name": "P1",
+      "type": "bidirectional"
+    },
+    {
+      "number": "2",
+      "name": "P2",
+      "type": "bidirectional"
+    },
+    {
+      "number": "3",
+      "name": "P3",
+      "type": "bidirectional"
+    },
+    {
+      "number": "4",
+      "name": "P4",
+      "type": "bidirectional"
+    },
+    {
+      "number": "5",
+      "name": "P5",
+      "type": "bidirectional"
+    },
+    {
+      "number": "6",
+      "name": "P6",
+      "type": "bidirectional"
+    },
+    {
+      "number": "7",
+      "name": "P7",
+      "type": "bidirectional"
+    },
+    {
+      "number": "8",
+      "name": "P8",
+      "type": "bidirectional"
+    },
+    {
+      "number": "9",
+      "name": "P9",
+      "type": "bidirectional"
+    },
+    {
+      "number": "10",
+      "name": "P10",
+      "type": "bidirectional"
+    },
+    {
+      "number": "11",
+      "name": "P11",
+      "type": "bidirectional"
+    },
+    {
+      "number": "12",
+      "name": "P12",
+      "type": "bidirectional"
+    },
+    {
+      "number": "13",
+      "name": "P13",
+      "type": "bidirectional"
+    },
+    {
+      "number": "14",
+      "name": "P14",
+      "type": "bidirectional"
+    },
+    {
+      "number": "15",
+      "name": "P15",
+      "type": "bidirectional"
+    },
+    {
+      "number": "16",
+      "name": "P16",
+      "type": "bidirectional"
+    },
+    {
+      "number": "17",
+      "name": "P17",
+      "type": "bidirectional"
+    },
+    {
+      "number": "18",
+      "name": "P18",
+      "type": "bidirectional"
+    },
+    {
+      "number": "19",
+      "name": "P19",
+      "type": "bidirectional"
+    },
+    {
+      "number": "20",
+      "name": "P20",
+      "type": "bidirectional"
+    },
+    {
+      "number": "21",
+      "name": "P21",
+      "type": "bidirectional"
+    },
+    {
+      "number": "22",
+      "name": "P22",
+      "type": "bidirectional"
+    },
+    {
+      "number": "23",
+      "name": "P23",
+      "type": "bidirectional"
+    },
+    {
+      "number": "24",
+      "name": "P24",
+      "type": "bidirectional"
+    },
+    {
+      "number": "25",
+      "name": "P25",
+      "type": "bidirectional"
+    },
+    {
+      "number": "26",
+      "name": "P26",
+      "type": "bidirectional"
+    },
+    {
+      "number": "27",
+      "name": "P27",
+      "type": "bidirectional"
+    },
+    {
+      "number": "28",
+      "name": "P28",
+      "type": "bidirectional"
+    },
+    {
+      "number": "29",
+      "name": "P29",
+      "type": "bidirectional"
+    },
+    {
+      "number": "30",
+      "name": "P30",
+      "type": "bidirectional"
+    },
+    {
+      "number": "31",
+      "name": "P31",
+      "type": "bidirectional"
+    },
+    {
+      "number": "32",
+      "name": "P32",
+      "type": "bidirectional"
+    },
+    {
+      "number": "33",
+      "name": "P33",
+      "type": "bidirectional"
+    },
+    {
+      "number": "34",
+      "name": "P34",
+      "type": "bidirectional"
+    },
+    {
+      "number": "35",
+      "name": "P35",
+      "type": "bidirectional"
+    },
+    {
+      "number": "36",
+      "name": "P36",
+      "type": "bidirectional"
+    },
+    {
+      "number": "37",
+      "name": "P37",
+      "type": "bidirectional"
+    },
+    {
+      "number": "38",
+      "name": "P38",
+      "type": "bidirectional"
+    },
+    {
+      "number": "39",
+      "name": "P39",
+      "type": "bidirectional"
+    },
+    {
+      "number": "40",
+      "name": "P40",
+      "type": "bidirectional"
+    },
+    {
+      "number": "41",
+      "name": "P41",
+      "type": "bidirectional"
+    },
+    {
+      "number": "42",
+      "name": "P42",
+      "type": "bidirectional"
+    },
+    {
+      "number": "43",
+      "name": "P43",
+      "type": "bidirectional"
+    },
+    {
+      "number": "44",
+      "name": "P44",
+      "type": "bidirectional"
+    },
+    {
+      "number": "45",
+      "name": "P45",
+      "type": "bidirectional"
+    },
+    {
+      "number": "46",
+      "name": "P46",
+      "type": "bidirectional"
+    },
+    {
+      "number": "47",
+      "name": "P47",
+      "type": "bidirectional"
+    },
+    {
+      "number": "48",
+      "name": "P48",
+      "type": "bidirectional"
+    },
+    {
+      "number": "49",
+      "name": "P49",
+      "type": "bidirectional"
+    },
+    {
+      "number": "50",
+      "name": "P50",
+      "type": "bidirectional"
+    },
+    {
+      "number": "51",
+      "name": "P51",
+      "type": "bidirectional"
+    },
+    {
+      "number": "52",
+      "name": "P52",
+      "type": "bidirectional"
+    },
+    {
+      "number": "53",
+      "name": "P53",
+      "type": "bidirectional"
+    },
+    {
+      "number": "54",
+      "name": "P54",
+      "type": "bidirectional"
+    },
+    {
+      "number": "55",
+      "name": "P55",
+      "type": "bidirectional"
+    },
+    {
+      "number": "56",
+      "name": "P56",
+      "type": "bidirectional"
+    },
+    {
+      "number": "57",
+      "name": "P57",
+      "type": "bidirectional"
+    },
+    {
+      "number": "58",
+      "name": "P58",
+      "type": "bidirectional"
+    },
+    {
+      "number": "59",
+      "name": "P59",
+      "type": "bidirectional"
+    },
+    {
+      "number": "60",
+      "name": "P60",
+      "type": "bidirectional"
+    },
+    {
+      "number": "61",
+      "name": "P61",
+      "type": "bidirectional"
+    },
+    {
+      "number": "62",
+      "name": "P62",
+      "type": "bidirectional"
+    },
+    {
+      "number": "63",
+      "name": "P63",
+      "type": "bidirectional"
+    },
+    {
+      "number": "64",
+      "name": "P64",
+      "type": "bidirectional"
+    }
+  ],
+  "provenance": {
+    "license": "CC-BY-4.0",
+    "source": "first-party"
+  }
+}
