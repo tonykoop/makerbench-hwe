@@ -37,6 +37,49 @@ class PCBAPowerNetRequirement:
 
 
 @dataclass(frozen=True)
+class PCBAThermalSource:
+    """A dissipating part for the thermal dimension.
+
+    ``power_w`` and ``theta_ja_c_per_w`` (R_thetaJA) give the junction temp
+    ``Tj = ambient + P * theta``; ``sensitive`` marks a part (e.g. a BLE xtal)
+    that must be kept clear of heat aggressors for the thermal-isolation check.
+    ``hot`` overrides the power-based heat-aggressor classification.
+    """
+
+    ref: str
+    power_w: float
+    theta_ja_c_per_w: float
+    max_junction_c: float
+    x_mm: float = 0.0
+    y_mm: float = 0.0
+    ambient_c: float = 25.0
+    sensitive: bool = False
+    hot: bool | None = None
+
+    def __post_init__(self) -> None:
+        if not self.ref:
+            raise ValueError("thermal source ref is required")
+        for field_name in ("power_w", "theta_ja_c_per_w"):
+            if getattr(self, field_name) < 0:
+                raise ValueError(f"{field_name} must be non-negative")
+
+    def junction_temp_c(self) -> float:
+        return self.ambient_c + self.power_w * self.theta_ja_c_per_w
+
+
+@dataclass(frozen=True)
+class PCBADesignVelocity:
+    """Agentic iterations spent to reach 100% DRC/ERC pass."""
+
+    iterations_to_clean: int
+    clean_achieved: bool = True
+
+    def __post_init__(self) -> None:
+        if self.iterations_to_clean < 0:
+            raise ValueError("iterations_to_clean must be non-negative")
+
+
+@dataclass(frozen=True)
 class PCBAMetrics:
     """Public PCBA layout metrics used by the profile."""
 
@@ -48,6 +91,8 @@ class PCBAMetrics:
     copper_layer_count: int = 2
     occupied_area_mm2: float = 0.0
     power_nets: tuple[PCBAPowerNetRequirement, ...] = field(default_factory=tuple)
+    thermal_sources: tuple[PCBAThermalSource, ...] = field(default_factory=tuple)
+    design_velocity: PCBADesignVelocity | None = None
 
     def __post_init__(self) -> None:
         if self.board_area_mm2 <= 0:
@@ -92,9 +137,15 @@ class PCBAScoringProfile:
     max_current_density_ma_per_mm: float = 1_000.0
     via_current_capacity_ma: float = 500.0
     min_power_clearance_mm: float = 0.20
+    hot_source_threshold_w: float = 0.5
+    min_thermal_isolation_mm: float = 5.0
+    target_design_iterations: int = 3
+    max_design_iterations: int = 12
     cost_weight: float = 0.30
     compactness_weight: float = 0.25
     power_integrity_weight: float = 0.45
+    thermal_weight: float = 0.30
+    design_velocity_weight: float = 0.20
 
     def __post_init__(self) -> None:
         if not self.profile_id:
@@ -116,6 +167,8 @@ class PCBAScoringProfile:
             raise ValueError("max_current_density_ma_per_mm must be positive")
         if self.via_current_capacity_ma <= 0:
             raise ValueError("via_current_capacity_ma must be positive")
+        if self.max_design_iterations <= self.target_design_iterations:
+            raise ValueError("max_design_iterations must exceed target_design_iterations")
         if self.cost_weight + self.compactness_weight + self.power_integrity_weight <= 0:
             raise ValueError("at least one profile weight must be positive")
 
@@ -151,6 +204,8 @@ class PCBAScoreResult:
     checks: dict[str, bool]
     quality: dict[str, float]
     line_items: tuple[PCBACostLineItem, ...]
+    thermal_score: float = 1.0
+    design_velocity_score: float = 1.0
     assumptions: tuple[str, ...] = (
         "deterministic PCBA estimate; not a vendor quote",
         "1 oz copper resistance approximated by profile copper_ohms_per_square",
@@ -163,6 +218,8 @@ class PCBAScoreResult:
             "cost_score": self.cost_score,
             "compactness_score": self.compactness_score,
             "power_integrity_score": self.power_integrity_score,
+            "thermal_score": self.thermal_score,
+            "design_velocity_score": self.design_velocity_score,
             "cost_usd": self.cost_usd,
             "checks": dict(self.checks),
             "quality": dict(self.quality),
@@ -196,15 +253,22 @@ def score_pcba(
     compactness_score = _round_score((area_score + fill_score) / 2.0)
 
     power_quality, power_checks, power_score = _score_power_integrity(metrics, profile)
+    thermal_quality, thermal_checks, thermal_score = _score_thermal(metrics, profile)
+    velocity_quality, velocity_checks, velocity_score = _score_design_velocity(metrics, profile)
 
-    weights = (
-        profile.cost_weight + profile.compactness_weight + profile.power_integrity_weight
-    )
-    total = (
-        cost_score * profile.cost_weight
-        + compactness_score * profile.compactness_weight
-        + power_score * profile.power_integrity_weight
-    ) / weights
+    # Cost / compactness / power always apply; thermal and design velocity are
+    # opt-in and only enter the weighted total when their inputs are supplied.
+    weighted = [
+        (cost_score, profile.cost_weight),
+        (compactness_score, profile.compactness_weight),
+        (power_score, profile.power_integrity_weight),
+    ]
+    if metrics.thermal_sources:
+        weighted.append((thermal_score, profile.thermal_weight))
+    if metrics.design_velocity is not None:
+        weighted.append((velocity_score, profile.design_velocity_weight))
+    weights = sum(weight for _, weight in weighted)
+    total = sum(score * weight for score, weight in weighted) / weights
 
     checks = {
         "cost_within_target": cost_usd <= profile.target_cost_usd,
@@ -218,6 +282,8 @@ def score_pcba(
             <= profile.max_placement_fill_ratio
         ),
         **power_checks,
+        **thermal_checks,
+        **velocity_checks,
     }
     quality = {
         "board_area_mm2": _round_metric(metrics.board_area_mm2),
@@ -228,7 +294,11 @@ def score_pcba(
         "cost_score": cost_score,
         "compactness_score": compactness_score,
         "power_integrity_score": power_score,
+        "thermal_score": thermal_score,
+        "design_velocity_score": velocity_score,
         **power_quality,
+        **thermal_quality,
+        **velocity_quality,
     }
     return PCBAScoreResult(
         profile_id=profile.profile_id,
@@ -236,6 +306,8 @@ def score_pcba(
         cost_score=cost_score,
         compactness_score=compactness_score,
         power_integrity_score=power_score,
+        thermal_score=thermal_score,
+        design_velocity_score=velocity_score,
         cost_usd=cost_usd,
         checks=checks,
         quality=quality,
@@ -373,6 +445,117 @@ def _score_power_integrity(
         checks,
         _round_score(min(scores)),
     )
+
+
+def _score_thermal(
+    metrics: PCBAMetrics,
+    profile: PCBAScoringProfile,
+) -> tuple[dict[str, float], dict[str, bool], float]:
+    """Score junction-temperature headroom and thermal isolation of hot parts."""
+
+    if not metrics.thermal_sources:
+        return (
+            {
+                "thermal_source_count": 0.0,
+                "worst_junction_temp_c": 0.0,
+                "min_junction_margin_c": float("inf"),
+                "min_thermal_isolation_mm": float("inf"),
+            },
+            {"thermal_sources_declared": False},
+            1.0,
+        )
+
+    checks: dict[str, bool] = {"thermal_sources_declared": True}
+    scores: list[float] = []
+    worst_junction = 0.0
+    min_margin = float("inf")
+
+    hot = [
+        s for s in metrics.thermal_sources
+        if (s.hot if s.hot is not None else s.power_w >= profile.hot_source_threshold_w)
+    ]
+
+    for source in metrics.thermal_sources:
+        tj = source.junction_temp_c()
+        margin = source.max_junction_c - tj
+        span = max(source.max_junction_c - source.ambient_c, 1e-9)
+        junction_score = _round_score(margin / span)
+        junction_ok = tj <= source.max_junction_c
+
+        key = _key(source.ref)
+        checks[f"{key}_junction_within_limit"] = junction_ok
+        worst_junction = max(worst_junction, tj)
+        min_margin = min(min_margin, margin)
+        scores.append(junction_score if junction_ok else 0.0)
+
+    # Thermal isolation: every sensitive part must stay clear of heat aggressors.
+    min_isolation = float("inf")
+    for sensitive in (s for s in metrics.thermal_sources if s.sensitive):
+        for aggressor in hot:
+            if aggressor.ref == sensitive.ref:
+                continue
+            distance = _distance_mm(sensitive, aggressor)
+            min_isolation = min(min_isolation, distance)
+    isolation_ok = min_isolation >= profile.min_thermal_isolation_mm
+    checks["sensitive_parts_thermally_isolated"] = isolation_ok
+    if min_isolation != float("inf"):
+        scores.append(
+            _round_score(min_isolation / profile.min_thermal_isolation_mm)
+            if not isolation_ok
+            else 1.0
+        )
+
+    return (
+        {
+            "thermal_source_count": float(len(metrics.thermal_sources)),
+            "worst_junction_temp_c": _round_metric(worst_junction),
+            "min_junction_margin_c": _round_metric(min_margin),
+            "min_thermal_isolation_mm": _round_metric(min_isolation),
+        },
+        checks,
+        _round_score(min(scores)),
+    )
+
+
+def _score_design_velocity(
+    metrics: PCBAMetrics,
+    profile: PCBAScoringProfile,
+) -> tuple[dict[str, float], dict[str, bool], float]:
+    """Score how few agentic iterations reached 100% DRC/ERC pass."""
+
+    velocity = metrics.design_velocity
+    if velocity is None:
+        return (
+            {"design_iterations": 0.0, "design_clean_achieved": 1.0},
+            {"design_velocity_declared": False},
+            1.0,
+        )
+
+    if not velocity.clean_achieved:
+        score = 0.0
+    else:
+        score = _upper_bound_score(
+            float(velocity.iterations_to_clean),
+            float(profile.target_design_iterations),
+            float(profile.max_design_iterations),
+        )
+    checks = {
+        "design_velocity_declared": True,
+        "design_reached_clean": bool(velocity.clean_achieved),
+        "design_within_iteration_budget": (
+            velocity.clean_achieved
+            and velocity.iterations_to_clean <= profile.max_design_iterations
+        ),
+    }
+    quality = {
+        "design_iterations": float(velocity.iterations_to_clean),
+        "design_clean_achieved": float(velocity.clean_achieved),
+    }
+    return quality, checks, _round_score(score)
+
+
+def _distance_mm(a: PCBAThermalSource, b: PCBAThermalSource) -> float:
+    return ((a.x_mm - b.x_mm) ** 2 + (a.y_mm - b.y_mm) ** 2) ** 0.5
 
 
 def _item(
