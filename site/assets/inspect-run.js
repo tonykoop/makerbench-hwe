@@ -443,4 +443,7 @@ if (document.readyState === "loading") {
 }
 
 // Exported for unit/headless checks; harmless in the browser.
-export { heatColor, computeThickness, applyHeatColors };
+// initInspect is exported so the inspect.html page controller can initialize
+// dynamically-created hosts after DOMContentLoaded (the static boot() path
+// only catches nodes already in the DOM at parse time).
+export { heatColor, computeThickness, applyHeatColors, initInspect };
