@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,14 @@ SPEC = importlib.util.spec_from_file_location(
 build_data = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(build_data)
 
+DRIFT_SPEC = importlib.util.spec_from_file_location(
+    "makerbench_site_check_data_drift",
+    ROOT / "site" / "check_data_drift.py",
+)
+check_data_drift = importlib.util.module_from_spec(DRIFT_SPEC)
+sys.modules[DRIFT_SPEC.name] = check_data_drift
+DRIFT_SPEC.loader.exec_module(check_data_drift)
+
 
 def test_published_site_pages_carry_noai_meta():
     """Every committed public HTML page carries the same per-page robots signal."""
@@ -24,6 +33,12 @@ def test_published_site_pages_carry_noai_meta():
         if build_data.ROBOTS_META_TAG not in path.read_text(encoding="utf-8")
     ]
     assert missing == []
+
+
+def test_committed_site_data_matches_build_data_generator():
+    """Committed build_data-owned JSON must match a fresh generator run."""
+    report = check_data_drift.check_build_data_drift(ROOT)
+    assert not report.has_drift, report.format()
 
 
 def _write_run(
