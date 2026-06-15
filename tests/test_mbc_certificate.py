@@ -104,3 +104,52 @@ def test_verify_rejects_algorithm_confusion():
     cert["signature_alg"] = "none"
 
     assert verify_mbc(cert, KEY) is False
+
+
+# --------------------------------------------------------------------------- #
+# Forward-compat: the signed body evolves additively (#223)
+# --------------------------------------------------------------------------- #
+def test_payload_preserves_unknown_field_through_parse_and_dump():
+    """A field a newer producer added survives parse + model_dump (extra=allow)."""
+    raw = _payload().model_dump(mode="json")
+    raw["fabrication_multiplier"] = 1.25  # field this version does not declare
+
+    parsed = MbcPayload.model_validate(raw)
+    assert parsed.model_dump(mode="json")["fabrication_multiplier"] == 1.25
+    # the extra field rides into the canonical signing bytes, not dropped
+    assert b"fabrication_multiplier" in canonical_payload_bytes(parsed)
+
+
+def test_older_verifier_accepts_newer_producers_additive_field():
+    """A newer producer signs a payload with an extra field; an older verify_mbc
+    (this code) must still validate it instead of dropping the field and failing.
+    """
+    # Newer producer: build + sign a payload dict carrying an unknown field.
+    payload_dict = _payload().model_dump(mode="json")
+    payload_dict["fabrication_multiplier"] = 1.25
+    signature = sign_payload(payload_dict, KEY)
+    cert = {
+        "payload": payload_dict,
+        "signature_alg": MBC_SIGNATURE_ALG,
+        "signature": signature,
+    }
+
+    # Older verifier re-serializes through the model; the field must be preserved
+    # so the HMAC recomputes over the exact bytes the producer signed.
+    assert verify_mbc(cert, KEY) is True
+    assert verify_mbc(json.dumps(cert), KEY) is True
+
+
+def test_forward_compat_still_detects_tampering_of_extra_field():
+    """extra=allow must not weaken tamper-evidence: mutating the new field fails."""
+    payload_dict = _payload().model_dump(mode="json")
+    payload_dict["fabrication_multiplier"] = 1.25
+    signature = sign_payload(payload_dict, KEY)
+
+    payload_dict["fabrication_multiplier"] = 2.0  # tamper after signing
+    cert = {
+        "payload": payload_dict,
+        "signature_alg": MBC_SIGNATURE_ALG,
+        "signature": signature,
+    }
+    assert verify_mbc(cert, KEY) is False
