@@ -2105,3 +2105,17 @@ def test_committed_findings_frontmatter_resolves_against_real_data():
         if "thumb" in finding:
             assert finding["thumb"]["src"].startswith("assets/failure-gallery/")
             assert (site / finding["thumb"]["src"]).exists()
+
+
+def test_site_delta_dossier_viz_is_wired():
+    """The Delta-Dossier front-end wiring must exist so the viz can't silently regress."""
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    assert 'id="delta-dossier"' in html
+    assert 'id="delta-dossier-grid"' in html
+    assert 'id="delta-dossier-empty"' in html
+
+    app = (ROOT / "site" / "assets" / "app.js").read_text(encoding="utf-8")
+    assert "function renderDeltaDossier" in app
+    # Both the definition and the call site must be present.
+    assert app.count("renderDeltaDossier(") >= 2
+    assert "DATA.delta_dossier" in app
