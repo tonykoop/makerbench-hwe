@@ -1049,3 +1049,300 @@ table.dt td.seedlist { font-variant-numeric: tabular-nums; color: var(--text-sof
 .mb-check-label {
   font-weight: 600;
 }
+
+/* ---- Domain-breadth gallery (#169) ----------------------------------------
+   Renders data/domains.json on site/domains.html. See site/assets/domains.js.
+   Naming convention mirrors .mb-inspect* / .mb-viewer*. */
+
+/* -- page head -- */
+.mb-domains-page-head {
+  padding: 36px 0 24px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0;
+}
+.mb-domains-page-title {
+  margin: 0 0 10px;
+  font-size: 1.85rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+.mb-domains-page-intro {
+  color: var(--text-soft);
+  margin: 0;
+  max-width: 74ch;
+  line-height: 1.6;
+}
+
+/* -- error / empty note -- */
+.mb-domains-note {
+  padding: 24px 0;
+  color: var(--text-soft);
+  font-size: 0.9rem;
+}
+.mb-domains-error {
+  color: var(--bad);
+}
+
+/* -- tier section -- */
+.mb-domains-tier {
+  padding: 44px 0 0;
+  border: none;      /* override section rule — we draw our own spacing */
+}
+.mb-domains-tier-head {
+  margin-bottom: 18px;
+}
+.mb-domains-tier-title {
+  margin: 0 0 6px;
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.mb-domains-tier-summary {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 0.9rem;
+  max-width: 72ch;
+}
+
+/* -- domain card grid -- */
+.mb-domain-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  margin-bottom: 8px;
+}
+@media (max-width: 760px) {
+  .mb-domain-grid { grid-template-columns: 1fr; }
+}
+
+/* -- domain card -- */
+.mb-domain-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mb-domain-card--not-live {
+  opacity: 0.75;
+}
+
+/* -- card header row: icon + title + badge -- */
+.mb-domain-card-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.mb-domain-icon {
+  font-size: 1.35rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.mb-domain-card-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  flex: 1;
+}
+
+/* -- status badge -- */
+.mb-domain-status {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  color: var(--text-faint);
+}
+.mb-domain-status[data-status="scored"] {
+  background: color-mix(in srgb, var(--good) 14%, transparent);
+  border-color: color-mix(in srgb, var(--good) 38%, transparent);
+  color: var(--good);
+}
+.mb-domain-status[data-status="runnable"] {
+  background: color-mix(in srgb, #4a90d9 14%, transparent);
+  border-color: color-mix(in srgb, #4a90d9 38%, transparent);
+  color: #4a90d9;
+}
+html[data-theme="dark"] .mb-domain-status[data-status="runnable"] {
+  background: color-mix(in srgb, #6aabf7 14%, transparent);
+  border-color: color-mix(in srgb, #6aabf7 38%, transparent);
+  color: #6aabf7;
+}
+.mb-domain-status[data-status="alpha"] {
+  background: color-mix(in srgb, var(--mid) 14%, transparent);
+  border-color: color-mix(in srgb, var(--mid) 38%, transparent);
+  color: var(--mid);
+}
+.mb-domain-status[data-status="planned"] {
+  background: var(--bg-soft);
+  border-color: var(--border);
+  color: var(--text-faint);
+}
+
+/* -- blurb -- */
+.mb-domain-blurb {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+/* -- counts rollup line -- */
+.mb-domain-counts {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* -- capability-axis chips -- */
+.mb-domain-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.mb-domain-chip {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-family: var(--mono);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+/* -- expandable entries <details> -- */
+.mb-domain-details {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  margin-top: 2px;
+}
+.mb-domain-details-summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 2px 0;
+  user-select: none;
+  list-style: none;         /* remove default triangle on some browsers */
+}
+.mb-domain-details-summary::-webkit-details-marker { display: none; }
+.mb-domain-details-summary::before {
+  content: "▶ ";
+  font-size: 0.7em;
+  opacity: 0.7;
+}
+.mb-domain-details[open] .mb-domain-details-summary::before {
+  content: "▼ ";
+}
+
+/* -- entries list -- */
+.mb-domain-entries {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.mb-domain-entry {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--bg-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.mb-domain-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.mb-domain-entry-title {
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--text);
+  flex: 1;
+}
+.mb-domain-entry-summary {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-soft);
+  line-height: 1.45;
+}
+.mb-domain-entry-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 2px;
+}
+.mb-domain-entry-link {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+.mb-domain-entry-link:hover { text-decoration: underline; }
+.mb-domain-entry-link--3d {
+  color: var(--text-soft);
+}
+.mb-domain-entry-link--3d:hover { color: var(--accent); }
+
+/* -- "Coming" horizon rail -- */
+.mb-domains-horizon { padding-top: 44px; }
+.mb-domain-coming {
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  background: var(--bg-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  opacity: 0.82;
+}
+.mb-domain-coming-tier {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-faint);
+  background: var(--bg-elev);
+  white-space: nowrap;
+}
+
+/* -- "Longer horizon" list -- */
+.mb-domains-longer-horizon { padding-top: 44px; padding-bottom: 44px; }
+.mb-domains-longer-list {
+  list-style: disc;
+  padding-left: 1.4em;
+  margin: 10px 0 0;
+  color: var(--text-soft);
+  font-size: 0.9rem;
+  display: grid;
+  gap: 6px;
+}
+
+/* -- provenance footnote -- */
+.mb-domains-provenance {
+  margin: 32px 0 0;
+  color: var(--text-faint);
+  font-size: 0.76rem;
+  font-family: var(--mono);
+  padding-bottom: 48px;
+}
