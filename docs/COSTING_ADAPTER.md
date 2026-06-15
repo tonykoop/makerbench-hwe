@@ -50,6 +50,42 @@ print(estimate.total_usd)
 print(estimate.as_dict()["line_items"])
 ```
 
+## Single-sourcing for downstream pipelines (HWE-Pipeline, epic #24)
+
+The CostingAdapter layer is the canonical home for the *geometry→dollars*
+formulas. A downstream sourcing/TPM cost layer (e.g. HWE-Pipeline) should
+single-source against it rather than re-deriving rate tables or adapter wiring:
+
+- **One entrypoint.** `estimate_cost(metrics, profile)` dispatches to the adapter
+  matching `profile.process_id`, so callers never import each adapter class.
+  `adapter_for(process_id)` and the `ADAPTERS` map are available when a caller
+  needs the adapter directly.
+- **Serializable contract.** `GeometryCostMetrics` and `ProcessRateProfile`
+  expose `to_dict()` / `from_dict()`. They round-trip through JSON (tuple
+  `assumptions` restore from lists) and `from_dict` ignores unknown keys, so a
+  downstream registry can carry extra annotation fields (`label`, `vendor`,
+  notes) without breaking.
+- **Starter profiles.** `PROFILE_PRESETS` / `get_profile(id)` / `list_profiles()`
+  provide vendor-neutral baseline rate profiles
+  (`cnc-aluminum-3axis-v1`, `sheet-laser-mild-steel-v1`, `fdm-pla-v1`, …). Every
+  preset is labelled *"not a vendor quote"* and is meant to be calibrated
+  locally.
+
+```python
+from makerbench.costing import estimate_cost, get_profile, GeometryCostMetrics
+
+profile = get_profile("cnc-aluminum-3axis-v1")          # or ProcessRateProfile.from_dict(...)
+metrics = GeometryCostMetrics(material_volume_mm3=12_000, removed_volume_mm3=3_000)
+estimate = estimate_cost(metrics, profile)
+print(estimate.total_usd, estimate.as_dict()["line_items"])
+```
+
+**Boundary for the downstream repo:** vendor-specific rate tables and process
+rules (e.g. SendCutSend sheet limits, a shop's actual shop rate) belong in the
+consuming pipeline, not here. This module stays vendor-neutral and deterministic;
+HWE-Pipeline plugs its own `ProcessRateProfile` values (or a `CostingAdapter`
+subclass) on top.
+
 ## Boundary
 
 - Costing estimates are local, transparent, and reproducible.
