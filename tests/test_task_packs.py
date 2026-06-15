@@ -316,21 +316,22 @@ def test_registry_records_assembly_alpha():
 
 
 def test_domain_matrix_records_issue_110_verticals():
-    """#110: the domain matrix tracks the new scaffold-only verticals."""
+    """#110: the domain matrix tracks the now-shipped verticals."""
     matrix = open("docs/DOMAIN_MATRIX.md", encoding="utf-8").read()
     roadmap = open("docs/ROADMAP.md", encoding="utf-8").read()
 
     for heading in (
-        "**Casting / foundry molds** — *scaffold needed* (#110).",
-        "**Robotics / mechatronic assemblies** — *scaffold needed* (#110).",
-        "**Glass / ceramics** — *scaffold needed* (#110).",
+        "**Casting / foundry molds** — `casting` (shipped: `casting_drafted_part`, #110).",
+        "**Robotics / mechatronic assemblies** — `robotics` "
+        "(shipped: `robotics_nema_motor_mount`, #110).",
+        "**Glass / ceramics** — `glass-ceramics` (shipped: `glass_ceramic_lofted_vessel`, #110).",
     ):
         assert heading in matrix
 
     for term in (
         "trapped-volume",
         "motor-face hole alignment",
-        "thermal-stress concentration heuristics",
+        "thermal-stress heuristic",
     ):
         assert term in matrix
 
