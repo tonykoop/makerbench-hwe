@@ -105,11 +105,11 @@ def _cmd_emit(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    hii = manifest["human_intervention_index"]
+    hii = manifest["hii"]
     print(
         f"wrote {args.output}  "
         f"(tool_calls={manifest['metrics']['tool_calls_count']}, "
-        f"HII={hii['overall']}, autonomy_ratio={hii['autonomy_ratio']})"
+        f"HII={hii['highest_level']}, autonomy_ratio={hii['autonomy_ratio']})"
     )
     return 0
 

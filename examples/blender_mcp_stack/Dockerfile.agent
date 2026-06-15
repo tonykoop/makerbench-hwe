@@ -1,0 +1,20 @@
+# The agent / task side of the reference stack (mb#93).
+#
+# A plain Python image that runs the MCP server and the sample task. It talks to
+# the Blender container over the compose network (TCP :8765). `makerbench-logger`
+# is vendored from the repo root, so the only optional dependency is `mcp` for
+# the live MCP stdio server (the sample task needs no third-party packages).
+FROM python:3.12-slim
+
+WORKDIR /work
+
+# Optional: the MCP runtime. The sample task and tool registry import without it.
+RUN pip install --no-cache-dir "mcp>=1.0.0" || true
+
+# The repo root is mounted at /repo by compose so makerbench_logger is importable;
+# the stack sources are mounted at /work.
+ENV PYTHONPATH=/repo:/work/mcp_server
+ENV MB_BRIDGE_HOST=blender
+ENV MB_BRIDGE_PORT=8765
+
+CMD ["python", "tasks/vented_plate_demo.py", "--out", "/work/out"]
