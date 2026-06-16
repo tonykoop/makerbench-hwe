@@ -1,0 +1,199 @@
+# Planetary Element Inventory — per-element abundance / run-rate rows
+#
+# SCAFFOLD / values need verification.
+# Schema + intent: ../CAPABILITY_INDEX.md  (RFC: Planetary Element Inventory, sec.3)
+# Refs: makerbench-hwe #272, claude-skills #205
+#
+# Purpose (RFC sec.3.1): resource-aware pre-screen. crustal_abundance_ppm (A_c)
+# plus a coarse global_annual_run_rate_t feed a scarcity_penalty (0..1) used to
+# REJECT high-penalty atoms used for commodity functions BEFORE grading, and force
+# an abundant_substitute (the canonical case: Au-for-EMI -> Al/Cu).
+#
+# HONESTY: crustal_abundance_ppm values are standard order-of-magnitude
+# continental-crust figures; global_annual_run_rate_t are COARSE round numbers.
+# Every row is flagged `estimated: true` and needs verification against a real
+# geochemical/USGS source before any scoring use. scarcity_penalty is a coarse
+# triage weight, NOT a price.
+
+schema_version: 0.1.0
+as_of_date: 2026-06-15
+source_note: >
+  A_c from standard continental-crust abundance tables (e.g. CRC Handbook /
+  Rudnick & Gao crustal averages, order-of-magnitude). run-rate are coarse global
+  annual production estimates (USGS MCS-style, rounded). All values ESTIMATED;
+  verify before use.
+
+# penalty heuristic (see RFC sec.3.1): higher when BOTH A_c is low AND run-rate
+# thin. Hand-assigned coarsely here on a 0(abundant) .. 1(reject-by-default) scale.
+
+elements:
+  - symbol: O
+    name: Oxygen
+    crustal_abundance_ppm: 461000
+    global_annual_run_rate_t: 1.0e8        # industrial O2, coarse
+    scarcity_penalty: 0.0
+    abundant_substitute: null
+    source: "crustal avg ~46.1% mass"
+    estimated: true
+
+  - symbol: Si
+    name: Silicon
+    crustal_abundance_ppm: 282000
+    global_annual_run_rate_t: 8.0e6        # silicon + ferrosilicon, coarse
+    scarcity_penalty: 0.02
+    abundant_substitute: null
+    source: "crustal avg ~28.2% mass"
+    estimated: true
+
+  - symbol: Al
+    name: Aluminium
+    crustal_abundance_ppm: 82300
+    global_annual_run_rate_t: 7.0e7        # primary aluminium, coarse
+    scarcity_penalty: 0.03
+    abundant_substitute: null              # IS the substitute (EMI, structure)
+    source: "crustal avg ~8.2% mass; abundant EMI/structural substitute"
+    estimated: true
+
+  - symbol: Fe
+    name: Iron
+    crustal_abundance_ppm: 56300
+    global_annual_run_rate_t: 2.5e9        # crude steel/iron, coarse
+    scarcity_penalty: 0.02
+    abundant_substitute: null              # workhorse structural atom
+    source: "crustal avg ~5.6% mass"
+    estimated: true
+
+  - symbol: C
+    name: Carbon
+    crustal_abundance_ppm: 200
+    global_annual_run_rate_t: 9.0e9        # incl. all carbon fuels/feedstock, coarse
+    scarcity_penalty: 0.05
+    abundant_substitute: null
+    source: "crustal avg ~200 ppm; run-rate dominated by fuel/feedstock"
+    estimated: true
+
+  - symbol: Ti
+    name: Titanium
+    crustal_abundance_ppm: 5650
+    global_annual_run_rate_t: 2.0e5        # Ti sponge, coarse
+    scarcity_penalty: 0.35
+    abundant_substitute: "Al"              # for non-bio/non-corrosion structural roles
+    source: "crustal avg ~0.57%; abundant crust but energy-intensive + thin run-rate"
+    estimated: true
+
+  - symbol: Cr
+    name: Chromium
+    crustal_abundance_ppm: 102
+    global_annual_run_rate_t: 4.0e7        # ferrochrome, coarse
+    scarcity_penalty: 0.30
+    abundant_substitute: null              # essential for stainless; no abundant sub for corrosion role
+    source: "crustal avg ~102 ppm; supply concentrated"
+    estimated: true
+
+  - symbol: Zn
+    name: Zinc
+    crustal_abundance_ppm: 70
+    global_annual_run_rate_t: 1.3e7        # mined zinc, coarse
+    scarcity_penalty: 0.30
+    abundant_substitute: "Al"              # galvanizing/coating alt where feasible
+    source: "crustal avg ~70 ppm"
+    estimated: true
+
+  - symbol: Ni
+    name: Nickel
+    crustal_abundance_ppm: 84
+    global_annual_run_rate_t: 3.3e6        # mined nickel, coarse
+    scarcity_penalty: 0.45
+    abundant_substitute: "Fe"              # for plain structural; not for battery/corrosion role
+    source: "crustal avg ~84 ppm; battery demand thins run-rate"
+    estimated: true
+
+  - symbol: Cu
+    name: Copper
+    crustal_abundance_ppm: 60
+    global_annual_run_rate_t: 2.2e7        # mined copper, coarse
+    scarcity_penalty: 0.45
+    abundant_substitute: "Al"              # Al windings/busbar where mass permits; Cu preferred for conductivity
+    source: "crustal avg ~60 ppm; the EMI/conductor reference substitute candidate"
+    estimated: true
+
+  - symbol: W
+    name: Tungsten
+    crustal_abundance_ppm: 1.25
+    global_annual_run_rate_t: 8.0e4        # mined tungsten, coarse
+    scarcity_penalty: 0.70
+    abundant_substitute: null              # high-temp/density role often irreplaceable
+    source: "crustal avg ~1.25 ppm; concentrated supply"
+    estimated: true
+
+  - symbol: Ag
+    name: Silver
+    crustal_abundance_ppm: 0.075
+    global_annual_run_rate_t: 2.6e4        # mined silver, coarse
+    scarcity_penalty: 0.85
+    abundant_substitute: "Cu"              # Cu/Al for ordinary conduction; reserve Ag for contacts
+    source: "crustal avg ~0.075 ppm"
+    estimated: true
+
+  - symbol: Pt
+    name: Platinum
+    crustal_abundance_ppm: 0.005
+    global_annual_run_rate_t: 2.0e2        # mined platinum, coarse
+    scarcity_penalty: 0.95
+    abundant_substitute: "Ni"              # base-metal catalyst where activity allows; reserve Pt for catalysis only
+    source: "crustal avg ~0.005 ppm; reserve for catalytic/electrode function"
+    estimated: true
+
+  - symbol: Au
+    name: Gold
+    crustal_abundance_ppm: 0.004
+    global_annual_run_rate_t: 3.0e3        # mined gold, coarse
+    scarcity_penalty: 0.97
+    abundant_substitute: "Al"              # CANONICAL: Al or Cu sheet/foil for EMI shielding (#205 worked case)
+    source: "crustal avg ~0.004 ppm; #205 reject-coat-it-in-gold-for-EMI example"
+    estimated: true
+
+  - symbol: Co
+    name: Cobalt
+    crustal_abundance_ppm: 25
+    global_annual_run_rate_t: 2.0e5        # mined cobalt, coarse
+    scarcity_penalty: 0.65
+    abundant_substitute: "Ni"              # for some battery/alloy roles; supply ethically + geographically concentrated
+    source: "crustal avg ~25 ppm; concentrated/contested supply"
+    estimated: true
+
+  - symbol: Li
+    name: Lithium
+    crustal_abundance_ppm: 20
+    global_annual_run_rate_t: 1.8e5        # mined lithium (Li content), coarse
+    scarcity_penalty: 0.55
+    abundant_substitute: "Na"              # Na-ion where energy density permits
+    source: "crustal avg ~20 ppm; run-rate rising fast"
+    estimated: true
+
+  - symbol: Mg
+    name: Magnesium
+    crustal_abundance_ppm: 23300
+    global_annual_run_rate_t: 1.0e6        # primary magnesium, coarse
+    scarcity_penalty: 0.10
+    abundant_substitute: null              # light-structural; abundant
+    source: "crustal avg ~2.3% mass"
+    estimated: true
+
+  - symbol: Sn
+    name: Tin
+    crustal_abundance_ppm: 2.3
+    global_annual_run_rate_t: 3.0e5        # mined tin, coarse
+    scarcity_penalty: 0.60
+    abundant_substitute: null              # solder role; lead-free constraints limit subs
+    source: "crustal avg ~2.3 ppm; solder feedstock"
+    estimated: true
+
+  - symbol: Nd
+    name: Neodymium
+    crustal_abundance_ppm: 28
+    global_annual_run_rate_t: 3.0e4        # NdFeB-relevant Nd, coarse
+    scarcity_penalty: 0.75
+    abundant_substitute: "Fe"              # ferrite magnets where flux density permits; reserve Nd for high-energy magnets
+    source: "crustal avg ~28 ppm but supply concentrated; rare-earth magnet driver"
+    estimated: true
