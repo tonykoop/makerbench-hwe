@@ -1,0 +1,16 @@
+# MakerBench HF Docker Space (#98) — app + headless geometry deps.
+# Pinned to compatible ranges; the data layer itself is stdlib-only.
+
+# Web UI / server (tabbed Blocks app + built-in gr.Model3D viewer).
+gradio==4.44.1
+
+# Headless geometry: trimesh tessellates/loads meshes and exports GLB for the
+# viewer; numpy is its core dep. STEP/B-Rep reading is provided by the OCP
+# (pythonocc) wheel, which trimesh uses as its STEP backend when present.
+trimesh==4.4.9
+numpy>=1.26,<2.2
+
+# STEP / B-Rep reader (headless OpenCASCADE bindings). Heavy wheel; lets
+# trimesh.load() handle *.step / *.stp solids. Optional at runtime — app.py
+# degrades gracefully if the import is unavailable.
+cadquery-ocp>=7.7,<7.8
