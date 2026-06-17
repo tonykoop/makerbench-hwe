@@ -42,7 +42,11 @@
 
   function uniq(arr) { var seen = {}, out = []; arr.forEach(function (v) { if (v && !seen[v]) { seen[v] = 1; out.push(v); } }); return out.sort(); }
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
-  function host(url) { try { return url.replace(/^https?:\/\//, "").split("/")[0]; } catch (e) { return "link"; } }
+  // Only allow http(s) URLs into an href; esc() does not neutralize a
+  // javascript:/data: scheme, and source/source_alt come from the landscape
+  // YAML. Anything else collapses to "#" so it can't execute.
+  function safeUrl(url) { var u = String(url == null ? "" : url).trim(); return /^https?:\/\//i.test(u) ? u : "#"; }
+  function host(url) { try { return String(url).replace(/^https?:\/\//, "").split("/")[0] || "link"; } catch (e) { return "link"; } }
 
   function selectEl(id, label, opts) {
     var wrap = document.createElement("div");
@@ -82,8 +86,8 @@
       var io = (e.input_modality || []).slice(0, 3).join(", ") + (e.output_representation && e.output_representation.length ? " &rarr; " + e.output_representation.slice(0, 2).join(", ") : "");
       html += '<tr class="lscape-row' + (e.is_self ? " lscape-self" : "") + '" data-i="' + i + '">' +
         '<td class="lscape-name">' +
-          '<a href="' + esc(e.source) + '" target="_blank" rel="noopener">' + esc(e.name) + "</a>" +
-          (e.recent ? ' <span class="lscape-new" title="v1 or major revision within 90 days of the sweep">NEW</span>' : "") +
+          '<a href="' + esc(safeUrl(e.source)) + '" target="_blank" rel="noopener">' + esc(e.name) + "</a>" +
+          (e.recent ? ' <span class="lscape-new" title="Flagged in the latest landscape sweep as a v1 or major revision (curated)">NEW</span>' : "") +
           (e.is_self ? ' <span class="lscape-mine">this benchmark</span>' : "") +
           '<span class="lscape-kind">' + esc(e._kind) + "</span>" +
         "</td>" +
@@ -103,8 +107,8 @@
       if (e.integrity) detailBits.push("<strong>Integrity:</strong> " + esc(e.integrity));
       if (e.openness) detailBits.push("<strong>Openness:</strong> " + esc(e.openness));
       if (e.note) detailBits.push("<strong>Note:</strong> " + esc(e.note));
-      var links = '<a href="' + esc(e.source) + '" target="_blank" rel="noopener">' + esc(host(e.source)) + "</a>";
-      if (e.source_alt) links += ' · <a href="' + esc(e.source_alt) + '" target="_blank" rel="noopener">' + esc(host(e.source_alt)) + "</a>";
+      var links = e.source ? '<a href="' + esc(safeUrl(e.source)) + '" target="_blank" rel="noopener">' + esc(host(e.source)) + "</a>" : "";
+      if (e.source_alt) links += (links ? " · " : "") + '<a href="' + esc(safeUrl(e.source_alt)) + '" target="_blank" rel="noopener">' + esc(host(e.source_alt)) + "</a>";
       html += '<tr class="lscape-detail" data-for="' + i + '" hidden><td colspan="7"><div class="lscape-detail-grid">' +
         detailBits.map(function (b) { return "<div>" + b + "</div>"; }).join("") +
         '<div class="lscape-links">' + links + "</div>" +
@@ -143,7 +147,8 @@
         CONTROLS.appendChild(selectEl("lscape-kind", "Kind", kinds));
         CONTROLS.appendChild(selectEl("lscape-grade", "Grading", grades));
         var rc = document.createElement("label"); rc.className = "lscape-check";
-        rc.innerHTML = '<input type="checkbox" id="lscape-recent"> New (&lt;90d)';
+        rc.innerHTML = '<input type="checkbox" id="lscape-recent"> Recently flagged';
+        rc.title = "Entries the latest quarterly sweep flagged as a v1 or major revision (curated)";
         CONTROLS.appendChild(rc);
         var search = document.createElement("input");
         search.type = "search"; search.id = "lscape-q"; search.placeholder = "Search…"; search.className = "lscape-search";

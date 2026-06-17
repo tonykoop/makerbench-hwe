@@ -94,7 +94,9 @@ def main() -> None:
 
     if args.check:
         current = args.out.read_text(encoding="utf-8") if args.out.exists() else ""
-        if current != text:
+        # Compare line-ending-insensitively: a CRLF checkout (Windows
+        # core.autocrlf) must not report a semantically-identical JSON as stale.
+        if current.replace("\r\n", "\n") != text.replace("\r\n", "\n"):
             sys.stderr.write(
                 f"{args.out} is stale — run: python site/landscape_data.py\n"
             )
