@@ -1,151 +1,275 @@
-"""Tests for the Workflow Manifest telemetry helpers (makerbench-hwe #295).
+"""WorkflowManifest + Human Intervention Index + .mbc certificate contract tests."""
 
-Self-contained: imports the stdlib-only module directly from ``scripts/`` so it
-does not depend on the wider makerbench package import graph.
-"""
+from __future__ import annotations
 
-import os
+import json
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
-# Make scripts/ importable without relying on package install.
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_SCRIPTS_DIR = os.path.join(_REPO_ROOT, "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
+from makerbench.certificate import (
+    MBC_SIGNATURE_ALG,
+    MbcCheckResult,
+    MbcPayload,
+    build_certificate,
+    canonical_payload_bytes,
+    sign_payload,
+    verify_mbc,
+    write_mbc,
+)
+from makerbench.schema import (
+    ComponentVersion,
+    DesignDossier,
+    HumanInterventionIndex,
+    ProvenanceTrace,
+    StackDescriptor,
+    WorkflowManifest,
+    WorkflowMetrics,
+)
 
-import workflow_manifest as wm  # noqa: E402
-
-
-# --- HITL tier enumeration --------------------------------------------------
-
-@pytest.mark.parametrize("tier", [0, 1, 2, 3])
-def test_hitl_tiers_0_to_3_valid(tier):
-    obj = {
-        "orchestration": "Claude Code",
-        "backbone_models": ["o3-mini"],
-        "tooling": ["Blender MCP"],
-        "hitl_tier": tier,
-    }
-    assert wm.validate_workflow_env(obj) == []
-
-
-def test_hitl_tier_4_invalid():
-    obj = {
-        "orchestration": "Claude Code",
-        "backbone_models": ["o3-mini"],
-        "tooling": ["Blender MCP"],
-        "hitl_tier": 4,
-    }
-    warnings = wm.validate_workflow_env(obj)
-    assert warnings
-    assert any("hitl_tier" in w for w in warnings)
+KEY = "shared-nonce-key-v0.1"
 
 
-def test_hitl_tiers_enumeration_meanings():
-    assert wm.HITL_TIERS[0] == "Fully-Autonomous"
-    assert wm.HITL_TIERS[1] == "Approved tool calls"
-    assert wm.HITL_TIERS[2] == "Text nudges"
-    assert wm.HITL_TIERS[3] == "Interactive CAD steering"
-
-
-# --- recipe tag rendering ---------------------------------------------------
-
-def test_recipe_tag_exact_format():
-    obj = {
-        "orchestration": "Claude Code",
-        "backbone_models": ["o3-mini"],
-        "tooling": ["Blender MCP"],
-        "hitl_tier": 1,
-    }
-    assert wm.render_recipe_tag(obj) == "[Claude Code] + [o3-mini] + [Blender MCP] (HITL-1)"
-
-
-def test_recipe_tag_multi_model_and_tool():
-    obj = {
-        "orchestration": "Codex CLI",
-        "backbone_models": ["gpt-5.5", "sonnet-4.6"],
-        "tooling": ["OpenSCAD CLI", "Blender MCP"],
-        "hitl_tier": 2,
-    }
-    assert (
-        wm.render_recipe_tag(obj)
-        == "[Codex CLI] + [gpt-5.5+sonnet-4.6] + [OpenSCAD CLI+Blender MCP] (HITL-2)"
+def _payload(**overrides) -> MbcPayload:
+    base = dict(
+        task_id="vented_plate",
+        seed=0,
+        score=3,
+        passed=True,
+        checks=[MbcCheckResult(name="structural", passed=True)],
+        artifact_fingerprint="a" * 64,
+        artifact_hash_version=2,
+        video_evidence_sha256="b" * 64,
+        autonomy_ratio=0.79,
+        hii_highest_level="L1",
+        toolchain_versions={"openscad": "2021.01", "makerbench": "0.1.0"},
+        timestamp="2026-06-13T12:00:00Z",
+        nonce="server-issued-nonce-123",
     )
+    base.update(overrides)
+    return MbcPayload(**base)
 
 
-def test_recipe_tag_omits_empty_tool_bracket():
-    obj = {
-        "orchestration": "Antigravity",
-        "backbone_models": ["gemini-3.5-flash"],
-        "tooling": [],
-        "hitl_tier": 0,
-    }
-    assert wm.render_recipe_tag(obj) == "[Antigravity] + [gemini-3.5-flash] (HITL-0)"
+# --- WorkflowManifest -------------------------------------------------------
 
 
-# --- backward compatibility -------------------------------------------------
-
-def test_entry_without_workflow_env_parses():
-    entry = {"task_id": "enclosure_fastened", "seed": 0, "cost_usd": 0.04}
-    view = wm.parse_result_entry(entry)
-    assert view["task_id"] == "enclosure_fastened"
-    assert view["has_workflow_env"] is False
-    assert view["workflow_env"] is None
-    assert view["recipe_tag"] == wm.AUTONOMOUS_CORE_TAG
-    assert view["recipe_tag"] == "[Autonomous Core] (HITL-0)"
-    assert view["warnings"] == []
+def test_manifest_defaults_are_present_and_additive():
+    m = WorkflowManifest(task_id="vented_plate", seed=0)
+    assert m.schema_version == "0.1"
+    # Every nested contract has a default so a sparse manifest still validates.
+    assert isinstance(m.stack, StackDescriptor)
+    assert isinstance(m.metrics, WorkflowMetrics)
+    assert isinstance(m.hii, HumanInterventionIndex)
+    assert isinstance(m.provenance_trace, ProvenanceTrace)
+    assert m.dossier is None
 
 
-def test_entry_with_workflow_env_parses():
-    entry = {
-        "task_id": "bracket_press_fit",
-        "workflow_env": {
-            "orchestration": "Claude Code",
-            "backbone_models": ["o3-mini"],
-            "tooling": ["Blender MCP"],
-            "hitl_tier": 1,
+def test_manifest_round_trips_through_json():
+    m = WorkflowManifest(
+        task_id="vented_plate",
+        seed=7,
+        stack=StackDescriptor(
+            orchestrator=ComponentVersion(name="claude-code", version="0.1.0"),
+            host_application=ComponentVersion(name="blender", version="4.2"),
+            execution_bridge=ComponentVersion(name="blender-mcp"),
+        ),
+        metrics=WorkflowMetrics(wall_clock_seconds=42.0, tool_calls_count=9),
+        hii=HumanInterventionIndex.from_events(l0=8, l1=3, l2=1),
+        provenance_trace=ProvenanceTrace(session_recording_hash="c" * 64),
+        dossier=DesignDossier(task_id="vented_plate", seed=7, fabrication_domain="enclosure"),
+    )
+    restored = WorkflowManifest.model_validate_json(m.model_dump_json())
+    assert restored == m
+    assert restored.stack.execution_bridge.version is None
+
+
+def test_manifest_accepts_plain_string_stack_components():
+    m = WorkflowManifest.model_validate({
+        "task_id": "vented_plate",
+        "seed": 0,
+        "stack": {
+            "framework": "makerbench-logger",
+            "execution_bridge": "blender-mcp",
         },
-    }
-    view = wm.parse_result_entry(entry)
-    assert view["has_workflow_env"] is True
-    assert view["recipe_tag"] == "[Claude Code] + [o3-mini] + [Blender MCP] (HITL-1)"
-    assert view["warnings"] == []
+    })
+
+    assert m.stack.framework == ComponentVersion(name="makerbench-logger")
+    assert m.stack.execution_bridge == ComponentVersion(name="blender-mcp")
 
 
-def test_parse_result_entry_tolerates_non_dict():
-    view = wm.parse_result_entry(None)
-    assert view["recipe_tag"] is None
-    assert view["has_workflow_env"] is False
+# --- Human Intervention Index ----------------------------------------------
 
 
-# --- validation flags bad tier / missing fields -----------------------------
-
-def test_validate_flags_bad_tier_string():
-    obj = {
-        "orchestration": "Claude Code",
-        "backbone_models": ["o3-mini"],
-        "tooling": [],
-        "hitl_tier": "1",
-    }
-    warnings = wm.validate_workflow_env(obj)
-    assert any("hitl_tier" in w for w in warnings)
+def test_hii_fully_autonomous_is_ratio_one():
+    hii = HumanInterventionIndex.from_events(l0=10)
+    assert hii.autonomy_ratio == 1.0
+    assert hii.highest_level == "L0"
 
 
-def test_validate_flags_missing_field():
-    obj = {"orchestration": "Claude Code", "hitl_tier": 0}
-    warnings = wm.validate_workflow_env(obj)
-    assert any("backbone_models" in w for w in warnings)
-    assert any("tooling" in w for w in warnings)
+def test_hii_no_events_defaults_to_autonomous():
+    hii = HumanInterventionIndex.from_events()
+    assert hii.autonomy_ratio == 1.0
+    assert hii.highest_level == "L0"
 
 
-def test_validate_flags_wrong_type():
-    obj = {
-        "orchestration": "Claude Code",
-        "backbone_models": "o3-mini",
-        "tooling": [],
-        "hitl_tier": 0,
-    }
-    warnings = wm.validate_workflow_env(obj)
-    assert any("backbone_models" in w for w in warnings)
+def test_hii_ratio_decreases_with_heavier_steering():
+    light = HumanInterventionIndex.from_events(l0=8, l1=2)
+    heavy = HumanInterventionIndex.from_events(l0=8, l2=2)
+    assert light.autonomy_ratio > heavy.autonomy_ratio
+    assert heavy.highest_level == "L2"
+    # L1 costs half autonomy, L2 costs all of it: (8*1 + 2*0.5)/10 = 0.9; (8*1)/10 = 0.8.
+    assert light.autonomy_ratio == 0.9
+    assert heavy.autonomy_ratio == 0.8
+
+
+def test_hii_highest_level_prefers_heaviest_tier():
+    assert HumanInterventionIndex.from_events(l0=1, l1=1).highest_level == "L1"
+    assert HumanInterventionIndex.from_events(l0=1, l1=1, l2=1).highest_level == "L2"
+
+
+def test_hii_direct_construction_rejects_gaming_vector():
+    """#223: the exact anti-gaming case — 20 heavy manual edits dressed up as a
+    fully-autonomous run — must be rejected at the model level, not just inside a
+    WorkflowManifest, since HII rides into the signed cert as trusted truth."""
+    with pytest.raises(ValidationError, match="autonomy_ratio must match HII event counts"):
+        HumanInterventionIndex(
+            l2_copilot_manual_events=20,
+            autonomy_ratio=1.0,
+            highest_level="L0",
+        )
+
+
+def test_hii_direct_construction_accepts_consistent_values():
+    """A hand-authored-but-consistent HII still validates (no false positives)."""
+    hii = HumanInterventionIndex(
+        l0_autonomous_events=8,
+        l1_nl_steering_events=2,
+        autonomy_ratio=0.9,
+        highest_level="L1",
+    )
+    assert hii.autonomy_ratio == 0.9
+
+
+def test_manifest_rejects_hii_ratio_that_disagrees_with_counts():
+    with pytest.raises(ValidationError, match="autonomy_ratio must match HII event counts"):
+        WorkflowManifest.model_validate({
+            "task_id": "vented_plate",
+            "seed": 0,
+            "hii": {
+                "l0_autonomous_events": 8,
+                "l1_nl_steering_events": 2,
+                "l2_copilot_manual_events": 0,
+                "autonomy_ratio": 1.0,
+                "highest_level": "L1",
+            },
+        })
+
+
+def test_manifest_rejects_hii_highest_level_that_disagrees_with_counts():
+    with pytest.raises(ValidationError, match="highest_level must match HII event counts"):
+        WorkflowManifest.model_validate({
+            "task_id": "vented_plate",
+            "seed": 0,
+            "hii": {
+                "l0_autonomous_events": 8,
+                "l1_nl_steering_events": 0,
+                "l2_copilot_manual_events": 1,
+                "autonomy_ratio": 0.888889,
+                "highest_level": "L1",
+            },
+        })
+
+
+# --- .mbc certificate -------------------------------------------------------
+
+
+def test_mbc_write_and_verify_round_trip(tmp_path):
+    path = tmp_path / "out.mbc"
+    text = write_mbc(_payload(), KEY, path=path)
+    assert path.read_text(encoding="utf-8") == text
+    assert verify_mbc(text, KEY) is True
+    assert verify_mbc(path, KEY) is True
+    assert verify_mbc(str(path), KEY) is True
+    assert verify_mbc(text.encode("utf-8"), KEY) is True
+
+
+def test_mbc_signature_uses_declared_alg():
+    cert = build_certificate(_payload(), KEY)
+    assert cert.signature_alg == MBC_SIGNATURE_ALG
+    assert cert.signature == sign_payload(cert.payload, KEY)
+
+
+def test_mbc_verify_fails_when_a_byte_is_mutated():
+    text = write_mbc(_payload(), KEY)
+    # Flip the graded score in the serialized payload — signature must reject it.
+    mutated = text.replace('"score": 3', '"score": 4')
+    assert mutated != text
+    assert verify_mbc(mutated, KEY) is False
+
+
+def test_mbc_verify_fails_on_wrong_key():
+    text = write_mbc(_payload(), KEY)
+    assert verify_mbc(text, "attacker-key") is False
+
+
+def test_mbc_verify_fails_on_tampered_signature():
+    cert = build_certificate(_payload(), KEY)
+    forged = cert.model_dump(mode="json")
+    forged["signature"] = "00" * 32
+    assert verify_mbc(forged, KEY) is False
+
+
+def test_mbc_verify_checks_expected_nonce():
+    text = write_mbc(_payload(nonce="real-nonce"), KEY)
+    assert verify_mbc(text, KEY, expected_nonce="real-nonce") is True
+    assert verify_mbc(text, KEY, expected_nonce="stale-nonce") is False
+
+
+def test_mbc_verify_rejects_malformed_input():
+    assert verify_mbc("not json at all", KEY) is False
+    assert verify_mbc("{}", KEY) is False
+    assert verify_mbc(b"\xff\xfe", KEY) is False
+
+
+# --- exported JSON Schema ---------------------------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_exported_schemas_are_not_stale():
+    """The committed schemas/ files must match the current pydantic models."""
+    proc = subprocess.run(
+        [sys.executable, "scripts/export_workflow_schemas.py", "--check"],
+        cwd=REPO_ROOT,
+        env={"PYTHONPATH": str(REPO_ROOT)},
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_exported_manifest_schema_is_nonempty_json_schema():
+    schema = json.loads((REPO_ROOT / "schemas" / "workflow_manifest.schema.json").read_text())
+    assert schema.get("title") == "WorkflowManifest"
+    assert "stack" in schema["properties"]
+    assert "hii" in schema["properties"]
+
+
+def test_committed_example_manifest_validates():
+    example = json.loads(
+        (REPO_ROOT / "schemas" / "examples" / "workflow_manifest.example.json").read_text()
+    )
+    manifest = WorkflowManifest.model_validate(example)
+    assert manifest.task_id == "vented_plate"
+    assert 0.0 <= manifest.hii.autonomy_ratio <= 1.0
+
+
+def test_canonical_payload_bytes_are_deterministic():
+    p = _payload()
+    assert canonical_payload_bytes(p) == canonical_payload_bytes(p.model_dump(mode="json"))
+    # Sorted keys + tight separators, like attestation.normalized_result_payload.
+    assert b", " not in canonical_payload_bytes(p)
+    assert json.loads(canonical_payload_bytes(p))["score"] == 3
