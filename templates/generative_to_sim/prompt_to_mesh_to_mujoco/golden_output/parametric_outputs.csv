@@ -1,0 +1,5 @@
+parameter,value
+joint_count,4
+mesh_triangles,18450
+max_constraint_limit,1.0
+min_constraint_limit,-1.0
