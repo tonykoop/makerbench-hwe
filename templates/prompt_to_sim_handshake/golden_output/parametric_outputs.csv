@@ -1,0 +1,6 @@
+parameter,value
+joint_count,3
+artifacts_required,3
+joint_count_min,-3
+joint_count_max,10
+max_abs_limit,1.2
