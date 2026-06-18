@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 160" width="220" height="160">
+  <title>Synthetic freehand sketch — front view</title>
+  <rect x="20" y="18" width="180" height="124" fill="none" stroke="#111" stroke-width="2" stroke-linecap="round" />
+  <circle cx="110" cy="80" r="18" fill="none" stroke="#111" stroke-width="1.6" />
+  <path d="M58 80 Q68 64 74 80 Q80 96 92 80" fill="none" stroke="#111" stroke-width="1.4" />
+  <path d="M128 80 Q134 64 142 80 Q150 96 162 80" fill="none" stroke="#111" stroke-width="1.4" />
+  <path d="M74 36 L84 48 L92 36" fill="none" stroke="#111" stroke-width="1.4" />
+  <path d="M128 36 L138 48 L146 36" fill="none" stroke="#111" stroke-width="1.4" />
+  <path d="M74 124 L84 136 L92 124" fill="none" stroke="#111" stroke-width="1.4" />
+  <path d="M128 124 L138 136 L146 124" fill="none" stroke="#111" stroke-width="1.4" />
+</svg>
