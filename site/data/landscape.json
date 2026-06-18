@@ -2,9 +2,33 @@
   "_comment": "GENERATED from docs/landscape.yaml by site/landscape_data.py — do not edit by hand; re-run on each quarterly sweep.",
   "sweep": {
     "date": "2026-06-10",
+    "next_due": "2026-09-10",
+    "cadence": "quarterly",
+    "process_doc": "docs/LANDSCAPE_SWEEP.md",
+    "evidence_template": "docs/landscape-evidence/<YYYY-MM-DD>.yaml",
+    "required_checks": [
+      "reverify_sources",
+      "hunt_new_entries",
+      "flag_recent_entries",
+      "refresh_promised_releases",
+      "refresh_cadgenbench_leaderboard",
+      "refresh_muse_grading",
+      "diff_landscape_yaml",
+      "append_what_changed",
+      "refresh_strategy_rankings",
+      "verify_benchmark_vs_method_labels"
+    ],
+    "volatile_watchlist": [
+      "UniCAD",
+      "Physics-in-the-Loop",
+      "Hephaestus-CCX",
+      "GenCAD-3D",
+      "CADGenBench",
+      "MUSE"
+    ],
     "method": "Primary-source verification (arXiv abstract pages, GitHub READMEs, HF Space cards/datasets) via fetch + quote; adversarial 3-vote verification for the claims that reached the deep-research pipeline. Abstract-level only; paper bodies may add detail."
   },
-  "count": 25,
+  "count": 27,
   "entries": [
     {
       "name": "MakerBench-HWE",
@@ -40,6 +64,48 @@
       ],
       "recent": false,
       "is_self": true
+    },
+    {
+      "name": "SOLIDWORKS AI Virtual Companions (LEO / AURA / MARIE)",
+      "type": "product",
+      "source": "https://www.solidworks.com/product/solidworks-design/ai-companions",
+      "source_alt": "https://develop3d.com/cad/new-solidworks-ai-agents-added-at-3dexperience-world/",
+      "date": "2026-02 announcement; beta available in SOLIDWORKS Design as of 2026-06-14",
+      "framing_own": "Dassault Systemes' SOLIDWORKS-native AI companion family: AURA for enterprise/web knowledge exploration, LEO for engineering, validation, simulation, manufacturing, assembly structure, STEP/image-to-geometry assistance, and MARIE for materials/science research.",
+      "scope": "manufacturability",
+      "grading": "n/a (proprietary embedded copilot; no public reproducible benchmark)",
+      "grading_detail": "vendor product capability surface; no disclosed deterministic public scoring protocol",
+      "agentic": "tool-use (embedded in SOLIDWORKS/3DEXPERIENCE workflows)",
+      "openness": "proprietary commercial SOLIDWORKS/3DEXPERIENCE capability; SOLIDWORKS page says SOLIDWORKS Design includes beta access to AURA and LEO",
+      "backing": "industry (Dassault Systemes / SOLIDWORKS)",
+      "dataset_scale": "n/a - product capability surface, not a dataset",
+      "integrity": "no public benchmark integrity mechanism claimed",
+      "anti_memorization": "not applicable - no public task set or leaderboard claimed",
+      "note": "Important incumbent signal for MakerBench-HWE: LEO brings inline design-environment DFM, simulation, assembly, drawing, and repair assistance into a major CAD seat, while MakerBench remains the open, deterministic, vendor-neutral referee for whether such workflows produce manufacturable artifacts. DEVELOP3D reports the companions are built on Mistral AI models running on Dassault Systemes' Outscale cloud, with LEO planned for mid-2026 and MARIE later in 2026; Engineering.com reports a July LEO / September MARIE schedule and consumption-based licensing.",
+      "input_modality": [
+        "solidworks-session-context",
+        "natural-language-prompts",
+        "sketches",
+        "images",
+        "step-files",
+        "enterprise-and-web-knowledge"
+      ],
+      "output_representation": [
+        "assembly-structures",
+        "parametric-features",
+        "simulation-studies",
+        "drawings",
+        "image-to-mesh",
+        "knowledge-guidance"
+      ],
+      "fab_processes": [
+        "cad-design",
+        "assembly",
+        "simulation",
+        "manufacturing"
+      ],
+      "recent": true,
+      "is_self": false
     },
     {
       "name": "CADBench",
@@ -274,6 +340,34 @@
       "note": "Headline - Codex (GPT-5.5) and Claude Code (Opus-4.7) produced zero strict-passing artifacts first-attempt; best config ~20% of typed requirements. Most significant new neighbour on the physics flank.",
       "input_modality": [
         "text-brief"
+      ],
+      "output_representation": [
+        "step-brep-assembly"
+      ],
+      "fab_processes": [],
+      "recent": true,
+      "is_self": false
+    },
+    {
+      "name": "MARB / CADCLAW",
+      "type": "benchmark+method",
+      "source": "https://marb.cadclaw.io/",
+      "source_alt": "https://github.com/sunnyday-technologies/CADCLAW",
+      "date": "2026-06 (v0.9)",
+      "framing_own": "Mechanical Assembly Readiness Benchmark: hand a model a goal image plus a kit of raw STEP parts and ask it to assemble a working multi-part machine; the CADCLAW engine (\"pytest for mechanical design\") runs black-box gates on the exported STEP and maps the result onto an L0-L7 readiness ladder tied to TRL / MRL / IRL.",
+      "scope": "assembly-integrity",
+      "grading": "deterministic-geometric",
+      "grading_detail": "CADCLAW black-box STEP gates - Inventory (right parts present), Interference (no solid-solid overlap), Adjacency/connection, Floating (nothing disconnected); Orientation gate marked v-next. Effort (time, tokens, attempts) is reported separately, never folded into the artifact score.",
+      "agentic": "tool-use (AI driver assembles in any CAD tool; \"one task, any tool, one grader\")",
+      "openness": "MIT (CADCLAW + MARB repos public on GitHub)",
+      "backing": "independent (Sunnyday Technologies / Nicholas Sonnentag)",
+      "dataset_scale": "v0.9 (2026-06) - 9 graded builds on one shared ~100-part machine; L1 is the current frontier bar",
+      "integrity": "none claimed (black-box gates on exported STEP; human-review step in the pipeline)",
+      "anti_memorization": "none claimed (single shared 100-part machine across runs as of v0.9)",
+      "note": "Closest neighbour yet to MakerBench's level-based framing, but grades MACRO-assembly / system integrity (placement, collision, connectivity) - not micro process-DFM. v0.9 headline: the frontier sits at a clean L1 (best run Claude Opus 4.7 + CadQuery, 0.0 mm gap median, ~49 min; \"none is buildable yet\"). Authors decline head-to-heads they have not run. Complementary to MakerBench, not competitive - see LANDSCAPE.md.",
+      "input_modality": [
+        "goal-image",
+        "step-parts-kit"
       ],
       "output_representation": [
         "step-brep-assembly"
