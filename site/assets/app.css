@@ -110,6 +110,26 @@ code, kbd, pre { font-family: var(--mono); font-size: 0.86em; }
   border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
 }
 .hero-cta { margin-top: 26px; display: flex; gap: 12px; flex-wrap: wrap; }
+.hero-card {
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  padding: 14px 16px;
+  max-width: 680px;
+  box-shadow: var(--shadow);
+}
+.hero-card-title {
+  margin: 0 0 6px;
+  font-weight: 700;
+  color: var(--text);
+}
+.hero-card-body {
+  margin: 0 0 10px;
+  color: var(--text-soft);
+  max-width: 60ch;
+  font-size: 0.94rem;
+}
 .btn {
   display: inline-flex; align-items: center; gap: 7px; padding: 10px 16px; border-radius: 10px;
   font-weight: 600; font-size: 0.92rem; cursor: pointer; border: 1px solid transparent;
