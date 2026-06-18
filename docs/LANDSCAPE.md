@@ -10,6 +10,19 @@ missing project, please open an issue or PR. A machine-readable version lives in
 in [`LANDSCAPE_SWEEP.md`](LANDSCAPE_SWEEP.md); next full sweep due:
 2026-09-10.*
 
+## Taxonomy legend
+
+The landscape uses two compact tags plus `type`:
+
+- `axis`: one or more from
+  `spatial-intelligence`, `hardware-engineering`, `code-cad`, `dfm`,
+  `reverse-engineering`, `physics-sim`.
+- `kind`: one of `benchmark`, `method`, or `dataset`.
+
+The older `type` field (for example `benchmark+method` or `method+dataset`) is
+kept for continuity. `kind` is the practical lane selector for sorting and
+filtering.
+
 AI-for-CAD evaluation is moving fast — a wave of benchmarks landed in early
 2026, and entries marked 🆕 below are less than 90 days old. That is good news:
 it means the problem is real and worth measuring. Most of this wave asks one
