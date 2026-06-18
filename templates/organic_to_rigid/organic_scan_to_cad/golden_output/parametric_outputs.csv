@@ -1,0 +1,5 @@
+parameter,value
+links,5
+max_vertices,5
+axis_margin_mm,10
+max_bbox_span_mm,325

@@ -1,0 +1,12 @@
+{
+  "scan_id": "humanoid_torso_scan_alpha",
+  "scale": "meters",
+  "landmarks": {
+    "torso": [0.0, 0.0, 0.0],
+    "shoulder_left": [-0.31, 0.62, 1.21],
+    "shoulder_right": [0.31, 0.62, 1.21],
+    "hip_left": [-0.19, 0.0, 0.42],
+    "hip_right": [0.19, 0.0, 0.42]
+  },
+  "expected_links": 5
+}
