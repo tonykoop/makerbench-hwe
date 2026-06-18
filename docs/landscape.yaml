@@ -7,8 +7,11 @@
 # revision) within 90 days of the sweep date.
 #
 # Axis vocabulary:
+#   axis:       spatial-intelligence | hardware-engineering | code-cad | dfm |
+#               reverse-engineering | physics-sim
 #   type:        benchmark | leaderboard | method | method+benchmark |
 #                dataset | benchmark+method | method+dataset | product
+#   kind:        benchmark | method | dataset
 #   grading:     deterministic-geometric | executability | simulation-fea |
 #                vlm-judge | llm-judge | human-preference | task-completion | mixed
 #   scope:       shape | shape+editability | physics | manufacturability |
@@ -48,6 +51,13 @@ sweep:
 
 entries:
   - name: MakerBench-HWE
+    axis:
+      - spatial-intelligence
+      - hardware-engineering
+      - code-cad
+      - reverse-engineering
+      - dfm
+    kind: benchmark
     type: benchmark
     source: https://github.com/TonyKoop/makerbench-hwe
     date: 2026 (ongoing)
@@ -70,6 +80,11 @@ entries:
 
   # -- Embedded CAD copilots / incumbent products -----------------------------
   - name: SOLIDWORKS AI Virtual Companions (LEO / AURA / MARIE)
+    axis:
+      - hardware-engineering
+      - code-cad
+      - spatial-intelligence
+    kind: method
     type: product
     source: https://www.solidworks.com/product/solidworks-design/ai-companions
     source_alt: https://develop3d.com/cad/new-solidworks-ai-agents-added-at-3dexperience-world/
@@ -104,6 +119,10 @@ entries:
 
   # ── CAD generation benchmarks ──────────────────────────────────────────────
   - name: CADBench
+    axis:
+      - spatial-intelligence
+      - code-cad
+    kind: benchmark
     type: benchmark
     source: https://arxiv.org/abs/2605.10873
     date: 2026-05
@@ -123,6 +142,10 @@ entries:
     dataset_scale: 18000 samples / 6 families
 
   - name: BenchCAD
+    axis:
+      - spatial-intelligence
+      - code-cad
+    kind: benchmark
     type: benchmark
     source: https://arxiv.org/abs/2605.10865
     date: 2026-05-11
@@ -142,6 +165,10 @@ entries:
     dataset_scale: 17900 CadQuery programs / 106 industrial part families
 
   - name: Text2CAD-Bench
+    axis:
+      - spatial-intelligence
+      - code-cad
+    kind: benchmark
     type: benchmark
     source: https://arxiv.org/abs/2605.18430
     date: 2026-05
@@ -160,6 +187,10 @@ entries:
     dataset_scale: 600 human-curated examples / 4 complexity levels (L1-L4)
 
   - name: CADTestBench
+    axis:
+      - spatial-intelligence
+      - code-cad
+    kind: benchmark
     type: benchmark
     source: https://arxiv.org/abs/2605.07807
     source_alt: https://github.com/dimitrismallis/CADTestBench
@@ -185,6 +216,11 @@ entries:
     note: kindred deterministic-grading philosophy - requirement-derived executable tests rather than reference-geometry similarity; shape-only, no DFM/physics
 
   - name: MUSE
+    axis:
+      - spatial-intelligence
+      - code-cad
+      - dfm
+    kind: benchmark
     type: benchmark
     source: https://arxiv.org/abs/2605.28579
     date: 2026-05
@@ -205,6 +241,11 @@ entries:
     note: nearest neighbour on framing; key differentiator is judge-based vs deterministic DFM
 
   - name: CADGenBench
+    axis:
+      - spatial-intelligence
+      - code-cad
+      - hardware-engineering
+    kind: benchmark
     type: leaderboard
     source: https://github.com/huggingface/cadgenbench
     source_alt: https://huggingface.co/spaces/HuggingAI4Engineering/CADGenBench
@@ -225,6 +266,10 @@ entries:
     dataset_scale: leaderboard, 14 submission rows as of 2026-06-10
 
   - name: 3DCodeBench
+    axis:
+      - spatial-intelligence
+      - code-cad
+    kind: benchmark
     type: benchmark
     source: https://arxiv.org/abs/2606.01057
     date: 2026-06
@@ -244,6 +289,10 @@ entries:
     dataset_scale: large-scale curated multimodal dataset (count not in abstract); 12 VLMs evaluated
 
   - name: UniCAD
+    axis:
+      - spatial-intelligence
+      - code-cad
+    kind: benchmark
     type: benchmark+method
     source: https://arxiv.org/abs/2606.05058
     date: 2026-06-03
@@ -266,6 +315,11 @@ entries:
 
   # ── Physics / simulation-graded ────────────────────────────────────────────
   - name: Hephaestus-CCX
+    axis:
+      - physics-sim
+      - hardware-engineering
+      - spatial-intelligence
+    kind: benchmark
     type: method+benchmark
     source: https://arxiv.org/abs/2605.17448
     date: 2026-05-17
@@ -293,6 +347,10 @@ entries:
 
   # ── Assembly readiness (macro / system-level) ──────────────────────────────
   - name: MARB / CADCLAW
+    axis:
+      - hardware-engineering
+      - reverse-engineering
+    kind: benchmark
     type: benchmark+method
     source: https://marb.cadclaw.io/
     source_alt: https://github.com/sunnyday-technologies/CADCLAW
@@ -329,6 +387,10 @@ entries:
       Complementary to MakerBench, not competitive - see LANDSCAPE.md.
 
   - name: EngDesign (Toward Engineering AGI)
+    axis:
+      - physics-sim
+      - spatial-intelligence
+    kind: benchmark
     type: benchmark
     source: https://arxiv.org/abs/2509.16204
     date: 2025 (NeurIPS 2025 Datasets & Benchmarks)
@@ -347,6 +409,9 @@ entries:
     dataset_scale: nine engineering domains; task count not in abstract
 
   - name: FEABench
+    axis:
+      - physics-sim
+    kind: benchmark
     type: benchmark
     source: https://arxiv.org/abs/2504.06260
     date: 2025-04
@@ -365,6 +430,9 @@ entries:
     dataset_scale: not recorded this sweep
 
   - name: FEM-Bench
+    axis:
+      - physics-sim
+    kind: benchmark
     type: benchmark
     source: https://arxiv.org/abs/2512.20732
     date: 2025-12 (v2 2026-05-29)
@@ -383,6 +451,11 @@ entries:
     dataset_scale: 33 tasks
 
   - name: Physics-in-the-Loop
+    axis:
+      - physics-sim
+      - hardware-engineering
+      - code-cad
+    kind: benchmark
     type: method+benchmark
     source: https://arxiv.org/abs/2605.19717
     date: 2026-05-19
@@ -402,6 +475,10 @@ entries:
 
   # ── Methods / models / datasets (context, not benchmarks) ──────────────────
   - name: GenCAD
+    axis:
+      - code-cad
+      - spatial-intelligence
+    kind: method
     type: method
     source: https://arxiv.org/abs/2409.16294
     date: 2024-09
@@ -415,6 +492,11 @@ entries:
     backing: MIT
 
   - name: GenCAD-3D
+    axis:
+      - code-cad
+      - spatial-intelligence
+      - reverse-engineering
+    kind: method
     type: method
     source: https://arxiv.org/abs/2509.15246
     date: 2025-09 (ASME JMD)
@@ -429,6 +511,10 @@ entries:
     note: the 51 scanned-part set is directly relevant to reverse-engineering evaluation
 
   - name: CADFS
+    axis:
+      - code-cad
+      - spatial-intelligence
+    kind: method
     type: method+dataset
     source: https://arxiv.org/abs/2605.01925
     source_alt: https://voyleg.github.io/cadfs/
@@ -453,6 +539,10 @@ entries:
       STRATEGY_MEMO.md.
 
   - name: CADFit
+    axis:
+      - code-cad
+      - reverse-engineering
+    kind: method
     type: method
     source: https://arxiv.org/abs/2605.01171
     source_alt: https://github.com/ghadinehme/CADFit
@@ -476,6 +566,10 @@ entries:
       not a benchmark.
 
   - name: CADSmith
+    axis:
+      - code-cad
+      - reverse-engineering
+    kind: method
     type: method
     source: https://arxiv.org/abs/2603.26512
     date: 2026-03-27
@@ -490,6 +584,9 @@ entries:
     note: VLM judge is part of the METHOD's repair loop, not its evaluation scoring - do not cite as judge-graded eval
 
   - name: Text-to-CadQuery
+    axis:
+      - code-cad
+    kind: method
     type: method
     source: https://arxiv.org/abs/2505.06507
     date: 2025-05
@@ -503,6 +600,11 @@ entries:
     backing: academic
 
   - name: ArtiCAD
+    axis:
+      - code-cad
+      - spatial-intelligence
+      - reverse-engineering
+    kind: benchmark
     type: method+benchmark
     source: https://arxiv.org/abs/2604.10992
     date: 2026-04-13
@@ -516,6 +618,10 @@ entries:
     backing: academic
 
   - name: BenDFM
+    axis:
+      - dfm
+      - hardware-engineering
+    kind: dataset
     type: dataset
     source: https://arxiv.org/abs/2603.13102
     date: 2026-03-13
@@ -535,6 +641,11 @@ entries:
     note: conceptual overlap with MakerBench sheet-metal white space; different audience (3D DL classifiers vs agents); its taxonomy is worth adopting as shared vocabulary
 
   - name: EngiAI
+    axis:
+      - hardware-engineering
+      - code-cad
+      - spatial-intelligence
+    kind: benchmark
     type: benchmark+method
     source: https://arxiv.org/abs/2605.19743
     date: 2026-05-19 (IDETC 2026)
@@ -552,6 +663,10 @@ entries:
     integrity: none claimed
 
   - name: ERI Benchmark
+    axis:
+      - spatial-intelligence
+      - hardware-engineering
+    kind: benchmark
     type: benchmark
     source: https://arxiv.org/abs/2603.02239
     date: 2026-02-16
@@ -571,6 +686,10 @@ entries:
     dataset_scale: 57750 records / 9 fields / 55 subdomains
 
   - name: GD&T drawing-annotation mapping
+    axis:
+      - code-cad
+      - reverse-engineering
+    kind: method
     type: method
     source: https://arxiv.org/abs/2602.18296
     date: 2026-02-20

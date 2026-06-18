@@ -45,6 +45,17 @@ ALLOWED_TYPES = {
     "product",
 }
 
+ALLOWED_AXIS = {
+    "spatial-intelligence",
+    "hardware-engineering",
+    "code-cad",
+    "dfm",
+    "reverse-engineering",
+    "physics-sim",
+}
+
+ALLOWED_KIND = {"benchmark", "method", "dataset"}
+
 # Documented `grading` vocabulary. The data also uses descriptive free text
 # (e.g. "executability + numeric correctness", "n/a (method; ...)"), which is
 # an accepted escape hatch — but a value that *looks* like a vocabulary token
@@ -67,6 +78,8 @@ _VOCAB_TOKEN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 REQUIRED_FIELDS = {
     "name",
     "type",
+    "axis",
+    "kind",
     "source",
     "date",
     "recent",
@@ -207,6 +220,28 @@ def test_type_uses_documented_vocabulary():
             f"{entry['name']}: type {entry['type']!r} not in documented "
             f"vocabulary {sorted(ALLOWED_TYPES)} (extend the header vocab "
             "and this test together if a new type is genuinely needed)"
+        )
+
+
+def test_axis_uses_documented_vocabulary():
+    for entry in _entries():
+        axis = entry["axis"]
+        assert isinstance(axis, list), (
+            f"{entry['name']}: `axis` must be a YAML list"
+        )
+        assert axis, f"{entry['name']}: `axis` must have at least one value"
+        for item in axis:
+            assert item in ALLOWED_AXIS, (
+                f"{entry['name']}: axis value {item!r} not in documented vocabulary "
+                f"{sorted(ALLOWED_AXIS)}"
+            )
+
+
+def test_kind_uses_documented_vocabulary():
+    for entry in _entries():
+        assert entry["kind"] in ALLOWED_KIND, (
+            f"{entry['name']}: kind {entry['kind']!r} not in documented vocabulary "
+            f"{sorted(ALLOWED_KIND)}"
         )
 
 

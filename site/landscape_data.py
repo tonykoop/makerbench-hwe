@@ -31,11 +31,12 @@ except ImportError:  # pragma: no cover - dev dependency
     raise
 
 # Lists pass through as lists; everything else as collapsed-whitespace scalars.
-_LIST_FIELDS = ("input_modality", "output_representation", "fab_processes")
+_LIST_FIELDS = ("axis", "input_modality", "output_representation", "fab_processes")
 _SCALAR_FIELDS = (
     "name", "type", "source", "source_alt", "date", "framing_own", "scope",
     "grading", "grading_detail", "agentic", "openness", "backing",
     "dataset_scale", "integrity", "anti_memorization", "note",
+    "kind",
 )
 
 
