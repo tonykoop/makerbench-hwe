@@ -1,0 +1,7 @@
+segment,parent,child,length_mm
+pelvis_left,pelvis_center,left_hip,100.0
+pelvis_right,pelvis_center,right_hip,100.0
+femur_left,left_hip,left_knee,420.0
+femur_right,right_hip,right_knee,420.0
+tibia_left,left_knee,left_ankle,400.0
+tibia_right,right_knee,right_ankle,400.0
