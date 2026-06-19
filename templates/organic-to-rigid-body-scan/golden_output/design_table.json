@@ -1,0 +1,20 @@
+{
+  "recipe_id": "organic-to-rigid-body-scan",
+  "seed": 0,
+  "units": "mm",
+  "frame": "z_up_right_handed",
+  "bbox_vertices": [
+    [-150, -90, 0], [150, -90, 0], [-150, 90, 0], [150, 90, 0],
+    [-150, -90, 980], [150, -90, 980], [-150, 90, 980], [150, 90, 980]
+  ],
+  "design_table": [
+    { "segment": "pelvis_left",  "parent": "pelvis_center", "child": "left_hip",    "length_mm": 100.0 },
+    { "segment": "pelvis_right", "parent": "pelvis_center", "child": "right_hip",   "length_mm": 100.0 },
+    { "segment": "femur_left",   "parent": "left_hip",      "child": "left_knee",   "length_mm": 420.0 },
+    { "segment": "femur_right",  "parent": "right_hip",     "child": "right_knee",  "length_mm": 420.0 },
+    { "segment": "tibia_left",   "parent": "left_knee",     "child": "left_ankle",  "length_mm": 400.0 },
+    { "segment": "tibia_right",  "parent": "right_knee",    "child": "right_ankle", "length_mm": 400.0 }
+  ],
+  "material_assignment": "AL6061-T6",
+  "self_check_summary": "8 AABB corners recovered; 6 skeletal segments measured; left/right symmetric within 1.5 mm."
+}
