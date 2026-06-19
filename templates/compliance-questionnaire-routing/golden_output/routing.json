@@ -1,0 +1,18 @@
+{
+  "recipe_id": "compliance-questionnaire-routing",
+  "seed": 0,
+  "selected_tests": [
+    "ASTM_D4169",
+    "ASTM_D5276",
+    "ASTM_D7386",
+    "ASTM_F1980",
+    "ISO_4180"
+  ],
+  "rationale": {
+    "ASTM_D4169": "Parcel distribution mode requires the overall distribution-cycle performance schedule.",
+    "ASTM_D5276": "Manual handling at 12 kg gross mass calls for a free-fall drop test.",
+    "ASTM_D7386": "The parcel (single-parcel courier) distribution_mode triggers the single-parcel schedule.",
+    "ASTM_F1980": "The sterile product's shelf_life_claim requires accelerated-aging validation.",
+    "ISO_4180": "The international market requires an international transport test schedule."
+  }
+}
