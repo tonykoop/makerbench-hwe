@@ -112,7 +112,6 @@ def derive_hazards(params: dict) -> list[str]:
     hazards = []
     m = params["module_mm"]
     b = params["face_width_mm"]
-    d1 = gold["pinion_pitch_diameter_mm"]
 
     # Non-standard module
     if not is_standard_module(m):
