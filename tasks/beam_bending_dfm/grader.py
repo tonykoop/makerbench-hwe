@@ -45,22 +45,22 @@ def section_properties(section_type: str, dims: dict) -> tuple[float, float]:
     """Return (I [mm⁴], c [mm]) for the cross-section."""
     if section_type == "rectangular":
         b, d = dims["b_mm"], dims["d_mm"]
-        I = b * d ** 3 / 12.0
+        I = b * d ** 3 / 12.0  # noqa: E741
         c = d / 2.0
     elif section_type == "circular":
         r = dims["r_mm"]
-        I = math.pi * r ** 4 / 4.0
+        I = math.pi * r ** 4 / 4.0  # noqa: E741
         c = r
     elif section_type == "hollow_circular":
         ro, ri = dims["ro_mm"], dims["ri_mm"]
-        I = math.pi * (ro ** 4 - ri ** 4) / 4.0
+        I = math.pi * (ro ** 4 - ri ** 4) / 4.0  # noqa: E741
         c = ro
     else:
         raise ValueError(f"Unknown section: {section_type}")
     return I, c
 
 
-def section_modulus(I: float, c: float) -> float:
+def section_modulus(I: float, c: float) -> float:  # noqa: E741
     """Z = I / c  [mm³]."""
     return I / c
 
@@ -99,7 +99,7 @@ def max_moment_n_mm(config: str, L_mm: float, F_n: float = 0.0,
 
 def compute_gold(params: dict) -> dict:
     mat = BEAM_MATERIALS[params["material"]]
-    I, c = section_properties(params["section_type"], params["dims"])
+    I, c = section_properties(params["section_type"], params["dims"])  # noqa: E741
     Z = section_modulus(I, c)
     L = params["span_mm"]
     config = params["load_config"]
