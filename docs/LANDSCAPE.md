@@ -148,6 +148,14 @@ knowing about.
 | **GD&T mapping** ([2602.18296](https://arxiv.org/abs/2602.18296)) | Method | Deterministic-first framework mapping 2D drawing annotations (GD&T, datums) to 3D CAD features for manufacturing automation — useful context for drawing-conditioned tasks |
 | **EngiAI** ([2605.19743](https://arxiv.org/abs/2605.19743), IDETC 2026) 🆕 | Benchmark suite + MAS method | Evaluates LLM **multi-agent engineering workflows** (prompt-style tasks, RAG gating, HPC orchestration; seven agents incl. topology optimization and 3D-printer control) — grades task completion, not geometry or DFM |
 | **ERI Benchmark** ([2603.02239](https://arxiv.org/abs/2603.02239)) | Benchmark / dataset | Taxonomy-driven engineering instruction dataset (57,750 records, nine fields, 55 subdomains) — text Q&A graded by **multi-judge LLM scoring** with a convergent-validation protocol; no CAD artifacts |
+| **Multi-model fusion-panel evaluation (DRACO)** ([2602.11685](https://arxiv.org/abs/2602.11685) · [HF dataset](https://huggingface.co/datasets/perplexity-ai/draco)) | Eval paradigm (adjacent) | Several models' candidate outputs are aggregated and cross-checked by a **fusion panel** before **rubric-based LLM-as-a-judge** scoring — demonstrated on DRACO, a cross-domain deep-research benchmark (100 tasks / 10 domains). An adjacent *candidate-production / aggregation* reference, **not** a CAD/hardware benchmark |
+
+> **Adjacent reference, not an endorsement.** Multi-model fusion-panel evaluation
+> is captured here as a *candidate-generation/aggregation* paradigm (issue #283),
+> distinct from how MakerBench scores: MakerBench grades the **exported artifact
+> deterministically** regardless of how the candidate was produced — whether one
+> model emitted it or a fusion panel did. The panel's non-deterministic
+> LLM-as-a-judge grading is explicitly **not** adopted in MakerBench core.
 
 The nearest neighbours remain **MUSE** (manufacturability/assemblability
 framing, judge-graded) and **CADGenBench** (STEP + editing, live leaderboard) —

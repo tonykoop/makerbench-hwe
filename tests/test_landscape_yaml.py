@@ -375,3 +375,53 @@ def test_marb_has_dated_primary_source_evidence():
     hosts = " ".join(item["sources"])
     assert "marb.cadclaw.io" in hosts, "evidence must cite the MARB landing page"
     assert "CADCLAW" in hosts, "evidence must cite the CADCLAW engine repo"
+
+
+_DRACO_NAME = "Multi-model fusion-panel evaluation (DRACO)"
+
+
+def test_draco_fusion_panel_entry_is_present_and_well_formed():
+    """Acceptance criterion for #283: the multi-model fusion-panel (DRACO-style)
+    adjacent reference is present, well-formed, and typed as a method — never as
+    a CAD/hardware benchmark."""
+    entry = _entry_by_name(_DRACO_NAME)
+
+    # All required fields present and non-empty (covered broadly elsewhere, but
+    # asserted here so this entry is a standalone deterministic check).
+    for field in REQUIRED_FIELDS:
+        assert entry.get(field) not in (None, "", []), f"DRACO entry missing {field}"
+
+    # It is an evaluation method/paradigm, not a benchmark we score against.
+    assert entry["kind"] == "method"
+    assert entry["type"] == "method"
+    # Non-deterministic judge grading — the thing MakerBench core does NOT adopt.
+    assert entry["grading"] == "llm-judge"
+    # Primary sources are URLs (the DRACO paper + public dataset).
+    assert str(entry["source"]).startswith("https://")
+    assert str(entry["source_alt"]).startswith("https://")
+    assert "draco" in str(entry["source_alt"]).lower()
+
+
+def test_draco_entry_renders_in_landscape_markdown_as_adjacent():
+    """The DRACO row renders in LANDSCAPE.md and is framed as adjacent (not a
+    benchmark MakerBench competes with or whose grading it adopts)."""
+    md_text = LANDSCAPE_MD.read_text(encoding="utf-8")
+    assert _DRACO_NAME in md_text, "DRACO fusion-panel row missing from LANDSCAPE.md"
+    assert "Adjacent reference, not an endorsement" in md_text
+    assert "exported artifact" in md_text and "deterministic" in md_text
+
+
+def test_draco_entry_has_dated_primary_source_evidence():
+    """The DRACO addendum ships a dated evidence sidecar citing fetched sources."""
+    evidence_files = sorted(EVIDENCE_DIR.glob("*.yaml"))
+    found = []
+    for path in evidence_files:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for item in data["entries"]:
+            if item["name"] == _DRACO_NAME:
+                found.append(item)
+
+    assert found, "no evidence sidecar entry for the DRACO fusion-panel addendum"
+    hosts = " ".join(found[0]["sources"])
+    assert "arxiv.org/abs/2602.11685" in hosts, "evidence must cite the DRACO paper"
+    assert "perplexity-ai/draco" in hosts, "evidence must cite the public dataset"
