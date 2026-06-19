@@ -130,7 +130,9 @@ bore_diameter_mm = {p['bore_diameter_mm']:.6f};
 
 echo("MAKERBENCH-ACOUSTICS-BORE: {escaped}");
 
-cylinder(h = bore_length_mm, d = bore_diameter_mm);
+// render() forces CGAL triangulation so trimesh loads the .off cleanly
+// (plain cylinder produces n-gon end caps that trip trimesh+numpy 2.x).
+render() {{ cylinder(h = bore_length_mm, d = bore_diameter_mm); }}
 """
 
 
