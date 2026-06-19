@@ -83,7 +83,6 @@ def compute_gold(params: dict) -> dict:
 
 def derive_hazards(params: dict) -> list[str]:
     gold = compute_gold(params)
-    belt = BELT_SECTIONS[params["belt_section"]]
     hazards = []
 
     if gold["belt_velocity_mps"] > _MAX_BELT_V:
