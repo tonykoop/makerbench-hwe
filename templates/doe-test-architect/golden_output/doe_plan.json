@@ -1,0 +1,20 @@
+{
+  "recipe_id": "doe-test-architect",
+  "seed": 0,
+  "doe_structure": "response_surface",
+  "factors": [
+    {
+      "name": "cooling_time",
+      "levels": 3
+    },
+    {
+      "name": "injection_temp",
+      "levels": 3
+    },
+    {
+      "name": "wall_thickness",
+      "levels": 3
+    }
+  ],
+  "rationale": "Stage 'beta': optimise the factors active at this stage with a response_surface at 3 levels each."
+}
