@@ -45,20 +45,20 @@ def section_properties(section_type: str, dims: dict) -> tuple[float, float]:
     if section_type == "solid_circle":
         d = dims["d_mm"]
         A = math.pi / 4 * d**2
-        I = math.pi / 64 * d**4
+        I = math.pi / 64 * d**4  # noqa: E741
     elif section_type == "hollow_circle":
         D, t = dims["D_mm"], dims["t_mm"]
         d = D - 2 * t
         A = math.pi / 4 * (D**2 - d**2)
-        I = math.pi / 64 * (D**4 - d**4)
+        I = math.pi / 64 * (D**4 - d**4)  # noqa: E741
     elif section_type == "square":
         b = dims["b_mm"]
         A = b**2
-        I = b**4 / 12
+        I = b**4 / 12  # noqa: E741
     else:  # rectangular
         b, h = dims["b_mm"], dims["h_mm"]
         A = b * h
-        I = b * h**3 / 12  # bending about the weak axis uses min I
+        I = b * h**3 / 12  # noqa: E741
     return A, I
 
 
@@ -93,7 +93,7 @@ def compute_gold(params: dict) -> dict:
     K = END_CONDITIONS[params["end_condition"]]["K"]
     L = params["length_mm"]
 
-    A, I = section_properties(params["section_type"], params["section_dims"])
+    A, I = section_properties(params["section_type"], params["section_dims"])  # noqa: E741
     r = radius_of_gyration(A, I)
     lambda_sl = K * L / r
     lambda_c = johnson_transition(E, Sy)
