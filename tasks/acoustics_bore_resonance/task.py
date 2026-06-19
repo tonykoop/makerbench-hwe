@@ -169,9 +169,15 @@ echo("MAKERBENCH-BORE: {echo_manifest}");
 
 // Solid cylinder representing the bore section envelope.
 // Height = bore_length_mm (the key acoustic dimension).
-// render() forces CGAL triangulation so trimesh loads the .off cleanly
-// (plain cylinder produces n-gon end caps that trip trimesh+numpy 2.x).
-render() {{ cylinder(h=bore_length_mm, d=outer_diameter_mm, $fn=64); }}
+// intersection() with an enclosing box forces CGAL triangulation so trimesh
+// loads the .off cleanly (plain cylinder produces n-gon end caps that trip
+// trimesh 4.12.2 + numpy 2.x). The box strictly encloses the cylinder;
+// geometry is identical to a plain cylinder().
+intersection() {{
+    cylinder(h=bore_length_mm, d=outer_diameter_mm, $fn=64);
+    translate([0, 0, bore_length_mm / 2])
+        cube([outer_diameter_mm + 2, outer_diameter_mm + 2, bore_length_mm + 2], center=true);
+}}
 """
 
 
