@@ -32,8 +32,6 @@ def constraint_stress_mpa(E_a_gpa, E_b_gpa, cte_a, cte_b, delta_T_c):
 
 
 def derive_hazards(params):
-    exp_a = thermal_expansion(params["cte_a"], params["span_mm"], params["delta_T_c"])
-    exp_b = thermal_expansion(params["cte_b"], params["span_mm"], params["delta_T_c"])
     stress = constraint_stress_mpa(params["E_a_gpa"], params["E_b_gpa"],
                                    params["cte_a"], params["cte_b"], params["delta_T_c"])
     Su_min = min(params["Su_a_mpa"], params["Su_b_mpa"])
