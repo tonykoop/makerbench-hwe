@@ -1,0 +1,36 @@
+# Evidence sidecar for the 2026-06-19 landscape addendum:
+#   - Multi-model fusion-panel evaluation (DRACO) — issue #283
+#
+# One file per sweep/addendum date (landscape-evidence/<YYYY-MM-DD>.yaml).
+# Primary-source fetches recorded before editing docs/landscape.yaml and
+# docs/LANDSCAPE.md, so reviewers can diff the claims against the evidence.
+
+sweep_date: 2026-06-19
+
+entries:
+  - name: Multi-model fusion-panel evaluation (DRACO)
+    sources:
+      - https://arxiv.org/abs/2602.11685
+      - https://huggingface.co/datasets/perplexity-ai/draco
+    fetched_on: 2026-06-19
+    supports: [name, type, kind, axis, source, source_alt, date, recent,
+               framing_own, input_modality, output_representation, grading,
+               grading_detail, scope, agentic, openness, backing, note]
+    claims:
+      - >
+        arXiv abstract page title: "DRACO: a Cross-Domain Benchmark for Deep
+        Research Accuracy, Completeness, and Objectivity"; outputs evaluated on
+        factual accuracy, breadth/depth (completeness), presentation quality
+        (objectivity), and citation quality; spans 10 domains; dataset public at
+        Hugging Face perplexity-ai/draco.
+      - >
+        DRACO is a deep-research (text/report) benchmark, not a CAD/hardware
+        benchmark; included only as an adjacent candidate-aggregation eval
+        paradigm. The "fusion-panel" framing (several models' candidates
+        aggregated/cross-checked before LLM-as-a-judge scoring) is the reference
+        point captured for issue #283.
+    volatility:
+      - >
+        Judge model and exact panel compositions/scores are version-volatile
+        (as of 2026-06-19); the landscape entry deliberately avoids pinning a
+        specific judge model or numeric leaderboard score.
