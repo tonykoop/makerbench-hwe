@@ -49,7 +49,7 @@ def angle_of_twist_deg(T_n_mm: float, L_mm: float, G_gpa: float, J_mm4: float) -
 def bending_stress_mpa(M_n_mm: float, do_mm: float, J_mm4: float) -> float:
     """sigma_b = M × (do/2) / (J/2) = M×do/(J)  [MPa]; I = J/2 for solid circle."""
     c = do_mm / 2.0
-    I = J_mm4 / 2.0
+    I = J_mm4 / 2.0  # noqa: E741
     return M_n_mm * c / I
 
 
