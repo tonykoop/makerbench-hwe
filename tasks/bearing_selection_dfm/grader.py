@@ -76,7 +76,6 @@ def compute_gold(params: dict) -> dict:
 def derive_hazards(params: dict) -> list[str]:
     gold = compute_gold(params)
     hazards = []
-    C0_kn = BEARINGS[params["bearing_id"]]["C0_kn"]
     Fr_kn = params["radial_load_kn"]
     target_hours = params["design_life_hours"]
 
