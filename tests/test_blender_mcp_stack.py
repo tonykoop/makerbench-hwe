@@ -174,3 +174,34 @@ def test_tool_registry_matches_bridge_methods():
     spec.loader.exec_module(mod)
     for tool in TOOLS:
         assert tool in mod._OPS, f"tool {tool} has no bridge op"
+
+
+def test_docker_compose_reference_stack_contract():
+    compose = (STACK / "docker-compose.yml").read_text(encoding="utf-8")
+    agent = (STACK / "Dockerfile.agent").read_text(encoding="utf-8")
+    blender = (STACK / "Dockerfile.blender").read_text(encoding="utf-8")
+
+    assert "docker compose up --build" in compose
+    assert "blender:" in compose
+    assert "dockerfile: Dockerfile.blender" in compose
+    assert '8765:8765' in compose
+    assert "./blender_addon:/opt/mb-bridge:ro" in compose
+
+    assert "agent:" in compose
+    assert "depends_on:" in compose and "- blender" in compose
+    assert "MB_BRIDGE_HOST: blender" in compose
+    assert 'MB_BRIDGE_PORT: "8765"' in compose
+    assert "../../:/repo:ro" in compose
+    assert "./out:/work/out" in compose
+    assert "vented_plate.stl" in compose
+    assert "workflow_manifest.json" in compose
+
+    assert "FROM python:3.12-slim" in agent
+    assert "PYTHONPATH=/repo:/work/mcp_server" in agent
+    assert 'CMD ["python", "tasks/vented_plate_demo.py", "--out", "/work/out"]' in agent
+
+    assert "FROM lscr.io/linuxserver/blender:4.2.1" in blender
+    assert "COPY blender_addon/ /opt/mb-bridge/" in blender
+    assert "ENV MB_BRIDGE_HOST=0.0.0.0" in blender
+    assert "EXPOSE 8765" in blender
+    assert '"--python", "/opt/mb-bridge/headless_launcher.py"' in blender
