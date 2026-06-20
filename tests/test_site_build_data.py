@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -2134,6 +2135,20 @@ def test_site_delta_dossier_viz_is_wired():
     # Both the definition and the call site must be present.
     assert app.count("renderDeltaDossier(") >= 2
     assert "DATA.delta_dossier" in app
+
+
+def test_blender_mcp_get_started_command_targets_real_stack():
+    """The #93 copy-paste command must point at the cloneable compose stack."""
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    match = re.search(r"^cd makerbench-hwe/(?P<path>.+)$", html, re.MULTILINE)
+    assert match, "landing page is missing the Blender MCP cd command"
+
+    stack_path = ROOT / match.group("path")
+    assert stack_path == ROOT / "examples" / "blender_mcp_stack"
+    assert (stack_path / "docker-compose.yml").exists()
+    assert (stack_path / "mcp_server").is_dir()
+    assert (stack_path / "blender_addon").is_dir()
+    assert (stack_path / "tasks" / "vented_plate_demo.py").exists()
 
 
 # --- generated HTML page-tree + domains drift guard (#224) -------------------

@@ -77,9 +77,10 @@ GET_STARTED_PATHS: list[dict] = [
     },
     {
         "id": "docker",
-        "status": "planned",
-        "status_label": "Planned",
+        "status": "available",
+        "status_label": "Ready now",
         "links": [
+            ("Blender MCP stack", "blob/main/examples/blender_mcp_stack/README.md"),
             ("track #93", "issues/93"),
         ],
     },

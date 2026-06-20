@@ -38,12 +38,16 @@
       "id": "docker",
       "links": [
         {
+          "href": "https://github.com/tonykoop/makerbench-hwe/blob/main/examples/blender_mcp_stack/README.md",
+          "label": "Blender MCP stack"
+        },
+        {
           "href": "https://github.com/tonykoop/makerbench-hwe/issues/93",
           "label": "track #93"
         }
       ],
-      "status": "planned",
-      "status_label": "Planned"
+      "status": "available",
+      "status_label": "Ready now"
     },
     {
       "id": "hf",
