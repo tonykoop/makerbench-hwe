@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 from makerbench.unified_component import (
@@ -124,3 +126,15 @@ def test_missing_manifest_is_reported(tmp_path):
     report = validate_catalog_entry(tmp_path)
     assert not report.ok
     assert any("no catalog manifest" in e for e in report.errors)
+
+
+def test_validate_catalog_script_runs_standalone_without_pythonpath():
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "validate_component_catalog.py")],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        env={},
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    assert "valid" in proc.stdout
