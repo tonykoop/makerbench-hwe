@@ -52,6 +52,34 @@ class _AnchorAndIdParser(HTMLParser):
             self._current = None
 
 
+class _HeadMetadataParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.title = ""
+        self.meta: dict[str, str] = {}
+        self.links: dict[str, str] = {}
+        self._in_title = False
+
+    def handle_starttag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+        if tag == "title":
+            self._in_title = True
+        elif tag == "meta":
+            key = attrs_dict.get("name") or attrs_dict.get("property")
+            if key:
+                self.meta[key] = attrs_dict.get("content", "")
+        elif tag == "link" and attrs_dict.get("rel"):
+            self.links[attrs_dict["rel"]] = attrs_dict.get("href", "")
+
+    def handle_data(self, data):
+        if self._in_title:
+            self.title += data
+
+    def handle_endtag(self, tag):
+        if tag == "title":
+            self._in_title = False
+
+
 def test_published_site_pages_carry_noai_meta():
     """Every committed public HTML page carries the same per-page robots signal."""
     missing = [
@@ -1820,6 +1848,27 @@ def test_site_citation_handles_missing_cff():
     assert citation["bibtex"].startswith("@software{makerbench_hwe")
 
 
+def test_landing_page_seo_social_and_canonical_metadata():
+    """Landing-page share metadata must point at the published makerbench-hwe site."""
+    parser = _HeadMetadataParser()
+    parser.feed((ROOT / "site" / "index.html").read_text(encoding="utf-8"))
+
+    site_url = "https://tonykoop.github.io/makerbench-hwe/"
+    share_image = site_url + "assets/og/leaderboard.svg"
+
+    assert "MakerBench" in parser.title
+    assert "Math-graded" in parser.meta["description"]
+    assert parser.links["canonical"] == site_url
+    assert parser.meta["og:title"] == "MakerBench Leaderboard"
+    assert parser.meta["og:type"] == "website"
+    assert parser.meta["og:url"] == site_url
+    assert parser.meta["og:image"] == share_image
+    assert parser.meta["twitter:card"] == "summary_large_image"
+    assert parser.meta["twitter:image"] == share_image
+    assert "makerbench/" not in parser.meta["og:url"]
+    assert (ROOT / "site" / "assets" / "og" / "leaderboard.svg").exists()
+
+
 def test_sitemap_present_and_referenced_by_robots():
     """A sitemap exists and robots.txt advertises it for discoverability."""
     sitemap = (ROOT / "site" / "sitemap.xml").read_text(encoding="utf-8")
@@ -2243,7 +2292,7 @@ def test_get_started_payload_has_all_install_paths_and_resolving_links():
     assert set(paths) == {"cli", "pip", "docker", "hf", "contribute"}
     assert paths["cli"]["status"] == "available"
     assert paths["pip"]["status"] == "available"
-    assert paths["docker"]["status"] == "planned"
+    assert paths["docker"]["status"] == "available"
     assert paths["hf"]["status"] == "in_progress"
     assert paths["contribute"]["status"] == "available"
 
