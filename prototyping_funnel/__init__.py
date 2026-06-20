@@ -18,7 +18,9 @@ Pure Python stdlib — no external dependencies required.
 
 from .cost_model import DeflationaryCurve, IterationCostPoint, PriceSchedule, QuantityBreak
 from .mfg_bridge import BridgeResult, DesignSpec, ManufacturingBridge, ProcessCostResult
-from .roi import BreakevenResult, ROIInput, breakeven_analysis
+from .report import DeflationaryReport, build_report, build_report_with_roi
+from .roi import BreakevenResult, ROIInput, SensitivityTable, breakeven_analysis, roi_at_volume
+from .runner import FunnelRunConfig, FunnelRunResult, build_funnel_from_price_schedule, run_funnel_stages
 from .stages import IterationRecord, PrototypingFunnel, Stage, StageResult
 
 __all__ = [
@@ -40,5 +42,16 @@ __all__ = [
     # roi
     "ROIInput",
     "BreakevenResult",
+    "SensitivityTable",
     "breakeven_analysis",
+    "roi_at_volume",
+    # runner
+    "FunnelRunConfig",
+    "FunnelRunResult",
+    "run_funnel_stages",
+    "build_funnel_from_price_schedule",
+    # report
+    "DeflationaryReport",
+    "build_report",
+    "build_report_with_roi",
 ]
