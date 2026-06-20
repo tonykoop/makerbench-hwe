@@ -1824,6 +1824,7 @@ def test_sitemap_present_and_referenced_by_robots():
     """A sitemap exists and robots.txt advertises it for discoverability."""
     sitemap = (ROOT / "site" / "sitemap.xml").read_text(encoding="utf-8")
     assert "tonykoop.github.io/makerbench-hwe/" in sitemap
+    assert "tonykoop.github.io/makerbench-hwe/run-library.html" in sitemap
     robots = (ROOT / "site" / "robots.txt").read_text(encoding="utf-8")
     assert "Sitemap: https://tonykoop.github.io/makerbench-hwe/sitemap.xml" in robots
 
@@ -1843,7 +1844,7 @@ def test_landing_nav_and_footer_expose_required_surfaces():
         "Tracks & leagues": "https://github.com/tonykoop/makerbench-hwe/blob/main/docs/WORKFLOW_TRACK.md",
         "Opportunity Matrix": "opportunity-matrix.html",
         "Inspect a Run": "inspect.html",
-        "Run library soon": "https://github.com/tonykoop/makerbench-hwe/issues/104",
+        "Run library": "run-library.html",
         "Badges": "https://github.com/tonykoop/makerbench-hwe/blob/main/docs/HII_BADGES.md",
         "Blog / Findings": "blog/",
         "Docs": "https://github.com/tonykoop/makerbench-hwe/tree/main/docs",
@@ -1862,6 +1863,17 @@ def test_landing_nav_and_footer_expose_required_surfaces():
         if href.startswith("#") and href[1:] not in parser.ids
     )
     assert missing_anchors == []
+
+
+def test_front_door_links_live_run_library_surface():
+    """The #121 site-map link is a live page, not a tracking-issue placeholder."""
+    index = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    run_library = (ROOT / "site" / "run-library.html").read_text(encoding="utf-8")
+
+    assert 'href="run-library.html">Run library</a>' in index
+    assert "Run library <span class=\"soon\">soon</span>" not in index
+    assert "data/run-library.json" in run_library
+    assert 'src="assets/run-library.js"' in run_library
 # --- explorer.html v2 context (mb#165) ------------------------------------
 
 def _explorer_inputs():
@@ -2243,7 +2255,7 @@ def test_get_started_payload_has_all_install_paths_and_resolving_links():
     assert set(paths) == {"cli", "pip", "docker", "hf", "contribute"}
     assert paths["cli"]["status"] == "available"
     assert paths["pip"]["status"] == "available"
-    assert paths["docker"]["status"] == "planned"
+    assert paths["docker"]["status"] == "available"
     assert paths["hf"]["status"] == "in_progress"
     assert paths["contribute"]["status"] == "available"
 

@@ -25,6 +25,7 @@ build_data = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(build_data)
 
 build_inspect = build_data.build_inspect  # type: ignore[attr-defined]
+build_run_library = build_data.build_run_library  # type: ignore[attr-defined]
 
 
 class _HeadMetadataParser(HTMLParser):
@@ -452,3 +453,81 @@ def test_build_inspect_does_not_touch_private_oracles_dir():
     # Confirm the artifact mesh is the submitted path, never redirected
     assert "private" not in result["artifacts"][0]["mesh"]
     assert "oracle" not in result["artifacts"][0]["mesh"]
+
+
+# ---------------------------------------------------------------------------
+# 8. Run library (#121): compact public index over Inspect-a-Run artifacts
+# ---------------------------------------------------------------------------
+
+def test_run_library_schema_summary_and_filters_are_data_driven():
+    manifest = _manifest([
+        _entry("vented_plate", model_identifier="model-b", track="perception", seed=2),
+        _entry("enclosure_fastened", model_identifier="model-a", track="blind", seed=1),
+    ])
+    inspect_payload = build_inspect(manifest, _REGISTRY, "0.1.0")
+    library = build_run_library(inspect_payload, "0.1.0")
+
+    assert library["schema"] == build_data.RUN_LIBRARY_SCHEMA
+    assert library["version"] == build_data.RUN_LIBRARY_VERSION
+    assert library["summary"] == {
+        "n_runs": 2,
+        "n_models": 2,
+        "n_tasks": 2,
+        "n_tracks": 2,
+    }
+    assert library["filters"]["models"] == [
+        {"value": "model-a", "count": 1},
+        {"value": "model-b", "count": 1},
+    ]
+    assert library["filters"]["tracks"] == [
+        {"value": "blind", "count": 1},
+        {"value": "perception", "count": 1},
+    ]
+
+
+def test_run_library_is_stably_sorted_and_links_to_inspect():
+    manifest = _manifest([
+        _entry("zz_task", model_identifier="model-b", track="blind", seed=9),
+        _entry("aa_task", model_identifier="model-a", track="blind", seed=0),
+    ])
+    inspect_payload = build_inspect(manifest, _REGISTRY, "0.1.0")
+    library = build_run_library(inspect_payload, "0.1.0")
+
+    assert [run["task_id"] for run in library["runs"]] == ["aa_task", "zz_task"]
+    assert library["runs"][0]["inspect_href"] == "inspect.html#aa_task"
+    assert library["runs"][0]["mesh"] == "assets/meshes/demo.stl"
+    assert library["runs"][0]["metrics"]
+
+
+def test_run_library_inspect_href_escapes_fragment_ids():
+    inspect_payload = {"artifacts": [{
+        "id": "task with space/and slash",
+        "task_id": "task with space/and slash",
+        "label": "Demo",
+        "model_identifier": "model-a",
+        "track": "blind",
+    }]}
+    library = build_run_library(inspect_payload, "0.1.0")
+
+    assert library["runs"][0]["inspect_href"] == "inspect.html#task%20with%20space%2Fand%20slash"
+
+
+def test_run_library_handles_empty_inspect_payload():
+    library = build_run_library({"artifacts": []}, "0.1.0")
+
+    assert library["summary"]["n_runs"] == 0
+    assert library["filters"] == {"models": [], "tasks": [], "tracks": []}
+    assert library["runs"] == []
+
+
+def test_run_library_payload_contains_no_private_artifact_paths():
+    inspect_payload = build_inspect(
+        _manifest([_entry("vented_plate", mesh="assets/meshes/vented_plate.stl")]),
+        _REGISTRY,
+        "0.1.0",
+    )
+    library = build_run_library(inspect_payload, "0.1.0")
+
+    for run in library["runs"]:
+        assert "private" not in run["mesh"]
+        assert "oracle" not in run["mesh"]
