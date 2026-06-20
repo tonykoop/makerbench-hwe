@@ -76,9 +76,14 @@ on an unknown/missing user.
   `schemaVersion: 1` payload so the HII badge can plug into the same
   `img.shields.io/endpoint?url=…` machinery as the per-model badges
   (`site/build_data.py`).
+- **Gallery metadata** — `badge_gallery_payload()` emits deterministic, public
+  metadata for L0/L1/L2 plus the grey `unverified` state, so the HF Space or docs
+  can render a badge gallery without duplicating tier rules.
 
 See [`examples/hii_badge.example.json`](../examples/hii_badge.example.json) for a
-worked output.
+worked single-badge output and
+[`examples/hii_badge_gallery.example.json`](../examples/hii_badge_gallery.example.json)
+for the gallery payload.
 
 ## Links
 

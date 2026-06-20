@@ -7,7 +7,9 @@ self-contained SVG render, and the ``/api/badge?user=`` endpoint core.
 
 from __future__ import annotations
 
+import json
 import xml.dom.minidom as minidom
+from pathlib import Path
 
 from makerbench.certificate import MbcCheckResult, MbcPayload, build_certificate, write_mbc
 from makerbench.hii_badge import (
@@ -15,6 +17,7 @@ from makerbench.hii_badge import (
     UNVERIFIED_COLOR,
     badge_class_for,
     badge_from_certificate,
+    badge_gallery_payload,
     badge_shields_payload,
     make_badge,
     render_badge_svg,
@@ -22,6 +25,7 @@ from makerbench.hii_badge import (
 )
 
 KEY = "shared-nonce-key-v0.1"
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _payload(**overrides) -> MbcPayload:
@@ -171,6 +175,39 @@ def test_shields_payload_unverified_is_grey():
     payload = badge_shields_payload(badge)
     assert payload["color"] == UNVERIFIED_COLOR
     assert payload["message"] == "unverified"
+
+
+def test_badge_gallery_payload_covers_all_classes_and_unverified_state():
+    gallery = badge_gallery_payload(user="ada", score=4)
+    entries = gallery["entries"]
+    assert gallery["schema_version"] == "0.1"
+    assert [entry["level"] for entry in entries] == ["L0", "L1", "L2", "unverified"]
+
+    earned = entries[:3]
+    assert all(entry["earned"] for entry in earned)
+    assert [entry["title"] for entry in earned] == [
+        "Pure Autonomy",
+        "Elite Copilot",
+        "Master Triage",
+    ]
+    assert {entry["color"] for entry in earned} == {
+        BADGE_CLASSES["L0"].color,
+        BADGE_CLASSES["L1"].color,
+        BADGE_CLASSES["L2"].color,
+    }
+    assert all(entry["shields_endpoint"]["schemaVersion"] == 1 for entry in entries)
+    assert entries[-1]["color"] == UNVERIFIED_COLOR
+    assert entries[-1]["message"] == "unverified"
+
+
+def test_gallery_example_matches_helper_output():
+    example = json.loads(
+        (ROOT / "examples" / "hii_badge_gallery.example.json").read_text(encoding="utf-8")
+    )
+    generated = badge_gallery_payload(user="ada-lovelace", score=4)
+    assert example["schema_version"] == generated["schema_version"]
+    assert example["source"] == generated["source"]
+    assert example["entries"] == generated["entries"]
 
 
 # --- SVG render ------------------------------------------------------------
