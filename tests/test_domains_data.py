@@ -9,6 +9,7 @@ Import pattern mirrors ``tests/test_inspect_payload.py`` / ``test_site_build_dat
 
 from __future__ import annotations
 
+from html.parser import HTMLParser
 import importlib.util
 import json
 from pathlib import Path
@@ -26,6 +27,34 @@ write_domains = domains_data.write_domains
 
 REGISTRY = ROOT / "tasks" / "registry.json"
 MESHES = ROOT / "site" / "data" / "meshes.json"
+
+
+class _HeadMetadataParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.title = ""
+        self.meta: dict[str, str] = {}
+        self.links: dict[str, str] = {}
+        self._in_title = False
+
+    def handle_starttag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+        if tag == "title":
+            self._in_title = True
+        elif tag == "meta":
+            key = attrs_dict.get("name") or attrs_dict.get("property")
+            if key:
+                self.meta[key] = attrs_dict.get("content", "")
+        elif tag == "link" and attrs_dict.get("rel"):
+            self.links[attrs_dict["rel"]] = attrs_dict.get("href", "")
+
+    def handle_data(self, data):
+        if self._in_title:
+            self.title += data
+
+    def handle_endtag(self, tag):
+        if tag == "title":
+            self._in_title = False
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +79,24 @@ def test_builds_from_real_registry_without_error():
 def test_returns_dict_type():
     payload = build_domain_gallery(REGISTRY)
     assert isinstance(payload, dict)
+
+
+def test_domains_page_seo_points_at_published_hwe_domain_gallery():
+    """The #169 domain gallery share URL must match the published Pages path."""
+    parser = _HeadMetadataParser()
+    parser.feed((ROOT / "site" / "domains.html").read_text(encoding="utf-8"))
+
+    page_url = "https://tonykoop.github.io/makerbench-hwe/domains.html"
+
+    assert "MakerBench" in parser.title
+    assert "What we cover" in parser.title
+    assert "data-driven gallery" in parser.meta["description"]
+    assert "MakerBench" in parser.meta["og:title"]
+    assert "What we cover" in parser.meta["og:title"]
+    assert parser.meta["og:type"] == "website"
+    assert parser.meta["og:url"] == page_url
+    assert parser.links["canonical"] == page_url
+    assert "makerbench/domains.html" not in parser.meta["og:url"]
 
 
 # ---------------------------------------------------------------------------
