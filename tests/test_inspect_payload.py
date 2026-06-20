@@ -12,6 +12,7 @@ still be verified with ``python3 -m py_compile`` even before that landing.
 
 from __future__ import annotations
 
+from html.parser import HTMLParser
 import importlib.util
 from pathlib import Path
 
@@ -24,6 +25,34 @@ build_data = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(build_data)
 
 build_inspect = build_data.build_inspect  # type: ignore[attr-defined]
+
+
+class _HeadMetadataParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.title = ""
+        self.meta: dict[str, str] = {}
+        self.links: dict[str, str] = {}
+        self._in_title = False
+
+    def handle_starttag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+        if tag == "title":
+            self._in_title = True
+        elif tag == "meta":
+            key = attrs_dict.get("name") or attrs_dict.get("property")
+            if key:
+                self.meta[key] = attrs_dict.get("content", "")
+        elif tag == "link" and attrs_dict.get("rel"):
+            self.links[attrs_dict["rel"]] = attrs_dict.get("href", "")
+
+    def handle_data(self, data):
+        if self._in_title:
+            self.title += data
+
+    def handle_endtag(self, tag):
+        if tag == "title":
+            self._in_title = False
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +132,23 @@ def test_benchmark_version_passes_through_verbatim():
     manifest = _manifest([_entry("vented_plate")])
     result = build_inspect(manifest, _REGISTRY, "2.3.4-rc1")
     assert result["benchmark_version"] == "2.3.4-rc1"
+
+
+def test_inspect_page_seo_points_at_published_hwe_viewer():
+    """The #107 Inspect-a-Run page must share the published hwe URL."""
+    parser = _HeadMetadataParser()
+    parser.feed((ROOT / "site" / "inspect.html").read_text(encoding="utf-8"))
+
+    page_url = "https://tonykoop.github.io/makerbench-hwe/inspect.html"
+
+    assert "MakerBench" in parser.title
+    assert "Inspect a Run" in parser.title
+    assert "submitted 3D artifacts" in parser.meta["description"]
+    assert "Inspect a Run" in parser.meta["og:title"]
+    assert parser.meta["og:type"] == "website"
+    assert parser.meta["og:url"] == page_url
+    assert parser.links["canonical"] == page_url
+    assert "makerbench/inspect.html" not in parser.meta["og:url"]
 
 
 def test_generated_mentions_submission_and_no_oracle():
