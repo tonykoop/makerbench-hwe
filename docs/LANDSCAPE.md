@@ -315,6 +315,39 @@ Hephaestus-CCX releases were *promised but not yet downloadable* at
 verification time; mecado.com served no fetchable body content (JS-rendered),
 so Mecado's absence is "unverifiable", not "disproven".
 
+Addendum (2026-06-20, issue #54) — mid-cycle volatile watchlist re-check plus
+new neighbours from the 2026-06-11 to 2026-06-20 window. Evidence preserved in
+[`landscape-evidence/2026-06-20.yaml`](landscape-evidence/2026-06-20.yaml).
+
+Watchlist status as of 2026-06-20:
+
+- **UniCAD** (2606.05058) — release still pending; no public URL.
+- **Physics-in-the-Loop** (2605.19717) — release still pending; now accepted at
+  **IJCAI-ECAI 2026 Special Track on AI4Tech** (release may follow conference).
+- **Hephaestus-CCX** (2605.17448) — **v2 released 2026-05-27**; abstract now
+  uses present-tense "we release" language paired with CalculiX evaluation kits;
+  paper still marked "work in progress", no public repo URL confirmed.
+- **GenCAD-3D** (2509.15246) — release still pending; now accepted at ASME Journal
+  of Mechanical Design.
+- **MUSE** (2605.28579) — **v2 released 2026-06-04** (minor revision); VLM judge
+  still in place, no deterministic grading replacement announced.
+- **CADGenBench** — leaderboard still JS-rendered and unverifiable from a static
+  fetch; previous count (14 entries, top 0.4514) could not be re-confirmed.
+
+New entries added this addendum:
+
+- **IterCAD-Bench** (2606.13368, Jun 11) — closed-loop evaluation for Drawing-to-Code,
+  Text-to-Code, and Interactive Editing; proposes CD-TR (Chamfer Distance
+  Tolerance-Recall) metric that jointly measures executability + geometric
+  precision without survivor bias. No release URL confirmed.
+- **PDAGENT-BENCH** (2606.17253, Jun 15) — 353-problem benchmark for LLM agents
+  on VLSI physical design automation (5 capability dimensions, 11 models);
+  best model 42.2% on Innovus script generation. Adjacent (EDA/VLSI), not
+  mechanical CAD.
+- **BIM-Edit** (2606.20146, Jun 18) — 324-task benchmark for NL-driven editing
+  of existing BIM models (IFC format); best model 49.5%, no model completes more
+  than 3.4% of tasks fully. Adjacent (AEC/BIM editing).
+
 *To re-run this sweep quarterly, follow
 [`LANDSCAPE_SWEEP.md`](LANDSCAPE_SWEEP.md): re-verify every row against its
 primary source, hunt anything newer than the date above, record your fetches
