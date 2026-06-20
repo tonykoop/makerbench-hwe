@@ -168,7 +168,11 @@ TRACK_EXPLAINER: list[dict] = [
             "Perception: renders of the candidate are fed back each iteration.",
             "Graded by deterministic geometry, not an LLM judge.",
         ],
-        "board": {"label": "Autonomous board", "href": "#leaderboard"},
+        "board": {
+            "label": "Autonomous board",
+            "href": "#leaderboard",
+            "kind": "live-board",
+        },
         "docs": [
             {"label": "Methodology", "href": "#methodology"},
             {"label": "Grading design", "href": _DOCS + "DESIGN.md"},
@@ -190,7 +194,11 @@ TRACK_EXPLAINER: list[dict] = [
             "Grade the artifact, disclose the workflow.",
             "Rows cap at artifact-verified; never cross-ranked.",
         ],
-        "board": {"label": "Workflows board", "href": "#leaderboard"},
+        "board": {
+            "label": "Workflows board",
+            "href": "#leaderboard",
+            "kind": "live-board",
+        },
         "docs": [
             {"label": "Workflow Track RFC (#100)", "href": _DOCS + "WORKFLOW_TRACK.md"},
             {"label": "Dual-league separation (#90)", "href": _ISSUE + "90"},
@@ -214,7 +222,11 @@ TRACK_EXPLAINER: list[dict] = [
             "Beta (+15%): on-demand-shop CMM report.",
             "Production: BOM + ECO + GD&T for tooling.",
         ],
-        "board": None,
+        "board": {
+            "label": "Physical verification board",
+            "href": _ISSUE + "112",
+            "kind": "roadmap-board",
+        },
         "docs": [
             {"label": "Track spec (#112)", "href": _ISSUE + "112"},
             {"label": "Roadmap", "href": _DOCS + "ROADMAP.md"},
@@ -237,7 +249,11 @@ TRACK_EXPLAINER: list[dict] = [
             "Boolean-compared to a hidden golden master.",
             "Builds on the B-rep + reverse-engineering families.",
         ],
-        "board": None,
+        "board": {
+            "label": "Moonshot board",
+            "href": _ISSUE + "96",
+            "kind": "roadmap-board",
+        },
         "docs": [
             {"label": "Track spec (#96)", "href": _ISSUE + "96"},
             {"label": "Reverse-engineering family", "href": _DOCS + "REVERSE_ENGINEERING.md"},
@@ -1761,6 +1777,11 @@ def build_track_explainer(models: list[dict]) -> dict:
         else:
             entry["row_count"] = 0
             entry["status"] = spec.get("status", "upcoming")
+        if entry.get("board"):
+            entry["board"] = dict(entry["board"])
+            entry["board"]["status"] = (
+                "available" if entry["status"] == "live" else "planned"
+            )
         tracks.append(entry)
 
     return {

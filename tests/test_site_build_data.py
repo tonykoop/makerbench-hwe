@@ -1954,6 +1954,7 @@ def test_track_explainer_lists_every_track_with_links(tmp_path):
     for track in explainer["tracks"]:
         assert track["tagline"] and track["variable"] and track["detail"]
         assert track["highlights"]
+        assert track["board"]["href"] and track["board"]["label"]
         # Every track deep-links to at least one doc/issue surface.
         assert track["docs"] and all(doc["href"] for doc in track["docs"])
 
@@ -1977,9 +1978,37 @@ def test_track_explainer_status_is_derived_from_real_league_rows(tmp_path):
     # No assisted-workflow rows submitted yet → the league can't claim to be live.
     assert by_id["workflows"]["status"] == "upcoming"
     assert by_id["workflows"]["row_count"] == 0
+    assert by_id["workflows"]["board"]["status"] == "planned"
     # Roadmap tracks with no data league are statically upcoming.
     assert by_id["physical_verification"]["status"] == "upcoming"
+    assert by_id["physical_verification"]["board"]["status"] == "planned"
     assert by_id["moonshot"]["status"] == "upcoming"
+    assert by_id["moonshot"]["board"]["status"] == "planned"
+
+
+def test_track_explainer_workflow_board_goes_live_with_workflow_rows(tmp_path):
+    """A workflow board is only marked available once an assisted-workflow row
+    exists, keeping the front page from overclaiming an empty workflow league."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    _write_run(
+        results_dir / "workflow.json",
+        "hybrid-stack",
+        "high",
+        3,
+        run_fields={"harness_class": "assisted-workflow"},
+    )
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    by_id = {
+        track["id"]: track
+        for track in build_data.build_payload(results_dir, registry)["track_explainer"]["tracks"]
+    }
+    assert by_id["workflows"]["status"] == "live"
+    assert by_id["workflows"]["row_count"] == 1
+    assert by_id["workflows"]["board"]["status"] == "available"
+    assert by_id["autonomous"]["status"] == "upcoming"
 
 
 def test_track_explainer_excludes_reference_rows_from_live_status(tmp_path):
