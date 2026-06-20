@@ -1,0 +1,13 @@
+{
+  "_comment": "Example BenDFM result for BenDFMAdapter (landscape #242).",
+  "entry_id": "bracket-injection-042",
+  "process": "injection_molding",
+  "checks": {
+    "draft_angle": { "passed": true, "severity": null },
+    "min_wall_thickness": { "passed": false, "severity": "critical" },
+    "undercut_depth": { "passed": true, "severity": null },
+    "sink_mark_risk": { "passed": false, "severity": "major" },
+    "gate_accessibility": { "passed": true, "severity": null }
+  },
+  "pass_rate": null
+}

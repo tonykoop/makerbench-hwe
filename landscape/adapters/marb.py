@@ -31,7 +31,7 @@ from .base import BaseInteropAdapter, CommonResult
 class MARBAdapter(BaseInteropAdapter):
     """Map a MARB / CADCLAW component-report dict → :class:`~landscape.adapters.CommonResult`."""
 
-    source_benchmark = "MARB"
+    source_benchmark = "MARB / CADCLAW"
     description = (
         "Maps a CADCLAW component report (per-part interference / DOF / joint "
         "scores + assembly_score) to CommonResult."

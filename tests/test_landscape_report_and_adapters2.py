@@ -367,10 +367,10 @@ class TestUniCADAdapter:
         r = self._ADAPTER.adapt(self._good())
         assert "code-cad" in r.axis_coverage
 
-    def test_eight_adapters_in_registry(self):
+    def test_nine_adapters_in_registry(self):
         expected = {
-            "CADGenBench", "BenDFM", "MARB", "Hephaestus-CCX",
-            "FEABench", "MUSE", "UniCAD", "CADTestBench",
+            "CADGenBench", "BenDFM", "MARB / CADCLAW", "Hephaestus-CCX",
+            "FEABench", "MUSE", "UniCAD", "CADTestBench", "ERI Benchmark",
         }
         assert expected <= set(adapter_registry.keys())
 
@@ -438,11 +438,11 @@ class TestCADTestBenchAdapter:
 
 
 # ============================================================================
-# Cross-adapter invariant sweep (all 8 adapters)
+# Cross-adapter invariant sweep (all 9 adapters)
 # ============================================================================
 
 class TestAllAdaptersInvariants:
-    """All eight adapters must satisfy the three safety invariants."""
+    """All nine adapters must satisfy the three safety invariants."""
 
     _ALL = list(adapter_registry.values())
 

@@ -17,6 +17,8 @@ from .gap_finder import CoverageGap, CoverageGapFinder
 from .report import LandscapeReport, generate_report
 from .sweeper import SweepEntry, SweepResult, BatchSweeper, sweep
 from .watchlist import WatchlistEntry, VolatileWatchlist, load_watchlist
+from .interop_matrix import AdapterCoverageRow, InteropMatrix, build_interop_matrix
+from .delta import FieldChange, EntryDelta, LandscapeDelta, diff_registries
 
 __all__ = [
     "BenchmarkEntry",
@@ -35,4 +37,11 @@ __all__ = [
     "WatchlistEntry",
     "VolatileWatchlist",
     "load_watchlist",
+    "AdapterCoverageRow",
+    "InteropMatrix",
+    "build_interop_matrix",
+    "FieldChange",
+    "EntryDelta",
+    "LandscapeDelta",
+    "diff_registries",
 ]
