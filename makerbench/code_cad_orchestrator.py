@@ -7,7 +7,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, Optional
+from typing import Callable, Iterable, Mapping
 
 
 SCHEMA = "makerbench-code-cad-orchestration-v1"
