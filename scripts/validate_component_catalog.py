@@ -24,6 +24,15 @@ import argparse
 import sys
 from pathlib import Path
 
+# Allow running as `python scripts/validate_component_catalog.py` without an
+# explicit PYTHONPATH by inserting the repo root when the package isn't found.
+_HERE = Path(__file__).resolve()
+_REPO_ROOT_CANDIDATE = _HERE.parent.parent
+try:
+    import makerbench  # noqa: F401
+except ImportError:
+    sys.path.insert(0, str(_REPO_ROOT_CANDIDATE))
+
 from makerbench.unified_component import find_catalog_manifest, validate_catalog_entry
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
