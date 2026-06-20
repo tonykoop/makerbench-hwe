@@ -1,0 +1,158 @@
+# Primary-source evidence sidecar for the 2026-06-20 landscape addendum.
+#
+# Scope: mid-cycle addendum between the 2026-06-10 full sweep and the
+# 2026-09-10 next full sweep. Covers volatile watchlist re-checks and new
+# entries that appeared in the 2026-06-11 to 2026-06-20 window.
+# Process: primary-source fetch → quote → edit landscape.yaml →
+# append LANDSCAPE.md addendum. Never rewrites 2026-06-10.yaml.
+
+sweep_date: 2026-06-20
+
+# ── Volatile watchlist re-checks ────────────────────────────────────────────
+
+entries:
+  - name: UniCAD
+    sources:
+      - https://arxiv.org/abs/2606.05058
+    fetched_on: 2026-06-20
+    supports: [openness]
+    claims:
+      - 'Abstract still states "will release the dataset, code, and pretrained
+         models to accelerate future research." No release URL present in
+         abstract page as of 2026-06-20. v1 only.'
+    volatility:
+      - 'Release still pending as of 2026-06-20. Re-check next sweep (2026-09-10).'
+
+  - name: Physics-in-the-Loop
+    sources:
+      - https://arxiv.org/abs/2605.19717
+    fetched_on: 2026-06-20
+    supports: [openness, backing]
+    claims:
+      - 'Abstract states "The codebase, prompts and dataset will be made
+         publicly available to support reproducibility and future research."
+         No release URL present in abstract page as of 2026-06-20. v1 only.'
+      - 'Accepted at IJCAI-ECAI 2026 Special Track on AI4Tech (per arXiv
+         abstract page comment field).'
+    volatility:
+      - 'Release still pending as of 2026-06-20. IJCAI-ECAI 2026 acceptance
+         may trigger release around the conference date. Re-check next sweep.'
+
+  - name: Hephaestus-CCX
+    sources:
+      - https://arxiv.org/abs/2605.17448
+    fetched_on: 2026-06-20
+    supports: [openness, date]
+    claims:
+      - 'v2 submitted 2026-05-27 (updated from v1 2026-05-17).'
+      - 'Abstract states "we release Hephaestus-CCX, a 50-case benchmark of
+         single-part and multi-part engineering briefs paired with CalculiX
+         evaluation kits and typed pass/fail requirement checkers." Release
+         language is present-tense, not future-tense — benchmark considered
+         released per abstract. Paper still marked "Work in progress"
+         (no public repo URL confirmed from abstract page).'
+    volatility:
+      - 'Repo URL not verified from abstract page. "Work in progress" label
+         suggests full code release may lag. Re-check next sweep.'
+
+  - name: GenCAD-3D
+    sources:
+      - https://arxiv.org/abs/2509.15246
+    fetched_on: 2026-06-20
+    supports: [openness]
+    claims:
+      - 'Abstract states "will publicly release our datasets and code,
+         including a set of 51 3D-printed and laser-scanned parts on our
+         project site." No release URL confirmed from abstract page as of
+         2026-06-20. Accepted at ASME Journal of Mechanical Design.'
+    volatility:
+      - 'Release still pending as of 2026-06-20. Re-check next sweep.'
+
+  - name: MUSE
+    sources:
+      - https://arxiv.org/abs/2605.28579
+    fetched_on: 2026-06-20
+    supports: [grading, openness]
+    claims:
+      - 'v2 submitted 2026-06-04 (same file size 24,696 KB — minor revision).
+         Abstract unchanged: "we use a rubric-based visual language model
+         (VLM) judge and validate its reliability through human annotation."
+         No mention of replacing VLM judge with deterministic checks in v2
+         abstract.'
+    volatility:
+      - 'VLM judge still in place as of 2026-06-20. No deterministic grading
+         replacement announced. Re-check next sweep.'
+
+  - name: CADGenBench
+    sources:
+      - https://huggingface.co/spaces/HuggingAI4Engineering/CADGenBench
+    fetched_on: 2026-06-20
+    supports: []
+    claims:
+      - 'HF Space is running (Docker-backed). Leaderboard data is
+         JavaScript-rendered and not present in static page content;
+         table row count and top score could not be verified from a static
+         fetch as of 2026-06-20.'
+    volatility:
+      - 'Leaderboard count and top score unverifiable via static fetch.
+         Previous count: 14 entries, top aggregate 0.4514 (2026-06-10).
+         Re-check next sweep with browser-rendered data.'
+
+# ── New entries since 2026-06-10 ────────────────────────────────────────────
+
+  - name: IterCAD-Bench
+    sources:
+      - https://arxiv.org/abs/2606.13368
+    fetched_on: 2026-06-20
+    supports: [name, type, source, date, recent, framing_own, input_modality,
+               output_representation, grading, grading_detail, scope,
+               agentic, openness, dataset_scale]
+    claims:
+      - 'Paper "IterCAD: An Iterative Multimodal Agent for Visually-Grounded
+         CAD Generation and Editing", arXiv 2606.13368 v1 2026-06-11.'
+      - 'Abstract: introduces IterCAD-Bench, a closed-loop evaluation suite
+         covering Drawing-to-Code, Text-to-Code, and Interactive Editing;
+         proposes CD-TR (Chamfer Distance Tolerance-Recall) metric that
+         jointly measures code executability and geometric precision without
+         survivor bias; trains with SFT + RL on synthetically generated
+         multi-view engineering drawings and code-editing trajectories.'
+    volatility:
+      - 'No public code or dataset release URL confirmed from abstract page.
+         CD-TR metric is novel — may be adopted or extended by other works.'
+
+  - name: PDAGENT-BENCH
+    sources:
+      - https://arxiv.org/abs/2606.17253
+    fetched_on: 2026-06-20
+    supports: [name, type, source, date, recent, framing_own, input_modality,
+               output_representation, grading, scope, openness, dataset_scale]
+    claims:
+      - 'Paper "PDAGENT-BENCH: Characterizing, Grounding, and Architecting
+         LLM Agents for VLSI Physical Design", arXiv 2606.17253 v1
+         2026-06-15.'
+      - 'Abstract: 353-problem benchmark across five dimensions
+         (foundational knowledge, report comprehension, root-cause analysis,
+         script generation, full-flow implementation); tested 11 models;
+         best model achieves 42.2% on Innovus script generation; open-source
+         release forthcoming.'
+    volatility:
+      - 'Open-source release stated as forthcoming. Adjacent to MakerBench
+         (hardware-engineering AI) but domain is EDA/VLSI PD, not
+         mechanical CAD.'
+
+  - name: BIM-Edit
+    sources:
+      - https://arxiv.org/abs/2606.20146
+    fetched_on: 2026-06-20
+    supports: [name, type, source, date, recent, framing_own, input_modality,
+               output_representation, grading, scope, openness, dataset_scale]
+    claims:
+      - 'Paper "BIM-Edit: Benchmarking Large Language Models for IFC-Based
+         Building Information Modeling", arXiv 2606.20146 v1 2026-06-18.'
+      - 'Abstract: 324-task benchmark for natural-language editing of existing
+         BIM models in IFC format; 11 realistic + 36 synthetic building
+         scenes; scores geometric accuracy, semantic validity, topological
+         consistency; best model achieves 49.5% with no model completing
+         more than 3.4% of tasks fully.'
+    volatility:
+      - 'No public dataset release URL confirmed from abstract page.'

@@ -2243,7 +2243,7 @@ def test_get_started_payload_has_all_install_paths_and_resolving_links():
     assert set(paths) == {"cli", "pip", "docker", "hf", "contribute"}
     assert paths["cli"]["status"] == "available"
     assert paths["pip"]["status"] == "available"
-    assert paths["docker"]["status"] == "planned"
+    assert paths["docker"]["status"] == "available"
     assert paths["hf"]["status"] == "in_progress"
     assert paths["contribute"]["status"] == "available"
 
