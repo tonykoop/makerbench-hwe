@@ -15,6 +15,8 @@ from .registry import BenchmarkEntry, BenchmarkRegistry
 from .matrix import ComparisonMatrix, MatrixRow, DIMENSIONS
 from .gap_finder import CoverageGap, CoverageGapFinder
 from .report import LandscapeReport, generate_report
+from .sweeper import SweepEntry, SweepResult, BatchSweeper, sweep
+from .watchlist import WatchlistEntry, VolatileWatchlist, load_watchlist
 
 __all__ = [
     "BenchmarkEntry",
@@ -26,4 +28,11 @@ __all__ = [
     "CoverageGapFinder",
     "LandscapeReport",
     "generate_report",
+    "SweepEntry",
+    "SweepResult",
+    "BatchSweeper",
+    "sweep",
+    "WatchlistEntry",
+    "VolatileWatchlist",
+    "load_watchlist",
 ]
