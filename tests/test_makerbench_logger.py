@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 import pytest
@@ -21,6 +20,19 @@ from makerbench_logger import (
 from makerbench_logger.manifest import ToolCall, validate_with_schema
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _project_script_entry(name: str) -> str | None:
+    """Read a console-script entry without tomllib, which is Python 3.11+."""
+    in_scripts = False
+    for raw_line in (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line.startswith("["):
+            in_scripts = line == "[project.scripts]"
+            continue
+        if in_scripts and line.startswith(f"{name} = "):
+            return line.split("=", 1)[1].strip().strip('"')
+    return None
 
 
 def test_normalize_hii_accepts_ints_and_strings():
@@ -164,10 +176,7 @@ def test_cli_help_runs():
 
 
 def test_console_script_entry_point_is_packaged():
-    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    scripts = pyproject["project"]["scripts"]
-
-    assert scripts["makerbench-logger"] == "makerbench_logger.__main__:main"
+    assert _project_script_entry("makerbench-logger") == "makerbench_logger.__main__:main"
 
 
 def test_cli_emit_from_log_file(tmp_path):
