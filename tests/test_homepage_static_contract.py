@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -19,6 +20,8 @@ class HomepageParser(HTMLParser):
         self._buf: list[str] = []
         self.headings: list[str] = []
         self.dl_attrs: list[dict[str, str]] = []
+        self.meta: list[dict[str, str]] = []
+        self.link_rels: list[dict[str, str]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr = {k: v or "" for k, v in attrs}
@@ -33,6 +36,10 @@ class HomepageParser(HTMLParser):
             self._buf = []
         if tag == "dl":
             self.dl_attrs.append(attr)
+        if tag == "meta":
+            self.meta.append(attr)
+        if tag == "link":
+            self.link_rels.append(attr)
 
     def handle_data(self, data: str) -> None:
         if self._capture_heading:
@@ -90,3 +97,77 @@ def test_homepage_stats_are_rendered_from_leaderboard_payload():
     assert "var hs = DATA.hero_stats;" in app_js
     assert 'document.getElementById("headline").textContent = data.headline || "";' in app_js
     assert "el.hidden = false;" in app_js
+
+
+# --------------------------------------------------------------------------- #
+# #175: roadmap & status section + SEO/OG meta + about / cite
+# --------------------------------------------------------------------------- #
+
+def test_seo_og_twitter_and_canonical_meta_tags_present():
+    """OG + Twitter card + canonical are required for link previews to unfurl."""
+    parsed = _parse_homepage()
+
+    by_name = {m.get("name", ""): m.get("content", "") for m in parsed.meta}
+    by_prop = {m.get("property", ""): m.get("content", "") for m in parsed.meta}
+
+    assert by_name["description"], "page-level meta description must be non-empty"
+    assert by_prop["og:title"], "og:title must be present"
+    assert by_prop["og:description"], "og:description must be present"
+    assert by_prop["og:type"] == "website"
+    assert by_prop["og:url"].startswith("https://"), "og:url must be an https URL"
+    assert by_prop["og:image"].startswith("https://"), "og:image must be an absolute https URL"
+    assert by_name["twitter:card"] == "summary_large_image"
+    assert by_name["twitter:title"], "twitter:title must be present"
+    assert by_name["twitter:image"].startswith("https://")
+
+    canonicals = [r for r in parsed.link_rels if r.get("rel") == "canonical"]
+    assert canonicals, "a <link rel='canonical'> must be present"
+    assert canonicals[0]["href"].startswith("https://")
+
+
+def test_roadmap_section_html_and_data_hooks():
+    """Roadmap section exists in HTML and leaderboard.json carries all required keys."""
+    parsed = _parse_homepage()
+
+    # HTML anchors for every data-driven slot
+    assert "roadmap" in parsed.ids
+    assert {"status-strip", "pack-grid", "phase-rail", "horizon-list"}.issubset(parsed.ids)
+    assert "Roadmap" in " ".join(parsed.headings)
+
+    # leaderboard.json must carry a populated roadmap block
+    lb = json.loads((ROOT / "site" / "data" / "leaderboard.json").read_text())
+    rm = lb.get("roadmap", {})
+    assert rm.get("status"), "roadmap.status must be non-empty"
+    assert rm["status"].get("benchmark_version"), "benchmark_version must be present"
+    assert rm.get("packs"), "roadmap.packs must be non-empty"
+    assert rm.get("phases"), "roadmap.phases must be non-empty"
+    assert rm.get("design_doc"), "design_doc link must be present"
+    assert rm.get("roadmap_doc"), "roadmap_doc link must be present"
+
+    # app.js must have the rendering hooks
+    app_js = (ROOT / "site" / "assets" / "app.js").read_text(encoding="utf-8")
+    assert "var roadmap = DATA.roadmap;" in app_js
+    assert 'document.getElementById("pack-grid")' in app_js
+    assert 'document.getElementById("phase-rail")' in app_js
+
+
+def test_about_cite_section_html_and_data_hooks():
+    """About / cite section exists in HTML with canary and CITATION.cff data."""
+    parsed = _parse_homepage()
+
+    assert "about" in parsed.ids
+    assert {"cite-bibtex", "cite-apa", "cite-summary"}.issubset(parsed.ids)
+    assert "canary-line" in parsed.classes or "canary" in parsed.classes
+
+    # leaderboard.json must have a populated citation block
+    lb = json.loads((ROOT / "site" / "data" / "leaderboard.json").read_text())
+    cite = lb.get("citation", {})
+    assert cite.get("bibtex", "").startswith("@"), "bibtex must start with @"
+    assert cite.get("apa"), "APA citation must be non-empty"
+    assert cite.get("title"), "citation title must be present"
+    assert cite.get("version"), "citation version must be present"
+
+    # app.js must render the citation block
+    app_js = (ROOT / "site" / "assets" / "app.js").read_text(encoding="utf-8")
+    assert "var cite = DATA.citation;" in app_js
+    assert 'document.getElementById("cite-bibtex")' in app_js
