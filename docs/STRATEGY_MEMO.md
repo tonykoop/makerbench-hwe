@@ -168,7 +168,9 @@ Steps 2–3 have a maintainer checklist in
 - Do not cite CADSmith as a VLM-judged evaluation. Its VLM judge is part of the
   method's repair loop; its reported metrics are deterministic.
 - Treat promised-but-not-shipped releases as dated observations, not permanent
-  facts. UniCAD, Physics-in-the-Loop, Hephaestus-CCX, and GenCAD-3D may change
-  quickly.
+  facts. UniCAD, Physics-in-the-Loop, and GenCAD-3D remain promised-only as of
+  2026-06-20. Hephaestus-CCX v2 (2026-05-27) released its benchmark per
+  abstract language ("we release … paired with CalculiX evaluation kits") but
+  no public repo URL was confirmed; paper still marked "work in progress".
 - Re-check leaderboard counts, top scores, validation policies, and release
   links before quoting them in outreach or papers.
