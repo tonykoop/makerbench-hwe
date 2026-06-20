@@ -65,7 +65,20 @@ def test_cli_build_parser_has_required_args():
 
 
 def test_submodules_are_all_present():
-    expected = {"stages", "cost_model", "mfg_bridge", "roi", "runner", "report", "cli"}
+    expected = {"stages", "cost_model", "mfg_bridge", "roi", "runner", "report", "cli", "ladder"}
     for module in expected:
         path = ROOT / "prototyping_funnel" / f"{module}.py"
         assert path.is_file(), f"missing module: prototyping_funnel/{module}.py"
+
+
+def test_ladder_symbols_importable():
+    import prototyping_funnel as pf
+    for sym in ("LadderCell", "QuantityRow", "LadderResult", "ProcessLadder", "compare_designs"):
+        assert hasattr(pf, sym), f"__all__ / __init__ missing {sym!r}"
+
+
+def test_ladder_module_has_process_ladder():
+    from prototyping_funnel.ladder import ProcessLadder, compare_designs
+    ladder = ProcessLadder(quantities=[1])
+    assert ladder.quantities == (1,)
+    assert callable(compare_designs)

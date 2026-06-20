@@ -12,11 +12,13 @@ Public surface:
         DesignSpec, ProcessCostResult, BridgeResult, ManufacturingBridge,
     )
     from prototyping_funnel.roi import ROIInput, BreakevenResult, breakeven_analysis
+    from prototyping_funnel.ladder import LadderCell, QuantityRow, LadderResult, ProcessLadder
 
 Pure Python stdlib — no external dependencies required.
 """
 
 from .cost_model import DeflationaryCurve, IterationCostPoint, PriceSchedule, QuantityBreak
+from .ladder import LadderCell, LadderResult, ProcessLadder, QuantityRow, compare_designs
 from .mfg_bridge import BridgeResult, DesignSpec, ManufacturingBridge, ProcessCostResult
 from .report import DeflationaryReport, build_report, build_report_with_roi
 from .roi import BreakevenResult, ROIInput, SensitivityTable, breakeven_analysis, roi_at_volume
@@ -54,4 +56,10 @@ __all__ = [
     "DeflationaryReport",
     "build_report",
     "build_report_with_roi",
+    # ladder
+    "LadderCell",
+    "QuantityRow",
+    "LadderResult",
+    "ProcessLadder",
+    "compare_designs",
 ]
