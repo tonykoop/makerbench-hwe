@@ -31,6 +31,7 @@
     "model_page": "models/antigravity-gemini-3-5-flash-default-community-agy-cli/",
     "og_image": "assets/og/models/antigravity-gemini-3-5-flash-default-community-agy-cli.svg",
     "reasoning_level": null,
+    "recipe_tag": "[Autonomous Core] (HITL-0)",
     "result_provenance": "community",
     "row_id": "[\"antigravity-gemini-3.5-flash\",null,\"community\",\"agy_cli\"]",
     "runner_environment": {

@@ -154,3 +154,77 @@ def test_validate_flags_wrong_type():
     }
     warnings = wm.validate_workflow_env(obj)
     assert any("backbone_models" in w for w in warnings)
+
+
+# --- dominant_recipe_tag (mb#90) -------------------------------------------
+
+def _wenv(orchestration="Claude Code", backbone_models=None, tooling=None, hitl_tier=1):
+    """Minimal valid workflow_env factory for dominant_recipe_tag tests."""
+    return {
+        "orchestration": orchestration,
+        "backbone_models": backbone_models or ["o3-mini"],
+        "tooling": tooling or ["Blender MCP"],
+        "hitl_tier": hitl_tier,
+    }
+
+
+def test_dominant_recipe_tag_empty_returns_autonomous_core():
+    """With no workflow_env objects the autonomous-core sentinel is returned."""
+    assert wm.dominant_recipe_tag([]) == wm.AUTONOMOUS_CORE_TAG
+    assert wm.dominant_recipe_tag([]) == "[Autonomous Core] (HITL-0)"
+
+
+def test_dominant_recipe_tag_single_env():
+    """A single workflow_env returns its own rendered tag."""
+    env = _wenv()
+    tag = wm.dominant_recipe_tag([env])
+    assert tag == wm.render_recipe_tag(env)
+    assert tag == "[Claude Code] + [o3-mini] + [Blender MCP] (HITL-1)"
+
+
+def test_dominant_recipe_tag_repeated_same_env():
+    """Repeated identical envs still return the same rendered tag."""
+    env = _wenv()
+    tag = wm.dominant_recipe_tag([env, env, env])
+    assert tag == wm.render_recipe_tag(env)
+
+
+def test_dominant_recipe_tag_picks_most_common():
+    """When two tags compete, the one with more occurrences wins."""
+    common = _wenv(orchestration="Claude Code")
+    rare = _wenv(orchestration="Codex CLI")
+    # common appears 3 times, rare appears 1 time.
+    tag = wm.dominant_recipe_tag([common, rare, common, common])
+    assert tag == wm.render_recipe_tag(common)
+    assert "Claude Code" in tag
+
+
+def test_dominant_recipe_tag_tie_broken_lexicographically():
+    """Ties are broken lexicographically so results are deterministic."""
+    env_a = _wenv(orchestration="AAA-Orchestrator")
+    env_b = _wenv(orchestration="ZZZ-Orchestrator")
+    tag_a = wm.render_recipe_tag(env_a)
+    tag_b = wm.render_recipe_tag(env_b)
+    # Each appears exactly once — lexicographic winner should be whichever is larger.
+    result = wm.dominant_recipe_tag([env_a, env_b])
+    assert result == max(tag_a, tag_b)
+
+
+def test_dominant_recipe_tag_non_dict_silently_ignored():
+    """Non-dict values in the iterable are silently skipped."""
+    env = _wenv()
+    tag = wm.dominant_recipe_tag([None, "bad", 42, env, None])
+    assert tag == wm.render_recipe_tag(env)
+
+
+def test_dominant_recipe_tag_all_non_dict_returns_autonomous_core():
+    """An iterable of only non-dict values behaves like an empty list."""
+    assert wm.dominant_recipe_tag([None, "oops", []]) == wm.AUTONOMOUS_CORE_TAG
+
+
+def test_dominant_recipe_tag_returns_string_never_none():
+    """The return value is always a non-None string."""
+    for envs in ([], [_wenv()], [None]):
+        result = wm.dominant_recipe_tag(envs)
+        assert isinstance(result, str)
+        assert result

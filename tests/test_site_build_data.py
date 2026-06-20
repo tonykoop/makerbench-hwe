@@ -2142,6 +2142,153 @@ def test_domains_json_is_a_guarded_top_level_output():
     assert "domains.json" in check_data_drift.GENERATED_TOP_LEVEL
 
 
+# --- recipe_tag on model rows (mb#90 / mb#299) ------------------------------
+
+_SAMPLE_WORKFLOW_ENV = {
+    "orchestration": "Claude Code",
+    "backbone_models": ["o3-mini"],
+    "tooling": ["Blender MCP"],
+    "hitl_tier": 1,
+}
+
+
+def test_site_autonomous_row_recipe_tag_is_autonomous_core(tmp_path):
+    """A legacy autonomous row (no workflow_env anywhere) gets the sentinel tag."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    _write_run(results_dir / "auto.json", "legacy-model", "high", 4)
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    row = build_data.build_payload(results_dir, registry)["models"][0]
+    assert row["recipe_tag"] == "[Autonomous Core] (HITL-0)"
+
+
+def test_site_workflow_row_recipe_tag_matches_workflow_env(tmp_path):
+    """A row carrying a workflow_env surfaces the correct rendered recipe tag."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    _write_run(
+        results_dir / "wf.json",
+        "workflow-model",
+        "high",
+        4,
+        agent_identifier="claude_cli",
+        row_fields={"workflow_env": _SAMPLE_WORKFLOW_ENV},
+    )
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    row = build_data.build_payload(results_dir, registry)["models"][0]
+    assert row["recipe_tag"] == "[Claude Code] + [o3-mini] + [Blender MCP] (HITL-1)"
+
+
+def test_site_run_level_workflow_env_used_as_fallback(tmp_path):
+    """When no row-level workflow_env exists, the run-level one provides the tag."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    # workflow_env on the run (not on the row) — compact-stack shorthand.
+    _write_run(
+        results_dir / "run_wenv.json",
+        "stack-model",
+        "high",
+        3,
+        agent_identifier="claude_cli",
+        run_fields={"workflow_env": _SAMPLE_WORKFLOW_ENV},
+    )
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    row = build_data.build_payload(results_dir, registry)["models"][0]
+    assert row["recipe_tag"] == "[Claude Code] + [o3-mini] + [Blender MCP] (HITL-1)"
+
+
+def test_site_recipe_tag_dominant_wins_across_rows(tmp_path):
+    """When rows carry differing workflow_env objects the most-common tag wins."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+
+    common_env = {
+        "orchestration": "Claude Code",
+        "backbone_models": ["o3-mini"],
+        "tooling": ["Blender MCP"],
+        "hitl_tier": 1,
+    }
+    rare_env = {
+        "orchestration": "Codex CLI",
+        "backbone_models": ["gpt-5.5"],
+        "tooling": [],
+        "hitl_tier": 2,
+    }
+
+    # Write three rows for the same model: 2× common_env, 1× rare_env.
+    path = results_dir / "mixed.json"
+    import json as _json  # already imported at module top but noqa in scope
+    payload = {
+        "benchmark_version": "0.1.0",
+        "benchmark_profile": "core",
+        "result_provenance": "community",
+        "model_identifier": "multi-env-model",
+        "reasoning_level": "high",
+        "agent_identifier": "claude_cli",
+        "results": [
+            {
+                "task_id": "vented_plate",
+                "seed": 0,
+                "track": "blind",
+                "workflow_env": common_env,
+                "grade": {"task_id": "vented_plate", "track": "blind", "score": 4, "levels": []},
+            },
+            {
+                "task_id": "vented_plate",
+                "seed": 1,
+                "track": "blind",
+                "workflow_env": common_env,
+                "grade": {"task_id": "vented_plate", "track": "blind", "score": 3, "levels": []},
+            },
+            {
+                "task_id": "vented_plate",
+                "seed": 2,
+                "track": "blind",
+                "workflow_env": rare_env,
+                "grade": {"task_id": "vented_plate", "track": "blind", "score": 2, "levels": []},
+            },
+        ],
+    }
+    path.write_text(_json.dumps(payload), encoding="utf-8")
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    row = build_data.build_payload(results_dir, registry)["models"][0]
+    # common_env appears twice so its tag should be dominant.
+    assert row["recipe_tag"] == "[Claude Code] + [o3-mini] + [Blender MCP] (HITL-1)"
+
+
+def test_site_all_model_rows_have_recipe_tag(tmp_path):
+    """Every model row in the payload carries a non-None recipe_tag string."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    # Two different models — one autonomous, one workflow.
+    _write_run(results_dir / "auto.json", "auto-model", "high", 4)
+    _write_run(
+        results_dir / "wf.json",
+        "wf-model",
+        "high",
+        3,
+        agent_identifier="claude_cli",
+        row_fields={"workflow_env": _SAMPLE_WORKFLOW_ENV},
+    )
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    rows = build_data.build_payload(results_dir, registry)["models"]
+    assert len(rows) == 2
+    for r in rows:
+        assert "recipe_tag" in r
+        assert isinstance(r["recipe_tag"], str)
+        assert r["recipe_tag"]  # non-empty
+
+
 def test_compare_site_pages_passes_for_identical_trees(tmp_path):
     committed = tmp_path / "committed"
     generated = tmp_path / "generated"
