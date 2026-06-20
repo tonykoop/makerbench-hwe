@@ -77,9 +77,10 @@ GET_STARTED_PATHS: list[dict] = [
     },
     {
         "id": "docker",
-        "status": "planned",
-        "status_label": "Planned",
+        "status": "available",
+        "status_label": "Ready now",
         "links": [
+            ("Blender MCP stack", "blob/main/examples/blender_mcp_stack/README.md"),
             ("track #93", "issues/93"),
         ],
     },
@@ -168,7 +169,11 @@ TRACK_EXPLAINER: list[dict] = [
             "Perception: renders of the candidate are fed back each iteration.",
             "Graded by deterministic geometry, not an LLM judge.",
         ],
-        "board": {"label": "Autonomous board", "href": "#leaderboard"},
+        "board": {
+            "label": "Autonomous board",
+            "href": "#leaderboard",
+            "kind": "live-board",
+        },
         "docs": [
             {"label": "Methodology", "href": "#methodology"},
             {"label": "Grading design", "href": _DOCS + "DESIGN.md"},
@@ -190,7 +195,11 @@ TRACK_EXPLAINER: list[dict] = [
             "Grade the artifact, disclose the workflow.",
             "Rows cap at artifact-verified; never cross-ranked.",
         ],
-        "board": {"label": "Workflows board", "href": "#leaderboard"},
+        "board": {
+            "label": "Workflows board",
+            "href": "#leaderboard",
+            "kind": "live-board",
+        },
         "docs": [
             {"label": "Workflow Track RFC (#100)", "href": _DOCS + "WORKFLOW_TRACK.md"},
             {"label": "Dual-league separation (#90)", "href": _ISSUE + "90"},
@@ -214,7 +223,11 @@ TRACK_EXPLAINER: list[dict] = [
             "Beta (+15%): on-demand-shop CMM report.",
             "Production: BOM + ECO + GD&T for tooling.",
         ],
-        "board": None,
+        "board": {
+            "label": "Physical verification board",
+            "href": _ISSUE + "112",
+            "kind": "roadmap-board",
+        },
         "docs": [
             {"label": "Track spec (#112)", "href": _ISSUE + "112"},
             {"label": "Roadmap", "href": _DOCS + "ROADMAP.md"},
@@ -237,7 +250,11 @@ TRACK_EXPLAINER: list[dict] = [
             "Boolean-compared to a hidden golden master.",
             "Builds on the B-rep + reverse-engineering families.",
         ],
-        "board": None,
+        "board": {
+            "label": "Moonshot board",
+            "href": _ISSUE + "96",
+            "kind": "roadmap-board",
+        },
         "docs": [
             {"label": "Track spec (#96)", "href": _ISSUE + "96"},
             {"label": "Reverse-engineering family", "href": _DOCS + "REVERSE_ENGINEERING.md"},
@@ -403,6 +420,20 @@ def _load_hii_badges_module():
 
 
 _HII_BADGES = _load_hii_badges_module()
+
+
+def _load_workflow_manifest_module():
+    """Load stdlib-only workflow_env / recipe-tag helpers without importing makerbench deps."""
+    module_path = Path(__file__).resolve().parents[1] / "scripts" / "workflow_manifest.py"
+    spec = importlib.util.spec_from_file_location("scripts_workflow_manifest", module_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_WORKFLOW_MANIFEST = _load_workflow_manifest_module()
 
 
 def is_infra_error(grade: dict) -> bool:
@@ -637,6 +668,7 @@ def scan_results(results_dir: Path) -> dict:
             key_fields.append(harness_class)
         model_key = json.dumps(key_fields, separators=(",", ":"))
         hii_levels = model_meta.get(model_key, {}).get("_hii_levels", [])
+        workflow_envs = model_meta.get(model_key, {}).get("_workflow_envs", [])
         model_meta[model_key] = {
             "identifier": model,
             "reasoning_level": reasoning_level,
@@ -650,8 +682,13 @@ def scan_results(results_dir: Path) -> dict:
             "hardware_environment": run.get("hardware_environment") or {},
             "grader_environment": run.get("grader_environment") or {},
             "_hii_levels": hii_levels,
+            "_workflow_envs": workflow_envs,
         }
         benchmark_version = benchmark_version or run.get("benchmark_version")
+
+        # A run-level workflow_env applies to all rows in this bundle when a
+        # row doesn't carry its own (consistent-stack shorthand).
+        run_level_wenv = run.get("workflow_env")
 
         for row in run.get("results", []):
             grade = row.get("grade") or {}
@@ -659,6 +696,12 @@ def scan_results(results_dir: Path) -> dict:
             track = row.get("track") or grade.get("track")
             if not task_id or not track:
                 continue
+
+            # Collect workflow_env for recipe-tag computation (mb#90/#299): prefer
+            # row-level, fall back to run-level, skip if neither is present.
+            wenv = row.get("workflow_env") or run_level_wenv
+            if wenv and isinstance(wenv, dict):
+                workflow_envs.append(wenv)
 
             hii_level = _HII_BADGES.hii_level_from_manifest(
                 row.get("workflow_manifest") or run.get("workflow_manifest")
@@ -1633,6 +1676,15 @@ def build_payload(results_dir: Path, registry_path: Path) -> dict:
         hii_badge = _HII_BADGES.badge_metadata_for_level(hii_level)
         if hii_badge is not None:
             model_row["hii_badge"] = hii_badge
+        # workflow_env recipe tag (mb#90 / mb#299): surface the canonical recipe
+        # label for Workflows League rows so the site can headline the *stack*
+        # (e.g. "[Claude Code] + [o3-mini] + [Blender MCP] (HITL-1)") instead of
+        # the bare model_identifier. Autonomous Core rows get the sentinel tag so
+        # the field is always present and the front-end never has to branch.
+        recipe_tag = _WORKFLOW_MANIFEST.dominant_recipe_tag(
+            meta.get("_workflow_envs", [])
+        )
+        model_row["recipe_tag"] = recipe_tag
         models_out.append(model_row)
 
     # Sort: league first (autonomous before workflows) so rows NEVER rank across
@@ -1726,6 +1778,11 @@ def build_track_explainer(models: list[dict]) -> dict:
         else:
             entry["row_count"] = 0
             entry["status"] = spec.get("status", "upcoming")
+        if entry.get("board"):
+            entry["board"] = dict(entry["board"])
+            entry["board"]["status"] = (
+                "available" if entry["status"] == "live" else "planned"
+            )
         tracks.append(entry)
 
     return {

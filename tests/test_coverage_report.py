@@ -260,6 +260,21 @@ def test_build_report_on_committed_results():
     assert backlog_models.isdisjoint({r["model"] for r in both})
 
 
+def test_committed_coverage_reports_match_generator():
+    """The checked-in #51 report artifacts must not drift from the generator."""
+    report = build_report()
+    expected_md = format_markdown(
+        report["adapter_inventory"],
+        report["blind_vs_perception"],
+        current_version=report["benchmark_version"],
+        backlog=report["perception_backlog"],
+    ) + "\n"
+    expected_json = json.dumps(report, indent=2, sort_keys=True) + "\n"
+
+    assert (REPO_ROOT / "docs" / "COVERAGE_REPORT.md").read_text(encoding="utf-8") == expected_md
+    assert (REPO_ROOT / "docs" / "coverage_report.json").read_text(encoding="utf-8") == expected_json
+
+
 def test_core_family_ids_and_version_load_from_registry():
     ids = core_family_ids(REPO_ROOT / "tasks" / "registry.json")
     assert "vented_plate" in ids

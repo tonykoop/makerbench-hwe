@@ -1144,8 +1144,9 @@
       }).join("");
       var links = [];
       if (t.board && t.board.href) {
+        var boardStatus = t.board.status === "planned" ? " planned" : "";
         links.push('<a class="track-link track-board" href="' + escapeHTML(t.board.href) +
-          '">' + escapeHTML(t.board.label || "Board") + " &rarr;</a>");
+          '">' + escapeHTML(t.board.label || "Board") + boardStatus + " &rarr;</a>");
       }
       (t.docs || []).forEach(function (d) {
         if (!d || !d.href) return;

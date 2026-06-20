@@ -229,6 +229,56 @@ def badge_shields_payload(badge: HiiBadge) -> dict[str, Any]:
     }
 
 
+def badge_gallery_payload(*, user: str = "example-user", score: int = 4) -> dict[str, Any]:
+    """Return deterministic gallery metadata for every HII badge class.
+
+    This is the data source for docs/HF Space badge galleries: three earned
+    class examples (L0/L1/L2) plus the neutral anti-fake ``unverified`` state.
+    It reuses the same badge constructor and shields payload path as the live
+    endpoint, so gallery copy cannot drift from production badge semantics.
+    """
+    entries: list[dict[str, Any]] = []
+    for level in ("L0", "L1", "L2"):
+        badge = make_badge(
+            user=user,
+            highest_level=level,  # type: ignore[arg-type]
+            score=score,
+            passed=True,
+            signature_verified=True,
+            leaderboard_verified=True,
+        )
+        cls = badge.badge_class
+        entries.append(
+            {
+                "level": cls.level,
+                "title": cls.title,
+                "flex": cls.flex,
+                "earned": badge.earned,
+                "color": badge.color,
+                "message": badge.message,
+                "shields_endpoint": badge_shields_payload(badge),
+            }
+        )
+
+    unverified = make_badge(user=user, highest_level="L0")
+    entries.append(
+        {
+            "level": "unverified",
+            "title": "Unverified",
+            "flex": "anti-fake fallback",
+            "earned": False,
+            "color": unverified.color,
+            "message": unverified.message,
+            "shields_endpoint": badge_shields_payload(unverified),
+        }
+    )
+    return {
+        "schema_version": BADGE_SCHEMA_VERSION,
+        "source": "makerbench.hii_badge.badge_gallery_payload",
+        "entries": entries,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Self-contained SVG rendering (no external shields call — anti-fake/offline).
 # ---------------------------------------------------------------------------

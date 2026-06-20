@@ -1,7 +1,9 @@
 """Site aggregation contract tests."""
 
+from html.parser import HTMLParser
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -23,6 +25,31 @@ DRIFT_SPEC = importlib.util.spec_from_file_location(
 check_data_drift = importlib.util.module_from_spec(DRIFT_SPEC)
 sys.modules[DRIFT_SPEC.name] = check_data_drift
 DRIFT_SPEC.loader.exec_module(check_data_drift)
+
+
+class _AnchorAndIdParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.ids: set[str] = set()
+        self.anchors: list[dict[str, str]] = []
+        self._current: dict[str, str] | None = None
+
+    def handle_starttag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+        if "id" in attrs_dict:
+            self.ids.add(attrs_dict["id"])
+        if tag == "a":
+            self._current = {"href": attrs_dict.get("href", ""), "text": ""}
+
+    def handle_data(self, data):
+        if self._current is not None:
+            self._current["text"] += data
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self._current is not None:
+            self._current["text"] = " ".join(self._current["text"].split())
+            self.anchors.append(self._current)
+            self._current = None
 
 
 def test_published_site_pages_carry_noai_meta():
@@ -1799,6 +1826,42 @@ def test_sitemap_present_and_referenced_by_robots():
     assert "tonykoop.github.io/makerbench-hwe/" in sitemap
     robots = (ROOT / "site" / "robots.txt").read_text(encoding="utf-8")
     assert "Sitemap: https://tonykoop.github.io/makerbench-hwe/sitemap.xml" in robots
+
+
+def test_landing_nav_and_footer_expose_required_surfaces():
+    """The #174 front door links every major surface without placeholder hrefs."""
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    parser = _AnchorAndIdParser()
+    parser.feed(html)
+
+    anchors = {a["text"]: a["href"] for a in parser.anchors}
+    required = {
+        "Leaderboard": "#leaderboard",
+        "Charts": "#charts",
+        "Domains & tasks": "#tasks",
+        "Ecosystem": "https://github.com/tonykoop/makerbench-hwe#readme",
+        "Tracks & leagues": "https://github.com/tonykoop/makerbench-hwe/blob/main/docs/WORKFLOW_TRACK.md",
+        "Opportunity Matrix": "opportunity-matrix.html",
+        "Inspect a Run": "inspect.html",
+        "Run library soon": "https://github.com/tonykoop/makerbench-hwe/issues/104",
+        "Badges": "https://github.com/tonykoop/makerbench-hwe/blob/main/docs/HII_BADGES.md",
+        "Blog / Findings": "blog/",
+        "Docs": "https://github.com/tonykoop/makerbench-hwe/tree/main/docs",
+        "Roadmap": "#roadmap",
+        "GitHub": "https://github.com/tonykoop/makerbench-hwe",
+        "HF Space soon": "https://github.com/tonykoop/makerbench-hwe/issues/98",
+    }
+    for label, href in required.items():
+        assert anchors.get(label) == href
+
+    hrefs = [a["href"] for a in parser.anchors]
+    assert "https://github.com/" not in hrefs
+    assert all(href for href in hrefs)
+    missing_anchors = sorted(
+        href[1:] for href in hrefs
+        if href.startswith("#") and href[1:] not in parser.ids
+    )
+    assert missing_anchors == []
 # --- explorer.html v2 context (mb#165) ------------------------------------
 
 def _explorer_inputs():
@@ -1954,6 +2017,7 @@ def test_track_explainer_lists_every_track_with_links(tmp_path):
     for track in explainer["tracks"]:
         assert track["tagline"] and track["variable"] and track["detail"]
         assert track["highlights"]
+        assert track["board"]["href"] and track["board"]["label"]
         # Every track deep-links to at least one doc/issue surface.
         assert track["docs"] and all(doc["href"] for doc in track["docs"])
 
@@ -1977,9 +2041,37 @@ def test_track_explainer_status_is_derived_from_real_league_rows(tmp_path):
     # No assisted-workflow rows submitted yet → the league can't claim to be live.
     assert by_id["workflows"]["status"] == "upcoming"
     assert by_id["workflows"]["row_count"] == 0
+    assert by_id["workflows"]["board"]["status"] == "planned"
     # Roadmap tracks with no data league are statically upcoming.
     assert by_id["physical_verification"]["status"] == "upcoming"
+    assert by_id["physical_verification"]["board"]["status"] == "planned"
     assert by_id["moonshot"]["status"] == "upcoming"
+    assert by_id["moonshot"]["board"]["status"] == "planned"
+
+
+def test_track_explainer_workflow_board_goes_live_with_workflow_rows(tmp_path):
+    """A workflow board is only marked available once an assisted-workflow row
+    exists, keeping the front page from overclaiming an empty workflow league."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    _write_run(
+        results_dir / "workflow.json",
+        "hybrid-stack",
+        "high",
+        3,
+        run_fields={"harness_class": "assisted-workflow"},
+    )
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    by_id = {
+        track["id"]: track
+        for track in build_data.build_payload(results_dir, registry)["track_explainer"]["tracks"]
+    }
+    assert by_id["workflows"]["status"] == "live"
+    assert by_id["workflows"]["row_count"] == 1
+    assert by_id["workflows"]["board"]["status"] == "available"
+    assert by_id["autonomous"]["status"] == "upcoming"
 
 
 def test_track_explainer_excludes_reference_rows_from_live_status(tmp_path):
@@ -2122,6 +2214,73 @@ def test_committed_findings_frontmatter_resolves_against_real_data():
             assert (site / finding["thumb"]["src"]).exists()
 
 
+def _assert_repo_link_resolves(href):
+    prefix = f"{build_data.REPO_URL}/"
+    assert href.startswith(prefix)
+    target = href[len(prefix):]
+    if target.startswith("blob/main/"):
+        local = ROOT / target.removeprefix("blob/main/")
+        fragmentless = Path(str(local).split("#", 1)[0])
+        assert fragmentless.exists(), href
+    elif target.startswith("issues/"):
+        assert target.removeprefix("issues/").isdigit(), href
+    else:
+        raise AssertionError(f"unexpected get-started link target: {href}")
+
+
+def test_get_started_payload_has_all_install_paths_and_resolving_links():
+    """The generated #173 hub data stays tied to real local docs/scripts."""
+    generated = build_data.build_get_started(ROOT / "tasks" / "registry.json")
+    committed = json.loads(
+        (ROOT / "site" / "data" / "get_started.json").read_text(encoding="utf-8")
+    )
+    assert committed == generated
+
+    assert generated["default_seeds"] == "0,1,2"
+    assert generated["example_baseline_task"]
+    assert generated["example_model_task"]
+    paths = {path["id"]: path for path in generated["paths"]}
+    assert set(paths) == {"cli", "pip", "docker", "hf", "contribute"}
+    assert paths["cli"]["status"] == "available"
+    assert paths["pip"]["status"] == "available"
+    assert paths["docker"]["status"] == "available"
+    assert paths["hf"]["status"] == "in_progress"
+    assert paths["contribute"]["status"] == "available"
+
+    for path in paths.values():
+        assert path["links"], path["id"]
+        for link in path["links"]:
+            assert link["label"]
+            _assert_repo_link_resolves(link["href"])
+
+
+def test_get_started_landing_page_keeps_copy_paste_hub_wired():
+    """The committed page exposes every #173 path, status slot, links, and command."""
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    assert 'id="get-started"' in html
+    assert 'aria-label="Get-started paths"' in html
+    for path_id in ("cli", "pip", "docker", "hf", "contribute"):
+        assert f'data-panel="{path_id}"' in html
+        assert f'data-gs-status="{path_id}"' in html
+        assert f'data-gs-links="{path_id}"' in html
+
+    required_copy_blocks = [
+        "pip install -r requirements.lock",
+        'pip install --no-deps -e ".[dev]"',
+        "makerbench reproduce-demo",
+        "makerbench run --task enclosure_fastened",
+        "makerbench run --task sheet_metal_bracket",
+        "pip install makerbench-core",
+        "makerbench-dfm-score candidate.step --json",
+        "docker-compose up",
+        "python spaces/hf_dashboard/dashboard_data.py --help",
+        "from makerbench_logger import WorkflowLogger",
+        "python site/build_data.py",
+    ]
+    for snippet in required_copy_blocks:
+        assert snippet in html
+
+
 def test_site_delta_dossier_viz_is_wired():
     """The Delta-Dossier front-end wiring must exist so the viz can't silently regress."""
     html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
@@ -2136,10 +2295,171 @@ def test_site_delta_dossier_viz_is_wired():
     assert "DATA.delta_dossier" in app
 
 
+def test_blender_mcp_get_started_command_targets_real_stack():
+    """The #93 copy-paste command must point at the cloneable compose stack."""
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    match = re.search(r"^cd makerbench-hwe/(?P<path>.+)$", html, re.MULTILINE)
+    assert match, "landing page is missing the Blender MCP cd command"
+
+    stack_path = ROOT / match.group("path")
+    assert stack_path == ROOT / "examples" / "blender_mcp_stack"
+    assert (stack_path / "docker-compose.yml").exists()
+    assert (stack_path / "mcp_server").is_dir()
+    assert (stack_path / "blender_addon").is_dir()
+    assert (stack_path / "tasks" / "vented_plate_demo.py").exists()
+
+
 # --- generated HTML page-tree + domains drift guard (#224) -------------------
 def test_domains_json_is_a_guarded_top_level_output():
     """domains.json is build_data output and must be drift-checked (#224)."""
     assert "domains.json" in check_data_drift.GENERATED_TOP_LEVEL
+
+
+# --- recipe_tag on model rows (mb#90 / mb#299) ------------------------------
+
+_SAMPLE_WORKFLOW_ENV = {
+    "orchestration": "Claude Code",
+    "backbone_models": ["o3-mini"],
+    "tooling": ["Blender MCP"],
+    "hitl_tier": 1,
+}
+
+
+def test_site_autonomous_row_recipe_tag_is_autonomous_core(tmp_path):
+    """A legacy autonomous row (no workflow_env anywhere) gets the sentinel tag."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    _write_run(results_dir / "auto.json", "legacy-model", "high", 4)
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    row = build_data.build_payload(results_dir, registry)["models"][0]
+    assert row["recipe_tag"] == "[Autonomous Core] (HITL-0)"
+
+
+def test_site_workflow_row_recipe_tag_matches_workflow_env(tmp_path):
+    """A row carrying a workflow_env surfaces the correct rendered recipe tag."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    _write_run(
+        results_dir / "wf.json",
+        "workflow-model",
+        "high",
+        4,
+        agent_identifier="claude_cli",
+        row_fields={"workflow_env": _SAMPLE_WORKFLOW_ENV},
+    )
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    row = build_data.build_payload(results_dir, registry)["models"][0]
+    assert row["recipe_tag"] == "[Claude Code] + [o3-mini] + [Blender MCP] (HITL-1)"
+
+
+def test_site_run_level_workflow_env_used_as_fallback(tmp_path):
+    """When no row-level workflow_env exists, the run-level one provides the tag."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    # workflow_env on the run (not on the row) — compact-stack shorthand.
+    _write_run(
+        results_dir / "run_wenv.json",
+        "stack-model",
+        "high",
+        3,
+        agent_identifier="claude_cli",
+        run_fields={"workflow_env": _SAMPLE_WORKFLOW_ENV},
+    )
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    row = build_data.build_payload(results_dir, registry)["models"][0]
+    assert row["recipe_tag"] == "[Claude Code] + [o3-mini] + [Blender MCP] (HITL-1)"
+
+
+def test_site_recipe_tag_dominant_wins_across_rows(tmp_path):
+    """When rows carry differing workflow_env objects the most-common tag wins."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+
+    common_env = {
+        "orchestration": "Claude Code",
+        "backbone_models": ["o3-mini"],
+        "tooling": ["Blender MCP"],
+        "hitl_tier": 1,
+    }
+    rare_env = {
+        "orchestration": "Codex CLI",
+        "backbone_models": ["gpt-5.5"],
+        "tooling": [],
+        "hitl_tier": 2,
+    }
+
+    # Write three rows for the same model: 2× common_env, 1× rare_env.
+    path = results_dir / "mixed.json"
+    import json as _json  # already imported at module top but noqa in scope
+    payload = {
+        "benchmark_version": "0.1.0",
+        "benchmark_profile": "core",
+        "result_provenance": "community",
+        "model_identifier": "multi-env-model",
+        "reasoning_level": "high",
+        "agent_identifier": "claude_cli",
+        "results": [
+            {
+                "task_id": "vented_plate",
+                "seed": 0,
+                "track": "blind",
+                "workflow_env": common_env,
+                "grade": {"task_id": "vented_plate", "track": "blind", "score": 4, "levels": []},
+            },
+            {
+                "task_id": "vented_plate",
+                "seed": 1,
+                "track": "blind",
+                "workflow_env": common_env,
+                "grade": {"task_id": "vented_plate", "track": "blind", "score": 3, "levels": []},
+            },
+            {
+                "task_id": "vented_plate",
+                "seed": 2,
+                "track": "blind",
+                "workflow_env": rare_env,
+                "grade": {"task_id": "vented_plate", "track": "blind", "score": 2, "levels": []},
+            },
+        ],
+    }
+    path.write_text(_json.dumps(payload), encoding="utf-8")
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    row = build_data.build_payload(results_dir, registry)["models"][0]
+    # common_env appears twice so its tag should be dominant.
+    assert row["recipe_tag"] == "[Claude Code] + [o3-mini] + [Blender MCP] (HITL-1)"
+
+
+def test_site_all_model_rows_have_recipe_tag(tmp_path):
+    """Every model row in the payload carries a non-None recipe_tag string."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    # Two different models — one autonomous, one workflow.
+    _write_run(results_dir / "auto.json", "auto-model", "high", 4)
+    _write_run(
+        results_dir / "wf.json",
+        "wf-model",
+        "high",
+        3,
+        agent_identifier="claude_cli",
+        row_fields={"workflow_env": _SAMPLE_WORKFLOW_ENV},
+    )
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    rows = build_data.build_payload(results_dir, registry)["models"]
+    assert len(rows) == 2
+    for r in rows:
+        assert "recipe_tag" in r
+        assert isinstance(r["recipe_tag"], str)
+        assert r["recipe_tag"]  # non-empty
 
 
 def test_compare_site_pages_passes_for_identical_trees(tmp_path):

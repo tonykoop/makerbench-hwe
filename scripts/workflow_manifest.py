@@ -5,7 +5,7 @@ along with a MakerBench ``results.json`` row. ``workflow_env`` records *how* a
 result was produced -- the orchestration surface, the backbone model(s), the
 tooling/MCP extensions, and the human-in-the-loop (HITL) tier.
 
-Three public helpers:
+Four public helpers:
 
 * :func:`validate_workflow_env` -- returns a list of human-readable warnings
   (empty list == clean). Flags bad ``hitl_tier`` values, missing required
@@ -15,6 +15,9 @@ Three public helpers:
 * :func:`parse_result_entry` -- normalizes a results.json row into a small view
   dict. Tolerates a missing ``workflow_env`` (the Autonomous Core / legacy
   case) without raising.
+* :func:`dominant_recipe_tag` -- aggregate a list of ``workflow_env`` objects
+  (collected across all result rows for a model) into the single most common
+  recipe tag; returns ``AUTONOMOUS_CORE_TAG`` when the list is empty.
 
 See ``docs/workflow-manifest.md`` and ``schema/workflow_env.schema.json``.
 """
@@ -183,3 +186,34 @@ def parse_result_entry(entry):
         "recipe_tag": render_recipe_tag(wf),
         "warnings": warnings,
     }
+
+
+def dominant_recipe_tag(workflow_envs):
+    """Return the most common recipe tag across a list of workflow_env objects.
+
+    Used by ``site/build_data.py`` to pick a single canonical tag per model row
+    (mb#90 / mb#299). When multiple distinct ``workflow_env`` objects appear (e.g.
+    a stack that alternated tool versions mid-sprint), the tag that appeared in
+    the most result rows wins; ties are broken lexicographically so the output is
+    deterministic. When ``workflow_envs`` is empty (Autonomous Core / legacy row),
+    returns ``AUTONOMOUS_CORE_TAG``.
+
+    Arguments:
+        workflow_envs: iterable of raw ``workflow_env`` dict objects collected
+            from result rows. Non-dict values are silently ignored.
+
+    Returns:
+        str: a recipe-tag string, never ``None``.
+    """
+    counts = {}
+    for wenv in workflow_envs:
+        tag = render_recipe_tag(wenv)
+        if tag is None:
+            continue
+        counts[tag] = counts.get(tag, 0) + 1
+
+    if not counts:
+        return AUTONOMOUS_CORE_TAG
+
+    # Most common; lexicographic tie-break for determinism.
+    return max(counts, key=lambda t: (counts[t], t))

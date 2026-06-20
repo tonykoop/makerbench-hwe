@@ -377,6 +377,50 @@ def test_marb_has_dated_primary_source_evidence():
     assert "CADCLAW" in hosts, "evidence must cite the CADCLAW engine repo"
 
 
+_SOLIDWORKS_COMPANIONS_NAME = "SOLIDWORKS AI Virtual Companions (LEO / AURA / MARIE)"
+
+
+def test_solidworks_companions_entry_is_proprietary_product_boundary():
+    """Issue #84 positions LEO/AURA/MARIE as an incumbent product signal, not a
+    public benchmark. The landscape row must keep that boundary explicit."""
+    entry = _entry_by_name(_SOLIDWORKS_COMPANIONS_NAME)
+
+    assert entry["kind"] == "method"
+    assert entry["type"] == "product"
+    assert entry["recent"] is True
+    assert str(entry["grading"]).startswith("n/a"), (
+        "SOLIDWORKS companions have no public reproducible benchmark score"
+    )
+    assert "proprietary" in str(entry["openness"]).lower()
+    assert "vendor-neutral referee" in str(entry["note"])
+    assert "Mistral" in str(entry["note"])
+    assert "Outscale" in str(entry["note"])
+
+
+def test_solidworks_companions_have_dated_primary_source_evidence():
+    """Acceptance criterion for #84: the SOLIDWORKS companion entry ships with a
+    dated evidence sidecar citing the product page and independent trade reports."""
+    evidence_files = sorted(EVIDENCE_DIR.glob("*.yaml"))
+    evidence = []
+    for path in evidence_files:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for item in data["entries"]:
+            if item["name"] == _SOLIDWORKS_COMPANIONS_NAME:
+                evidence.append((path, item))
+
+    assert evidence, f"no evidence sidecar entry for {_SOLIDWORKS_COMPANIONS_NAME!r}"
+    _, item = evidence[0]
+    hosts = " ".join(item["sources"])
+    claims = " ".join(item["claims"])
+    volatility = " ".join(item["volatility"])
+    assert "solidworks.com" in hosts
+    assert "develop3d.com" in hosts
+    assert "engineering.com" in hosts
+    assert "AURA" in claims and "LEO" in claims and "MARIE" in claims
+    assert "Mistral" in claims and "Outscale" in claims
+    assert "re-check SOLIDWORKS release pages" in volatility
+
+
 _DRACO_NAME = "Multi-model fusion-panel evaluation (DRACO)"
 
 
