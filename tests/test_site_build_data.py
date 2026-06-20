@@ -1,5 +1,6 @@
 """Site aggregation contract tests."""
 
+from html.parser import HTMLParser
 import importlib.util
 import json
 import sys
@@ -23,6 +24,31 @@ DRIFT_SPEC = importlib.util.spec_from_file_location(
 check_data_drift = importlib.util.module_from_spec(DRIFT_SPEC)
 sys.modules[DRIFT_SPEC.name] = check_data_drift
 DRIFT_SPEC.loader.exec_module(check_data_drift)
+
+
+class _AnchorAndIdParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.ids: set[str] = set()
+        self.anchors: list[dict[str, str]] = []
+        self._current: dict[str, str] | None = None
+
+    def handle_starttag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+        if "id" in attrs_dict:
+            self.ids.add(attrs_dict["id"])
+        if tag == "a":
+            self._current = {"href": attrs_dict.get("href", ""), "text": ""}
+
+    def handle_data(self, data):
+        if self._current is not None:
+            self._current["text"] += data
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self._current is not None:
+            self._current["text"] = " ".join(self._current["text"].split())
+            self.anchors.append(self._current)
+            self._current = None
 
 
 def test_published_site_pages_carry_noai_meta():
@@ -1799,6 +1825,42 @@ def test_sitemap_present_and_referenced_by_robots():
     assert "tonykoop.github.io/makerbench-hwe/" in sitemap
     robots = (ROOT / "site" / "robots.txt").read_text(encoding="utf-8")
     assert "Sitemap: https://tonykoop.github.io/makerbench-hwe/sitemap.xml" in robots
+
+
+def test_landing_nav_and_footer_expose_required_surfaces():
+    """The #174 front door links every major surface without placeholder hrefs."""
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    parser = _AnchorAndIdParser()
+    parser.feed(html)
+
+    anchors = {a["text"]: a["href"] for a in parser.anchors}
+    required = {
+        "Leaderboard": "#leaderboard",
+        "Charts": "#charts",
+        "Domains & tasks": "#tasks",
+        "Ecosystem": "https://github.com/tonykoop/makerbench-hwe#readme",
+        "Tracks & leagues": "https://github.com/tonykoop/makerbench-hwe/blob/main/docs/WORKFLOW_TRACK.md",
+        "Opportunity Matrix": "opportunity-matrix.html",
+        "Inspect a Run": "inspect.html",
+        "Run library soon": "https://github.com/tonykoop/makerbench-hwe/issues/104",
+        "Badges": "https://github.com/tonykoop/makerbench-hwe/blob/main/docs/HII_BADGES.md",
+        "Blog / Findings": "blog/",
+        "Docs": "https://github.com/tonykoop/makerbench-hwe/tree/main/docs",
+        "Roadmap": "#roadmap",
+        "GitHub": "https://github.com/tonykoop/makerbench-hwe",
+        "HF Space soon": "https://github.com/tonykoop/makerbench-hwe/issues/98",
+    }
+    for label, href in required.items():
+        assert anchors.get(label) == href
+
+    hrefs = [a["href"] for a in parser.anchors]
+    assert "https://github.com/" not in hrefs
+    assert all(href for href in hrefs)
+    missing_anchors = sorted(
+        href[1:] for href in hrefs
+        if href.startswith("#") and href[1:] not in parser.ids
+    )
+    assert missing_anchors == []
 # --- explorer.html v2 context (mb#165) ------------------------------------
 
 def _explorer_inputs():
