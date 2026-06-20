@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from typer.testing import CliRunner
+
 from makerbench.cli import app
 
 
@@ -40,3 +42,15 @@ def test_readme_cli_command_reference_matches_registered_commands():
     documented = set(COMMAND_RE.findall(section))
 
     assert documented == _actual_cli_commands()
+
+
+def test_run_help_exposes_workflow_harness_fields_for_issue_88():
+    result = CliRunner().invoke(app, ["run", "--help"])
+
+    assert result.exit_code == 0
+    assert "--harness-class" in result.stdout
+    assert "--harness-subclass" in result.stdout
+    assert "assisted-workflow" in result.stdout
+    assert "api-driven-code" in result.stdout
+    assert "gui-injected-copilot" in result.stdout
+    assert "whole-canvas-diffusion-code" in result.stdout
