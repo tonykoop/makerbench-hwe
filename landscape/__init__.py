@@ -14,6 +14,7 @@ Refs: epic #242 — Competitive landscape & adjacent-benchmark interop.
 from .registry import BenchmarkEntry, BenchmarkRegistry
 from .matrix import ComparisonMatrix, MatrixRow, DIMENSIONS
 from .gap_finder import CoverageGap, CoverageGapFinder
+from .report import LandscapeReport, generate_report
 
 __all__ = [
     "BenchmarkEntry",
@@ -23,4 +24,6 @@ __all__ = [
     "DIMENSIONS",
     "CoverageGap",
     "CoverageGapFinder",
+    "LandscapeReport",
+    "generate_report",
 ]
