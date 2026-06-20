@@ -52,6 +52,22 @@ class _AnchorAndIdParser(HTMLParser):
             self._current = None
 
 
+class _HeadMetadataParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.meta: dict[str, str] = {}
+        self.links: dict[str, str] = {}
+
+    def handle_starttag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+        if tag == "meta":
+            key = attrs_dict.get("name") or attrs_dict.get("property")
+            if key:
+                self.meta[key] = attrs_dict.get("content", "")
+        elif tag == "link" and attrs_dict.get("rel"):
+            self.links[attrs_dict["rel"]] = attrs_dict.get("href", "")
+
+
 def test_published_site_pages_carry_noai_meta():
     """Every committed public HTML page carries the same per-page robots signal."""
     missing = [
@@ -2243,7 +2259,7 @@ def test_get_started_payload_has_all_install_paths_and_resolving_links():
     assert set(paths) == {"cli", "pip", "docker", "hf", "contribute"}
     assert paths["cli"]["status"] == "available"
     assert paths["pip"]["status"] == "available"
-    assert paths["docker"]["status"] == "planned"
+    assert paths["docker"]["status"] == "available"
     assert paths["hf"]["status"] == "in_progress"
     assert paths["contribute"]["status"] == "available"
 
@@ -2279,6 +2295,34 @@ def test_get_started_landing_page_keeps_copy_paste_hub_wired():
     ]
     for snippet in required_copy_blocks:
         assert snippet in html
+
+
+def test_committed_blog_pages_use_hwe_canonical_and_social_urls():
+    """The #172 findings/blog surfaces must share links under makerbench-hwe."""
+    site = ROOT / "site"
+    expected = {
+        "index.html": "https://tonykoop.github.io/makerbench-hwe/blog/",
+        "what-makerbench-measures.html": (
+            "https://tonykoop.github.io/makerbench-hwe/blog/what-makerbench-measures.html"
+        ),
+        "methodology-and-findings.html": (
+            "https://tonykoop.github.io/makerbench-hwe/blog/methodology-and-findings.html"
+        ),
+        "failure-gallery.html": (
+            "https://tonykoop.github.io/makerbench-hwe/blog/failure-gallery.html"
+        ),
+    }
+    for rel, page_url in expected.items():
+        parser = _HeadMetadataParser()
+        parser.feed((site / "blog" / rel).read_text(encoding="utf-8"))
+
+        assert parser.meta["og:type"] in {"website", "article"}
+        assert parser.meta["og:url"] == page_url
+        assert parser.links["canonical"] == page_url
+        assert parser.meta["og:image"] == (
+            "https://tonykoop.github.io/makerbench-hwe/assets/og/leaderboard.svg"
+        )
+        assert "tonykoop.github.io/makerbench/" not in parser.meta["og:url"]
 
 
 def test_site_delta_dossier_viz_is_wired():
