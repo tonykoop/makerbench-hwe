@@ -2122,6 +2122,73 @@ def test_committed_findings_frontmatter_resolves_against_real_data():
             assert (site / finding["thumb"]["src"]).exists()
 
 
+def _assert_repo_link_resolves(href):
+    prefix = f"{build_data.REPO_URL}/"
+    assert href.startswith(prefix)
+    target = href[len(prefix):]
+    if target.startswith("blob/main/"):
+        local = ROOT / target.removeprefix("blob/main/")
+        fragmentless = Path(str(local).split("#", 1)[0])
+        assert fragmentless.exists(), href
+    elif target.startswith("issues/"):
+        assert target.removeprefix("issues/").isdigit(), href
+    else:
+        raise AssertionError(f"unexpected get-started link target: {href}")
+
+
+def test_get_started_payload_has_all_install_paths_and_resolving_links():
+    """The generated #173 hub data stays tied to real local docs/scripts."""
+    generated = build_data.build_get_started(ROOT / "tasks" / "registry.json")
+    committed = json.loads(
+        (ROOT / "site" / "data" / "get_started.json").read_text(encoding="utf-8")
+    )
+    assert committed == generated
+
+    assert generated["default_seeds"] == "0,1,2"
+    assert generated["example_baseline_task"]
+    assert generated["example_model_task"]
+    paths = {path["id"]: path for path in generated["paths"]}
+    assert set(paths) == {"cli", "pip", "docker", "hf", "contribute"}
+    assert paths["cli"]["status"] == "available"
+    assert paths["pip"]["status"] == "available"
+    assert paths["docker"]["status"] == "planned"
+    assert paths["hf"]["status"] == "in_progress"
+    assert paths["contribute"]["status"] == "available"
+
+    for path in paths.values():
+        assert path["links"], path["id"]
+        for link in path["links"]:
+            assert link["label"]
+            _assert_repo_link_resolves(link["href"])
+
+
+def test_get_started_landing_page_keeps_copy_paste_hub_wired():
+    """The committed page exposes every #173 path, status slot, links, and command."""
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    assert 'id="get-started"' in html
+    assert 'aria-label="Get-started paths"' in html
+    for path_id in ("cli", "pip", "docker", "hf", "contribute"):
+        assert f'data-panel="{path_id}"' in html
+        assert f'data-gs-status="{path_id}"' in html
+        assert f'data-gs-links="{path_id}"' in html
+
+    required_copy_blocks = [
+        "pip install -r requirements.lock",
+        'pip install --no-deps -e ".[dev]"',
+        "makerbench reproduce-demo",
+        "makerbench run --task enclosure_fastened",
+        "makerbench run --task sheet_metal_bracket",
+        "pip install makerbench-core",
+        "makerbench-dfm-score candidate.step --json",
+        "docker-compose up",
+        "python spaces/hf_dashboard/dashboard_data.py --help",
+        "from makerbench_logger import WorkflowLogger",
+        "python site/build_data.py",
+    ]
+    for snippet in required_copy_blocks:
+        assert snippet in html
+
+
 def test_site_delta_dossier_viz_is_wired():
     """The Delta-Dossier front-end wiring must exist so the viz can't silently regress."""
     html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
