@@ -86,6 +86,7 @@ _AGENT_ID_ALIASES = {
     "deepseek": "deepseek_api",
     "qwen": "qwen_api",
     "diffusiongemma": "diffusiongemma",
+    "mistral": "mistral_api",
 }
 
 
