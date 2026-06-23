@@ -50,6 +50,7 @@ _AGENT_ID_ALIASES = {
     "kimi": "kimi_api",
     "deepseek": "deepseek_api",
     "qwen": "qwen_api",
+    "mistral": "mistral_api",
 }
 
 

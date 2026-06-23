@@ -32,6 +32,7 @@ TelemetryProvider = Literal[
     "deepseek",
     "qwen",
     "openrouter",
+    "mistral",
     "unknown",
 ]
 UsageSource = Literal[
