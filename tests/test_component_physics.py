@@ -280,3 +280,27 @@ def test_thermal_calc_computes_junction_temp_and_verdict():
 
     with pytest.raises(ValueError, match="provide power_w"):
         thermal_calc(thermal_resistance_c_per_w=62, max_junction_c=150)
+
+
+def test_trace_width_calc_passes_healthy_wide_trace():
+    # 1 A on a 1 mm, 2 oz external trace — well within IPC-2221 limits.
+    report = trace_width_calc(current_a=1.0, width_mm=1.0, copper_weight_oz=2.0)
+    assert report["passed"] is True
+    assert report["temperature_rise_c"] < report["max_temp_rise_c"]
+    assert report["required_width_mm"] < 1.0
+
+
+def test_thermal_calc_margin_is_positive_when_passing():
+    # Low dissipation — junction well below limit; margin must be explicitly positive.
+    report = thermal_calc(
+        current_a=1.0,
+        r_ds_on_ohm=0.01,
+        thermal_resistance_c_per_w=10,
+        ambient_c=25,
+        max_junction_c=150,
+    )
+    assert report["passed"] is True
+    assert report["margin_c"] > 0
+    assert report["junction_temp_c"] == pytest.approx(
+        report["ambient_c"] + report["power_w"] * report["thermal_resistance_c_per_w"]
+    )
