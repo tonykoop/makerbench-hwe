@@ -237,7 +237,11 @@ def load_craft_evidence(
 
     raw: dict[str, dict[tuple, dict]] = defaultdict(dict)
     for path in sorted(runs_root.rglob("*.json")):
-        if path.name != "workflow_manifest.json" and not path.name.endswith(".manifest.json"):
+        if (
+            path.name != "workflow_manifest.json"
+            and not path.name.endswith(".manifest.json")
+            and not path.name.endswith(".workflow_manifest.json")
+        ):
             continue
         try:
             manifest = json.loads(path.read_text(encoding="utf-8"))
