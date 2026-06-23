@@ -22,7 +22,7 @@ jobs:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: false  # oracles are private; unit tests never need them
 
@@ -74,7 +74,7 @@ jobs:
       # Absent on fork PRs (secrets aren't shared), which gates selftest below.
       ORACLES_DEPLOY_KEY: ${{ secrets.ORACLES_DEPLOY_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: false  # gold oracles are private; initialized explicitly below
 
