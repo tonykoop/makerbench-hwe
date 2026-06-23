@@ -629,6 +629,7 @@ def scan_results(results_dir: Path) -> dict:
     cells: dict = defaultdict(lambda: defaultdict(lambda: defaultdict(_empty_bucket)))
     model_meta: dict[str, dict] = {}
     benchmark_version = None
+    row_candidates: list[dict] = []
 
     for path in sorted(results_dir.rglob("*.json")):
         try:
@@ -689,43 +690,103 @@ def scan_results(results_dir: Path) -> dict:
         # A run-level workflow_env applies to all rows in this bundle when a
         # row doesn't carry its own (consistent-stack shorthand).
         run_level_wenv = run.get("workflow_env")
+        try:
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            mtime_ns = 0
 
-        for row in run.get("results", []):
+        for row_index, row in enumerate(run.get("results", [])):
             grade = row.get("grade") or {}
             task_id = row.get("task_id") or grade.get("task_id")
             track = row.get("track") or grade.get("track")
             if not task_id or not track:
                 continue
-
-            # Collect workflow_env for recipe-tag computation (mb#90/#299): prefer
-            # row-level, fall back to run-level, skip if neither is present.
-            wenv = row.get("workflow_env") or run_level_wenv
-            if wenv and isinstance(wenv, dict):
-                workflow_envs.append(wenv)
-
-            hii_level = _HII_BADGES.hii_level_from_manifest(
-                row.get("workflow_manifest") or run.get("workflow_manifest")
+            row_candidates.append(
+                {
+                    "path": path,
+                    "mtime_ns": mtime_ns,
+                    "row_index": row_index,
+                    "run": run,
+                    "row": row,
+                    "model_key": model_key,
+                    "track": track,
+                    "task_id": task_id,
+                    "seed": row.get("seed"),
+                    "run_level_wenv": run_level_wenv,
+                }
             )
-            if hii_level is None:
-                hii_level = _HII_BADGES.hii_level_from_manifest(
-                    {
-                        "hii": row.get("hii") or run.get("hii"),
-                        "human_intervention_index": row.get("human_intervention_index")
-                        or run.get("human_intervention_index"),
-                    }
-                )
-            if hii_level is not None:
-                hii_levels.append(hii_level)
 
-            bucket = cells[model_key][track][task_id]
-            _add_telemetry(bucket, row)
-            if is_infra_error(grade):
-                bucket["n_infra"] += 1
+    duplicate_seed_groups: dict[tuple[str, str, str, object], list[dict]] = defaultdict(list)
+    for candidate in row_candidates:
+        seed = candidate["seed"]
+        if seed is None:
+            continue
+        dedupe_key = (
+            candidate["model_key"],
+            candidate["track"],
+            candidate["task_id"],
+            seed,
+        )
+        duplicate_seed_groups[dedupe_key].append(candidate)
+
+    newest_by_seed: dict[tuple[str, str, str, object], dict] = {}
+    for dedupe_key, candidates in duplicate_seed_groups.items():
+        if len(candidates) < 2 or not any(c["path"].name.startswith("r_") for c in candidates):
+            continue
+        newest_by_seed[dedupe_key] = max(
+            candidates,
+            key=lambda c: (c["mtime_ns"], c["path"].as_posix(), c["row_index"]),
+        )
+
+    for candidate in row_candidates:
+        seed = candidate["seed"]
+        if seed is not None:
+            dedupe_key = (
+                candidate["model_key"],
+                candidate["track"],
+                candidate["task_id"],
+                seed,
+            )
+            if dedupe_key in newest_by_seed and newest_by_seed[dedupe_key] is not candidate:
                 continue
-            bucket["scores"].append(float(grade.get("score", 0)))
-            _add_dossier_scores(bucket, row.get("dossier_scores"))
-            _add_perception_trace(bucket, row.get("perception_trace"), row.get("iterations"))
-            _add_self_verification(bucket, row.get("dossier"))
+
+        run = candidate["run"]
+        row = candidate["row"]
+        model_key = candidate["model_key"]
+        track = candidate["track"]
+        task_id = candidate["task_id"]
+        run_level_wenv = candidate["run_level_wenv"]
+
+        # Collect workflow_env for recipe-tag computation (mb#90/#299): prefer
+        # row-level, fall back to run-level, skip if neither is present.
+        wenv = row.get("workflow_env") or run_level_wenv
+        if wenv and isinstance(wenv, dict):
+            model_meta[model_key]["_workflow_envs"].append(wenv)
+
+        hii_level = _HII_BADGES.hii_level_from_manifest(
+            row.get("workflow_manifest") or run.get("workflow_manifest")
+        )
+        if hii_level is None:
+            hii_level = _HII_BADGES.hii_level_from_manifest(
+                {
+                    "hii": row.get("hii") or run.get("hii"),
+                    "human_intervention_index": row.get("human_intervention_index")
+                    or run.get("human_intervention_index"),
+                }
+            )
+        if hii_level is not None:
+            model_meta[model_key]["_hii_levels"].append(hii_level)
+
+        grade = row.get("grade") or {}
+        bucket = cells[model_key][track][task_id]
+        _add_telemetry(bucket, row)
+        if is_infra_error(grade):
+            bucket["n_infra"] += 1
+            continue
+        bucket["scores"].append(float(grade.get("score", 0)))
+        _add_dossier_scores(bucket, row.get("dossier_scores"))
+        _add_perception_trace(bucket, row.get("perception_trace"), row.get("iterations"))
+        _add_self_verification(bucket, row.get("dossier"))
 
     return {
         "cells": cells,
