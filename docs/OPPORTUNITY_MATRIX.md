@@ -28,12 +28,21 @@ real workflow run lands on exactly one coordinate.
 | **B — CAD / geometry host** | OpenSCAD, CadQuery/build123d, FreeCAD, Blender (bpy), Onshape, Fusion 360, SolidWorks | `host_application` |
 | **C — plugin / bridge** | code-first (no bridge), Python SDK, Blender MCP, Onshape/Fusion/SolidWorks APIs, Adam, Leo/Aura … **and the empty cells = plugin vacancies** | `execution_bridge` |
 | **(D — domain / field)** | optional: 3D print, sheet metal, laser, casting, robotics, glass, woodworking, instruments | `dossier.fabrication_domain` |
+| **(D' — fabrication process / craft)** | optional alternative to D: wood turning, stave joinery, CNC router, laser cut, CNC plasma, sheet-metal brake, hand power tools | `dossier.fabrication_process` |
 
 The catalog of axis members lives in `makerbench/opportunity_matrix.py` and is
 **meant to be edited** as new models, hosts, and bridges appear — that is how the
 cube grows. A bridge declares the CAD `hosts` it is compatible with, so the cube
 only contains meaningful coordinates (e.g. Blender MCP never pairs with OpenSCAD);
 `none` (code-first emission) is compatible with every host.
+
+The D and D' axes are mutually exclusive views of the same fourth slot. The
+domain axis asks "which field is this stack strong in?"; the process axis,
+introduced by the instrument-library workflow corpus (#183), asks the narrower
+"which craft does this stack win?" question. The process vocabulary and corpus
+mapping live in [`INSTRUMENT_WORKFLOW_CORPUS.md`](INSTRUMENT_WORKFLOW_CORPUS.md),
+and the per-craft rollup is generated as
+[`BEST_COMBO_PER_CRAFT.md`](BEST_COMBO_PER_CRAFT.md).
 
 ## The weighting index
 
@@ -108,6 +117,8 @@ Regenerate with:
 ```bash
 python3 scripts/generate_opportunity_matrix.py            # 3D cube (default)
 python3 scripts/generate_opportunity_matrix.py --with-domain   # add the 4th axis
+python3 scripts/generate_opportunity_matrix.py --with-process  # add the craft/process axis
+python3 scripts/generate_best_combo_per_craft.py          # best combo per craft report
 ```
 
 ## See also
@@ -115,4 +126,6 @@ python3 scripts/generate_opportunity_matrix.py --with-domain   # add the 4th axi
 - [`DOMAIN_MATRIX.md`](DOMAIN_MATRIX.md) — task-family roadmap this extends.
 - [`WORKFLOW_TRACK.md`](WORKFLOW_TRACK.md) — the assisted-workflow track and the
   `WorkflowManifest` / HII contract the capability and autonomy axes read from.
+- [`INSTRUMENT_WORKFLOW_CORPUS.md`](INSTRUMENT_WORKFLOW_CORPUS.md) — the #183
+  process-axis vocabulary and instrument corpus manifest.
 - [`OPPORTUNITY_VACANCIES.md`](OPPORTUNITY_VACANCIES.md) — the generated backlog.

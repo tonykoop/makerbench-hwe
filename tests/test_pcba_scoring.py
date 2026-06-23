@@ -238,3 +238,49 @@ def test_design_velocity_rewards_fast_convergence_and_penalizes_dirty_boards():
     assert never_clean.design_velocity_score == 0.0
     assert never_clean.checks["design_reached_clean"] is False
     assert never_clean.total_score < 1.0
+
+
+def test_all_five_scoring_dimensions_are_bounded_and_deterministic():
+    # Mixed fixture: non-maxed inputs so all five dimensions have non-trivial values.
+    metrics = PCBAMetrics(
+        board_area_mm2=1_600.0,
+        occupied_area_mm2=400.0,
+        component_count=50,
+        smd_pad_count=120,
+        through_hole_pin_count=16,
+        via_count=8,
+        copper_layer_count=2,
+        power_nets=(
+            PCBAPowerNetRequirement(
+                name="5V",
+                current_ma=500.0,
+                trace_length_mm=80.0,
+                min_trace_width_mm=0.40,
+                via_count=1,
+                min_clearance_mm=0.20,
+            ),
+        ),
+        design_velocity=PCBADesignVelocity(iterations_to_clean=6),
+    )
+    first = score_pcba(metrics)
+    second = score_pcba(metrics)
+
+    # Determinism: identical inputs must produce bit-identical score vectors.
+    assert first.cost_score == second.cost_score
+    assert first.compactness_score == second.compactness_score
+    assert first.power_integrity_score == second.power_integrity_score
+    assert first.thermal_score == second.thermal_score
+    assert first.design_velocity_score == second.design_velocity_score
+    assert first.total_score == second.total_score
+
+    # All five dimensions must be in [0.0, 1.0].
+    for name, value in [
+        ("cost", first.cost_score),
+        ("compactness", first.compactness_score),
+        ("power_integrity", first.power_integrity_score),
+        ("thermal", first.thermal_score),
+        ("design_velocity", first.design_velocity_score),
+    ]:
+        assert 0.0 <= value <= 1.0, f"{name}_score={value!r} outside [0, 1]"
+
+    assert 0.0 <= first.total_score <= 1.0
