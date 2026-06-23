@@ -125,6 +125,16 @@
       "stale": false
     },
     {
+      "adapter": "diffusiongemma_http_agent.py",
+      "benchmark_versions": [],
+      "covered": false,
+      "expected_agent_id": "diffusiongemma_http",
+      "matched_agent_ids": [],
+      "models": [],
+      "n_models": 0,
+      "stale": false
+    },
+    {
       "adapter": "gemini_agent.py",
       "benchmark_versions": [
         "0.1.0"
