@@ -320,3 +320,22 @@ def validate_with_schema(manifest_dict: dict[str, Any]) -> tuple[bool, Optional[
                     "non-conforming",
                 )
     return True, None
+
+
+def validate_fail_closed(manifest_dict: Any) -> tuple[bool, Optional[str]]:
+    """Fail-closed manifest validation that is guaranteed never to raise.
+
+    Like :func:`validate_with_schema`, but it tolerates *structurally* garbage
+    input (``None``, a list, a string, a dict missing required keys) by returning
+    ``(False, reason)`` instead of letting an ``AttributeError``/``TypeError``
+    escape. This mirrors the grader fail-closed contract (a garbled submission
+    must score zero, not crash the grader): callers that grade an agent-produced
+    manifest can treat a ``False`` result as an automatic failure without wrapping
+    every call in a ``try``/``except``.
+    """
+    if not isinstance(manifest_dict, dict):
+        return False, f"manifest_not_mapping (got {type(manifest_dict).__name__})"
+    try:
+        return validate_with_schema(manifest_dict)
+    except Exception as exc:  # defensive: validate_with_schema should not raise
+        return False, f"validation_raised: {exc}"

@@ -178,3 +178,42 @@ def test_cli_emit_from_log_file(tmp_path):
     # 1 L0 + 1 L2 -> highest L2, weighted ratio (1*1.0 + 1*0.0)/2 = 0.5.
     assert data["hii"]["highest_level"] == "L2"
     assert data["hii"]["autonomy_ratio"] == 0.5
+
+
+def test_validate_fail_closed_tolerates_garbage_without_raising():
+    from makerbench_logger.manifest import validate_fail_closed
+
+    for garbage in (None, [], "x", 7, {}):
+        ok, reason = validate_fail_closed(garbage)
+        assert ok is False and reason
+
+
+def test_emit_soft_does_not_raise_and_records_validation(tmp_path, monkeypatch):
+    """emit(validate="soft") fails closed: no raise, evidence written, outcome recorded."""
+    import makerbench_logger.logger as logger_mod
+
+    monkeypatch.setattr(
+        logger_mod, "validate_fail_closed", lambda _m: (False, "synthetic_invalid")
+    )
+    out = tmp_path / "wm.json"
+    with WorkflowLogger(task_id="t1", seed=0, framework="blender-mcp") as log:
+        log.tool_call("blender.add_cube", {"size": 20})
+        manifest = log.emit(str(out), validate="soft")  # must not raise
+
+    assert out.exists()
+    assert manifest["task_id"] == "t1"
+    assert log.last_validation == (False, "synthetic_invalid")
+
+
+def test_emit_strict_still_raises_on_invalid(tmp_path, monkeypatch):
+    """Default validate=True keeps the raise-on-invalid contract (backward compat)."""
+    import makerbench_logger.logger as logger_mod
+
+    monkeypatch.setattr(
+        logger_mod, "validate_with_schema", lambda _m: (False, "synthetic_invalid")
+    )
+    out = tmp_path / "wm.json"
+    with WorkflowLogger(task_id="t1", seed=0, framework="blender-mcp") as log:
+        log.tool_call("blender.add_cube", {"size": 20})
+        with pytest.raises(ValueError):
+            log.emit(str(out))
