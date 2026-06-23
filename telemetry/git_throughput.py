@@ -11,7 +11,6 @@ should be treated as an upper bound, not an exact figure.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 

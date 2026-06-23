@@ -1,5 +1,6 @@
 """Tests for git throughput metrics (Epic #569, Story #572)."""
 
+from pytest import approx
 from telemetry.git_throughput import compute
 
 FIXTURE_LOG = [
@@ -24,7 +25,7 @@ def test_issue_to_pr_ratio():
     result = compute(FIXTURE_LOG)
     assert result["issues_closed"] == 3
     assert result["pull_requests_opened"] == 2
-    assert result["issue_to_pr_ratio"] == pytest_approx(1.5)
+    assert result["issue_to_pr_ratio"] == approx(1.5)
 
 
 def test_self_correction_detected():
@@ -66,9 +67,3 @@ def test_empty_log():
     assert result["failed_ci_runs_resolved"] == 0
 
 
-# pytest_approx shim — use the real one
-try:
-    from pytest import approx as pytest_approx
-except ImportError:
-    def pytest_approx(v, rel=1e-6):
-        return v
