@@ -82,6 +82,10 @@ class BlenderSession:
             if WorkflowLogger is not None
             else None
         )
+        # Set by emit_manifest(..., fail_closed=True): whether the last emitted
+        # manifest passed schema validation, and the reason if not.
+        self.manifest_valid: bool = True
+        self.manifest_validation_error: Optional[str] = None
 
     def __enter__(self) -> "BlenderSession":
         self.client.connect()
@@ -103,9 +107,24 @@ class BlenderSession:
                 self._logger.add_artifact(result["filepath"])
         return result
 
-    def emit_manifest(self, path: str, *, validate: bool = True) -> Optional[dict]:
+    def emit_manifest(
+        self, path: str, *, validate: bool = True, fail_closed: bool = False
+    ) -> Optional[dict]:
+        """Write the workflow manifest and return it.
+
+        With ``fail_closed=True`` a structurally malformed manifest is still
+        written to disk as evidence and its validation outcome is recorded on
+        ``self.manifest_valid`` / ``self.manifest_validation_error`` instead of
+        raising — so a garbled session is gradeable as a failure rather than
+        crashing the MCP server / grader. The default (``fail_closed=False``)
+        preserves strict raise-on-invalid behavior.
+        """
         if self._logger is None:
             return None
+        if fail_closed:
+            manifest = self._logger.emit(path, validate="soft")
+            self.manifest_valid, self.manifest_validation_error = self._logger.last_validation
+            return manifest
         return self._logger.emit(path, validate=validate)
 
 
