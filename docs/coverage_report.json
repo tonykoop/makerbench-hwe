@@ -163,6 +163,16 @@
       "stale": false
     },
     {
+      "adapter": "mistral_agent.py",
+      "benchmark_versions": [],
+      "covered": false,
+      "expected_agent_id": "mistral",
+      "matched_agent_ids": [],
+      "models": [],
+      "n_models": 0,
+      "stale": false
+    },
+    {
       "adapter": "openai_agent.py",
       "benchmark_versions": [],
       "covered": false,
