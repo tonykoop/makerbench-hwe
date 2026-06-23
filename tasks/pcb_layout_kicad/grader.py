@@ -476,10 +476,24 @@ def _min_clearance(board: Board) -> float:
                 clearances.append(
                     _point_seg_dist(via.at, a.start, a.end) - via.size / 2 - a.width / 2
                 )
+        for pad in board.pads:
+            if a.net != pad.net:
+                clearances.append(
+                    _point_seg_dist(pad.at, a.start, a.end)
+                    - max(pad.size) / 2
+                    - a.width / 2
+                )
     for i, a in enumerate(board.vias):
         for b in board.vias[i + 1:]:
             if a.net != b.net:
                 clearances.append(_dist(a.at, b.at) - a.size / 2 - b.size / 2)
+        for pad in board.pads:
+            if a.net != pad.net:
+                clearances.append(_dist(a.at, pad.at) - a.size / 2 - max(pad.size) / 2)
+    for i, a in enumerate(board.pads):
+        for b in board.pads[i + 1:]:
+            if a.net != b.net:
+                clearances.append(_dist(a.at, b.at) - max(a.size) / 2 - max(b.size) / 2)
     return min(clearances) if clearances else float("inf")
 
 
