@@ -428,7 +428,7 @@ def list_packs(
     table.add_column("Status")
     table.add_column("Profile")
     table.add_column("Dependencies", no_wrap=True)
-    table.add_column("Tasks", no_wrap=True)
+    table.add_column("Tasks", overflow="fold")
     for col in ("System tools", "Categories"):
         table.add_column(col)
     for pack in task_registry.task_packs:
