@@ -61,7 +61,7 @@ jobs:
             --jq '"sha=\(.headRefOid)\nbase=\(.baseRefName)"' >> "$GITHUB_OUTPUT"
 
       - name: Check out public metadata-only PR
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ steps.pr.outputs.sha }}
           fetch-depth: 0
