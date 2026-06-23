@@ -122,8 +122,8 @@ def _score_bom(
 ) -> DossierCategoryResult:
     catalog_items = [item for item in dossier.bom if item.source == "catalog"]
     expected_fasteners = float(spec.params.get("n_screws", 1))
-    screw_items = [item for item in catalog_items if _item_mentions(item, ("screw", "shcs"))]
-    insert_items = [item for item in catalog_items if _item_mentions(item, ("insert", "hsi"))]
+    screw_items = _items_in_categories(catalog_items, _SCREW_CATEGORIES)
+    insert_items = _items_in_categories(catalog_items, _INSERT_CATEGORIES)
 
     checks = {
         "bom_present": bool(dossier.bom),
@@ -165,27 +165,32 @@ def _score_assembly_sequence(
     spec: TaskSpec,
 ) -> DossierCategoryResult:
     del spec
-    sequence = dossier.process_plan.assembly_sequence if dossier.process_plan else []
-    joined = " ".join(sequence).lower()
+    operations = dossier.process_plan.assembly_operations if dossier.process_plan else []
+    actions = [op.action for op in operations]
     checks = {
-        "assembly_sequence_present": bool(sequence),
-        "at_least_three_steps": len(sequence) >= 3,
-        "fabrication_step_present": any(word in joined for word in ("print", "fabricate", "make")),
-        "insert_install_step_present": "insert" in joined and "install" in joined,
-        "fastening_step_present": any(word in joined for word in ("fasten", "screw", "secure")),
+        "assembly_operations_present": bool(operations),
+        "at_least_three_operations": len(operations) >= 3,
+        "fabrication_step_present": "fabricate" in actions,
+        "insert_install_step_present": "install_insert" in actions,
+        "fastening_step_present": "fasten" in actions,
     }
     missing = []
-    if not checks["assembly_sequence_present"]:
-        missing.append("dossier.process_plan.assembly_sequence")
-    if not checks["at_least_three_steps"]:
-        missing.append("dossier.process_plan.assembly_sequence[3_steps]")
+    if not checks["assembly_operations_present"]:
+        missing.append("dossier.process_plan.assembly_operations")
+    if not checks["at_least_three_operations"]:
+        missing.append("dossier.process_plan.assembly_operations[3_operations]")
     if not checks["fabrication_step_present"]:
-        missing.append("dossier.process_plan.assembly_sequence[fabrication_step]")
+        missing.append("dossier.process_plan.assembly_operations[action=fabricate]")
     if not checks["insert_install_step_present"]:
-        missing.append("dossier.process_plan.assembly_sequence[insert_install_step]")
+        missing.append("dossier.process_plan.assembly_operations[action=install_insert]")
     if not checks["fastening_step_present"]:
-        missing.append("dossier.process_plan.assembly_sequence[fastening_step]")
-    return _result(category, checks, missing, "Assembly sequence covers fabrication, inserts, and fastening.")
+        missing.append("dossier.process_plan.assembly_operations[action=fasten]")
+    return _result(
+        category,
+        checks,
+        missing,
+        "Assembly operations cover fabrication, inserts, and fastening.",
+    )
 
 
 def _score_agent_self_verification(
@@ -236,8 +241,9 @@ def _score_documentation_handoff(
     return _result(category, checks, missing, "Handoff includes source artifact and explicit notes.")
 
 
-_FABRICATION_WORDS = ("print", "fabricate", "make", "cut", "mill", "turn", "machine")
 _PART_BOM_SOURCES = ("fabricated", "stock_material")
+_SCREW_CATEGORIES = frozenset({"socket_head_cap_screw", "machine_screw", "cap_screw"})
+_INSERT_CATEGORIES = frozenset({"heat_set_insert", "threaded_insert"})
 
 
 def assess_packet_completeness(
@@ -251,8 +257,8 @@ def assess_packet_completeness(
     inconsistencies in a fabricable packet so a reviewer can see them — it does
     not pass or fail a grading level. Two hooks per the issue:
 
-    * BOM count vs assembly — the parts you make/cut must at least cover the
-      part-producing steps in the assembly sequence.
+    * BOM count vs assembly — fabricated/stock BOM items must at least cover
+      the parts declared by structured fabrication operations.
     * G-code bounds enclose part — when both are disclosed, the toolpath extents
       must contain the part's bounding box, else the program cannot make it.
 
@@ -270,18 +276,16 @@ def assess_packet_completeness(
         )
 
     packet = dossier.packet
-    assembly = dossier.process_plan.assembly_sequence if dossier.process_plan else []
-    fabrication_steps = [
-        step for step in assembly
-        if any(word in step.lower() for word in _FABRICATION_WORDS)
-    ]
+    operations = dossier.process_plan.assembly_operations if dossier.process_plan else []
+    fabrication_ops = [op for op in operations if op.action == "fabricate"]
+    fabricated_part_count = sum(max(1, len(op.part_ids)) for op in fabrication_ops)
     part_bom_items = [item for item in dossier.bom if item.source in _PART_BOM_SOURCES]
 
     checks = {
         "packet_present": True,
         "manifest_lists_all_files": _manifest_covers_files(packet),
         "bom_enumerates_assembly_parts": bool(part_bom_items)
-        and len(part_bom_items) >= len(fabrication_steps),
+        and len(part_bom_items) >= fabricated_part_count,
         "gcode_bounds_enclose_part": _gcode_bounds_enclose_part(packet),
     }
     missing = []
@@ -347,12 +351,8 @@ def _gcode_bounds_enclose_part(packet) -> bool:
     )
 
 
-def _item_mentions(item, needles: tuple[str, ...]) -> bool:
-    haystack = " ".join(
-        str(value or "")
-        for value in (item.item_id, item.category, item.part_number, item.notes)
-    ).lower()
-    return any(needle in haystack for needle in needles)
+def _items_in_categories(items, categories: frozenset[str]) -> list:
+    return [item for item in items if item.category.strip().lower() in categories]
 
 
 def _result(
