@@ -1,0 +1,33 @@
+{
+  "provider": "mistral",
+  "effective_date": "2026-06-20",
+  "source_url": "https://mistral.ai/technology/#pricing",
+  "notes": "Mistral native Chat Completions API rates. Prices are per 1M tokens (input / output). Magistral reasoning models bill thinking tokens within the output bucket. Devstral is a code-agent model; pricing matches Mistral Small tier as of this date. Verify current pricing at the source URL before publishing results.",
+  "models": {
+    "mistral-medium-3.5": {
+      "input_usd_per_1m_tokens": 0.4,
+      "output_usd_per_1m_tokens": 2.0,
+      "notes": "Mistral Medium 3.5 — current premier frontier model. 128K context."
+    },
+    "mistral-large-3": {
+      "input_usd_per_1m_tokens": 2.0,
+      "output_usd_per_1m_tokens": 6.0,
+      "notes": "Mistral Large 3 — 128K context, open weights available. Hosted API pricing."
+    },
+    "magistral-medium": {
+      "input_usd_per_1m_tokens": 2.0,
+      "output_usd_per_1m_tokens": 5.0,
+      "notes": "Magistral Medium reasoning model. Thinking tokens billed within output bucket."
+    },
+    "magistral-small": {
+      "input_usd_per_1m_tokens": 0.5,
+      "output_usd_per_1m_tokens": 1.5,
+      "notes": "Magistral Small reasoning model. Thinking tokens billed within output bucket."
+    },
+    "devstral-small": {
+      "input_usd_per_1m_tokens": 0.1,
+      "output_usd_per_1m_tokens": 0.3,
+      "notes": "Devstral Small code-agent model. 128K context."
+    }
+  }
+}

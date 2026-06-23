@@ -18,7 +18,7 @@ is stdlib-only, so the cube regenerates anywhere.
 
 Usage:
     python3 scripts/generate_opportunity_matrix.py \
-        [--results-dir results] [--runs-root results] [--with-domain] \
+        [--results-dir results] [--runs-root results] [--with-domain | --with-process] \
         [--output-json opportunity-matrix.json] \
         [--output-html opportunity-matrix.html] \
         [--output-report docs/OPPORTUNITY_VACANCIES.md]
@@ -282,7 +282,13 @@ def main(argv=None) -> int:
     p.add_argument("--results-dir", type=Path, default=repo_root / "results")
     p.add_argument("--runs-root", type=Path, default=repo_root / "results",
                    help="Where to scan for WorkflowManifest evidence (default: results/).")
-    p.add_argument("--with-domain", action="store_true", help="Add the 4th domain axis.")
+    axis = p.add_mutually_exclusive_group()
+    axis.add_argument("--with-domain", action="store_true", help="Add the 4th domain axis.")
+    axis.add_argument(
+        "--with-process",
+        action="store_true",
+        help="Add the #183 fabrication-process/craft axis.",
+    )
     p.add_argument("--output-json", type=Path, default=repo_root / "site" / "data" / "opportunity-matrix.json")
     p.add_argument("--output-html", type=Path, default=repo_root / "site" / "opportunity-matrix.html")
     p.add_argument("--output-report", type=Path, default=repo_root / "docs" / "OPPORTUNITY_VACANCIES.md")
@@ -292,6 +298,7 @@ def main(argv=None) -> int:
         results_dir=a.results_dir if a.results_dir.exists() else None,
         runs_root=a.runs_root if a.runs_root.exists() else None,
         with_domain=a.with_domain,
+        with_process=a.with_process,
     )
     for path in (a.output_json, a.output_html, a.output_report):
         path.parent.mkdir(parents=True, exist_ok=True)

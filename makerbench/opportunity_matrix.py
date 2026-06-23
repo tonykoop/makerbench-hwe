@@ -286,7 +286,11 @@ def load_manifest_evidence(
 
     raw: dict[tuple, dict] = {}
     for path in sorted(runs_root.rglob("*.json")):
-        if path.name not in ("workflow_manifest.json",) and not path.name.endswith(".manifest.json"):
+        if (
+            path.name != "workflow_manifest.json"
+            and not path.name.endswith(".manifest.json")
+            and not path.name.endswith(".workflow_manifest.json")
+        ):
             continue
         try:
             manifest = json.loads(path.read_text(encoding="utf-8"))

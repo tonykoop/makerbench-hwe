@@ -44,7 +44,16 @@ silently rank an assisted run as autonomous).
 
 ## CLI
 
-Build a manifest from a recorded tool-call log (the `makerbench logger emit` form):
+Build a manifest from a recorded tool-call log:
+
+```bash
+makerbench-logger emit \
+    --tool-call-log calls.json \
+    --task-id bracket_v1 --seed 0 \
+    -o workflow_manifest.json
+```
+
+Without an installed console script, the module form is equivalent:
 
 ```bash
 python -m makerbench_logger emit \
