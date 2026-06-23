@@ -3,6 +3,7 @@
 from html.parser import HTMLParser
 import importlib.util
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -207,6 +208,40 @@ def test_site_reports_track_level_seed_totals_for_mixed_counts(tmp_path):
     assert track["overall_mean_stderr"] is not None  # 2 families -> defined
     assert track["overall_score_ci95_low"] is not None
     assert track["overall_score_ci95_high"] is not None
+
+
+def test_site_dedupes_legacy_and_r_prefixed_results_by_seed(tmp_path):
+    """A newer r_ result file supersedes legacy rows for the same seed (#516)."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    legacy = results_dir / "enclosure_fastened_blind.json"
+    prefixed = results_dir / "r_enclosure_fastened_blind.json"
+    _write_multi_seed_run(
+        legacy,
+        "dedupe-model",
+        [1, 1, 4],
+        task_id="enclosure_fastened",
+    )
+    _write_multi_seed_run(
+        prefixed,
+        "dedupe-model",
+        [4, 3],
+        task_id="enclosure_fastened",
+    )
+    os.utime(legacy, (1000, 1000))
+    os.utime(prefixed, (2000, 2000))
+    registry = tmp_path / "registry.json"
+    registry.write_text(json.dumps({"task_families": [
+        {"id": "enclosure_fastened", "title": "Enclosure", "tracks": ["blind"]},
+    ]}), encoding="utf-8")
+
+    cell = build_data.build_payload(results_dir, registry)["models"][0]["tracks"]["blind"][
+        "families"
+    ]["enclosure_fastened"]
+
+    assert cell["n_seeds"] == 3
+    assert cell["mean_score"] == build_data._round((4 + 3 + 4) / 3)
+    assert sorted(cell["seed_scores"]) == [3.0, 4.0, 4.0]
 
 
 def test_site_excludes_diagnostic_and_calibrator_families_from_stats(tmp_path):

@@ -31,6 +31,8 @@ TelemetryProvider = Literal[
     "moonshot",
     "deepseek",
     "qwen",
+    "cohere",
+    "mistral",
     "openrouter",
     "unknown",
 ]
