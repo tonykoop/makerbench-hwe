@@ -569,7 +569,7 @@
       "perception_mean": 0.0
     }
   ],
-  "n_core_families": 21,
+  "n_core_families": 23,
   "perception_backlog": [
     {
       "blind_mean": 1.682,
