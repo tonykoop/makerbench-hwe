@@ -107,6 +107,21 @@ def test_with_domain_flag_expands_cube(tmp_path):
     assert cube["axes"]["domain"]
 
 
+def test_with_process_flag_expands_cube_with_per_process_summary(tmp_path):
+    gen.main([
+        "--results-dir", str(ROOT / "results"),
+        "--with-process",
+        "--output-json", str(tmp_path / "om.json"),
+        "--output-html", str(tmp_path / "om.html"),
+        "--output-report", str(tmp_path / "om.md"),
+    ])
+    cube = json.loads((tmp_path / "om.json").read_text(encoding="utf-8"))
+    assert cube["with_process"] is True
+    assert cube["with_domain"] is False
+    assert cube["axes"]["process"]
+    assert cube["per_process"]
+
+
 def test_report_renders_proven_table_when_evidence_present(tmp_path):
     # fabricate a manifest so the proven branch of the report is exercised
     results = tmp_path / "results" / "claude-code-opus-4.8"
