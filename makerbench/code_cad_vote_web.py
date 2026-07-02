@@ -37,7 +37,31 @@ function cast(winner) {
 }
 document.querySelectorAll('button[data-vote]').forEach(b =>
   b.addEventListener('click', () => cast(b.dataset.vote)));
+document.addEventListener('keydown', (e) => {
+  const map = {l: 'left', ArrowLeft: 'left', d: 'draw', ArrowDown: 'draw',
+               r: 'right', ArrowRight: 'right'};
+  if (map[e.key]) cast(map[e.key]);
+});
 </script>
+"""
+
+# The shared vote page is sized for the file:// terminal flow; the web queue
+# should use the whole viewport (Round 2 voter feedback: "way too small").
+WEB_CSS = """
+<style>
+  main { max-width: none !important; margin: 0 !important;
+         padding: 8px 24px 16px !important;
+         height: calc(100vh - 60px); display: flex; flex-direction: column; }
+  .grid { flex: 1; min-height: 0; }
+  figure { display: flex; flex-direction: column; min-height: 0; }
+  figcaption { flex: 0 0 auto; }
+  model-viewer, figure > img {
+    flex: 1; min-height: 0; height: 100% !important;
+    aspect-ratio: auto !important; width: 100%; object-fit: contain; }
+  .controls { justify-content: center; margin-top: 12px !important; }
+  .controls button { min-width: 160px; min-height: 56px; font-size: 19px;
+                     cursor: pointer; }
+</style>
 """
 
 
@@ -100,11 +124,13 @@ for the scorelines, or <code>arena report</code> for the full page.</p>
 </body></html>"""
     page = render_vote_surface(item.pair)
     banner = (
-        f'<p style="text-align:center;font-family:system-ui;color:#555">'
+        f'<p style="text-align:center;font-family:system-ui;color:#555;margin:10px 0 4px">'
         f"pair {done + 1} of {total} &middot; "
         f'{item.meta.get("instrument_id")} seed={item.meta.get("seed")} '
-        f'round={item.meta.get("round")}</p>'
+        f'round={item.meta.get("round")} &middot; '
+        f"keys: L / D / R</p>"
     )
+    page = page.replace("</head>", WEB_CSS + "</head>", 1)
     page = page.replace("<main", banner + "\n  <main", 1)
     return page.replace("</body>", VOTE_JS + "</body>")
 
