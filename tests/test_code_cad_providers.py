@@ -214,3 +214,48 @@ class TestDispatch:
 
     def test_preflight_stub_needs_nothing(self):
         assert providers.preflight_binaries(["stub-a", "stub-b"], stub=True) == []
+
+    def test_model_map_timeout_and_max_turns_reach_the_cli(self, monkeypatch):
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"] = cmd
+            seen["timeout"] = kwargs.get("timeout")
+            return _completed(stdout=json.dumps({"result": "```scad\ncube(1);\n```"}))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        gen = providers.resolve_generator(
+            "claude-code-sonnet",
+            model_map={"claude-code-sonnet": {"timeout_s": 1234, "max_turns": 3}},
+        )
+        assert gen(_request()) == "cube(1);"
+        assert seen["timeout"] == 1234
+        assert seen["cmd"][seen["cmd"].index("--max-turns") + 1] == "3"
+
+    def test_model_map_timeout_beats_run_level_default(self, monkeypatch):
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["timeout"] = kwargs.get("timeout")
+            return _completed(stdout="```scad\ncube(2);\n```")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        gen = providers.resolve_generator(
+            "codex-gpt-5.3",
+            model_map={"codex-gpt-5.3": {"timeout_s": 111}},
+            timeout_s=999,
+        )
+        gen(_request("codex-gpt-5.3"))
+        assert seen["timeout"] == 111
+
+    def test_claude_default_timeout_is_900(self, monkeypatch):
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["timeout"] = kwargs.get("timeout")
+            return _completed(stdout=json.dumps({"result": "```scad\ncube(3);\n```"}))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        gen = providers.make_claude_generator("sonnet", retry_sleep_s=0)
+        gen(_request())
+        assert seen["timeout"] == 900

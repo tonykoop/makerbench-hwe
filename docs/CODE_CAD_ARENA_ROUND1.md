@@ -24,8 +24,14 @@ Prefix dispatch (see `makerbench/code_cad_providers.py`):
 | `antigravity-*` | `agy --print` | n/a (agy picks its model) |
 | `stub*` | none | deterministic zero-token stub |
 
-Non-conventional ids can be mapped with `--model-map map.json`
-(`{"my-entrant": {"provider": "claude", "model": "opus", "effort": "high"}}`).
+> **Gemini note (#592):** the `gemini` CLI currently fails subscription auth
+> (`IneligibleTierError`); use `antigravity-gemini-default` (agy) as the
+> Gemini entrant until the adapter migrates.
+
+Non-conventional ids can be mapped with `--model-map map.json`; per-entrant
+keys are `provider`, `model`, `effort`, `timeout_s`, and (claude only)
+`max_turns` (#593), e.g.
+`{"my-entrant": {"provider": "claude", "model": "opus", "effort": "high", "timeout_s": 1200}}`.
 
 ## The loop
 
