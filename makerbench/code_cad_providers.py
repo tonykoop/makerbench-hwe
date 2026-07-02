@@ -19,7 +19,7 @@ import re
 import subprocess
 import tempfile
 import time
-from typing import Callable, Mapping, Optional
+from typing import Mapping, Optional
 
 from .code_cad_generator import GenerationRequest, Generator
 
