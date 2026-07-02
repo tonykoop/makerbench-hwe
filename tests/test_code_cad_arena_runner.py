@@ -403,3 +403,100 @@ module bowl() { sphere(1); }
 
     def test_missing_scad_counts_zero(self, tmp_path):
         assert runner.count_standalone_part_modules(tmp_path / "nope.scad") == 0
+
+
+class TestEnvelopeOrientationFree:
+    def test_rotated_model_fits_sorted_envelope(self, tmp_path):
+        # #613: the Round 2 lyre lay flat (571 x 794 x 87mm) against envelope
+        # [550, 200, 800] and was falsely failed by fixed-axis comparison.
+        gate = runner.mesh_objective_gate(
+            {"id": "lyre", "envelope_mm": [550, 200, 800], "min_bodies": 1}
+        )
+        flat = trimesh.creation.box(extents=[571, 794, 87])
+        result = gate(_context(tmp_path, flat))
+        assert result["sub_scores"]["fits_envelope"] == 1.0
+
+    def test_genuinely_oversized_still_fails(self, tmp_path):
+        gate = runner.mesh_objective_gate(
+            {"id": "x", "envelope_mm": [100, 100, 100], "min_bodies": 1}
+        )
+        result = gate(_context(tmp_path, trimesh.creation.box(extents=[500, 500, 500])))
+        assert result["sub_scores"]["fits_envelope"] == 0.0
+
+
+class TestRound3Registry:
+    def test_round3_instruments_resolve_with_integrity_notes(self):
+        registry = runner.load_arena_registry(ARENA_REGISTRY)
+        for instrument_id in ("handpan", "udu", "cajon", "duduk"):
+            spec = instrument_spec_from_registry(registry, instrument_id)
+            assert spec["min_wall_mm"] > 0
+            assert spec["repo_path"]
+        handpan = instrument_spec_from_registry(registry, "handpan")
+        text = handpan["task_brief"].lower()
+        assert "geometry only" in text and "pitch" in text
+        duduk = instrument_spec_from_registry(registry, "duduk")
+        assert "provenance" in duduk["constraints"]
+
+
+class TestIngestCandidate:
+    def _seeded_run(self, tmp_path):
+        config = OrchestrationConfig(
+            instrument_ids=("boxolin",), model_ids=("stub-a",), seeds=(0,), reps=1,
+        )
+        execute = runner.make_execute_trial(
+            registry=TINY_REGISTRY, run_dir=tmp_path,
+            generators={"stub-a": make_stub_generator()},
+            compiler=_fake_compiler(tmp_path),
+        )
+        run_orchestration(config=config, run_log_path=tmp_path / "run_log.json",
+                          execute_trial=execute)
+        return tmp_path / "run_log.json"
+
+    def test_ingest_scores_and_appends_compatible_trial_row(self, tmp_path):
+        import json
+        log_path = self._seeded_run(tmp_path)
+        scad = tmp_path / "external.scad"
+        scad.write_text("cube([30,20,10]);\n", encoding="utf-8")
+        entry = runner.ingest_candidate(
+            run_log_path=log_path, registry=TINY_REGISTRY,
+            instrument_id="boxolin", model_id="cadam-fable-image",
+            scad_path=scad, run_dir=tmp_path,
+            compiler=_fake_compiler(tmp_path),
+            provenance_extra={"cost_usd": 0.66},
+        )
+        assert entry["status"] == "scored"
+        log = json.loads(log_path.read_text())
+        assert log["summary"]["counts"]["scored"] == 2
+        rows = runner.collect_objective_scoreline(log)
+        assert {r["entrant"] for r in rows} == {"stub-a", "cadam-fable-image"}
+        cells = runner.build_vote_candidates(log)
+        assert len(cells[("boxolin", 0, 0)]) == 2  # ingested joins the vote cell
+
+    def test_ingest_refuses_trial_collision(self, tmp_path):
+        log_path = self._seeded_run(tmp_path)
+        scad = tmp_path / "external.scad"
+        scad.write_text("cube([5,5,5]);\n", encoding="utf-8")
+        kwargs = dict(
+            run_log_path=log_path, registry=TINY_REGISTRY,
+            instrument_id="boxolin", model_id="cadam-fable-image",
+            scad_path=scad, run_dir=tmp_path, compiler=_fake_compiler(tmp_path),
+        )
+        runner.ingest_candidate(**kwargs)
+        import pytest as _pytest
+        with _pytest.raises(ValueError, match="already exists"):
+            runner.ingest_candidate(**kwargs)
+
+    def test_ingest_pre_exported_stl_without_compile(self, tmp_path):
+        log_path = self._seeded_run(tmp_path)
+        scad = tmp_path / "external.scad"
+        scad.write_text("// solidworks export placeholder\n", encoding="utf-8")
+        stl = _export_stl(trimesh.creation.box(extents=[30, 20, 10]), tmp_path / "ext.stl")
+        png = tmp_path / "ext.png"
+        png.write_bytes(b"\x89PNG\r\n")
+        entry = runner.ingest_candidate(
+            run_log_path=log_path, registry=TINY_REGISTRY,
+            instrument_id="boxolin", model_id="adam-solidworks",
+            scad_path=scad, run_dir=tmp_path, stl_path=stl, png_path=png,
+        )
+        assert entry["status"] == "scored"
+        assert entry["result"]["objective"]["objective_pass_rate"] == 1.0

@@ -447,6 +447,56 @@ def arena_agreement(
     console.print(markdown)
 
 
+@arena_app.command("ingest-candidate")
+def arena_ingest_candidate(
+        run_dir: str = typer.Option(..., "--run-dir"),
+        instrument: str = typer.Option(..., "--instrument", help="Instrument id from the arena registry."),
+        entrant: str = typer.Option(..., "--entrant", help="Model id for the external candidate (e.g. cadam-fable-image)."),
+        scad: str = typer.Option(..., "--scad", help="Path to the candidate OpenSCAD source."),
+        stl: Optional[str] = typer.Option(None, "--stl", help="Pre-exported STL (skips local compile)."),
+        png: Optional[str] = typer.Option(None, "--png", help="Preview image (needed for voting when --stl is used)."),
+        seed: int = typer.Option(0, "--seed"),
+        rep: int = typer.Option(0, "--rep"),
+        registry: str = typer.Option(DEFAULT_REGISTRY, help="Arena registry JSON path."),
+        cost_usd: Optional[float] = typer.Option(None, "--cost-usd", help="Generation cost recorded in provenance."),
+        source_image: Optional[str] = typer.Option(None, "--source-image", help="Inspiration image recorded in provenance.")):
+    """Ingest an externally-generated candidate (CADAM, SolidWorks, ...) into a run (#616)."""
+
+    run_path = Path(run_dir)
+    if not (run_path / "run_log.json").exists():
+        raise typer.BadParameter(f"no run log at {run_path / 'run_log.json'}")
+    registry_payload = arena_runner.load_arena_registry(Path(registry))
+    extra = {}
+    if cost_usd is not None:
+        extra["cost_usd"] = cost_usd
+    if source_image:
+        extra["source_image"] = source_image
+    try:
+        entry = arena_runner.ingest_candidate(
+            run_log_path=run_path / "run_log.json",
+            registry=registry_payload,
+            instrument_id=instrument,
+            model_id=entrant,
+            scad_path=Path(scad),
+            run_dir=run_path,
+            seed=seed,
+            rep=rep,
+            stl_path=Path(stl) if stl else None,
+            png_path=Path(png) if png else None,
+            provenance_extra=extra,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1)
+    objective = (entry.get("result") or {}).get("objective") or {}
+    console.print(
+        f"ingested {entry['trial_id']}: status={entry['status']} "
+        f"pass_rate={objective.get('objective_pass_rate')}"
+    )
+    if stl and not png:
+        console.print("[yellow]no --png given — candidate is scored but will not enter blind voting[/yellow]")
+
+
 @arena_app.command("export-winners")
 def arena_export_winners(
         run_dir: str = typer.Option(..., "--run-dir"),
