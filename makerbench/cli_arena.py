@@ -322,6 +322,17 @@ def arena_leaderboard(
         console.print("[yellow]single-voter Elo is directional, not a population claim[/yellow]")
 
 
+@arena_app.command("report")
+def arena_report(
+        run_dir: str = typer.Option(..., "--run-dir")):
+    """Write a self-contained local HTML report (dual scoreline, gates, gallery)."""
+
+    from .code_cad_arena_report import write_report
+
+    out_path = write_report(Path(run_dir))
+    console.print(f"report: {_windows_link(out_path)}")
+
+
 @arena_app.command("agreement")
 def arena_agreement(
         run_dir: str = typer.Option(..., "--run-dir")):
