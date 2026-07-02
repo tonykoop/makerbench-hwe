@@ -204,3 +204,45 @@ class TestDropUnratedEntrants:
         assert [row["entrant"] for row in result["leaderboard"]] == ["agy", "haiku"]
         assert [row["rank"] for row in result["leaderboard"]] == [1, 2]
         assert result["unrated_entrants"] == ["gemini-cli"]
+
+
+class TestVoteWebQueue:
+    def _queue(self, tmp_path):
+        from makerbench.code_cad_vote_web import QueueItem, VoteQueue, render_queue_page
+        from makerbench.code_cad_vote_surface import VoteCandidate, build_blind_pair
+
+        left = VoteCandidate(candidate_id="a", model_id="m1", trial_id="t-a",
+                             render_path="blind/p-left.png")
+        right = VoteCandidate(candidate_id="b", model_id="m2", trial_id="t-b",
+                              render_path="blind/p-right.png")
+        pair = build_blind_pair(left, right, pair_seed="cell")
+        queue = VoteQueue(run_dir=tmp_path, voter="tony")
+        queue.items.append(QueueItem(pair=pair, meta={
+            "instrument_id": "boxolin", "seed": 0, "rep": 0, "round": 0}))
+        return queue, pair, render_queue_page
+
+    def test_cast_appends_blind_and_revealed_records(self, tmp_path):
+        import json
+        queue, pair, _ = self._queue(tmp_path)
+        assert queue.cast(pair.pair_id, "left") is True
+        blind = json.loads((tmp_path / "votes.blind.jsonl").read_text().strip())
+        revealed = json.loads((tmp_path / "votes.revealed.jsonl").read_text().strip())
+        assert blind["winner"] == "left" and blind["voter_id"] == "tony"
+        assert "model_id" not in json.dumps(blind.get("left"))
+        assert revealed["reveal"]["left"]["model_id"] in {"m1", "m2"}
+        assert revealed["instrument_id"] == "boxolin"
+
+    def test_duplicate_and_unknown_votes_rejected(self, tmp_path):
+        queue, pair, _ = self._queue(tmp_path)
+        assert queue.cast(pair.pair_id, "draw") is True
+        assert queue.cast(pair.pair_id, "left") is False
+        assert queue.cast("pair-nope", "left") is False
+
+    def test_queue_page_serves_pair_then_summary(self, tmp_path):
+        queue, pair, render_queue_page = self._queue(tmp_path)
+        page = render_queue_page(queue)
+        assert "pair 1 of 1" in page
+        assert "fetch('/vote'" in page
+        assert "m1" not in page and "m2" not in page  # blindness holds
+        queue.cast(pair.pair_id, "right")
+        assert "All 1 pairs voted" in render_queue_page(queue)

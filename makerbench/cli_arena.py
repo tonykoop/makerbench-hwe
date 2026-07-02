@@ -389,6 +389,61 @@ def arena_vote(
     console.print(f"\nrecorded {asked} vote(s); run `arena leaderboard --run-dir {run_dir}`")
 
 
+@arena_app.command("vote-web")
+def arena_vote_web(
+        run_dir: str = typer.Option(..., "--run-dir"),
+        voter: str = typer.Option(..., "--voter", help="Voter id recorded on every vote."),
+        rounds: str = typer.Option("0,1", "--rounds", help="Comma-separated Swiss round indexes to queue."),
+        port: int = typer.Option(0, "--port", help="Local server port (0 = pick a free one).")):
+    """Browser-native blind voting: one URL, vote with the on-page buttons."""
+
+    from .code_cad_vote_web import QueueItem, VoteQueue, serve_vote_queue
+
+    run_path = Path(run_dir)
+    run_log = _load_run_log(run_path)
+    vote_pages = run_path / "vote_pages"
+    vote_pages.mkdir(parents=True, exist_ok=True)
+    already = _voted_pair_keys(run_path, voter)
+    queue = VoteQueue(run_dir=run_path, voter=voter)
+
+    for round_index in (int(r) for r in _split_csv(rounds)):
+        for item in _pairing_plan(run_path, run_log, round_index):
+            cand_a, cand_b = item["candidates"]
+            pair_seed = (
+                f"{item['instrument_id']}:seed{item['seed']}:rep{item['rep']}:round{item['round']}"
+            )
+            shuffled = build_blind_pair(cand_a, cand_b, pair_seed=pair_seed)
+            if (shuffled.pair_id, voter) in already:
+                continue
+            pair = BlindPair(
+                pair_id=shuffled.pair_id,
+                left=_stage_blind_assets(shuffled.left, shuffled.pair_id, "left", vote_pages),
+                right=_stage_blind_assets(shuffled.right, shuffled.pair_id, "right", vote_pages),
+            )
+            queue.items.append(QueueItem(pair=pair, meta={
+                "instrument_id": item["instrument_id"], "seed": item["seed"],
+                "rep": item["rep"], "round": item["round"],
+            }))
+
+    if not queue.items:
+        console.print("nothing left to vote — all queued pairs already have your vote")
+        raise typer.Exit()
+
+    server, server_port = serve_vote_queue(queue, port)
+    console.print(f"[bold]vote here: http://127.0.0.1:{server_port}/queue[/bold]")
+    console.print(f"[dim]{len(queue.items)} pairs queued (loopback only; Ctrl+C when done)[/dim]")
+    try:
+        while queue.next_unvoted() is not None:
+            import time
+            time.sleep(2)
+        console.print("all pairs voted — run `arena leaderboard` next")
+    except KeyboardInterrupt:
+        done, total = queue.progress()
+        console.print(f"stopped at {done}/{total}; rerun to resume")
+    finally:
+        server.shutdown()
+
+
 @arena_app.command("leaderboard")
 def arena_leaderboard(
         run_dir: str = typer.Option(..., "--run-dir")):
