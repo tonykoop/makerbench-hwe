@@ -100,3 +100,46 @@ def test_doc_names_twingrid_and_private_boundary():
     assert "TwinGrid" in text
     assert "Partner-Peek" in text
     assert "Selecta internals" in text
+
+
+class TestModel3dVoteSurface:
+    def _pair_with_3d(self):
+        left = vote.VoteCandidate(
+            candidate_id="a", model_id="gpt-5.5", trial_id="lyre-s0-a",
+            render_path="blind/pair-x-left.png", model3d_path="blind/pair-x-left.glb",
+        )
+        right = vote.VoteCandidate(
+            candidate_id="b", model_id="sonnet", trial_id="lyre-s0-b",
+            render_path="blind/pair-x-right.png", model3d_path="blind/pair-x-right.glb",
+        )
+        return vote.build_blind_pair(left, right, pair_seed="lyre")
+
+    def test_glb_candidates_get_rotatable_viewer_with_img_fallback(self):
+        html = vote.render_vote_surface(self._pair_with_3d())
+        assert html.count("<model-viewer") == 2
+        assert "camera-controls" in html
+        assert vote.MODEL_VIEWER_CDN in html
+        # the static render nests inside the viewer as the no-JS fallback
+        assert html.count("<img src=") == 2
+
+    def test_png_only_pair_has_no_viewer_or_cdn_script(self):
+        pair = vote.build_blind_pair(
+            _candidate("a", "gpt-5.5"), _candidate("b", "sonnet"), pair_seed="lyre"
+        )
+        html = vote.render_vote_surface(pair)
+        assert "<model-viewer" not in html
+        assert vote.MODEL_VIEWER_CDN not in html
+
+    def test_page_markup_never_leaks_candidate_or_trial_ids(self):
+        # Trial ids embed entrant names; the blind page must not carry them
+        # even in data attributes (#602 blindness hardening).
+        html = vote.render_vote_surface(self._pair_with_3d())
+        assert "lyre-s0-a" not in html
+        assert "candidate-id" not in html
+
+    def test_model3d_path_rides_blind_and_revealed_records(self):
+        pair = self._pair_with_3d()
+        record = vote.record_vote(pair, winner="left", voter_id="tony")
+        assert record["left"]["model3d_path"].endswith(".glb")
+        revealed = vote.reveal_vote(pair, record)
+        assert revealed["reveal"]["left"]["model3d_path"].endswith(".glb")

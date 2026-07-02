@@ -9,7 +9,6 @@ gitignored run directory (``runs/code_cad_arena/<run_id>/`` by convention).
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +16,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from . import code_cad_export as arena_export
 from . import code_cad_providers as providers
 from . import code_cad_arena_runner as arena_runner
 from . import render
@@ -24,6 +24,7 @@ from .code_cad_agreement import build_agreement_summary, render_markdown_summary
 from .code_cad_arena import build_elo_leaderboard, sample_swiss_pairs
 from .code_cad_orchestrator import OrchestrationConfig, run_orchestration
 from .code_cad_vote_surface import (
+    BlindPair,
     VoteCandidate,
     append_vote_record,
     build_blind_pair,
@@ -72,7 +73,30 @@ def _windows_link(path: Path) -> str:
 def _elo_payload_for_run(run_dir: Path, run_log: dict) -> dict:
     votes = arena_runner.votes_to_elo_votes(run_dir / "votes.revealed.jsonl")
     entrants = (run_log.get("config") or {}).get("model_ids") or []
-    return build_elo_leaderboard(votes, entrants=entrants)
+    payload = build_elo_leaderboard(votes, entrants=entrants)
+    return drop_unrated_entrants(payload)
+
+
+def drop_unrated_entrants(payload: dict) -> dict:
+    """Remove zero-vote ghost entrants from the leaderboard (#597).
+
+    An entrant with no recorded games (e.g. a dead CLI swapped out mid-run but
+    still present in the run-log config) would otherwise sit mid-table at the
+    initial rating. Rated rows are re-ranked contiguously; the ghosts move to
+    an ``unrated_entrants`` list so they stay visible without distorting ranks.
+    """
+
+    rated = [row for row in payload.get("leaderboard") or [] if int(row.get("games") or 0) > 0]
+    unrated = [
+        str(row["entrant"])
+        for row in payload.get("leaderboard") or []
+        if int(row.get("games") or 0) == 0
+    ]
+    for rank, row in enumerate(rated, start=1):
+        row["rank"] = rank
+    payload["leaderboard"] = rated
+    payload["unrated_entrants"] = sorted(unrated)
+    return payload
 
 
 def _pairing_plan(run_dir: Path, run_log: dict, round_index: int) -> list[dict]:
@@ -102,6 +126,65 @@ def _pairing_plan(run_dir: Path, run_log: dict, round_index: int) -> list[dict]:
                 }
             )
     return plan
+
+
+def _serve_run_dir(run_dir: Path, port: int) -> tuple[object, int]:
+    """Serve the run dir on 127.0.0.1 so vote pages get real http URLs.
+
+    Pages opened via file:// cannot load module scripts or fetch GLBs, so the
+    3D viewer only works over http. Loopback-only on purpose — run artifacts
+    must never be exposed to the LAN.
+    """
+
+    import threading
+    from functools import partial
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+    class QuietHandler(SimpleHTTPRequestHandler):
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+            pass
+
+    handler = partial(QuietHandler, directory=run_dir.resolve().as_posix())
+    server = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, server.server_address[1]
+
+
+def _stage_blind_assets(
+    candidate: VoteCandidate, pair_hint: str, side: str, vote_pages: Path
+) -> VoteCandidate:
+    """Copy a candidate's viewer assets under anonymized names (blindness).
+
+    Raw artifact paths embed entrant names (``...__claude-code-opus/...``), so
+    the page must reference per-pair aliases instead. Also converts the STL to
+    a colored GLB lazily, which retrofits 3D viewing onto existing runs.
+    """
+
+    import shutil
+
+    assets = vote_pages / "blind"
+    assets.mkdir(parents=True, exist_ok=True)
+    png_alias = assets / f"{pair_hint}-{side}.png"
+    shutil.copyfile(candidate.render_path, png_alias)
+
+    model3d_rel = None
+    stl_path = (candidate.provenance or {}).get("stl_path")
+    if stl_path:
+        glb = arena_export.ensure_glb(Path(str(stl_path)))
+        if glb is not None:
+            glb_alias = assets / f"{pair_hint}-{side}.glb"
+            shutil.copyfile(glb, glb_alias)
+            model3d_rel = f"blind/{glb_alias.name}"
+
+    return VoteCandidate(
+        candidate_id=candidate.candidate_id,
+        model_id=candidate.model_id,
+        trial_id=candidate.trial_id,
+        render_path=f"blind/{png_alias.name}",
+        provenance=candidate.provenance,
+        model3d_path=model3d_rel,
+    )
 
 
 def _voted_pair_keys(run_dir: Path, voter_id: str) -> set[tuple[str, str]]:
@@ -232,7 +315,9 @@ def arena_vote(
         run_dir: str = typer.Option(..., "--run-dir"),
         voter: str = typer.Option(..., "--voter", help="Voter id recorded on every vote."),
         round_index: int = typer.Option(0, "--round", help="Swiss voting round index."),
-        max_pairs: Optional[int] = typer.Option(None, "--max-pairs", help="Stop after N pairs this session.")):
+        max_pairs: Optional[int] = typer.Option(None, "--max-pairs", help="Stop after N pairs this session."),
+        serve: bool = typer.Option(True, "--serve/--no-serve", help="Serve pages on 127.0.0.1 so the 3D viewer works (file:// blocks it)."),
+        port: int = typer.Option(0, "--port", help="Local server port (0 = pick a free one).")):
     """Interactive blind voting: open each pair page, record l/r/d votes."""
 
     run_path = Path(run_dir)
@@ -244,6 +329,11 @@ def arena_vote(
 
     vote_pages = run_path / "vote_pages"
     vote_pages.mkdir(parents=True, exist_ok=True)
+    server = None
+    server_port = 0
+    if serve:
+        server, server_port = _serve_run_dir(run_path, port)
+        console.print(f"[dim]serving {run_path} at http://127.0.0.1:{server_port}/ (loopback only)[/dim]")
     already = _voted_pair_keys(run_path, voter)
     asked = 0
     for item in plan:
@@ -253,22 +343,16 @@ def arena_vote(
         pair_seed = (
             f"{item['instrument_id']}:seed{item['seed']}:rep{item['rep']}:round{item['round']}"
         )
-        # Rebase image paths relative to vote_pages/ so the HTML opens in a browser.
-        rel_a = VoteCandidate(
-            candidate_id=cand_a.candidate_id, model_id=cand_a.model_id,
-            trial_id=cand_a.trial_id,
-            render_path=os.path.relpath(cand_a.render_path, vote_pages),
-            provenance=cand_a.provenance,
-        )
-        rel_b = VoteCandidate(
-            candidate_id=cand_b.candidate_id, model_id=cand_b.model_id,
-            trial_id=cand_b.trial_id,
-            render_path=os.path.relpath(cand_b.render_path, vote_pages),
-            provenance=cand_b.provenance,
-        )
-        pair = build_blind_pair(rel_a, rel_b, pair_seed=pair_seed)
-        if (pair.pair_id, voter) in already:
+        shuffled = build_blind_pair(cand_a, cand_b, pair_seed=pair_seed)
+        if (shuffled.pair_id, voter) in already:
             continue
+        # Stage viewer assets under anonymized per-pair names: raw artifact
+        # paths embed entrant ids and would unblind a voter reading the DOM.
+        pair = BlindPair(
+            pair_id=shuffled.pair_id,
+            left=_stage_blind_assets(shuffled.left, shuffled.pair_id, "left", vote_pages),
+            right=_stage_blind_assets(shuffled.right, shuffled.pair_id, "right", vote_pages),
+        )
         page_path = vote_pages / f"{item['instrument_id']}_seed{item['seed']}_rep{item['rep']}_round{item['round']}_{pair.pair_id}.html"
         page_path.write_text(render_vote_surface(pair), encoding="utf-8")
 
@@ -276,7 +360,12 @@ def arena_vote(
             f"\n[bold]{item['instrument_id']}[/bold] seed={item['seed']} rep={item['rep']} "
             f"round={item['round']}  ({pair.pair_id})"
         )
-        console.print(f"  open: {_windows_link(page_path)}")
+        if server is not None:
+            console.print(
+                f"  open: http://127.0.0.1:{server_port}/vote_pages/{page_path.name}"
+            )
+        else:
+            console.print(f"  open: {_windows_link(page_path)}  [dim](3D viewer needs --serve)[/dim]")
         choice = typer.prompt("  vote [l]eft / [r]ight / [d]raw / [s]kip / [q]uit").strip().lower()
         if choice.startswith("q"):
             break
@@ -295,6 +384,8 @@ def arena_vote(
         revealed["round"] = item["round"]
         append_vote_record(run_path / "votes.revealed.jsonl", revealed)
         asked += 1
+    if server is not None:
+        server.shutdown()
     console.print(f"\nrecorded {asked} vote(s); run `arena leaderboard --run-dir {run_dir}`")
 
 
@@ -318,6 +409,12 @@ def arena_leaderboard(
             f"{row['wins']}-{row['losses']}-{row['draws']}",
         )
     console.print(table)
+    if payload.get("unrated_entrants"):
+        console.print(
+            "[dim]unrated (0 votes, excluded): "
+            + ", ".join(payload["unrated_entrants"])
+            + "[/dim]"
+        )
     if payload["voters"] <= 1:
         console.print("[yellow]single-voter Elo is directional, not a population claim[/yellow]")
 
@@ -348,3 +445,44 @@ def arena_agreement(
     markdown = render_markdown_summary(summary)
     (run_path / "agreement.md").write_text(markdown + "\n", encoding="utf-8")
     console.print(markdown)
+
+
+@arena_app.command("export-winners")
+def arena_export_winners(
+        run_dir: str = typer.Option(..., "--run-dir"),
+        instruments_root: str = typer.Option(..., "--instruments-root", help="Root of the instrument build repos (registry repo_path values are relative to it)."),
+        registry: str = typer.Option(DEFAULT_REGISTRY, help="Arena registry JSON path."),
+        force: bool = typer.Option(False, "--force", help="Overwrite an existing export for this run.")):
+    """Export each instrument's winning model into its instrument repo (#603).
+
+    Winner = most blind-vote wins on that instrument, tiebroken by objective
+    pass-rate. Copies scad/stl/glb/png + provenance + README into
+    ``<repo>/arena/<run_id>/``. Committing the export stays a human decision.
+    """
+
+    run_path = Path(run_dir)
+    run_log = _load_run_log(run_path)
+    registry_payload = arena_runner.load_arena_registry(Path(registry))
+    summary = arena_export.export_winners(
+        run_log=run_log,
+        run_dir=run_path,
+        registry=registry_payload,
+        instruments_root=Path(instruments_root),
+        force=force,
+    )
+    table = Table(title=f"Arena winners exported ({run_path.name})")
+    table.add_column("instrument")
+    table.add_column("winner")
+    table.add_column("votes", justify="right")
+    table.add_column("objective", justify="right")
+    table.add_column("status")
+    for row in summary:
+        table.add_row(
+            row["instrument_id"], row["entrant"], f"{row['vote_wins']:g}",
+            f"{row['objective_rate']:.3f}", row["status"],
+        )
+    console.print(table)
+    for row in summary:
+        if row["status"] == "exported":
+            console.print(f"  {row['instrument_id']}: {_windows_link(Path(row['dest']))}")
+    console.print("[dim]exports are working-tree only — review and commit in each instrument repo yourself[/dim]")

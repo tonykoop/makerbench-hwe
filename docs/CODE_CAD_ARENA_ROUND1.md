@@ -65,8 +65,40 @@ Run-dir contents: `run_log.json` (resumable trial log),
 
 `mesh_objective_gate` (oracle-free, candidate mesh vs public spec only):
 renders / watertight / nonzero_volume / fits_envelope (spec envelope × 1.5) /
-min_wall (≥ 2 mm printability floor) / **body_count** (≥ spec `min_bodies` —
-this is the kora assembly check; single-blob kora submissions fail it).
+min_wall / **body_count** (≥ spec `min_bodies` — the kora assembly check).
+
+- **min_wall (#595):** each instrument sets its own `min_wall_mm` floor in the
+  registry (fallback 2 mm). Floors are estimator-calibrated: on kena/ocarina
+  the wall estimator finds the legitimate embouchure/voicing knife edge, so
+  those floors are sub-millimeter degeneracy checks, not design wall specs.
+- **body_count (#596):** a correctly *mated* assembly fuses into one connected
+  component, so `assembly: true` tasks also pass when ≥ `min_bodies` of the
+  candidate's zero-arg part modules compile standalone to non-empty geometry
+  (`use <candidate.scad>; part();` per module). Positions no longer break the
+  count; exploded-blob submissions no longer get free credit.
+
+## Voting in 3D (#602)
+
+`arena vote` serves the run dir at `http://127.0.0.1:<port>/` (loopback only,
+`--no-serve` to disable) and each pair page embeds rotatable `<model-viewer>`
+GLBs converted lazily from candidate STLs, one distinct color per disjoint
+body. The static PNG nests inside the viewer as the no-JS fallback. Viewer
+assets are copied to `vote_pages/blind/<pair>-<side>.*` aliases — raw artifact
+paths embed entrant names and would unblind a voter reading the DOM.
+
+## Exporting winners (#603)
+
+```
+makerbench arena export-winners --run-dir runs/code_cad_arena/round1 \
+  --instruments-root /path/to/GitHub/instruments
+```
+
+Winner per instrument = most blind-vote wins, tiebroken by objective
+pass-rate. Exports scad/stl/glb/png + `provenance.json` + README into
+`<repo>/arena/<run_id>/` (registry `repo_path` locates the repo). The README
+marks the model as arena-generated, never a measured master. Committing the
+export in the instrument repo stays a human decision; nothing flows back from
+instrument repos into entrant context.
 
 ## Caveats (report results this way)
 
