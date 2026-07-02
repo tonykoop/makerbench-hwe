@@ -1,0 +1,206 @@
+"""Tests for arena 3D viewer assets and winner export (#602, #603)."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import trimesh
+
+from makerbench import code_cad_export as export
+from makerbench.cli_arena import drop_unrated_entrants
+
+
+def _write_stl(path: Path, meshes: list[trimesh.Trimesh]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    trimesh.util.concatenate(meshes).export(path.as_posix())
+    return path
+
+
+def _two_body_stl(path: Path) -> Path:
+    a = trimesh.creation.box(extents=[20, 20, 20])
+    b = trimesh.creation.box(extents=[20, 20, 20])
+    b.apply_translation([100, 0, 0])
+    return _write_stl(path, [a, b])
+
+
+class TestStlToGlb:
+    def test_bodies_become_distinctly_colored_scene_nodes(self, tmp_path):
+        stl = _two_body_stl(tmp_path / "output.stl")
+        glb = export.stl_to_glb(stl, tmp_path / "output.glb")
+        assert glb.exists() and glb.stat().st_size > 0
+        scene = trimesh.load(glb.as_posix(), force="scene")
+        assert len(scene.geometry) == 2
+
+    def test_ensure_glb_is_lazy_and_cached(self, tmp_path):
+        stl = _two_body_stl(tmp_path / "output.stl")
+        first = export.ensure_glb(stl)
+        assert first is not None and first.suffix == ".glb"
+        stamp = first.stat().st_mtime_ns
+        second = export.ensure_glb(stl)
+        assert second == first
+        assert second.stat().st_mtime_ns == stamp  # no reconversion
+
+    def test_ensure_glb_missing_stl_returns_none(self, tmp_path):
+        assert export.ensure_glb(tmp_path / "nope.stl") is None
+
+
+def _revealed(path: Path, instrument: str, left: str, right: str, winner: str) -> None:
+    record = {
+        "instrument_id": instrument,
+        "winner": winner,
+        "reveal": {"left": {"model_id": left}, "right": {"model_id": right}},
+    }
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record) + "\n")
+
+
+def _run_log_with_trials(run_dir: Path, rates: dict[tuple[str, str, int], float]) -> dict:
+    trials = []
+    for (instrument, entrant, seed), rate in rates.items():
+        trial_id = f"{instrument}__seed{seed}__rep0__{entrant}"
+        gen_dir = run_dir / "gen" / trial_id
+        render_dir = run_dir / "render" / trial_id
+        gen_dir.mkdir(parents=True, exist_ok=True)
+        scad = gen_dir / "candidate.scad"
+        scad.write_text("cube([20,20,20]);\n", encoding="utf-8")
+        stl = _two_body_stl(render_dir / "output.stl")
+        png = render_dir / "preview.png"
+        png.write_bytes(b"\x89PNG\r\n")
+        trials.append(
+            {
+                "trial_id": trial_id,
+                "instrument_id": instrument,
+                "model_id": entrant,
+                "seed": seed,
+                "rep": 0,
+                "status": "scored",
+                "result": {
+                    "objective": {"objective_pass_rate": rate},
+                    "gen": {"scad_path": scad.as_posix()},
+                    "artifacts": {
+                        "stl_path": stl.as_posix(),
+                        "png_path": png.as_posix(),
+                    },
+                },
+            }
+        )
+    return {"trials": trials}
+
+
+class TestWinnerSelection:
+    def test_vote_wins_beat_objective_rate(self, tmp_path):
+        votes = tmp_path / "votes.revealed.jsonl"
+        _revealed(votes, "kora", "agy", "codex", "left")
+        _revealed(votes, "kora", "agy", "opus", "left")
+        run_log = _run_log_with_trials(
+            tmp_path,
+            {
+                ("kora", "agy", 0): 0.5,
+                ("kora", "codex", 0): 0.9,
+                ("kora", "opus", 0): 0.9,
+            },
+        )
+        winners = export.pick_winners(run_log, votes)
+        assert winners["kora"]["entrant"] == "agy"
+        assert winners["kora"]["vote_wins"] == 2.0
+
+    def test_no_votes_falls_back_to_objective(self, tmp_path):
+        run_log = _run_log_with_trials(
+            tmp_path,
+            {("kena", "agy", 0): 0.5, ("kena", "opus", 0): 0.9},
+        )
+        winners = export.pick_winners(run_log, tmp_path / "none.jsonl")
+        assert winners["kena"]["entrant"] == "opus"
+
+    def test_draws_count_half(self, tmp_path):
+        votes = tmp_path / "votes.revealed.jsonl"
+        _revealed(votes, "kora", "agy", "codex", "draw")
+        tallies = export.instrument_vote_tallies(votes)
+        assert tallies["kora"] == {"agy": 0.5, "codex": 0.5}
+
+
+class TestExportWinners:
+    REGISTRY = {
+        "instruments": [
+            {"id": "kora", "repo_path": "strings/kora"},
+            {"id": "kena", "repo_path": ""},
+        ]
+    }
+
+    def _exported(self, tmp_path, force=False):
+        run_dir = tmp_path / "runs" / "round9"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        run_log = _run_log_with_trials(
+            run_dir, {("kora", "agy", 0): 0.5, ("kora", "codex", 0): 0.9}
+        )
+        votes = run_dir / "votes.revealed.jsonl"
+        _revealed(votes, "kora", "agy", "codex", "left")
+        instruments_root = tmp_path / "instruments"
+        (instruments_root / "strings" / "kora").mkdir(parents=True, exist_ok=True)
+        summary = export.export_winners(
+            run_log=run_log,
+            run_dir=run_dir,
+            registry=self.REGISTRY,
+            instruments_root=instruments_root,
+            force=force,
+        )
+        return summary, instruments_root
+
+    def test_winner_lands_in_instrument_repo_with_provenance(self, tmp_path):
+        summary, root = self._exported(tmp_path)
+        row = next(r for r in summary if r["instrument_id"] == "kora")
+        assert row["status"] == "exported"
+        dest = root / "strings" / "kora" / "arena" / "round9"
+        assert (dest / "kora-arena-winner.scad").exists()
+        assert (dest / "kora-arena-winner.stl").exists()
+        assert (dest / "kora-arena-winner.glb").exists()
+        provenance = json.loads((dest / "provenance.json").read_text(encoding="utf-8"))
+        assert provenance["entrant"] == "agy"
+        assert provenance["generated"] is True
+        readme = (dest / "README.md").read_text(encoding="utf-8")
+        assert "NOT a measured master" in readme
+
+    def test_existing_export_is_not_clobbered_without_force(self, tmp_path):
+        self._exported(tmp_path)
+        run_dir = tmp_path / "runs" / "round9"
+        run_log = _run_log_with_trials(
+            run_dir, {("kora", "agy", 0): 0.5, ("kora", "codex", 0): 0.9}
+        )
+        summary = export.export_winners(
+            run_log=run_log,
+            run_dir=run_dir,
+            registry=self.REGISTRY,
+            instruments_root=tmp_path / "instruments",
+            force=False,
+        )
+        row = next(r for r in summary if r["instrument_id"] == "kora")
+        assert row["status"].startswith("exists")
+
+    def test_missing_repo_path_is_reported_not_fatal(self, tmp_path):
+        run_dir = tmp_path / "runs" / "round9"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        run_log = _run_log_with_trials(run_dir, {("kena", "agy", 0): 0.5})
+        summary = export.export_winners(
+            run_log=run_log,
+            run_dir=run_dir,
+            registry=self.REGISTRY,
+            instruments_root=tmp_path / "instruments",
+        )
+        row = next(r for r in summary if r["instrument_id"] == "kena")
+        assert "repo_path" in row["status"]
+
+
+class TestDropUnratedEntrants:
+    def test_ghost_rows_move_to_unrated_and_ranks_stay_contiguous(self):
+        payload = {
+            "leaderboard": [
+                {"rank": 1, "entrant": "agy", "rating": 1560.0, "games": 8},
+                {"rank": 2, "entrant": "gemini-cli", "rating": 1500.0, "games": 0},
+                {"rank": 3, "entrant": "haiku", "rating": 1440.0, "games": 8},
+            ]
+        }
+        result = drop_unrated_entrants(payload)
+        assert [row["entrant"] for row in result["leaderboard"]] == ["agy", "haiku"]
+        assert [row["rank"] for row in result["leaderboard"]] == [1, 2]
+        assert result["unrated_entrants"] == ["gemini-cli"]

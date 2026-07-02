@@ -277,3 +277,108 @@ class TestVoteJoinAndAgreement:
         cells = runner.build_vote_candidates(log)
         assert list(cells) == [("boxolin", 0, 0)]
         assert [c.model_id for c in cells[("boxolin", 0, 0)]] == ["stub-a"]
+
+
+class TestPerInstrumentMinWall:
+    def test_min_wall_mm_override_is_honored(self, tmp_path):
+        # A solid 30mm cube has no thin features; a 50mm floor must fail it
+        # while a 0.5mm floor passes — proving the spec override reaches the
+        # gate (#595).
+        strict = runner.mesh_objective_gate(
+            {"id": "x", "envelope_mm": [100, 100, 100], "min_bodies": 1, "min_wall_mm": 50.0}
+        )
+        lenient = runner.mesh_objective_gate(
+            {"id": "x", "envelope_mm": [100, 100, 100], "min_bodies": 1, "min_wall_mm": 0.5}
+        )
+        box = trimesh.creation.box(extents=[30, 30, 30])
+        strict_result = strict(_context(tmp_path, box))
+        lenient_result = lenient(_context(tmp_path / "b", box))
+        assert strict_result["sub_scores"]["min_wall"] == 0.0
+        assert lenient_result["sub_scores"]["min_wall"] == 1.0
+        assert strict_result["metrics"]["min_wall_floor_mm"] == 50.0
+
+    def test_missing_min_wall_mm_falls_back_to_default(self, tmp_path):
+        gate = runner.mesh_objective_gate(
+            {"id": "x", "envelope_mm": [100, 100, 100], "min_bodies": 1}
+        )
+        result = gate(_context(tmp_path, trimesh.creation.box(extents=[30, 30, 30])))
+        assert result["metrics"]["min_wall_floor_mm"] == runner.MIN_WALL_FLOOR_MM
+
+
+class TestAssemblyModuleFallback:
+    ASSEMBLY_SPEC = {
+        "id": "kora", "envelope_mm": [1500, 700, 700],
+        "min_bodies": 4, "assembly": True,
+    }
+
+    def test_mated_assembly_passes_via_part_modules(self, tmp_path):
+        # One fused connected component (a correctly mated assembly) must not
+        # fail the assembly check when its part modules compile standalone
+        # (#596 — Round 1 penalized the most accurate kora candidates).
+        gate = runner.mesh_objective_gate(
+            self.ASSEMBLY_SPEC, part_module_counter=lambda path: 5
+        )
+        result = gate(_context(tmp_path, trimesh.creation.box(extents=[50, 50, 50])))
+        assert result["sub_scores"]["body_count"] == 1.0
+        assert result["metrics"]["part_modules_compiled"] == 5
+
+    def test_too_few_part_modules_still_fails(self, tmp_path):
+        gate = runner.mesh_objective_gate(
+            self.ASSEMBLY_SPEC, part_module_counter=lambda path: 2
+        )
+        result = gate(_context(tmp_path, trimesh.creation.box(extents=[50, 50, 50])))
+        assert result["sub_scores"]["body_count"] == 0.0
+
+    def test_disjoint_pass_skips_the_module_counter(self, tmp_path):
+        boxes = [trimesh.creation.box(extents=[20, 20, 20]) for _ in range(4)]
+        for index, box in enumerate(boxes):
+            box.apply_translation([index * 100, 0, 0])
+        combined = trimesh.util.concatenate(boxes)
+
+        def exploding_counter(path):
+            raise AssertionError("counter must not run when components pass")
+
+        gate = runner.mesh_objective_gate(
+            self.ASSEMBLY_SPEC, part_module_counter=exploding_counter
+        )
+        result = gate(_context(tmp_path, combined))
+        assert result["sub_scores"]["body_count"] == 1.0
+        assert result["metrics"]["part_modules_compiled"] is None
+
+    def test_non_assembly_spec_never_uses_fallback(self, tmp_path):
+        def exploding_counter(path):
+            raise AssertionError("non-assembly specs must not consult modules")
+
+        gate = runner.mesh_objective_gate(
+            {"id": "x", "envelope_mm": [100, 100, 100], "min_bodies": 4},
+            part_module_counter=exploding_counter,
+        )
+        result = gate(_context(tmp_path, trimesh.creation.box(extents=[30, 30, 30])))
+        assert result["sub_scores"]["body_count"] == 0.0
+
+
+class TestCallableModuleParsing:
+    def test_zero_arg_and_defaulted_modules_qualify(self):
+        source = """
+module bowl() { sphere(258); }
+module neck(length=1300, d=[40,40,60]) { cylinder(h=length, r=20); }
+module bridge(h) { cube([10, 10, h]); }
+module bowl() { sphere(1); }
+"""
+        names = runner._callable_module_names(source)
+        assert names == ["bowl", "neck"]
+
+    def test_count_uses_injected_face_counter(self, tmp_path):
+        scad = tmp_path / "candidate.scad"
+        scad.write_text(
+            "module bowl() {}\nmodule neck() {}\nmodule empty() {}\n",
+            encoding="utf-8",
+        )
+        faces = {"bowl": 12, "neck": 8, "empty": 0}
+        count = runner.count_standalone_part_modules(
+            scad, face_counter=lambda path, name: faces[name]
+        )
+        assert count == 2
+
+    def test_missing_scad_counts_zero(self, tmp_path):
+        assert runner.count_standalone_part_modules(tmp_path / "nope.scad") == 0
