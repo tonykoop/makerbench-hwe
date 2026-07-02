@@ -31,7 +31,10 @@ ARENA_REGISTRY = REPO_ROOT / "tasks" / "code_cad_arena" / "registry.json"
 class TestArenaRegistry:
     def test_registry_loads_and_all_ids_resolve(self):
         registry = runner.load_arena_registry(ARENA_REGISTRY)
-        for instrument_id in ("ocarina", "kena", "tongue-drum", "kora"):
+        for instrument_id in (
+            "ocarina", "kena", "tongue-drum", "kora",
+            "sambuca", "lyre", "stave-djembe",
+        ):
             spec = instrument_spec_from_registry(registry, instrument_id)
             assert spec["id"] == instrument_id
             assert spec["task_brief"].strip()
@@ -42,6 +45,24 @@ class TestArenaRegistry:
         kora = instrument_spec_from_registry(registry, "kora")
         assert kora["assembly"] is True
         assert kora["min_bodies"] >= 4
+
+    def test_round2_instruments_are_assembly_tasks_with_floors(self):
+        registry = runner.load_arena_registry(ARENA_REGISTRY)
+        for instrument_id in ("sambuca", "lyre", "stave-djembe"):
+            spec = instrument_spec_from_registry(registry, instrument_id)
+            assert spec["assembly"] is True
+            assert spec["min_bodies"] >= 4
+            assert spec["min_wall_mm"] > 0
+            assert spec["repo_path"]
+
+    def test_stave_djembe_brief_carries_no_tuning_claims(self):
+        # The djembe packet marks tuning/head tension measurement-required;
+        # the arena brief must stay geometry-only (Non-Claims discipline).
+        registry = runner.load_arena_registry(ARENA_REGISTRY)
+        spec = instrument_spec_from_registry(registry, "stave-djembe")
+        text = (spec["task_brief"] + str(spec["constraints"])).lower()
+        assert "hz" not in text
+        assert "pitch" not in text.replace("tuning pitches", "")
 
     def test_bad_registry_shape_raises(self, tmp_path):
         bad = tmp_path / "registry.json"
