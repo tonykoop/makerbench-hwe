@@ -15,6 +15,7 @@ from makerbench.code_cad_generator import instrument_spec_from_registry
 from makerbench.code_cad_objective import ObjectiveContext, RenderArtifacts
 from makerbench.code_cad_orchestrator import OrchestrationConfig, run_orchestration
 from makerbench.code_cad_providers import make_stub_generator
+from makerbench.run_log_io import atomic_write_json, file_lock
 from makerbench.code_cad_vote_surface import (
     build_blind_pair,
     record_vote,
@@ -610,6 +611,47 @@ class TestIngestCandidate:
         )
         assert entry["status"] == "scored"
         assert entry["result"]["objective"]["objective_pass_rate"] == 1.0
+
+    def test_ingest_survives_concurrent_orchestrator_write(self, tmp_path):
+        """Mirror of #619 Bug A from the ingest side.
+
+        `ingest_candidate` does an early, best-effort read of the run log
+        before its (potentially slow) compile/render/score work, then a
+        locked read-modify-write at the end. If a concurrent `arena run`
+        writes to the log in between - deterministically forced here by
+        hooking the compiler, which runs squarely inside that window - the
+        orchestrator's update must survive alongside the ingested row: no
+        real threading/sleep timing involved, so this can't be flaky.
+        """
+
+        log_path = self._seeded_run(tmp_path)
+        scad = tmp_path / "external.scad"
+        scad.write_text("cube([30,20,10]);\n", encoding="utf-8")
+        base_compiler = _fake_compiler(tmp_path)
+
+        def racing_compiler(scad_path: Path, out_dir: Path):
+            with file_lock(log_path):
+                log = json.loads(log_path.read_text(encoding="utf-8"))
+                log["trials"][0]["status"] = "ok"
+                log["trials"][0]["attempts"] = 99
+                atomic_write_json(log_path, log)
+            return base_compiler(scad_path, out_dir)
+
+        runner.ingest_candidate(
+            run_log_path=log_path, registry=TINY_REGISTRY,
+            instrument_id="boxolin", model_id="cadam-fable-image",
+            scad_path=scad, run_dir=tmp_path,
+            compiler=racing_compiler,
+        )
+
+        log = json.loads(log_path.read_text())
+        trial_ids = {t["trial_id"] for t in log["trials"]}
+        assert "boxolin__seed0__rep0__stub-a" in trial_ids
+        assert "boxolin__seed0__rep0__cadam-fable-image" in trial_ids
+        stub_row = next(
+            t for t in log["trials"] if t["trial_id"] == "boxolin__seed0__rep0__stub-a"
+        )
+        assert stub_row["attempts"] == 99  # the concurrent writer's update survived too
 
 
 class TestRoundsR5R10Registry:

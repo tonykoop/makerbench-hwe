@@ -34,6 +34,7 @@ from .code_cad_objective import (
     evaluate_objective_trial,
 )
 from .code_cad_orchestrator import ArenaTrial, TrialExecutor
+from .run_log_io import atomic_write_json, file_lock
 from .code_cad_vote_surface import VoteCandidate
 
 
@@ -354,10 +355,17 @@ def ingest_candidate(
     with the same schema the orchestrator writes — so votes, Elo, agreement,
     report, and export-winners need zero special-casing. Refuses trial-id
     collisions rather than clobbering orchestrated results.
+
+    The compile/render/score work below can take a while, so the collision
+    check here is only a fail-fast courtesy against a possibly-stale read.
+    The authoritative check - and the actual append - happens under
+    `run_log_io.file_lock` right before writing (#619), re-reading the log
+    fresh so a concurrent `arena run` write landing in between can't be lost
+    and can't be silently clobbered either.
     """
 
-    log = json.loads(Path(run_log_path).read_text(encoding="utf-8"))
     trial_id = f"{instrument_id}__seed{seed}__rep{rep}__{model_id}"
+    log = json.loads(Path(run_log_path).read_text(encoding="utf-8"))
     if any(t.get("trial_id") == trial_id for t in log.get("trials") or []):
         raise ValueError(f"trial {trial_id} already exists in the run log")
 
@@ -421,15 +429,19 @@ def ingest_candidate(
         "attempts": 1,
         "result": payload,
     }
-    log.setdefault("trials", []).append(entry)
-    counts: dict[str, int] = {}
-    for t in log["trials"]:
-        status = str(t.get("status") or "pending")
-        counts[status] = counts.get(status, 0) + 1
-    log.setdefault("summary", {})["counts"] = counts
-    Path(run_log_path).write_text(
-        json.dumps(log, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+
+    run_log_path = Path(run_log_path)
+    with file_lock(run_log_path):
+        log = json.loads(run_log_path.read_text(encoding="utf-8"))
+        if any(t.get("trial_id") == trial_id for t in log.get("trials") or []):
+            raise ValueError(f"trial {trial_id} already exists in the run log")
+        log.setdefault("trials", []).append(entry)
+        counts: dict[str, int] = {}
+        for t in log["trials"]:
+            status = str(t.get("status") or "pending")
+            counts[status] = counts.get(status, 0) + 1
+        log.setdefault("summary", {})["counts"] = counts
+        atomic_write_json(run_log_path, log)
     return entry
 
 
