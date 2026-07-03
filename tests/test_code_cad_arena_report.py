@@ -90,3 +90,27 @@ class TestArenaReport:
         out = report.write_report(_run_dir(tmp_path))
         assert out.name == "report.html"
         assert out.exists()
+
+    def test_no_triangulation_section_without_judge_votes(self, tmp_path):
+        html_text = report.build_report_html(_run_dir(tmp_path))
+        assert "Triangulated agreement" not in html_text
+
+    def test_triangulation_section_appears_with_judge_votes(self, tmp_path):
+        from makerbench.code_cad_judge import judge_pair, stub_judge
+        from makerbench.code_cad_vote_surface import (
+            VoteCandidate, build_blind_pair, append_vote_record,
+        )
+
+        run_dir = _run_dir(tmp_path)
+        left = VoteCandidate(candidate_id="c1", model_id="stub-a", trial_id="t1", render_path="a.png")
+        right = VoteCandidate(candidate_id="c2", model_id="stub-<b>", trial_id="t2", render_path="b.png")
+        pair = build_blind_pair(left, right, pair_seed="ocarina:seed0")
+        record = judge_pair(
+            pair, instrument_id="ocarina", brief="brief",
+            judge=stub_judge(default="left"), judge_model_id="test-judge",
+        )
+        append_vote_record(run_dir / "votes.judge.jsonl", record)
+
+        html_text = report.build_report_html(run_dir)
+        assert "Triangulated agreement" in html_text
+        assert "Judge Elo" in html_text

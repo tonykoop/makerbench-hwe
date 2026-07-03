@@ -38,16 +38,23 @@ GATE_COLUMNS = (
 def load_run_payloads(run_dir: Path) -> dict:
     """Assemble everything the report needs from one run directory."""
 
+    run_dir = Path(run_dir)
     run_log = json.loads((run_dir / "run_log.json").read_text(encoding="utf-8"))
     votes = runner.votes_to_elo_votes(run_dir / "votes.revealed.jsonl")
     entrants = (run_log.get("config") or {}).get("model_ids") or []
     elo = build_elo_leaderboard(votes, entrants=entrants)
     scoreline = runner.collect_objective_scoreline(run_log)
-    agreement = build_agreement_summary(runner.build_agreement_rows(elo, scoreline))
+    judge = (
+        runner.judge_elo_payload(run_dir, run_log)
+        if (run_dir / "votes.judge.jsonl").exists()
+        else None
+    )
+    agreement = build_agreement_summary(runner.build_agreement_rows(elo, scoreline, judge))
     return {
         "run_log": run_log,
         "elo": elo,
         "scoreline": scoreline,
+        "judge": judge,
         "agreement": agreement,
     }
 
@@ -175,9 +182,17 @@ def _stat_tiles(payloads: Mapping[str, object]) -> str:
 
 
 def _dual_scoreline_table(agreement: Mapping[str, object]) -> str:
+    has_judge = bool(agreement.get("matrix"))
     rows = []
     for row in agreement.get("rankings") or []:
         record = dict(row)
+        judge_cells = ""
+        if has_judge:
+            judge_cells = (
+                f'<td class="num">{_esc(record.get("judge_elo") or "–")}</td>'
+                f'<td class="num">{_esc(record.get("judge_rank") or "–")}</td>'
+                f'<td class="num">{_esc(record.get("n_judge_votes", 0))}</td>'
+            )
         rows.append(
             "<tr>"
             f'<td class="mono">{_esc(record["entrant"])}</td>'
@@ -185,16 +200,47 @@ def _dual_scoreline_table(agreement: Mapping[str, object]) -> str:
             f'<td class="num">{_esc(record.get("subjective_rank") or "–")}</td>'
             f'<td class="num">{_fmt_rate(record.get("objective_pass_rate"))}</td>'
             f'<td class="num">{_esc(record.get("objective_rank") or "–")}</td>'
+            f'{judge_cells}'
             f'<td class="num">{_esc(record.get("rank_delta") if record.get("rank_delta") is not None else "–")}</td>'
             f'<td class="num">{_esc(record.get("n_subjective_votes", 0))}</td>'
             f'<td class="num">{_esc(record.get("n_objective_trials", 0))}</td>'
             "</tr>"
         )
+    judge_head = (
+        '<th class="num">Judge Elo</th><th class="num">Judge rank</th>'
+        '<th class="num">Judge votes</th>'
+        if has_judge
+        else ""
+    )
     return (
         '<table><thead><tr><th>Entrant</th><th class="num">Elo</th>'
         '<th class="num">Elo rank</th><th class="num">Objective</th>'
-        '<th class="num">Obj rank</th><th class="num">Rank Δ</th>'
+        f'<th class="num">Obj rank</th>{judge_head}<th class="num">Rank Δ</th>'
         '<th class="num">Votes</th><th class="num">Trials</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>'
+    )
+
+
+def _triangulation_matrix(matrix: Mapping[str, object]) -> str:
+    rows = []
+    for key, label in (
+        ("subjective_objective", "Subjective Elo × Objective"),
+        ("subjective_judge", "Subjective Elo × VLM judge"),
+        ("objective_judge", "Objective × VLM judge"),
+    ):
+        cell = dict(matrix.get(key) or {})
+        rho = cell.get("rho")
+        rows.append(
+            "<tr>"
+            f'<td>{_esc(label)}</td>'
+            f'<td class="num">{"–" if rho is None else f"{float(rho):.3f}"}</td>'
+            f'<td class="num">{_esc(cell.get("n", 0))}</td>'
+            f'<td>{_esc(cell.get("interpretation") or "n/a")}</td>'
+            "</tr>"
+        )
+    return (
+        '<table><thead><tr><th>Pair</th><th class="num">Spearman ρ</th>'
+        '<th class="num">n</th><th>Interpretation</th></tr></thead>'
         f'<tbody>{"".join(rows)}</tbody></table>'
     )
 
@@ -274,6 +320,18 @@ def build_report_html(run_dir: Path) -> str:
         "preference under this protocol, not a population claim."
         if voters <= 1
         else "Subjective Elo and objective pass-rate are separate scorelines by design."
+    )
+    triangulation = payloads["agreement"].get("matrix")
+    triangulation_section = (
+        f"""
+  <h2>Triangulated agreement</h2>
+  <p class="sub">Three independent scorelines, pairwise Spearman rank correlation.
+  A third judge that agrees with neither human nor mesh gate is still evidence,
+  not noise (#598).</p>
+  {_triangulation_matrix(triangulation)}
+"""
+        if triangulation
+        else ""
     )
 
     return f"""<!doctype html>
@@ -359,7 +417,7 @@ footer {{ margin-top:48px; color:var(--text-faint); font-size:0.8rem; }}
   <p class="sub">Subjective blind-vote Elo vs objective render/DFM pass-rate —
   kept separate, never blended. Disagreement is evidence, not a defect.</p>
   {_dual_scoreline_table(payloads["agreement"])}
-
+  {triangulation_section}
   <h2>Objective pass-rate</h2>
   {_objective_bars(payloads["scoreline"])}
 

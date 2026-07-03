@@ -77,6 +77,23 @@ def _elo_payload_for_run(run_dir: Path, run_log: dict) -> dict:
     return drop_unrated_entrants(payload)
 
 
+def _judge_payload_for_run(run_dir: Path, run_log: dict) -> dict:
+    payload = arena_runner.judge_elo_payload(run_dir, run_log)
+    return drop_unrated_entrants(payload)
+
+
+def _judged_pair_ids(run_dir: Path) -> set[str]:
+    judge_path = run_dir / "votes.judge.jsonl"
+    ids: set[str] = set()
+    if not judge_path.exists():
+        return ids
+    for line in judge_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        ids.add(str(json.loads(line).get("pair_id")))
+    return ids
+
+
 def drop_unrated_entrants(payload: dict) -> dict:
     """Remove zero-vote ghost entrants from the leaderboard (#597).
 
@@ -548,16 +565,88 @@ def arena_compare_tiers(
     console.print(markdown)
 
 
+@arena_app.command("judge")
+def arena_judge(
+        run_dir: str = typer.Option(..., "--run-dir"),
+        registry: str = typer.Option(DEFAULT_REGISTRY, help="Arena registry JSON path (source of task briefs)."),
+        judge_model: str = typer.Option("claude-code-sonnet", "--judge-model", help="Judge model id recorded as provenance/voter_id."),
+        rounds: str = typer.Option("0", "--rounds", help="Comma-separated Swiss round indexes to judge (mirrors human vote rounds so matchups match)."),
+        stub: bool = typer.Option(False, "--stub", help="Zero-token deterministic stub judge (tests / dry runs, #598 acceptance).")):
+    """Score blind pairs with a VLM image judge — a third scoreline (#598).
+
+    Reuses the same Swiss pairing plan and pair shuffle a human vote round
+    uses, so the judge scores identical matchups. Judge decisions land in
+    ``votes.judge.jsonl`` (never mixed into the human leaderboard) and
+    ``judge_scoreline.json`` is (re)written from the resulting judge Elo.
+    """
+
+    from . import code_cad_judge as judge_mod
+
+    run_path = Path(run_dir)
+    run_log = _load_run_log(run_path)
+    registry_payload = arena_runner.load_arena_registry(Path(registry))
+    briefs = {
+        str(spec["id"]): str(spec.get("task_brief") or "")
+        for spec in registry_payload.get("instruments") or []
+    }
+
+    if stub:
+        judge_fn = judge_mod.stub_judge()
+    elif judge_mod.judge_available():
+        judge_fn = judge_mod.claude_cli_judge(judge_model)
+    else:
+        console.print("[red]judge CLI not found on PATH — pass --stub for a dry run[/red]")
+        raise typer.Exit(code=1)
+
+    already = _judged_pair_ids(run_path)
+    scored = 0
+    for round_index in (int(r) for r in _split_csv(rounds)):
+        plan = _pairing_plan(run_path, run_log, round_index)
+        records = arena_runner.judge_pairing_plan(
+            plan, briefs=briefs, judge=judge_fn, judge_model_id=judge_model
+        )
+        for record in records:
+            if record["pair_id"] in already:
+                continue
+            append_vote_record(run_path / "votes.judge.jsonl", record)
+            already.add(record["pair_id"])
+            scored += 1
+
+    judge_payload = _judge_payload_for_run(run_path, run_log)
+    scoreline_rows = arena_runner.judge_scoreline_rows(judge_payload)
+    arena_runner.write_json(
+        run_path / "judge_scoreline.json",
+        {
+            "schema": "makerbench-code-cad-judge-scoreline-v1",
+            "judge_model_id": judge_model,
+            "rows": scoreline_rows,
+        },
+    )
+    console.print(f"judged {scored} new pair(s) with {judge_model} (voter_id=vlm:{judge_model})")
+    table = Table(title="VLM judge scoreline")
+    table.add_column("entrant")
+    table.add_column("judge Elo", justify="right")
+    table.add_column("judge votes", justify="right")
+    for row in scoreline_rows:
+        table.add_row(row["entrant"], f"{row['judge_elo']:.1f}", str(row["n_judge_votes"]))
+    console.print(table)
+
+
 @arena_app.command("agreement")
 def arena_agreement(
         run_dir: str = typer.Option(..., "--run-dir")):
-    """Dual-scoreline agreement: subjective Elo vs objective pass-rate (#427)."""
+    """Scoreline agreement: subjective Elo x objective pass-rate x VLM judge (#427, #598)."""
 
     run_path = Path(run_dir)
     run_log = _load_run_log(run_path)
     elo_payload = _elo_payload_for_run(run_path, run_log)
     scoreline = arena_runner.collect_objective_scoreline(run_log)
-    rows = arena_runner.build_agreement_rows(elo_payload, scoreline)
+    judge_payload = (
+        _judge_payload_for_run(run_path, run_log)
+        if (run_path / "votes.judge.jsonl").exists()
+        else None
+    )
+    rows = arena_runner.build_agreement_rows(elo_payload, scoreline, judge_payload)
     summary = build_agreement_summary(rows)
     arena_runner.write_json(run_path / "agreement.json", summary)
     markdown = render_markdown_summary(summary)
