@@ -39,6 +39,66 @@ class TestExtractScad:
         assert providers.extract_scad("  cube([9,9,9]);  ") == "cube([9,9,9]);"
 
 
+class TestBlenderBackendAxis:
+    """CAD-backend axis (#601): entrants can emit a bpy script instead of OpenSCAD."""
+
+    def test_extract_candidate_defaults_to_openscad_fence(self):
+        text = "```scad\ncube(1);\n```"
+        assert providers.extract_candidate(text) == "cube(1);"
+
+    def test_extract_candidate_reads_python_fence_for_blender(self):
+        text = "notes\n```python\nbpy.ops.mesh.primitive_cube_add(size=1)\n```\ntrailer"
+        assert (
+            providers.extract_candidate(text, "blender")
+            == "bpy.ops.mesh.primitive_cube_add(size=1)"
+        )
+
+    def test_extract_candidate_accepts_bpy_fence_label(self):
+        text = "```bpy\nbpy.ops.mesh.primitive_cube_add(size=2)\n```"
+        assert (
+            providers.extract_candidate(text, "blender")
+            == "bpy.ops.mesh.primitive_cube_add(size=2)"
+        )
+
+    def test_arena_prompt_uses_bpy_system_and_closing_for_blender(self):
+        prompt = providers.arena_prompt(_request(), "blender")
+        assert "Blender Python (bpy)" in prompt
+        assert "```python block" in prompt
+        assert "OpenSCAD" not in prompt
+
+    def test_arena_prompt_defaults_to_openscad(self):
+        prompt = providers.arena_prompt(_request())
+        assert prompt == providers.arena_prompt(_request(), "openscad")
+        assert "```scad block" in prompt
+
+    def test_stub_generator_emits_bpy_script_for_blender_backend(self):
+        gen = providers.make_stub_generator(backend="blender")
+        text = gen(_request("stub-a"))
+        assert "bpy.ops.mesh.primitive_cube_add" in text
+        assert "difference()" not in text  # no OpenSCAD leaking into the blender stub
+
+    def test_stub_generator_still_defaults_to_openscad(self):
+        gen = providers.make_stub_generator()
+        assert "cube" in gen(_request())
+
+    def test_claude_generator_threads_backend_into_prompt_and_extraction(self, monkeypatch):
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["prompt"] = cmd[-1]
+            payload = {"result": "```python\nbpy.ops.mesh.primitive_cube_add(size=5)\n```"}
+            return _completed(stdout=json.dumps(payload))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        gen = providers.make_claude_generator("sonnet", retry_sleep_s=0, backend="blender")
+        assert gen(_request()) == "bpy.ops.mesh.primitive_cube_add(size=5)"
+        assert "Blender Python (bpy)" in seen["prompt"]
+
+    def test_resolve_generator_stub_threads_backend(self):
+        gen = providers.resolve_generator("claude-code-sonnet", stub=True, backend="blender")
+        assert "bpy.ops.mesh.primitive_cube_add" in gen(_request())
+
+
 class TestClaudeGenerator:
     def test_parses_json_envelope_and_extracts_scad(self, monkeypatch):
         calls = []
