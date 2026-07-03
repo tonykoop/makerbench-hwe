@@ -26,18 +26,50 @@ from .code_cad_vote_surface import (
 )
 
 
+# Structured per-candidate defect/disposition flags (Round 4 voter feedback).
+# ids are stable vocabulary for analysis; labels are what the voter reads.
+VOTE_FLAGS: tuple[tuple[str, str], ...] = (
+    ("missing_critical_components", "missing critical components"),
+    ("misaligned_assembly", "components misaligned in the assembly"),
+    ("insufficient_detail", "insufficient detail"),
+    ("wrong_proportions", "wrong proportions / scale"),
+    ("save_for_later", "save for later"),
+    ("delete_immediately", "delete immediately"),
+)
+
+VOTE_FLAG_IDS = frozenset(flag_id for flag_id, _ in VOTE_FLAGS)
+
+
+def _flag_fieldset(side: str) -> str:
+    boxes = "\n".join(
+        f'      <label><input type="checkbox" name="flag" value="{flag_id}"> {label}</label>'
+        for flag_id, label in VOTE_FLAGS
+    )
+    return (
+        f'\n    <fieldset class="flags" data-flag-side="{side}">\n'
+        f"      <legend>flags ({side})</legend>\n{boxes}\n    </fieldset>\n  "
+    )
+
+
 VOTE_JS = """
 <script>
+function sideFlags(side) {
+  return Array.from(document.querySelectorAll(
+    '[data-flag-side="' + side + '"] input[name="flag"]:checked')).map(cb => cb.value);
+}
 function cast(winner) {
   fetch('/vote', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({pair_id: document.querySelector('main').dataset.pairId, winner: winner})
+    body: JSON.stringify({pair_id: document.querySelector('main').dataset.pairId,
+                          winner: winner,
+                          flags: {left: sideFlags('left'), right: sideFlags('right')}})
   }).then(r => r.json()).then(() => { window.location = '/queue'; });
 }
 document.querySelectorAll('button[data-vote]').forEach(b =>
   b.addEventListener('click', () => cast(b.dataset.vote)));
 document.addEventListener('keydown', (e) => {
+  if (e.target && e.target.tagName === 'INPUT') return;  // don't hijack checkbox focus
   const map = {l: 'left', ArrowLeft: 'left', d: 'draw', ArrowDown: 'draw',
                r: 'right', ArrowRight: 'right'};
   if (map[e.key]) cast(map[e.key]);
@@ -61,6 +93,11 @@ WEB_CSS = """
   .controls { justify-content: center; margin-top: 12px !important; }
   .controls button { min-width: 160px; min-height: 56px; font-size: 19px;
                      cursor: pointer; }
+  fieldset.flags { flex: 0 0 auto; margin: 6px 10px 10px; padding: 6px 10px;
+                   border: 1px solid #c8c8bd; display: flex; flex-wrap: wrap;
+                   gap: 4px 16px; font: 13px/1.5 system-ui; background: #fafaf5; }
+  fieldset.flags legend { font-weight: 700; padding: 0 6px; }
+  fieldset.flags label { cursor: pointer; white-space: nowrap; }
 </style>
 """
 
@@ -91,8 +128,8 @@ class VoteQueue:
         done = sum(1 for item in self.items if item.pair.pair_id in self.voted_pair_ids)
         return done, len(self.items)
 
-    def cast(self, pair_id: str, winner: str) -> bool:
-        """Record one vote; returns False for unknown/duplicate pairs."""
+    def cast(self, pair_id: str, winner: str, flags: Optional[dict] = None) -> bool:
+        """Record one vote (plus optional per-side flags); False for unknown/duplicate pairs."""
 
         with self.lock:
             item = next(
@@ -101,12 +138,32 @@ class VoteQueue:
             if item is None or pair_id in self.voted_pair_ids:
                 return False
             vote = record_vote(item.pair, winner=winner, voter_id=self.voter)
+            clean_flags = _normalize_flags(flags)
+            if clean_flags:
+                vote["flags"] = clean_flags
             append_vote_record(self.run_dir / "votes.blind.jsonl", vote)
             revealed = reveal_vote(item.pair, vote)
             revealed.update(item.meta)
+            if clean_flags:
+                revealed["flags"] = clean_flags
             append_vote_record(self.run_dir / "votes.revealed.jsonl", revealed)
             self.voted_pair_ids.add(pair_id)
             return True
+
+
+def _normalize_flags(flags: Optional[dict]) -> dict:
+    """Keep only known flag ids per side; drop empty sides entirely."""
+
+    if not isinstance(flags, dict):
+        return {}
+    out = {}
+    for side in ("left", "right"):
+        raw = flags.get(side)
+        if isinstance(raw, (list, tuple)):
+            kept = [f for f in raw if isinstance(f, str) and f in VOTE_FLAG_IDS]
+            if kept:
+                out[side] = kept
+    return out
 
 
 def render_queue_page(queue: VoteQueue) -> str:
@@ -132,6 +189,14 @@ for the scorelines, or <code>arena report</code> for the full page.</p>
     )
     page = page.replace("</head>", WEB_CSS + "</head>", 1)
     page = page.replace("<main", banner + "\n  <main", 1)
+    # Per-candidate flag checkboxes just inside each figure (Round 4 feedback).
+    parts = page.split("</figure>")
+    if len(parts) == 3:
+        page = (
+            parts[0] + _flag_fieldset("left") + "</figure>"
+            + parts[1] + _flag_fieldset("right") + "</figure>"
+            + parts[2]
+        )
     return page.replace("</body>", VOTE_JS + "</body>")
 
 
@@ -171,7 +236,9 @@ class VoteRequestHandler(SimpleHTTPRequestHandler):
             winner = str(payload.get("winner"))
             if winner not in {"left", "right", "draw"}:
                 raise ValueError("winner must be left/right/draw")
-            ok = self.queue.cast(str(payload.get("pair_id")), winner)
+            ok = self.queue.cast(
+                str(payload.get("pair_id")), winner, flags=payload.get("flags")
+            )
         except (ValueError, json.JSONDecodeError) as exc:
             body = json.dumps({"ok": False, "error": str(exc)}).encode()
             self.send_response(400)
