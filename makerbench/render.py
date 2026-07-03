@@ -64,7 +64,7 @@ def compile_to_mesh(source: str, out_dir: str, fmt: str = "off",
     with open(scad_path, "w", encoding="utf-8") as fh:
         fh.write(source)
 
-    proc = _run(["-o", mesh_path, scad_path])
+    proc = _run(["-o", mesh_path, scad_path], timeout=timeout)
     warnings = [ln for ln in proc.stderr.splitlines()
                 if "WARNING" in ln or "DEPRECATED" in ln]
     if proc.returncode != 0 or not os.path.exists(mesh_path):
