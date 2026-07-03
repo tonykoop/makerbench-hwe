@@ -40,3 +40,23 @@ it without importing provider SDKs:
 Provider rate limits are keyed by provider, not model id. The runner accepts
 injected `clock_fn` and `sleep_fn` hooks so production can wait between calls
 while tests can prove the schedule without sleeping.
+
+## Concurrency (#619)
+
+`arena ingest-candidate` can run against the same `run_log.json` while an
+`arena run` orchestrator is live on it - the CADAM image lane and SolidWorks
+exports are meant to land mid-experiment, not only after the matrix finishes.
+Both writers share the primitives in `makerbench.run_log_io`:
+
+- an exclusive `fcntl.flock` sidecar lock (`run_log.json.lock`) held across
+  the whole read-modify-write span, with the read happening *after* the lock
+  is acquired so it sees the latest committed state;
+- `os.replace`-based atomic writes, so a reader never observes a torn file;
+- a trial-row merge keyed by `trial_id`: each writer's own authoritative rows
+  win for the ids it manages, and every other row already on disk - an
+  ingested candidate, or a row from a run dir's prior, differently-shaped
+  model matrix - passes through untouched.
+
+That merge is also what makes resuming onto a run dir with an
+expanded/changed model matrix safe: rows for `trial_id`s the new matrix
+doesn't reproduce are preserved rather than dropped.

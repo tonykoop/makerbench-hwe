@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
 
+from .run_log_io import atomic_write_json, file_lock, merge_trial_rows
+
 
 SCHEMA = "makerbench-code-cad-orchestration-v1"
 TrialExecutor = Callable[["ArenaTrial"], Mapping[str, object]]
@@ -110,7 +112,18 @@ def run_orchestration(
     clock_fn: Callable[[], float] = time.monotonic,
     sleep_fn: Callable[[float], None] = time.sleep,
 ) -> dict:
-    """Run or resume an arena DoE, writing an idempotent JSON run log."""
+    """Run or resume an arena DoE, writing an idempotent JSON run log.
+
+    Every write merges this orchestrator's own rows for the CURRENT trial
+    matrix on top of whatever is on disk at write time (see `run_log_io`).
+    Rows for trial_ids outside the current matrix - an externally-ingested
+    candidate (`arena ingest-candidate`), or a row left over from a run dir's
+    prior, differently-shaped matrix - pass through untouched instead of
+    being silently dropped. This fixes #619: (a) the ingest-vs-run
+    last-writer-wins race, and (b) resuming onto a run dir with an
+    expanded/changed model matrix wiping out trial_ids absent from the new
+    matrix.
+    """
 
     trials = build_trial_matrix(config)
     log = _load_log(run_log_path, config)
@@ -118,6 +131,9 @@ def run_orchestration(
     for trial in trials:
         existing.setdefault(trial.trial_id, _new_entry(trial))
     last_provider_call: dict[str, float] = {}
+
+    def managed_rows() -> dict[str, dict]:
+        return {item.trial_id: existing[item.trial_id] for item in trials}
 
     for trial in trials:
         entry = existing.get(trial.trial_id) or _new_entry(trial)
@@ -140,13 +156,10 @@ def run_orchestration(
             entry["result"] = None
             entry["error"] = str(exc) or exc.__class__.__name__
         last_provider_call[trial.provider] = clock_fn()
-        log["trials"] = [existing[item.trial_id] for item in trials]
-        _write_log(run_log_path, log)
+        merged = _merge_and_write(run_log_path, config, managed_rows())
 
-    log["trials"] = [existing[item.trial_id] for item in trials]
-    log["summary"] = _summary(log["trials"])
-    _write_log(run_log_path, log)
-    return log
+    merged = _merge_and_write(run_log_path, config, managed_rows())
+    return merged
 
 
 def _load_log(path: Path, config: OrchestrationConfig) -> dict:
@@ -159,9 +172,23 @@ def _load_log(path: Path, config: OrchestrationConfig) -> dict:
     return {"schema": SCHEMA, "config": config.as_dict(), "trials": [], "summary": {}}
 
 
-def _write_log(path: Path, payload: Mapping[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+def _merge_and_write(
+    path: Path, config: OrchestrationConfig, managed: Mapping[str, dict]
+) -> dict:
+    """Merge `managed` trial rows onto a fresh on-disk read, then write back.
+
+    Locked so a concurrent `ingest_candidate` write can't interleave between
+    our read and write (#619). The read happens *inside* the lock so we
+    always merge onto the latest committed state, not a stale snapshot taken
+    before we blocked on the lock.
+    """
+
+    with file_lock(path):
+        payload = _load_log(path, config)
+        payload["trials"] = merge_trial_rows(payload["trials"], managed)
+        payload["summary"] = _summary(payload["trials"])
+        atomic_write_json(path, payload)
+        return payload
 
 
 def _new_entry(trial: ArenaTrial) -> dict:
