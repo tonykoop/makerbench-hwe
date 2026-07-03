@@ -259,3 +259,84 @@ class TestDispatch:
         gen = providers.make_claude_generator("sonnet", retry_sleep_s=0)
         gen(_request())
         assert seen["timeout"] == 900
+
+
+class TestOpenRouterProvider:
+    """API-lane entrant via OpenRouter (#620)."""
+
+    def _request(self, monkeypatch, responses):
+        calls = []
+
+        def fake_request(path, payload, *, timeout_s):
+            calls.append({"path": path, "payload": payload, "timeout_s": timeout_s})
+            result = responses[min(len(calls) - 1, len(responses) - 1)]
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        monkeypatch.setattr(providers, "_openrouter_request", fake_request)
+        monkeypatch.setattr(providers, "_openrouter_slug_cache", {}, raising=False)
+        return calls
+
+    def _req(self):
+        return GenerationRequest(
+            model_id="openrouter-glm-5.2",
+            instrument_id="udu",
+            seed=3,
+            spec={},
+            prompt="spec json here",
+            prompt_sha256="0" * 64,
+        )
+
+    def test_prefix_dispatch_and_slug_resolution(self, monkeypatch):
+        assert providers.provider_for_model_id("openrouter-glm-5.2") == "openrouter"
+        calls = self._request(
+            monkeypatch,
+            [
+                {"data": [{"id": "z-ai/glm-5.2"}, {"id": "z-ai/glm-5"}]},
+                {"choices": [{"message": {"content": "```scad\ncube(1);\n```"}}]},
+            ],
+        )
+        gen = providers.resolve_generator("openrouter-glm-5.2")
+        assert gen(self._req()) == "cube(1);"
+        assert calls[0]["path"] == "/models"
+        chat = calls[1]
+        assert chat["path"] == "/chat/completions"
+        assert chat["payload"]["model"] == "z-ai/glm-5.2"
+        assert chat["payload"]["seed"] == 3
+        assert chat["payload"]["messages"][0]["content"] == providers.SYSTEM
+
+    def test_full_slug_passthrough_skips_models_call(self, monkeypatch):
+        calls = self._request(
+            monkeypatch,
+            [{"choices": [{"message": {"content": "```scad\nsphere(2);\n```"}}]}],
+        )
+        gen = providers.make_openrouter_generator("z-ai/glm-5.2")
+        assert gen(self._req()) == "sphere(2);"
+        assert [c["path"] for c in calls] == ["/chat/completions"]
+
+    def test_ambiguous_slug_is_an_error(self, monkeypatch):
+        self._request(
+            monkeypatch,
+            [{"data": [{"id": "a/glm-5.2"}, {"id": "b/glm-5.2"}]}],
+        )
+        with pytest.raises(ValueError, match="ambiguous"):
+            providers.resolve_openrouter_slug("glm-5.2")
+
+    def test_retries_once_then_raises(self, monkeypatch):
+        monkeypatch.setattr(providers.time, "sleep", lambda _s: None)
+        self._request(monkeypatch, [RuntimeError("boom")])
+        gen = providers.make_openrouter_generator("z-ai/glm-5.2")
+        with pytest.raises(RuntimeError, match="failed"):
+            gen(self._req())
+
+    def test_timeout_raises_timeout_error(self, monkeypatch):
+        self._request(monkeypatch, [TimeoutError("deadline")])
+        gen = providers.make_openrouter_generator("z-ai/glm-5.2")
+        with pytest.raises(TimeoutError, match="timed out"):
+            gen(self._req())
+
+    def test_missing_key_preflights(self, monkeypatch):
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        missing = providers.preflight_binaries(["openrouter-glm-5.2"])
+        assert missing and "OPENROUTER_API_KEY" in missing[0]
