@@ -295,7 +295,7 @@ def arena_run(
         rate_limit_s: float = typer.Option(5.0, "--rate-limit-s", help="Seconds between calls to the same provider."),
         timeout_s: Optional[int] = typer.Option(None, help="Override per-call CLI timeout in seconds."),
         model_map: Optional[str] = typer.Option(None, "--model-map", help="JSON file mapping model_id -> {provider, model, effort}."),
-        context_tier: str = typer.Option("blind", "--context-tier", help="blind (default) | packet | repo — #600 context-grounding axis."),
+        context_tier: str = typer.Option("blind", "--context-tier", help="blind (default) | packet | repo | image — #600/#609 context-grounding axis."),
         instruments_root: Optional[str] = typer.Option(None, "--instruments-root", help="Root of instrument build repos; required for --context-tier packet|repo."),
         backend: str = typer.Option(
             "openscad",
@@ -303,6 +303,7 @@ def arena_run(
             help="CAD-backend axis (#601/#627): 'openscad', 'blender', 'solidworks', 'fusion', or the agentic live tiers 'solidworks-live'/'fusion-live'.",
         ),
         driver_model: str = typer.Option("gpt-5.6-sol", "--driver-model", help="Live backends only: the codex driver model each entrant agent uses."),
+        image_map: Optional[str] = typer.Option(None, "--image-map", help="JSON file mapping instrument_id -> inspiration image path; required for --context-tier image (#609)."),
         stub: bool = typer.Option(False, "--stub", help="Swap every entrant for the zero-token stub generator (smoke runs).")):
     """Run (or resume) the 4D arena matrix and write the objective scoreline."""
 
@@ -368,7 +369,10 @@ def arena_run(
     if context_tier not in CONTEXT_TIERS:
         console.print(f"[red]--context-tier must be one of {CONTEXT_TIERS}[/red]")
         raise typer.Exit(code=1)
-    if context_tier != "blind" and not instruments_root:
+    if context_tier == "image" and not image_map:
+        console.print("[red]--context-tier image needs --image-map[/red]")
+        raise typer.Exit(code=1)
+    if context_tier in ("packet", "repo") and not instruments_root:
         console.print(f"[red]--context-tier {context_tier} needs --instruments-root[/red]")
         raise typer.Exit(code=1)
 
@@ -429,6 +433,11 @@ def arena_run(
         ),
         backend=backend,
     )
+    image_paths = None
+    if image_map:
+        raw_image_map = json.loads(Path(image_map).read_text(encoding="utf-8"))
+        image_paths = {inst: Path(path) for inst, path in raw_image_map.items()}
+
     if is_live:
         assert live_config is not None
         execute = make_live_execute_trial(
@@ -449,6 +458,7 @@ def arena_run(
             compiler=arena_runner.compiler_for_backend(backend),
             context_tier=context_tier,
             instruments_root=Path(instruments_root) if instruments_root else None,
+            image_paths=image_paths,
         )
     total = len(instrument_ids) * len(seed_values) * reps * len(model_ids)
     tier_note = f" (context tier: {context_tier})" if context_tier != "blind" else ""

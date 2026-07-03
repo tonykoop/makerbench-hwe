@@ -378,6 +378,55 @@ class TestContextTierExecution:
         with pytest.raises(ValueError, match="repo_path"):
             execute(trial)
 
+    def test_image_tier_stages_image_without_instruments_root(self, tmp_path):
+        image = tmp_path / "hero.png"
+        image.write_bytes(b"\x89PNG\r\n")
+        captured = []
+
+        def capturing_generator(request):
+            captured.append(request)
+            return "cube(3);\n"
+
+        execute = runner.make_execute_trial(
+            registry=TINY_REGISTRY, run_dir=tmp_path,
+            generators={"stub-a": capturing_generator},
+            compiler=_fake_compiler(tmp_path),
+            context_tier="image",
+            image_paths={"boxolin": image},
+        )
+        from makerbench.code_cad_orchestrator import ArenaTrial
+
+        trial = ArenaTrial(
+            trial_id="t5", instrument_id="boxolin", model_id="stub-a", seed=9, rep=0,
+            provider="stub",
+        )
+        payload = execute(trial)
+
+        assert payload["context_tier"] == "image"
+        manifest = payload["staging_manifest"]
+        assert manifest["image"]["source_image"] == str(image)
+        assert manifest["image"]["image_seed"] == 9  # trial.seed, not a separate param
+        workspace = tmp_path / "gen" / "t5" / "workspace"
+        assert (workspace / "reference-image.png").exists()
+        assert captured[0].context_tier == "image"
+        assert captured[0].workspace_dir == str(workspace)
+
+    def test_image_tier_without_image_paths_entry_raises(self, tmp_path):
+        execute = runner.make_execute_trial(
+            registry=TINY_REGISTRY, run_dir=tmp_path,
+            generators={"stub-a": make_stub_generator()},
+            compiler=_fake_compiler(tmp_path),
+            context_tier="image",
+        )
+        from makerbench.code_cad_orchestrator import ArenaTrial
+
+        trial = ArenaTrial(
+            trial_id="t6", instrument_id="boxolin", model_id="stub-a", seed=0, rep=0,
+            provider="stub",
+        )
+        with pytest.raises(ValueError, match="image_paths"):
+            execute(trial)
+
 
 class TestVoteJoinAndAgreement:
     def _revealed_votes_file(self, tmp_path: Path) -> Path:

@@ -381,6 +381,89 @@ class TestContextTierWorkspaceRouting:
         assert providers._workspace_text_blob(_request()) == ""
 
 
+class TestImageTierAttachment:
+    """#609: image-conditioned entrant tier — attachment routing."""
+
+    def _staged_image_request(self, tmp_path, *, model_id="claude-code-sonnet"):
+        from makerbench import code_cad_context_staging as staging
+
+        image = tmp_path / "hero.png"
+        image.write_bytes(b"\x89PNG\r\n")
+        workspace = tmp_path / "ws"
+        staging.stage_workspace(
+            tier="image", instrument_id="ocarina", repo_dir=None,
+            workspace_dir=workspace, image_path=image, image_seed=3,
+        )
+        return _request(model_id, context_tier="image", workspace_dir=workspace), workspace
+
+    def test_staged_image_path_resolves_from_manifest(self, tmp_path):
+        request, workspace = self._staged_image_request(tmp_path)
+        assert providers._staged_image_path(request) == str(workspace / "reference-image.png")
+
+    def test_staged_image_path_none_for_non_image_tiers(self, tmp_path):
+        assert providers._staged_image_path(_request()) is None
+        assert providers._staged_image_path(
+            _request(context_tier="repo", workspace_dir=tmp_path)
+        ) is None
+
+    def test_arena_prompt_notes_inspiration_image(self, tmp_path):
+        request, _ = self._staged_image_request(tmp_path)
+        prompt = providers.arena_prompt(request)
+        assert "inspiration image" in prompt
+        assert "context tier: image" in prompt
+
+    def test_claude_receives_staged_image_path_in_prompt(self, tmp_path, monkeypatch):
+        request, workspace = self._staged_image_request(tmp_path)
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"] = cmd
+            return _completed(json.dumps({"result": "```scad\ncube(1);\n```"}))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        gen = providers.make_claude_generator("sonnet", retry_sleep_s=0)
+        gen(request)
+        assert str(workspace / "reference-image.png") in seen["cmd"][-1]
+        # The installed Claude CLI has no local --image flag. The image stays
+        # in the isolated cwd and its exact path is supplied in the prompt;
+        # it must not be appended as an undocumented positional argument.
+        assert seen["cmd"].count(str(workspace / "reference-image.png")) == 0
+
+    def test_codex_attaches_staged_image_with_documented_flag(self, tmp_path, monkeypatch):
+        request, workspace = self._staged_image_request(tmp_path, model_id="codex-gpt-5.5")
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"] = cmd
+            return _completed("")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        gen = providers.make_codex_generator(retry_sleep_s=0)
+        gen(request)
+        index = seen["cmd"].index("--image")
+        assert seen["cmd"][index + 1] == str(workspace / "reference-image.png")
+        assert "inspiration image" in seen["cmd"][-1]
+
+    def test_blind_request_has_no_image_attachment(self, monkeypatch):
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"] = cmd
+            return _completed(json.dumps({"result": "```scad\ncube(1);\n```"}))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        gen = providers.make_claude_generator("sonnet", retry_sleep_s=0)
+        gen(_request())
+        assert seen["cmd"][-1] != ""
+        assert not seen["cmd"][-1].endswith(".png")
+
+    def test_openrouter_rejects_image_tier_loudly(self, tmp_path, monkeypatch):
+        request, _ = self._staged_image_request(tmp_path, model_id="openrouter-glm-5.2")
+        gen = providers.make_openrouter_generator("glm-5.2", retry_sleep_s=0)
+        with pytest.raises(RuntimeError, match="context-tier image"):
+            gen(request)
+
+
 class TestStubGenerator:
     def test_deterministic_and_jittered_per_model(self):
         gen = providers.make_stub_generator()
