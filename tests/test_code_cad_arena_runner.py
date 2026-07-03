@@ -12,6 +12,7 @@ from makerbench import code_cad_arena_runner as runner
 from makerbench.code_cad_arena import build_elo_leaderboard
 from makerbench.code_cad_agreement import build_agreement_summary
 from makerbench.code_cad_generator import instrument_spec_from_registry
+from makerbench.code_cad_judge import JudgeError, stub_judge
 from makerbench.code_cad_objective import ObjectiveContext, RenderArtifacts
 from makerbench.code_cad_orchestrator import OrchestrationConfig, run_orchestration
 from makerbench.code_cad_providers import make_stub_generator
@@ -409,6 +410,134 @@ class TestVoteJoinAndAgreement:
         cells = runner.build_vote_candidates(log)
         assert list(cells) == [("boxolin", 0, 0)]
         assert [c.model_id for c in cells[("boxolin", 0, 0)]] == ["stub-a"]
+
+
+class TestJudgeScoreline:
+    """#598 — VLM judge third scoreline: stub-mode loop, no tokens spent."""
+
+    def _plan_item(self, round_index: int = 0):
+        cand_a = VoteCandidate(
+            candidate_id="c1", model_id="stub-a", trial_id="t1", render_path="a.png"
+        )
+        cand_b = VoteCandidate(
+            candidate_id="c2", model_id="stub-b", trial_id="t2", render_path="b.png"
+        )
+        return {
+            "instrument_id": "boxolin",
+            "seed": 0,
+            "rep": 0,
+            "round": round_index,
+            "candidates": (cand_a, cand_b),
+        }
+
+    def test_judge_pairing_plan_matches_human_pair_seed(self):
+        item = self._plan_item()
+        expected = build_blind_pair(
+            *item["candidates"], pair_seed="boxolin:seed0:rep0:round0"
+        )
+
+        records = runner.judge_pairing_plan(
+            [item],
+            briefs={"boxolin": "build a box"},
+            judge=stub_judge(default="left"),
+            judge_model_id="claude-code-sonnet",
+        )
+
+        assert len(records) == 1
+        record = records[0]
+        assert record["pair_id"] == expected.pair_id
+        assert record["reveal"]["left"]["model_id"] == expected.left.model_id
+        assert record["reveal"]["right"]["model_id"] == expected.right.model_id
+        assert record["seed"] == 0 and record["rep"] == 0 and record["round"] == 0
+        assert record["voter_id"] == "vlm:claude-code-sonnet"
+
+    def test_judge_pairing_plan_skips_failed_judge_call(self):
+        # #629: a failed judge (JudgeError) must contribute NO vote — never a
+        # phantom draw folded into judge Elo/agreement.
+        def failing_judge(prompt):
+            raise JudgeError("subprocess exited 1")
+
+        with pytest.warns(UserWarning, match="VLM judge skipped"):
+            records = runner.judge_pairing_plan(
+                [self._plan_item()],
+                briefs={"boxolin": "build a box"},
+                judge=failing_judge,
+                judge_model_id="claude-code-sonnet",
+            )
+
+        assert records == []
+
+    def test_judge_elo_payload_and_scoreline_rows(self, tmp_path):
+        records = runner.judge_pairing_plan(
+            [self._plan_item()],
+            briefs={"boxolin": "build a box"},
+            judge=stub_judge(default="left"),
+            judge_model_id="test-judge",
+        )
+        for record in records:
+            append_vote_record(tmp_path / "votes.judge.jsonl", record)
+
+        run_log = {"config": {"model_ids": ["stub-a", "stub-b"]}}
+        payload = runner.judge_elo_payload(tmp_path, run_log)
+        assert payload["votes"] == 1
+        assert {row["entrant"] for row in payload["leaderboard"]} == {"stub-a", "stub-b"}
+
+        rows = runner.judge_scoreline_rows(payload)
+        assert {row["entrant"] for row in rows} == {"stub-a", "stub-b"}
+        for row in rows:
+            assert "judge_elo" in row and "n_judge_votes" in row
+
+    def test_judge_elo_payload_empty_without_votes_file(self, tmp_path):
+        run_log = {"config": {"model_ids": ["stub-a", "stub-b"]}}
+        payload = runner.judge_elo_payload(tmp_path, run_log)
+        assert payload["votes"] == 0
+
+    def test_build_agreement_rows_includes_judge_when_provided(self, tmp_path):
+        human_votes = runner.votes_to_elo_votes(self._revealed_votes_file(tmp_path))
+        elo = build_elo_leaderboard(human_votes, entrants=["stub-a", "stub-b"])
+        scoreline = [
+            {"entrant": "stub-a", "objective_pass_rate": 1.0, "n_objective_trials": 2},
+            {"entrant": "stub-b", "objective_pass_rate": 0.5, "n_objective_trials": 2},
+        ]
+
+        judge_votes_path = tmp_path / "votes.judge.jsonl"
+        for record in runner.judge_pairing_plan(
+            [self._plan_item()],
+            briefs={"boxolin": "build a box"},
+            judge=stub_judge(default="right"),
+            judge_model_id="test-judge",
+        ):
+            append_vote_record(judge_votes_path, record)
+        judge_payload = runner.judge_elo_payload(tmp_path, {"config": {"model_ids": []}})
+
+        rows = runner.build_agreement_rows(elo, scoreline, judge_payload)
+        by_entrant = {row["entrant"]: row for row in rows}
+        assert by_entrant["stub-a"]["judge_elo"] is not None
+        assert by_entrant["stub-a"]["n_judge_votes"] == 1
+
+        summary = build_agreement_summary(rows)
+        assert "matrix" in summary
+        assert set(summary["matrix"]) == {
+            "subjective_objective",
+            "subjective_judge",
+            "objective_judge",
+        }
+
+    def _revealed_votes_file(self, tmp_path: Path) -> Path:
+        left = VoteCandidate(
+            candidate_id="c1", model_id="stub-a", trial_id="t1", render_path="a.png"
+        )
+        right = VoteCandidate(
+            candidate_id="c2", model_id="stub-b", trial_id="t2", render_path="b.png"
+        )
+        pair = build_blind_pair(left, right, pair_seed="cell:0")
+        vote = record_vote(pair, winner="left", voter_id="tony")
+        revealed = reveal_vote(pair, vote)
+        revealed["instrument_id"] = "boxolin"
+        revealed["seed"] = 0
+        path = tmp_path / "votes.revealed.jsonl"
+        append_vote_record(path, revealed)
+        return path
 
 
 class TestPerInstrumentMinWall:

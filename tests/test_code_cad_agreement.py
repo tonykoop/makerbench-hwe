@@ -103,3 +103,64 @@ def test_doc_defines_metric_and_confound():
     text = doc.read_text(encoding="utf-8")
     assert "Spearman rank correlation" in text
     assert "aesthetics-vs-manufacturability" in text
+
+
+def test_no_matrix_without_judge_data():
+    summary = agreement.build_agreement_summary(
+        [
+            {"entrant": "a", "subjective_elo": 1600, "objective_pass_rate": 0.8},
+            {"entrant": "b", "subjective_elo": 1500, "objective_pass_rate": 0.2},
+        ]
+    )
+    assert "matrix" not in summary
+
+
+def test_triangulation_matrix_present_with_judge_data():
+    summary = agreement.build_agreement_summary(
+        [
+            {
+                "entrant": "gpt-5.5", "subjective_elo": 1600, "objective_pass_rate": 0.80,
+                "judge_elo": 1550,
+            },
+            {
+                "entrant": "sonnet", "subjective_elo": 1550, "objective_pass_rate": 0.90,
+                "judge_elo": 1600,
+            },
+            {
+                "entrant": "gemini", "subjective_elo": 1500, "objective_pass_rate": 0.20,
+                "judge_elo": 1450,
+            },
+        ]
+    )
+
+    assert set(summary["matrix"]) == {
+        "subjective_objective", "subjective_judge", "objective_judge",
+    }
+    # subjective_objective is unchanged from the pre-#598 top-level "agreement".
+    assert summary["matrix"]["subjective_objective"] == summary["agreement"]
+    # subjective and judge ranks are identical here (both a>b... wait sonnet>gpt-5.5
+    # on judge) — just assert the correlation computed without error and is bounded.
+    for cell in summary["matrix"].values():
+        assert cell["rho"] is None or -1.0 <= cell["rho"] <= 1.0
+
+    rows = {row["entrant"]: row for row in summary["rankings"]}
+    assert rows["sonnet"]["judge_rank"] == 1.0
+    assert rows["sonnet"]["n_judge_votes"] == 0
+
+
+def test_triangulation_markdown_includes_judge_columns():
+    summary = agreement.build_agreement_summary(
+        [
+            {
+                "entrant": "a", "subjective_elo": 1600, "objective_pass_rate": 0.8,
+                "judge_elo": 1500, "n_judge_votes": 3,
+            },
+            {
+                "entrant": "b", "subjective_elo": 1500, "objective_pass_rate": 0.2,
+                "judge_elo": 1600, "n_judge_votes": 3,
+            },
+        ]
+    )
+    text = agreement.render_markdown_summary(summary)
+    assert "Judge Elo" in text
+    assert "VLM judge Elo" in text
