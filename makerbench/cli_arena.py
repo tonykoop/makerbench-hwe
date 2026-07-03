@@ -212,11 +212,22 @@ def arena_run(
         rate_limit_s: float = typer.Option(5.0, "--rate-limit-s", help="Seconds between calls to the same provider."),
         timeout_s: Optional[int] = typer.Option(None, help="Override per-call CLI timeout in seconds."),
         model_map: Optional[str] = typer.Option(None, "--model-map", help="JSON file mapping model_id -> {provider, model, effort}."),
+        context_tier: str = typer.Option("blind", "--context-tier", help="blind (default) | packet | repo — #600 context-grounding axis."),
+        instruments_root: Optional[str] = typer.Option(None, "--instruments-root", help="Root of instrument build repos; required for --context-tier packet|repo."),
         stub: bool = typer.Option(False, "--stub", help="Swap every entrant for the zero-token stub generator (smoke runs).")):
     """Run (or resume) the 4D arena matrix and write the objective scoreline."""
 
     if not render.openscad_available():
         console.print("[red]openscad binary not found — objective scoring needs it.[/red]")
+        raise typer.Exit(code=1)
+
+    from .code_cad_context_staging import CONTEXT_TIERS
+
+    if context_tier not in CONTEXT_TIERS:
+        console.print(f"[red]--context-tier must be one of {CONTEXT_TIERS}[/red]")
+        raise typer.Exit(code=1)
+    if context_tier != "blind" and not instruments_root:
+        console.print(f"[red]--context-tier {context_tier} needs --instruments-root[/red]")
         raise typer.Exit(code=1)
 
     model_ids = _split_csv(models)
@@ -261,12 +272,15 @@ def arena_run(
         ),
     )
     execute = arena_runner.make_execute_trial(
-        registry=registry_payload, run_dir=run_path, generators=generators
+        registry=registry_payload, run_dir=run_path, generators=generators,
+        context_tier=context_tier,
+        instruments_root=Path(instruments_root) if instruments_root else None,
     )
     total = len(instrument_ids) * len(seed_values) * reps * len(model_ids)
+    tier_note = f" (context tier: {context_tier})" if context_tier != "blind" else ""
     console.print(
         f"arena matrix: {len(instrument_ids)} instruments x {len(seed_values)} seeds "
-        f"x {reps} reps x {len(model_ids)} models = {total} trials"
+        f"x {reps} reps x {len(model_ids)} models = {total} trials{tier_note}"
     )
     log = run_orchestration(
         config=config,

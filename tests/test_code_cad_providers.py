@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -11,7 +12,12 @@ from makerbench import code_cad_providers as providers
 from makerbench.code_cad_generator import GenerationRequest
 
 
-def _request(model_id: str = "claude-code-sonnet") -> GenerationRequest:
+def _request(
+    model_id: str = "claude-code-sonnet",
+    *,
+    context_tier: str = "blind",
+    workspace_dir=None,
+) -> GenerationRequest:
     return GenerationRequest(
         model_id=model_id,
         instrument_id="ocarina",
@@ -19,6 +25,8 @@ def _request(model_id: str = "claude-code-sonnet") -> GenerationRequest:
         spec={"id": "ocarina"},
         prompt="Instrument id: ocarina\nSeed: 0\n",
         prompt_sha256="0" * 64,
+        context_tier=context_tier,
+        workspace_dir=str(workspace_dir) if workspace_dir is not None else None,
     )
 
 
@@ -154,6 +162,113 @@ class TestGeminiAndAgyGenerators:
         assert cmd[cmd.index("--print-timeout") + 1] == "15m"
 
 
+class TestContextTierWorkspaceRouting:
+    """#600: a non-blind request's subprocess cwd is the staged workspace,
+    never the provider's own fixed isolated blind cwd."""
+
+    def test_claude_uses_workspace_dir_as_cwd_when_present(self, tmp_path, monkeypatch):
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cwd"] = kwargs.get("cwd")
+            return _completed(stdout=json.dumps({"result": "```scad\ncube(1);\n```"}))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        gen = providers.make_claude_generator("sonnet", retry_sleep_s=0)
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        gen(_request(context_tier="repo", workspace_dir=workspace))
+        assert seen["cwd"] == str(workspace)
+
+    def test_claude_blind_request_keeps_isolated_cwd(self, tmp_path, monkeypatch):
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cwd"] = kwargs.get("cwd")
+            return _completed(stdout=json.dumps({"result": "```scad\ncube(1);\n```"}))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        gen = providers.make_claude_generator("sonnet", retry_sleep_s=0)
+        gen(_request())  # default blind, no workspace_dir
+        assert seen["cwd"] != str(tmp_path)
+        assert Path(seen["cwd"]).is_dir()
+
+    def test_codex_dash_c_flag_and_cwd_both_use_workspace(self, tmp_path, monkeypatch):
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"] = cmd
+            seen["cwd"] = kwargs.get("cwd")
+            return _completed(stdout="")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        gen = providers.make_codex_generator(retry_sleep_s=0)
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        gen(_request("codex-gpt-5.5", context_tier="packet", workspace_dir=workspace))
+        assert seen["cwd"] == str(workspace)
+        assert seen["cmd"][seen["cmd"].index("-C") + 1] == str(workspace)
+
+    def test_gemini_uses_workspace_dir(self, tmp_path, monkeypatch):
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cwd"] = kwargs.get("cwd")
+            return _completed(stdout="```scad\ncube(1);\n```")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        gen = providers.make_gemini_generator(retry_sleep_s=0)
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        gen(_request("gemini-2.5-pro", context_tier="repo", workspace_dir=workspace))
+        assert seen["cwd"] == str(workspace)
+
+    def test_agy_uses_workspace_dir(self, tmp_path, monkeypatch):
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cwd"] = kwargs.get("cwd")
+            return _completed(stdout="```scad\ncube(1);\n```")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        gen = providers.make_agy_generator(retry_sleep_s=0)
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        gen(_request("antigravity-gemini-default", context_tier="repo", workspace_dir=workspace))
+        assert seen["cwd"] == str(workspace)
+
+    def test_arena_prompt_notes_context_tier_when_non_blind(self, tmp_path):
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        blind_prompt = providers.arena_prompt(_request())
+        repo_prompt = providers.arena_prompt(
+            _request(context_tier="repo", workspace_dir=workspace)
+        )
+        assert "context tier" not in blind_prompt
+        assert "context tier: repo" in repo_prompt
+
+    def test_workspace_text_blob_inlines_staged_docs_for_non_cwd_backends(self, tmp_path):
+        from makerbench import code_cad_context_staging as staging
+
+        workspace = tmp_path / "ws"
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "design.md").write_text("brief text\n", encoding="utf-8")
+        (repo / "master.scad").write_text("cube(1);\n", encoding="utf-8")
+        staging.stage_workspace(
+            tier="packet", instrument_id="ocarina", repo_dir=repo, workspace_dir=workspace
+        )
+        blob = providers._workspace_text_blob(
+            _request(context_tier="packet", workspace_dir=workspace)
+        )
+        assert "design.md" in blob
+        assert "brief text" in blob
+        assert "master.scad" not in blob  # answer-key suffix never inlined
+
+    def test_workspace_text_blob_empty_for_blind_requests(self):
+        assert providers._workspace_text_blob(_request()) == ""
+
+
 class TestStubGenerator:
     def test_deterministic_and_jittered_per_model(self):
         gen = providers.make_stub_generator()
@@ -278,7 +393,7 @@ class TestOpenRouterProvider:
         monkeypatch.setattr(providers, "_openrouter_slug_cache", {}, raising=False)
         return calls
 
-    def _req(self):
+    def _req(self, *, context_tier="blind", workspace_dir=None):
         return GenerationRequest(
             model_id="openrouter-glm-5.2",
             instrument_id="udu",
@@ -286,7 +401,31 @@ class TestOpenRouterProvider:
             spec={},
             prompt="spec json here",
             prompt_sha256="0" * 64,
+            context_tier=context_tier,
+            workspace_dir=str(workspace_dir) if workspace_dir is not None else None,
         )
+
+    def test_non_blind_tier_inlines_staged_docs_since_http_has_no_cwd(self, tmp_path, monkeypatch):
+        from makerbench import code_cad_context_staging as staging
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "design.md").write_text("udu design brief\n", encoding="utf-8")
+        workspace = tmp_path / "ws"
+        staging.stage_workspace(
+            tier="packet", instrument_id="udu", repo_dir=repo, workspace_dir=workspace
+        )
+        calls = self._request(
+            monkeypatch,
+            [
+                {"data": [{"id": "z-ai/glm-5.2"}]},
+                {"choices": [{"message": {"content": "```scad\ncube(1);\n```"}}]},
+            ],
+        )
+        gen = providers.resolve_generator("openrouter-glm-5.2")
+        gen(self._req(context_tier="packet", workspace_dir=workspace))
+        content = calls[1]["payload"]["messages"][1]["content"]
+        assert "udu design brief" in content
 
     def test_prefix_dispatch_and_slug_resolution(self, monkeypatch):
         assert providers.provider_for_model_id("openrouter-glm-5.2") == "openrouter"
