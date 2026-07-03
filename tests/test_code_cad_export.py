@@ -246,3 +246,55 @@ class TestVoteWebQueue:
         assert "m1" not in page and "m2" not in page  # blindness holds
         queue.cast(pair.pair_id, "right")
         assert "All 1 pairs voted" in render_queue_page(queue)
+
+
+class TestVoteFlags:
+    """Per-candidate defect/disposition flags on votes (Round 4 feedback)."""
+
+    def _queue(self, tmp_path):
+        from makerbench.code_cad_vote_web import QueueItem, VoteQueue
+        from makerbench.code_cad_vote_surface import VoteCandidate, build_blind_pair
+
+        left = VoteCandidate(candidate_id="a", model_id="m1", trial_id="t-a",
+                             render_path="blind/p-left.png")
+        right = VoteCandidate(candidate_id="b", model_id="m2", trial_id="t-b",
+                              render_path="blind/p-right.png")
+        pair = build_blind_pair(left, right, pair_seed="cell")
+        queue = VoteQueue(run_dir=tmp_path, voter="tony")
+        queue.items.append(QueueItem(pair=pair, meta={
+            "instrument_id": "boxolin", "seed": 0, "rep": 0, "round": 0}))
+        return queue, pair
+
+    def test_flags_recorded_in_blind_and_revealed(self, tmp_path):
+        import json
+        queue, pair = self._queue(tmp_path)
+        ok = queue.cast(pair.pair_id, "left", flags={
+            "left": ["insufficient_detail"],
+            "right": ["missing_critical_components", "delete_immediately"],
+        })
+        assert ok
+        blind = json.loads((tmp_path / "votes.blind.jsonl").read_text().strip())
+        revealed = json.loads((tmp_path / "votes.revealed.jsonl").read_text().strip())
+        for record in (blind, revealed):
+            assert record["flags"]["left"] == ["insufficient_detail"]
+            assert record["flags"]["right"] == [
+                "missing_critical_components", "delete_immediately"]
+
+    def test_unknown_flags_dropped_and_empty_flags_omitted(self, tmp_path):
+        import json
+        queue, pair = self._queue(tmp_path)
+        ok = queue.cast(pair.pair_id, "draw", flags={
+            "left": ["not_a_real_flag"], "right": [], "up": ["save_for_later"]})
+        assert ok
+        blind = json.loads((tmp_path / "votes.blind.jsonl").read_text().strip())
+        assert "flags" not in blind
+
+    def test_queue_page_renders_flag_checkboxes_per_side(self, tmp_path):
+        from makerbench.code_cad_vote_web import render_queue_page, VOTE_FLAGS
+        queue, pair = self._queue(tmp_path)
+        page = render_queue_page(queue)
+        assert 'data-flag-side="left"' in page
+        assert 'data-flag-side="right"' in page
+        for flag_id, label in VOTE_FLAGS:
+            assert page.count(f'value="{flag_id}"') == 2
+            assert label in page
