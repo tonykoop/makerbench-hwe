@@ -28,9 +28,18 @@ If the reused DFM/acoustic gate fails or returns an invalid payload, the trial i
 also an auto-fail with `failure_stage: objective_gate`. Any render artifacts that
 were produced remain listed in the payload for auditability.
 
+Known limitation: `failure_stage` is hardcoded to `openscad_render` regardless
+of which `Compiler` raised `render.CompileError` (#601 added a second,
+Blender-backed compiler — see below — that reuses the same label). It is
+cosmetic; the failure semantics are identical either way.
+
 ## Links
 
 This is the objective half of the Code-CAD instrument loop from #83 and the
 measured pass-rate side of the Opportunity Matrix / workflow-comparison work in
 #120. Subjective Elo stays separate; #427 compares the two scorelines without
 blending them.
+
+The default compiler is OpenSCAD-only; #601 generalizes the `Compiler` seam
+into a CAD-backend axis (Blender `bpy` today) — see
+[`CODE_CAD_BACKEND_AXIS.md`](CODE_CAD_BACKEND_AXIS.md).

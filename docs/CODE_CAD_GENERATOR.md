@@ -48,3 +48,11 @@ This harness does not call vendor APIs directly and does not know about private
 provenance systems. Provider adapters, CLIs, or local test generators can all
 share the same output/provenance contract without exposing secrets or private
 Selecta internals.
+
+## CAD-backend axis
+
+`GenerationRequest`/`GenerationResult` are backend-agnostic (they just carry
+prompt text and raw output); the entrant fence language (OpenSCAD vs. a
+Blender `bpy` script) is a `code_cad_providers` concern selected via a
+`backend` kwarg on the provider factories. See
+[`CODE_CAD_BACKEND_AXIS.md`](CODE_CAD_BACKEND_AXIS.md) (#601).
