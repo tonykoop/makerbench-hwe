@@ -77,8 +77,10 @@ def test_judge_pair_rejects_invalid_choice_from_judge():
 
 
 class _FakeCompletedProcess:
-    def __init__(self, stdout: str):
+    def __init__(self, stdout: str, returncode: int = 0, stderr: str = ""):
         self.stdout = stdout
+        self.returncode = returncode
+        self.stderr = stderr
 
 
 def test_claude_cli_judge_parses_left_right_draw():
@@ -102,8 +104,8 @@ def test_claude_cli_judge_parses_left_right_draw():
     [
         ("RIGHT wins on fit.", "right"),
         ("Genuinely a DRAW.", "draw"),
+        # A SUCCESSFUL call whose answer is genuinely ambiguous is a real DRAW.
         ("both LEFT and RIGHT are unreadable", "draw"),
-        ("", "draw"),
     ],
 )
 def test_claude_cli_judge_choice_parsing_variants(stdout, expected):
@@ -111,6 +113,41 @@ def test_claude_cli_judge_choice_parsing_variants(stdout, expected):
     pair = _pair()
     prompt = judge.build_judge_prompt(pair, instrument_id="boxolin", brief="build a box")
     assert fn(prompt) == expected
+
+
+def test_claude_cli_judge_raises_on_nonzero_returncode():
+    """A failed subprocess must not be parsed to DRAW (#629 blocking bug)."""
+
+    def failing_runner(cmd, **kwargs):
+        return _FakeCompletedProcess("", returncode=1, stderr="auth/model error")
+
+    fn = judge.claude_cli_judge(runner=failing_runner)
+    pair = _pair()
+    prompt = judge.build_judge_prompt(pair, instrument_id="boxolin", brief="build a box")
+    with pytest.raises(judge.JudgeError):
+        fn(prompt)
+
+
+def test_claude_cli_judge_raises_on_empty_stdout():
+    # Exit 0 but no usable output (e.g. image args rejected) -> not a DRAW.
+    fn = judge.claude_cli_judge(runner=lambda cmd, **kw: _FakeCompletedProcess("   "))
+    pair = _pair()
+    prompt = judge.build_judge_prompt(pair, instrument_id="boxolin", brief="build a box")
+    with pytest.raises(judge.JudgeError):
+        fn(prompt)
+
+
+def test_claude_cli_judge_raises_when_subprocess_errors():
+    import subprocess
+
+    def raising_runner(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, 120)
+
+    fn = judge.claude_cli_judge(runner=raising_runner)
+    pair = _pair()
+    prompt = judge.build_judge_prompt(pair, instrument_id="boxolin", brief="build a box")
+    with pytest.raises(judge.JudgeError):
+        fn(prompt)
 
 
 def test_judge_available_reflects_path(monkeypatch):

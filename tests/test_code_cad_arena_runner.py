@@ -12,7 +12,7 @@ from makerbench import code_cad_arena_runner as runner
 from makerbench.code_cad_arena import build_elo_leaderboard
 from makerbench.code_cad_agreement import build_agreement_summary
 from makerbench.code_cad_generator import instrument_spec_from_registry
-from makerbench.code_cad_judge import stub_judge
+from makerbench.code_cad_judge import JudgeError, stub_judge
 from makerbench.code_cad_objective import ObjectiveContext, RenderArtifacts
 from makerbench.code_cad_orchestrator import OrchestrationConfig, run_orchestration
 from makerbench.code_cad_providers import make_stub_generator
@@ -450,6 +450,22 @@ class TestJudgeScoreline:
         assert record["reveal"]["right"]["model_id"] == expected.right.model_id
         assert record["seed"] == 0 and record["rep"] == 0 and record["round"] == 0
         assert record["voter_id"] == "vlm:claude-code-sonnet"
+
+    def test_judge_pairing_plan_skips_failed_judge_call(self):
+        # #629: a failed judge (JudgeError) must contribute NO vote — never a
+        # phantom draw folded into judge Elo/agreement.
+        def failing_judge(prompt):
+            raise JudgeError("subprocess exited 1")
+
+        with pytest.warns(UserWarning, match="VLM judge skipped"):
+            records = runner.judge_pairing_plan(
+                [self._plan_item()],
+                briefs={"boxolin": "build a box"},
+                judge=failing_judge,
+                judge_model_id="claude-code-sonnet",
+            )
+
+        assert records == []
 
     def test_judge_elo_payload_and_scoreline_rows(self, tmp_path):
         records = runner.judge_pairing_plan(

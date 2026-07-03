@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import tempfile
+import warnings
 from pathlib import Path
 from typing import Callable, Mapping, Optional
 
@@ -26,7 +27,7 @@ from .code_cad_generator import (
     instrument_spec_from_registry,
     run_generation_batch,
 )
-from .code_cad_judge import JudgeCallable, judge_pair
+from .code_cad_judge import JudgeCallable, JudgeError, judge_pair
 from .code_cad_objective import (
     Compiler,
     ObjectiveContext,
@@ -638,13 +639,22 @@ def judge_pairing_plan(
             f"{item['instrument_id']}:seed{item['seed']}:rep{item['rep']}:round{item['round']}"
         )
         pair = build_blind_pair(cand_a, cand_b, pair_seed=pair_seed)
-        record = judge_pair(
-            pair,
-            instrument_id=str(item["instrument_id"]),
-            brief=briefs.get(str(item["instrument_id"]), ""),
-            judge=judge,
-            judge_model_id=judge_model_id,
-        )
+        try:
+            record = judge_pair(
+                pair,
+                instrument_id=str(item["instrument_id"]),
+                brief=briefs.get(str(item["instrument_id"]), ""),
+                judge=judge,
+                judge_model_id=judge_model_id,
+            )
+        except JudgeError as exc:
+            # A failed judge call contributes NO vote — never a phantom draw.
+            warnings.warn(
+                f"VLM judge skipped {item['instrument_id']} "
+                f"seed{item['seed']} round{item['round']}: {exc}",
+                stacklevel=2,
+            )
+            continue
         record["seed"] = item["seed"]
         record["rep"] = item["rep"]
         record["round"] = item["round"]
