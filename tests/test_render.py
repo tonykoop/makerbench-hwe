@@ -128,3 +128,32 @@ def test_perceive_emits_section_json_and_png_failure_is_warning(tmp_path, monkey
     # The renderer failed, so no section PNGs exist — only warnings.
     assert not any(a["format"] == "png" for a in sections)
     assert any("png" in warning for warning in observed["warnings"])
+
+
+def test_compile_to_mesh_honors_timeout(tmp_path, monkeypatch):
+    """compile_to_mesh must forward its timeout to the subprocess (#618).
+
+    It silently dropped it before, so every caller-supplied budget fell
+    back to the 120s default.
+    """
+
+    from makerbench import render as render_mod
+
+    seen = {}
+
+    def fake_run(args, timeout=120):
+        seen["timeout"] = timeout
+
+        class Proc:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        mesh = [a for a in args if str(a).startswith(str(tmp_path))][0]
+        with open(mesh, "w", encoding="utf-8") as fh:
+            fh.write("solid fake\n")
+        return Proc()
+
+    monkeypatch.setattr(render_mod, "_run", fake_run)
+    render_mod.compile_to_mesh("cube(1);", tmp_path.as_posix(), fmt="stl", timeout=900)
+    assert seen["timeout"] == 900
