@@ -500,3 +500,64 @@ class TestIngestCandidate:
         )
         assert entry["status"] == "scored"
         assert entry["result"]["objective"]["objective_pass_rate"] == 1.0
+
+
+class TestRoundsR5R10Registry:
+    """Rounds 5-10: the full fresh strings family through the arena.
+
+    Six rounds of six strings instruments each, authored geometry-only from
+    each repo's design packet. Mirrors TestRound3Registry's integrity checks.
+    """
+
+    ROUNDS = {
+        5: ("acoustic-violin", "electric-violin", "erhu", "haegeum",
+            "sympathetic-sarangi-fiddle", "tromba-marina"),
+        6: ("aeolian-harp-pillar", "egyptian-harps", "floor-harp", "konghou",
+            "magnetic-chromatic-harp", "zephyr-zither"),
+        7: ("clavichord", "harpsichord", "hurdy-gurdy", "pianola",
+            "nyckelharpa", "wheelharp"),
+        8: ("autoharp-inspired", "marxophone", "multi-bridge-sheet-zither",
+            "bowed-metal-psaltery", "bowed-sheet-metal-sarod", "ngoni"),
+        9: ("cnc-guitar-bodies", "electric-guitar-bodies",
+            "folding-travel-resonator-guitar", "resophonic-bouzouki",
+            "stave-lute-oud", "triple-cone-slide-guitar"),
+        10: ("octobass", "spun-aluminum-cello", "telescoping-bass-profundo",
+             "whamola-bass", "ukulele", "pipa"),
+    }
+
+    def test_all_strings_resolve_with_floors_and_repo_paths(self):
+        registry = runner.load_arena_registry(ARENA_REGISTRY)
+        for ids in self.ROUNDS.values():
+            for instrument_id in ids:
+                spec = instrument_spec_from_registry(registry, instrument_id)
+                assert spec["id"] == instrument_id
+                assert spec["family"] == "strings"
+                assert spec["task_brief"].strip()
+                assert len(spec["envelope_mm"]) == 3
+                assert spec["min_wall_mm"] > 0
+                assert spec["repo_path"].startswith("strings/")
+
+    def test_each_round_has_an_assembly_task(self):
+        registry = runner.load_arena_registry(ARENA_REGISTRY)
+        for rn, ids in self.ROUNDS.items():
+            specs = [instrument_spec_from_registry(registry, i) for i in ids]
+            assert any(s["assembly"] and s["min_bodies"] >= 4 for s in specs), (
+                f"round {rn} has no assembly task with min_bodies>=4"
+            )
+
+    def test_briefs_are_geometry_only_no_tuning_claims(self):
+        # Instrument packets gate tuning/pitch as measurement-craft; the arena
+        # briefs must stay geometry-only (Non-Claims discipline).
+        registry = runner.load_arena_registry(ARENA_REGISTRY)
+        for ids in self.ROUNDS.values():
+            for instrument_id in ids:
+                spec = instrument_spec_from_registry(registry, instrument_id)
+                brief = spec["task_brief"].lower()
+                blob = brief + " " + json.dumps(spec["constraints"]).lower()
+                # Positive discipline: every brief declares geometry-only and
+                # defers tuning to physical measurement.
+                assert "geometry only" in brief
+                assert "requires physical build measurement" in brief
+                # No tuned-frequency claims (spacing "pitch" e.g. channel_pitch
+                # is geometric and allowed; a frequency unit is not).
+                assert "hz" not in blob
