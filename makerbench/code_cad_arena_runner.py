@@ -20,6 +20,7 @@ from typing import Callable, Mapping, Optional
 from . import geometry
 from . import render
 from .code_cad_arena import Vote
+from .code_cad_context_staging import stage_workspace
 from .code_cad_generator import (
     Generator,
     instrument_spec_from_registry,
@@ -253,14 +254,43 @@ def make_execute_trial(
     generators: Mapping[str, Generator],
     compiler: Compiler = compile_scad_to_artifacts,
     gate_factory: Callable[[Mapping[str, object]], Callable] = mesh_objective_gate,
+    context_tier: str = "blind",
+    instruments_root: Optional[Path] = None,
 ) -> TrialExecutor:
-    """Wire #422 generation and #423 objective scoring into one trial executor."""
+    """Wire #422 generation and #423 objective scoring into one trial executor.
+
+    ``context_tier`` is #600's opt-in context-grounding axis (``blind``
+    default, ``packet``, ``repo``). Non-blind tiers need ``instruments_root``
+    to locate each instrument's ``repo_path`` and stage a filtered per-trial
+    workspace (see ``code_cad_context_staging``) before generation.
+    """
 
     def execute(trial: ArenaTrial) -> dict:
         generator = generators.get(trial.model_id)
         if generator is None:
             raise RuntimeError(f"no generator configured for entrant {trial.model_id}")
+        spec = instrument_spec_from_registry(registry, trial.instrument_id)
         gen_dir = run_dir / "gen" / trial.trial_id
+
+        workspace_dir: Optional[Path] = None
+        staging_manifest: Optional[dict] = None
+        if context_tier != "blind":
+            if instruments_root is None:
+                raise ValueError(f"context tier {context_tier!r} needs instruments_root")
+            repo_path = spec.get("repo_path")
+            if not repo_path:
+                raise ValueError(
+                    f"instrument {trial.instrument_id!r} has no repo_path for "
+                    f"context tier {context_tier!r}"
+                )
+            workspace_dir = gen_dir / "workspace"
+            staging_manifest = stage_workspace(
+                tier=context_tier,
+                instrument_id=trial.instrument_id,
+                repo_dir=Path(instruments_root) / str(repo_path),
+                workspace_dir=workspace_dir,
+            )
+
         results = run_generation_batch(
             registry=registry,
             instrument_id=trial.instrument_id,
@@ -268,6 +298,8 @@ def make_execute_trial(
             model_ids=[trial.model_id],
             generator=generator,
             out_dir=gen_dir,
+            context_tier=context_tier,
+            workspace_dir=workspace_dir,
         )
         gen = results[0]
         if gen.status != "ok" or gen.scad_path is None:
@@ -275,7 +307,6 @@ def make_execute_trial(
             # trial up to max_attempts (transient CLI failures).
             raise RuntimeError(f"generation {gen.status}: {gen.error}")
 
-        spec = instrument_spec_from_registry(registry, trial.instrument_id)
         payload = evaluate_objective_trial(
             trial_id=trial.trial_id,
             model_id=trial.model_id,
@@ -291,6 +322,9 @@ def make_execute_trial(
             "scad_path": gen.scad_path.as_posix(),
             "provenance_path": gen.provenance_path.as_posix(),
         }
+        payload["context_tier"] = context_tier
+        if staging_manifest is not None:
+            payload["staging_manifest"] = staging_manifest
         return payload
 
     return execute
