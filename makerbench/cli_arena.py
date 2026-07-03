@@ -20,7 +20,9 @@ from . import blender_backend
 from . import code_cad_export as arena_export
 from . import code_cad_providers as providers
 from . import code_cad_arena_runner as arena_runner
+from . import fusion_backend
 from . import render
+from . import solidworks_backend
 from .code_cad_agreement import build_agreement_summary, render_markdown_summary
 from .code_cad_arena import build_elo_leaderboard, sample_swiss_pairs
 from .code_cad_orchestrator import OrchestrationConfig, run_orchestration
@@ -287,7 +289,11 @@ def arena_run(
         model_map: Optional[str] = typer.Option(None, "--model-map", help="JSON file mapping model_id -> {provider, model, effort}."),
         context_tier: str = typer.Option("blind", "--context-tier", help="blind (default) | packet | repo — #600 context-grounding axis."),
         instruments_root: Optional[str] = typer.Option(None, "--instruments-root", help="Root of instrument build repos; required for --context-tier packet|repo."),
-        backend: str = typer.Option("openscad", "--backend", help="CAD-backend axis (#601): 'openscad' or 'blender'."),
+        backend: str = typer.Option(
+            "openscad",
+            "--backend",
+            help="CAD-backend axis (#601/#627): 'openscad', 'blender', 'solidworks', or 'fusion'.",
+        ),
         stub: bool = typer.Option(False, "--stub", help="Swap every entrant for the zero-token stub generator (smoke runs).")):
     """Run (or resume) the 4D arena matrix and write the objective scoreline."""
 
@@ -299,6 +305,22 @@ def arena_run(
         raise typer.Exit(code=1)
     if backend == "blender" and not blender_backend.blender_available():
         console.print("[red]blender binary not found — objective scoring needs it.[/red]")
+        raise typer.Exit(code=1)
+    if backend == "solidworks" and not solidworks_backend.solidworks_jobdir_available():
+        console.print(
+            "[red]SolidWorks job-dir handoff path not available (no /mnt/c bridge, or "
+            "the jobs root could not be created) — see docs/CODE_CAD_BACKEND_AXIS.md. "
+            "This only checks the filesystem handoff, not whether a Windows watcher "
+            "is actually running.[/red]"
+        )
+        raise typer.Exit(code=1)
+    if backend == "fusion" and not fusion_backend.fusion_jobdir_available():
+        console.print(
+            "[red]Fusion job-dir handoff path not available (no /mnt/c bridge, or the "
+            "jobs root could not be created) — see docs/CODE_CAD_BACKEND_AXIS.md. This "
+            "only checks the filesystem handoff, not whether a Windows watcher is "
+            "actually running.[/red]"
+        )
         raise typer.Exit(code=1)
 
     from .code_cad_context_staging import CONTEXT_TIERS
