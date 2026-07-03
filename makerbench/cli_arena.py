@@ -295,6 +295,7 @@ def arena_run(
             if rate_limit_s > 0 and not stub
             else {}
         ),
+        backend=backend,
     )
     execute = arena_runner.make_execute_trial(
         registry=registry_payload,

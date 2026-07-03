@@ -195,3 +195,59 @@ def test_resume_with_disjoint_matrix_preserves_old_trial_rows(tmp_path):
     assert on_disk_ids == trial_ids
     old_row = next(t for t in second["trials"] if t["trial_id"] == "lyre__seed0__rep0__model-a")
     assert old_row["status"] == "ok"
+
+
+class TestBackendInConfig:
+    """CAD-backend axis observability (#631, follow-up to #601)."""
+
+    def test_backend_defaults_to_openscad(self):
+        assert _config().backend == "openscad"
+        assert _config().as_dict()["backend"] == "openscad"
+
+    def test_backend_override_reaches_as_dict(self):
+        config = _config(backend="blender")
+        assert config.backend == "blender"
+        assert config.as_dict()["backend"] == "blender"
+
+    def test_fresh_run_log_records_backend_in_config(self, tmp_path):
+        config = _config(
+            instrument_ids=("lyre",), model_ids=("gpt",), seeds=(0,), reps=1,
+            backend="blender",
+        )
+        log = orch.run_orchestration(
+            config=config,
+            run_log_path=tmp_path / "run.json",
+            execute_trial=lambda trial: {"status": "ok"},
+        )
+        assert log["config"]["backend"] == "blender"
+        on_disk = json.loads((tmp_path / "run.json").read_text(encoding="utf-8"))
+        assert on_disk["config"]["backend"] == "blender"
+
+    def test_resuming_a_pre_backend_run_log_does_not_inject_the_key(self, tmp_path):
+        """A run_log.json written before #631 has no config.backend key at all;
+        resuming it must not silently rewrite that config (setdefault, not merge)."""
+
+        path = tmp_path / "run.json"
+        legacy_config = {
+            "instrument_ids": ["lyre"],
+            "model_ids": ["gpt"],
+            "seeds": [0],
+            "reps": 1,
+            "max_attempts": 1,
+            "model_providers": {},
+            "provider_rate_limits_s": {},
+        }
+        path.write_text(
+            json.dumps({"schema": orch.SCHEMA, "config": legacy_config, "trials": []}),
+            encoding="utf-8",
+        )
+        config = _config(
+            instrument_ids=("lyre",), model_ids=("gpt",), seeds=(0,), reps=1,
+            backend="blender",
+        )
+        log = orch.run_orchestration(
+            config=config,
+            run_log_path=path,
+            execute_trial=lambda trial: {"status": "ok"},
+        )
+        assert "backend" not in log["config"]
