@@ -16,10 +16,10 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from . import code_cad_backends as backends
 from . import code_cad_export as arena_export
 from . import code_cad_providers as providers
 from . import code_cad_arena_runner as arena_runner
-from . import render
 from .code_cad_agreement import build_agreement_summary, render_markdown_summary
 from .code_cad_arena import build_elo_leaderboard, sample_swiss_pairs
 from .code_cad_orchestrator import OrchestrationConfig, run_orchestration
@@ -212,12 +212,22 @@ def arena_run(
         rate_limit_s: float = typer.Option(5.0, "--rate-limit-s", help="Seconds between calls to the same provider."),
         timeout_s: Optional[int] = typer.Option(None, help="Override per-call CLI timeout in seconds."),
         model_map: Optional[str] = typer.Option(None, "--model-map", help="JSON file mapping model_id -> {provider, model, effort}."),
+        backend: str = typer.Option("openscad", "--backend", help="CAD compile backend: openscad | fusion | solidworks (#627)."),
+        jobs_root: Optional[str] = typer.Option(None, "--jobs-root", help="Job-dir root for Windows-side backends (default <run-dir>/backend_jobs)."),
         stub: bool = typer.Option(False, "--stub", help="Swap every entrant for the zero-token stub generator (smoke runs).")):
     """Run (or resume) the 4D arena matrix and write the objective scoreline."""
 
-    if not render.openscad_available():
-        console.print("[red]openscad binary not found — objective scoring needs it.[/red]")
+    if backend not in backends.known_backends():
+        console.print(f"[red]unknown --backend {backend!r}; expected one of {backends.known_backends()}[/red]")
         raise typer.Exit(code=1)
+    run_path = Path(run_dir)
+    backend_jobs_root = Path(jobs_root) if jobs_root else run_path / "backend_jobs"
+    ok, detail = backends.backend_preflight(backend, backend_jobs_root)
+    if not ok:
+        console.print(f"[red]{backend} backend preflight failed: {detail}[/red]")
+        raise typer.Exit(code=1)
+    if backend != "openscad":
+        console.print(f"[dim]backend={backend}: {detail}[/dim]")
 
     model_ids = _split_csv(models)
     instrument_ids = _split_csv(instruments)
@@ -230,7 +240,6 @@ def arena_run(
         raise typer.Exit(code=1)
 
     registry_payload = arena_runner.load_arena_registry(Path(registry))
-    run_path = Path(run_dir)
     run_path.mkdir(parents=True, exist_ok=True)
 
     model_providers = {}
@@ -260,9 +269,14 @@ def arena_run(
             else {}
         ),
     )
-    execute = arena_runner.make_execute_trial(
-        registry=registry_payload, run_dir=run_path, generators=generators
+    compiler = backends.compiler_for_backend(backend, jobs_root=backend_jobs_root)
+    gate_factory = backends.gate_factory_for_backend(backend)
+    execute_kwargs = dict(
+        registry=registry_payload, run_dir=run_path, generators=generators, compiler=compiler
     )
+    if gate_factory is not None:
+        execute_kwargs["gate_factory"] = gate_factory
+    execute = arena_runner.make_execute_trial(**execute_kwargs)
     total = len(instrument_ids) * len(seed_values) * reps * len(model_ids)
     console.print(
         f"arena matrix: {len(instrument_ids)} instruments x {len(seed_values)} seeds "
@@ -525,6 +539,8 @@ def arena_ingest_candidate(
         seed: int = typer.Option(0, "--seed"),
         rep: int = typer.Option(0, "--rep"),
         registry: str = typer.Option(DEFAULT_REGISTRY, help="Arena registry JSON path."),
+        backend: str = typer.Option("openscad", "--backend", help="CAD compile backend when compiling live source: openscad | fusion | solidworks (#627)."),
+        jobs_root: Optional[str] = typer.Option(None, "--jobs-root", help="Job-dir root for Windows-side backends (default <run-dir>/backend_jobs)."),
         cost_usd: Optional[float] = typer.Option(None, "--cost-usd", help="Generation cost recorded in provenance."),
         source_image: Optional[str] = typer.Option(None, "--source-image", help="Inspiration image recorded in provenance.")):
     """Ingest an externally-generated candidate (CADAM, SolidWorks, ...) into a run (#616)."""
@@ -532,26 +548,44 @@ def arena_ingest_candidate(
     run_path = Path(run_dir)
     if not (run_path / "run_log.json").exists():
         raise typer.BadParameter(f"no run log at {run_path / 'run_log.json'}")
+    if backend not in backends.known_backends():
+        console.print(f"[red]unknown --backend {backend!r}; expected one of {backends.known_backends()}[/red]")
+        raise typer.Exit(code=1)
+    backend_jobs_root = Path(jobs_root) if jobs_root else run_path / "backend_jobs"
+    # A pre-exported STL skips compilation entirely, so only preflight a live
+    # (source-compiled) non-openscad backend.
+    if backend != "openscad" and not stl:
+        ok, detail = backends.backend_preflight(backend, backend_jobs_root)
+        if not ok:
+            console.print(f"[red]{backend} backend preflight failed: {detail}[/red]")
+            raise typer.Exit(code=1)
+        console.print(f"[dim]backend={backend}: {detail}[/dim]")
     registry_payload = arena_runner.load_arena_registry(Path(registry))
     extra = {}
     if cost_usd is not None:
         extra["cost_usd"] = cost_usd
     if source_image:
         extra["source_image"] = source_image
+    compiler = backends.compiler_for_backend(backend, jobs_root=backend_jobs_root)
+    gate_factory = backends.gate_factory_for_backend(backend)
+    ingest_kwargs = dict(
+        run_log_path=run_path / "run_log.json",
+        registry=registry_payload,
+        instrument_id=instrument,
+        model_id=entrant,
+        scad_path=Path(scad),
+        run_dir=run_path,
+        seed=seed,
+        rep=rep,
+        stl_path=Path(stl) if stl else None,
+        png_path=Path(png) if png else None,
+        provenance_extra=extra,
+        compiler=compiler,
+    )
+    if gate_factory is not None:
+        ingest_kwargs["gate_factory"] = gate_factory
     try:
-        entry = arena_runner.ingest_candidate(
-            run_log_path=run_path / "run_log.json",
-            registry=registry_payload,
-            instrument_id=instrument,
-            model_id=entrant,
-            scad_path=Path(scad),
-            run_dir=run_path,
-            seed=seed,
-            rep=rep,
-            stl_path=Path(stl) if stl else None,
-            png_path=Path(png) if png else None,
-            provenance_extra=extra,
-        )
+        entry = arena_runner.ingest_candidate(**ingest_kwargs)
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1)
