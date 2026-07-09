@@ -44,6 +44,7 @@
         <a href="#tasks">Tasks</a>
         <a href="#covers">Covers</a>
         <a href="#delta-dossier">Regressions</a>
+        <a href="#arena">Arena</a>
         <a href="#ecosystem">Ecosystem</a>
         <a href="opportunity-matrix.html">Matrix</a>
         <a href="inspect.html">Inspect</a>
@@ -334,6 +335,31 @@
         No repeated stack runs to compare yet. Submit a second revision of a
         stack on an identical task/track/seed and its before/after delta appears
         here.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================= CODE-CAD ARENA ================= -->
+  <!-- Reads the opt-in top-level `arena` payload from data/leaderboard.json
+       (only present when site/build_data.py is run with --runs-dir). The two
+       scorelines are rendered as SEPARATE tables and are NEVER blended; the
+       Spearman rho is a standalone stat. Single-voter Elo is badged directional.
+       The section stays hidden until a published arena payload loads. -->
+  <section id="arena" hidden>
+    <div class="wrap">
+      <div class="eyebrow">Blind preference vs. objective DFM</div>
+      <h2>Code-CAD Arena</h2>
+      <p class="lede">
+        The arena scores generated CAD two ways at once and
+        <strong>keeps them separate</strong>: subjective blind-vote Elo and
+        objective render/DFM mesh pass-rate. They are never blended into one
+        number — when the rankings disagree, that disagreement is evidence, not a
+        defect. Rank agreement is reported as a Spearman <em>ρ</em>.
+      </p>
+      <div id="arena-runs"></div>
+      <p class="muted-note" id="arena-empty" hidden>
+        No published arena run yet. Multi-voter runs appear here once ingested
+        with <code>site/build_data.py --runs-dir runs/</code>.
       </p>
     </div>
   </section>

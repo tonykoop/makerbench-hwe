@@ -1271,6 +1271,84 @@
     }).join("");
   }
 
+  // ---- Code-CAD Arena scorelines (#591) -----------------------------------
+  // Reads the opt-in DATA.arena payload. Renders the two scorelines as SEPARATE
+  // tables (subjective Elo, objective pass-rate) plus a standalone Spearman rho
+  // — never a blended/composite score. Single-voter Elo is badged "directional"
+  // and its ranks are withheld from being presented as an official ranking. The
+  // whole section stays hidden unless a published arena payload is present.
+  function arenaNum(value, digits) {
+    if (value == null || value === "") return "–";
+    var n = Number(value);
+    if (isNaN(n)) return "–";
+    return n.toFixed(digits == null ? 2 : digits);
+  }
+
+  function arenaEloTable(run) {
+    var directional = !!run.directional;
+    var rows = (run.subjective_elo || []).map(function (r) {
+      var rank = directional ? "—" : escapeHTML(String(r.rank == null ? "–" : r.rank));
+      return "<tr><td class=\"mono\">" + escapeHTML(String(r.entrant)) + "</td>" +
+        "<td class=\"num\">" + arenaNum(r.rating, 1) + "</td>" +
+        "<td class=\"num\">" + rank + "</td>" +
+        "<td class=\"num\">" + escapeHTML(String(r.games || 0)) + "</td></tr>";
+    }).join("");
+    var badge = directional
+      ? "<span class=\"arena-badge arena-badge-warn\" title=\"" +
+        escapeHTML(run.withheld_reason || "Single-voter Elo is directional.") +
+        "\">directional · single-voter</span>"
+      : "<span class=\"arena-badge\">" + escapeHTML(String(run.voters)) + " voters · " +
+        escapeHTML(String(run.votes)) + " votes</span>";
+    return "<div class=\"arena-scoreline\"><h4>Subjective — blind-vote Elo " + badge + "</h4>" +
+      "<table><thead><tr><th>Entrant</th><th class=\"num\">Elo</th>" +
+      "<th class=\"num\">Rank</th><th class=\"num\">Votes</th></tr></thead>" +
+      "<tbody>" + rows + "</tbody></table></div>";
+  }
+
+  function arenaObjectiveTable(run) {
+    var rows = (run.objective_pass_rate || []).map(function (r) {
+      return "<tr><td class=\"mono\">" + escapeHTML(String(r.entrant)) + "</td>" +
+        "<td class=\"num\">" + arenaNum(r.objective_pass_rate, 2) + "</td>" +
+        "<td class=\"num\">" + escapeHTML(String(r.n_objective_trials || 0)) + "</td></tr>";
+    }).join("");
+    return "<div class=\"arena-scoreline\"><h4>Objective — render / DFM pass-rate</h4>" +
+      "<table><thead><tr><th>Entrant</th><th class=\"num\">Pass-rate</th>" +
+      "<th class=\"num\">Trials</th></tr></thead>" +
+      "<tbody>" + rows + "</tbody></table></div>";
+  }
+
+  function arenaRunCard(run) {
+    var ag = run.agreement || {};
+    var rho = ag.rho == null ? "n/a" : arenaNum(ag.rho, 3);
+    var interp = ag.interpretation ? " · " + escapeHTML(String(ag.interpretation).replace(/_/g, " ")) : "";
+    var prov = run.provenance || {};
+    return "<article class=\"arena-card\">" +
+      "<div class=\"arena-head\"><h3 class=\"mono\">" + escapeHTML(String(run.run_id)) + "</h3>" +
+      "<span class=\"arena-meta\">" + escapeHTML(String(prov.matrix || "")) + "</span></div>" +
+      "<div class=\"arena-tables\">" + arenaEloTable(run) + arenaObjectiveTable(run) + "</div>" +
+      "<p class=\"arena-rho\">Rank agreement (Spearman ρ): <strong>" + rho + "</strong>" + interp +
+      " — the two scorelines are reported separately and never blended.</p>" +
+      "</article>";
+  }
+
+  function renderArena() {
+    var section = document.getElementById("arena");
+    var host = document.getElementById("arena-runs");
+    var empty = document.getElementById("arena-empty");
+    if (!section || !host) return;
+    var data = DATA.arena || null;
+    var runs = data && data.runs ? data.runs : [];
+    if (!runs.length) {
+      host.innerHTML = "";
+      if (empty) empty.hidden = false;
+      section.hidden = true;  // nothing published → stay hidden
+      return;
+    }
+    if (empty) empty.hidden = true;
+    host.innerHTML = runs.map(arenaRunCard).join("");
+    section.hidden = false;
+  }
+
   // ---- ecosystem: the repo family (mb#170) --------------------------------
   // Themeable + responsive: the SVG carries no hard-coded colors — every fill
   // and stroke is a CSS class resolved against the [data-theme] tokens, so the
@@ -1571,6 +1649,7 @@
     renderTrackExplainer();
     renderExtended();
     renderDeltaDossier();
+    renderArena();
     renderEcosystem();
     renderRoadmap();
     renderCitation();

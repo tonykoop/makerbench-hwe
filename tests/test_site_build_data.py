@@ -2543,3 +2543,139 @@ def test_compare_site_pages_detects_changed_missing_and_extra(tmp_path):
     assert "site/models/m1/index.html" in report.changed
     assert "site/tasks/t_new/index.html" in report.missing
     assert "site/tasks/t_stale/index.html" in report.extra
+
+
+# --- Code-CAD Arena scorelines on the site (#591) --------------------------
+
+def _write_arena_run(run_dir, *, model_ids, objective, votes):
+    """Write a synthetic arena run dir (run_log.json + votes.revealed.jsonl).
+
+    ``objective`` maps model_id -> objective_pass_rate for one scored trial each.
+    ``votes`` is a list of (winner, voter_id, left_model, right_model) tuples.
+    """
+    run_dir.mkdir(parents=True, exist_ok=True)
+    trials = []
+    for model_id, rate in objective.items():
+        trials.append({
+            "model_id": model_id, "instrument_id": "flute", "seed": 0, "rep": 0,
+            "status": "scored",
+            "result": {"objective": {"objective_pass_rate": rate, "sub_scores": {}}},
+        })
+    run_log = {
+        "schema": "makerbench-code-cad-arena-run-v1",
+        "config": {"model_ids": list(model_ids), "instrument_ids": ["flute"],
+                   "seeds": [0], "reps": 1},
+        "trials": trials,
+    }
+    (run_dir / "run_log.json").write_text(json.dumps(run_log), encoding="utf-8")
+    lines = []
+    for i, (winner, voter, left, right) in enumerate(votes):
+        lines.append(json.dumps({
+            "winner": winner, "instrument_id": "flute", "seed": i, "voter_id": voter,
+            "reveal": {"left": {"model_id": left}, "right": {"model_id": right}},
+        }))
+    (run_dir / "votes.revealed.jsonl").write_text("\n".join(lines), encoding="utf-8")
+
+
+def _no_blended_score(entry):
+    """No composite/blended score field anywhere in an arena run entry."""
+    banned = ("blended", "composite", "combined_score", "overall_score",
+              "aggregate_score", "final_score", "total_score")
+    def walk(obj):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                assert not any(b in str(k).lower() for b in banned), f"blended key: {k}"
+                walk(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                walk(v)
+    walk(entry)
+
+
+def test_arena_section_keeps_two_scorelines_separate_and_gates_single_voter(tmp_path):
+    if build_data._load_run_payloads() is None:
+        pytest.skip("arena aggregation deps unavailable")
+    runs_dir = tmp_path / "runs" / "code_cad_arena"
+    # Multi-voter run: two distinct voters -> Elo is a population claim.
+    _write_arena_run(
+        runs_dir / "run-multi",
+        model_ids=["alpha", "beta"],
+        objective={"alpha": 1.0, "beta": 0.5},
+        votes=[("left", "v1", "alpha", "beta"), ("left", "v2", "alpha", "beta")],
+    )
+    # Single-voter run: one voter only -> directional, Elo withheld from ranking.
+    _write_arena_run(
+        runs_dir / "run-single",
+        model_ids=["alpha", "beta"],
+        objective={"alpha": 0.75, "beta": 0.25},
+        votes=[("left", "solo", "alpha", "beta")],
+    )
+
+    section = build_data.build_arena_section(runs_dir)
+    assert section is not None
+    assert section["schema"] == "makerbench-site-arena-v1"
+    runs = {r["run_id"]: r for r in section["runs"]}
+    assert set(runs) == {"run-multi", "run-single"}
+
+    for entry in section["runs"]:
+        # Two SEPARATE scorelines are both present, as distinct arrays.
+        assert entry["subjective_elo"] and entry["objective_pass_rate"]
+        assert "subjective_elo" in entry and "objective_pass_rate" in entry
+        # rho is carried as its own statistic.
+        assert "rho" in entry["agreement"]
+        # And nothing blends them into a single composite score.
+        _no_blended_score(entry)
+
+    multi = runs["run-multi"]
+    assert multi["voters"] == 2
+    assert multi["directional"] is False
+    assert multi["elo_published"] is True
+    assert multi["withheld_reason"] is None
+    assert multi["agreement"]["rho"] is not None
+
+    single = runs["run-single"]
+    assert single["voters"] == 1
+    assert single["directional"] is True          # single-voter gate
+    assert single["elo_published"] is False        # Elo withheld from ranking
+    assert single["withheld_reason"]               # badged with a reason
+
+
+def test_arena_section_absent_without_runs_dir(tmp_path):
+    """Backward compatible: no --runs-dir -> no `arena` key in the payload."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    _write_multi_seed_run(results_dir / "run.json", "m", [4, 3])
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    payload = build_data.build_payload(results_dir, registry)
+    assert "arena" not in payload
+
+    if build_data._load_run_payloads() is None:
+        pytest.skip("arena aggregation deps unavailable")
+    runs_dir = tmp_path / "runs" / "code_cad_arena"
+    _write_arena_run(
+        runs_dir / "run-multi",
+        model_ids=["alpha", "beta"],
+        objective={"alpha": 1.0, "beta": 0.5},
+        votes=[("left", "v1", "alpha", "beta"), ("left", "v2", "alpha", "beta")],
+    )
+    payload2 = build_data.build_payload(results_dir, registry, runs_dir=runs_dir)
+    assert "arena" in payload2
+    assert [r["run_id"] for r in payload2["arena"]["runs"]] == ["run-multi"]
+
+
+def test_arena_section_skips_run_with_broken_provenance(tmp_path):
+    if build_data._load_run_payloads() is None:
+        pytest.skip("arena aggregation deps unavailable")
+    runs_dir = tmp_path / "runs" / "code_cad_arena"
+    run_dir = runs_dir / "run-noprov"
+    run_dir.mkdir(parents=True)
+    # No config.model_ids -> provenance broken -> run skipped entirely.
+    (run_dir / "run_log.json").write_text(json.dumps({
+        "schema": "makerbench-code-cad-arena-run-v1",
+        "config": {}, "trials": [],
+    }), encoding="utf-8")
+    (run_dir / "votes.revealed.jsonl").write_text("", encoding="utf-8")
+
+    assert build_data.build_arena_section(runs_dir) is None
