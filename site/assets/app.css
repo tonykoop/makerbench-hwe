@@ -276,6 +276,22 @@ table.lb tbody tr:hover td.model-col { background: var(--bg-soft); }
 .dd-chip.is-bad .dd-chip-arrow { color: var(--bad); }
 .dd-chip.is-flat .dd-chip-arrow { color: var(--text-faint); }
 
+/* ---- Code-CAD Arena scorelines (#591) ---- */
+/* Two scorelines rendered side by side; never a blended column. */
+.arena-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elev); padding: 16px 18px; box-shadow: var(--shadow); margin-bottom: 16px; }
+.arena-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.arena-head h3 { margin: 0; font-size: 0.95rem; }
+.arena-meta { color: var(--text-soft); font-size: 0.82rem; }
+.arena-tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+.arena-scoreline h4 { margin: 0 0 8px; font-size: 0.85rem; color: var(--text-soft); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.arena-scoreline table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+.arena-scoreline th, .arena-scoreline td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.arena-scoreline th { color: var(--text-soft); font-weight: 600; font-size: 0.75rem; }
+.arena-scoreline td.num, .arena-scoreline th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.arena-badge { border-radius: 999px; padding: 1px 8px; font-size: 0.68rem; font-weight: 600; border: 1px solid var(--border-strong); color: var(--text-soft); }
+.arena-badge-warn { border-color: color-mix(in srgb, var(--mid) 55%, transparent); background: color-mix(in srgb, var(--mid) 14%, transparent); color: var(--text); }
+.arena-rho { margin: 12px 0 0; font-size: 0.82rem; color: var(--text-soft); }
+
 /* ---- ecosystem: the repo family (mb#170) ---- */
 /* The SVG uses only theme-token classes, so it re-themes with no JS re-render. */
 .eco-map { margin: 0 0 18px; }
