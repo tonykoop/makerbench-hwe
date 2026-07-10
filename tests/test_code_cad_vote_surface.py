@@ -143,3 +143,34 @@ class TestModel3dVoteSurface:
         assert record["left"]["model3d_path"].endswith(".glb")
         revealed = vote.reveal_vote(pair, record)
         assert revealed["reveal"]["left"]["model3d_path"].endswith(".glb")
+
+    def _pair_with_frames(self):
+        lframes = tuple(f"blind/pair-x-left-f{i:02d}.png" for i in range(16))
+        rframes = tuple(f"blind/pair-x-right-f{i:02d}.png" for i in range(16))
+        left = vote.VoteCandidate(
+            candidate_id="a", model_id="opus", trial_id="lyre-s0-a",
+            render_path=lframes[0], model3d_path="blind/pair-x-left.glb",
+            frames=lframes,
+        )
+        right = vote.VoteCandidate(
+            candidate_id="b", model_id="glm", trial_id="lyre-s0-b",
+            render_path=rframes[0], frames=rframes,
+        )
+        return vote.build_blind_pair(left, right, pair_seed="lyre")
+
+    def test_frames_render_webgl_free_turntable_not_model_viewer(self):
+        html = vote.render_vote_surface(self._pair_with_frames())
+        # both candidates use the turntable (frames win over GLB)
+        assert html.count('class="turntable"') == 2
+        assert "data-frames=" in html
+        assert vote.TURNTABLE_JS.strip()[:20] in html
+        # no WebGL viewer: left had a GLB but frames take precedence, right had none
+        assert "<model-viewer" not in html
+        assert vote.MODEL_VIEWER_CDN not in html
+
+    def test_frames_ride_blind_and_revealed_records(self):
+        pair = self._pair_with_frames()
+        record = vote.record_vote(pair, winner="left", voter_id="tony")
+        assert len(record["left"]["frames"]) == 16
+        revealed = vote.reveal_vote(pair, record)
+        assert len(revealed["reveal"]["left"]["frames"]) == 16
