@@ -218,13 +218,16 @@ def _stage_blind_assets(
 
 
 def _stage_turntable_frames(
-    stl_path: Path, pair_hint: str, side: str, vote_pages: Path, frames: int = 16
+    stl_path: Path, pair_hint: str, side: str, vote_pages: Path,
+    frames: int = 24, size: tuple[int, int] = (720, 720),
 ) -> Optional[tuple[str, ...]]:
     """Render (cached) turntable frames for a mesh, then blind-alias them.
 
-    Frames render once into ``vote_pages/frames_cache/<stl-hash>/`` (survives
+    Frames render once into ``vote_pages/frames_cache/<key>/`` (survives
     relaunches); blind aliases under ``blind/<pair>-<side>-fNN.png`` keep the
-    entrant name out of every served path.
+    entrant name out of every served path. The cache key includes frame count
+    and resolution, so bumping either re-renders instead of serving stale
+    low-res frames.
     """
     import hashlib
     import shutil
@@ -234,12 +237,15 @@ def _stage_turntable_frames(
     stl_path = stl_path.resolve()
     if not stl_path.is_file():
         return None
-    key = hashlib.sha256(stl_path.as_posix().encode("utf-8")).hexdigest()[:16]
+    key_src = f"{stl_path.as_posix()}:{frames}:{size[0]}x{size[1]}"
+    key = hashlib.sha256(key_src.encode("utf-8")).hexdigest()[:16]
     cache_dir = vote_pages / "frames_cache" / key
     have = sorted(cache_dir.glob("frame_*.png")) if cache_dir.exists() else []
     if len(have) < frames:
         cache_dir.mkdir(parents=True, exist_ok=True)
-        render_mod.render_turntable(stl_path.as_posix(), cache_dir.as_posix(), frames=frames)
+        render_mod.render_turntable(
+            stl_path.as_posix(), cache_dir.as_posix(), frames=frames, size=size
+        )
         have = sorted(cache_dir.glob("frame_*.png"))
     if not have:
         return None

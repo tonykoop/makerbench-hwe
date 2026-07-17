@@ -174,3 +174,26 @@ class TestModel3dVoteSurface:
         assert len(record["left"]["frames"]) == 16
         revealed = vote.reveal_vote(pair, record)
         assert len(revealed["reveal"]["left"]["frames"]) == 16
+
+    def test_turntable_page_has_spin_toggle_and_pause_logic(self):
+        html = vote.render_vote_surface(self._pair_with_frames())
+        # a spin toggle control, distinct from the vote buttons
+        assert 'id="spin-toggle"' in html
+        assert 'data-role="spin"' in html
+        assert 'data-vote=' not in html.split('id="spin-toggle"')[1][:60]
+        # pause/play logic is wired in the turntable script
+        assert "Pause spin" in html
+        assert "aria-pressed" in html
+
+    def test_no_frames_no_spin_toggle(self):
+        pair = vote.build_blind_pair(
+            _candidate("a", "gpt-5.5"), _candidate("b", "sonnet"), pair_seed="lyre"
+        )
+        html = vote.render_vote_surface(pair)
+        assert "spin-toggle" not in html          # nothing to spin
+
+    def test_surface_is_responsive(self):
+        html = vote.render_vote_surface(self._pair_with_frames())
+        # narrow screens stack the pair into one column
+        assert "@media (max-width: 720px)" in html
+        assert "grid-template-columns: 1fr" in html

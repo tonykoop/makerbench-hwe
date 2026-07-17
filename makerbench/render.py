@@ -106,7 +106,7 @@ def render_png(source: str, out_path: str, *,
 
 
 def render_turntable(mesh_path: str, out_dir: str, *, frames: int = 24,
-                     size: tuple[int, int] = (480, 480), elevation: float = 60.0,
+                     size: tuple[int, int] = (720, 720), elevation: float = 60.0,
                      timeout: int = 120) -> list[str]:
     """Render a WebGL-free turntable: N azimuth PNGs of an existing mesh.
 
