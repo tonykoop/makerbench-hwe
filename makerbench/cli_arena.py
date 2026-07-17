@@ -9,6 +9,7 @@ gitignored run directory (``runs/code_cad_arena/<run_id>/`` by convention).
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -21,8 +22,10 @@ from . import code_cad_export as arena_export
 from . import code_cad_providers as providers
 from . import code_cad_arena_runner as arena_runner
 from . import fusion_backend
+from . import live_cad_runner
 from . import render
 from . import solidworks_backend
+from .live_cad_runner import LIVE_BACKENDS, LiveCadConfig, make_live_execute_trial
 from .code_cad_agreement import build_agreement_summary, render_markdown_summary
 from .code_cad_arena import build_elo_leaderboard, sample_swiss_pairs
 from .code_cad_orchestrator import OrchestrationConfig, run_orchestration
@@ -292,13 +295,16 @@ def arena_run(
         backend: str = typer.Option(
             "openscad",
             "--backend",
-            help="CAD-backend axis (#601/#627): 'openscad', 'blender', 'solidworks', or 'fusion'.",
+            help="CAD-backend axis (#601/#627): 'openscad', 'blender', 'solidworks', 'fusion', or the agentic live tiers 'solidworks-live'/'fusion-live'.",
         ),
+        driver_model: str = typer.Option("gpt-5.6-sol", "--driver-model", help="Live backends only: the codex driver model each entrant agent uses."),
         stub: bool = typer.Option(False, "--stub", help="Swap every entrant for the zero-token stub generator (smoke runs).")):
     """Run (or resume) the 4D arena matrix and write the objective scoreline."""
 
-    if backend not in arena_runner.BACKEND_COMPILERS:
-        console.print(f"[red]unknown --backend '{backend}'; choose one of {sorted(arena_runner.BACKEND_COMPILERS)}[/red]")
+    is_live = backend in LIVE_BACKENDS
+    if not is_live and backend not in arena_runner.BACKEND_COMPILERS:
+        choices = sorted(arena_runner.BACKEND_COMPILERS) + list(LIVE_BACKENDS)
+        console.print(f"[red]unknown --backend '{backend}'; choose one of {choices}[/red]")
         raise typer.Exit(code=1)
     if backend == "openscad" and not render.openscad_available():
         console.print("[red]openscad binary not found — objective scoring needs it.[/red]")
@@ -323,6 +329,31 @@ def arena_run(
         )
         raise typer.Exit(code=1)
 
+    live_config: Optional[LiveCadConfig] = None
+    if is_live:
+        connector = "hwe-fusion" if backend == "fusion-live" else "hwe-solidworks"
+        default_port = "8766" if backend == "fusion-live" else "8767"
+        live_env = {
+            k: v for k, v in {
+                "HWE_SW_TOKEN": os.environ.get("HWE_SW_TOKEN", ""),
+                "HWE_SW_HOST": os.environ.get("HWE_SW_HOST", "127.0.0.1"),
+                "HWE_SW_PORT": os.environ.get("HWE_SW_PORT", default_port),
+                "HWE_FUSION_TOKEN": os.environ.get("HWE_FUSION_TOKEN", ""),
+            }.items() if v
+        }
+        live_config = LiveCadConfig(
+            backend=backend, driver_model=driver_model, connector=connector,
+            images_root=Path(instruments_root) if instruments_root else None,
+            env=live_env,
+        )
+        if not live_cad_runner.connector_available(live_config):
+            console.print(
+                f"[red]{connector} adapter is not reachable/ready (authenticated "
+                f"/ping failed). Start the bridge and export HWE_SW_TOKEN/HOST/PORT "
+                f"before a live run — see the connector handoff.[/red]"
+            )
+            raise typer.Exit(code=1)
+
     from .code_cad_context_staging import CONTEXT_TIERS
 
     if context_tier not in CONTEXT_TIERS:
@@ -337,10 +368,11 @@ def arena_run(
     seed_values = tuple(int(s) for s in _split_csv(seeds))
     mapping = _load_model_map(model_map)
 
-    missing = providers.preflight_binaries(list(model_ids), model_map=mapping, stub=stub)
-    if missing:
-        console.print("[red]missing entrant CLIs:[/red] " + ", ".join(missing))
-        raise typer.Exit(code=1)
+    if not is_live:
+        missing = providers.preflight_binaries(list(model_ids), model_map=mapping, stub=stub)
+        if missing:
+            console.print("[red]missing entrant CLIs:[/red] " + ", ".join(missing))
+            raise typer.Exit(code=1)
 
     registry_payload = arena_runner.load_arena_registry(Path(registry))
     run_path = Path(run_dir)
@@ -348,12 +380,17 @@ def arena_run(
 
     model_providers = {}
     for model_id in model_ids:
+        if is_live:
+            # every live entrant shares the single CAD seat; one provider key so
+            # the (serial) orchestrator + any rate-limit treat them as one lane.
+            model_providers[model_id] = backend
+            continue
         overrides = dict((mapping or {}).get(model_id) or {})
         model_providers[model_id] = (
             "stub" if stub
             else str(overrides.get("provider") or providers.provider_for_model_id(model_id))
         )
-    generators = {
+    generators = {} if is_live else {
         model_id: providers.resolve_generator(
             model_id, model_map=mapping, stub=stub, timeout_s=timeout_s, backend=backend
         )
@@ -374,14 +411,22 @@ def arena_run(
         ),
         backend=backend,
     )
-    execute = arena_runner.make_execute_trial(
-        registry=registry_payload,
-        run_dir=run_path,
-        generators=generators,
-        compiler=arena_runner.compiler_for_backend(backend),
-        context_tier=context_tier,
-        instruments_root=Path(instruments_root) if instruments_root else None,
-    )
+    if is_live:
+        assert live_config is not None
+        execute = make_live_execute_trial(
+            registry=registry_payload,
+            run_dir=run_path,
+            config=live_config,
+        )
+    else:
+        execute = arena_runner.make_execute_trial(
+            registry=registry_payload,
+            run_dir=run_path,
+            generators=generators,
+            compiler=arena_runner.compiler_for_backend(backend),
+            context_tier=context_tier,
+            instruments_root=Path(instruments_root) if instruments_root else None,
+        )
     total = len(instrument_ids) * len(seed_values) * reps * len(model_ids)
     tier_note = f" (context tier: {context_tier})" if context_tier != "blind" else ""
     console.print(
