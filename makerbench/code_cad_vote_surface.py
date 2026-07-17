@@ -93,6 +93,8 @@ MODEL_VIEWER_CDN = "/model-viewer.min.js"
 TURNTABLE_JS = """
 <script>
 (function () {
+  var paused = false;          // page-wide auto-spin state (toggled by the button)
+  var rigs = [];               // per-turntable { start, stop }
   document.querySelectorAll('.turntable').forEach(function (el) {
     var frames = (el.dataset.frames || '').split(',').filter(Boolean);
     if (frames.length < 2) return;
@@ -105,6 +107,7 @@ TURNTABLE_JS = """
       img.src = frames[idx];
     }
     function startAuto() {
+      if (paused) return;      // honor the page-wide pause
       stopAuto();
       auto = setInterval(function () { show(idx + 1); }, 110);
     }
@@ -129,8 +132,18 @@ TURNTABLE_JS = """
     el.addEventListener('pointerup', endDrag);
     el.addEventListener('pointercancel', endDrag);
     el.addEventListener('pointerleave', endDrag);
+    rigs.push({ start: startAuto, stop: stopAuto });
     startAuto();
   });
+  var toggle = document.getElementById('spin-toggle');
+  if (toggle) {
+    toggle.addEventListener('click', function () {
+      paused = !paused;
+      toggle.setAttribute('aria-pressed', paused ? 'true' : 'false');
+      toggle.textContent = paused ? '▶ Play spin' : '⏸ Pause spin';
+      rigs.forEach(function (r) { paused ? r.stop() : r.start(); });
+    });
+  }
 })();
 </script>
 """
@@ -205,6 +218,13 @@ def render_vote_surface(pair: BlindPair) -> str:
         else ""
     )
     turntable_script = TURNTABLE_JS if has_frames else ""
+    # Spin toggle only makes sense when there are turntables to spin.
+    spin_button = (
+        '\n      <button type="button" data-role="spin" id="spin-toggle" '
+        'aria-pressed="false">⏸ Pause spin</button>'
+        if has_frames
+        else ""
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -215,6 +235,9 @@ def render_vote_surface(pair: BlindPair) -> str:
     body {{ font-family: system-ui, sans-serif; margin: 0; background: #f7f7f2; color: #17211b; }}
     main {{ max-width: 1180px; margin: 0 auto; padding: 24px; }}
     .grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }}
+    /* Narrow screens: stack the two candidates so neither shrinks to a
+       postage stamp. Below 720px a side-by-side pair is unusable for CAD. */
+    @media (max-width: 720px) {{ .grid {{ grid-template-columns: 1fr; }} }}
     figure {{ margin: 0; border: 1px solid #c8c8bd; background: white; }}
     figcaption {{ padding: 10px 12px; font-weight: 700; }}
     img {{ display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: contain;
@@ -225,9 +248,12 @@ def render_vote_surface(pair: BlindPair) -> str:
       cursor: grab; touch-action: pan-y; user-select: none; position: relative; }}
     .turntable.dragging {{ cursor: grabbing; }}
     .turntable img {{ aspect-ratio: 4 / 3; pointer-events: none; }}
-    .controls {{ display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }}
+    .controls {{ display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap;
+      align-items: center; }}
     button {{ min-height: 40px; padding: 8px 14px; border: 1px solid #17211b;
       background: #17211b; color: white; }}
+    /* the spin toggle is a viewer control, not a vote — set it apart */
+    button[data-role="spin"] {{ background: white; color: #17211b; margin-left: auto; }}
   </style>
 </head>
 <body>
@@ -239,7 +265,7 @@ def render_vote_surface(pair: BlindPair) -> str:
     <section class="controls" aria-label="Vote controls">
       <button data-vote="left">Left</button>
       <button data-vote="draw">Draw</button>
-      <button data-vote="right">Right</button>
+      <button data-vote="right">Right</button>{spin_button}
     </section>
   </main>{turntable_script}
 </body>
