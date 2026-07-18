@@ -26,6 +26,11 @@ from . import live_cad_runner
 from . import render
 from . import solidworks_backend
 from .live_cad_runner import LIVE_BACKENDS, LiveCadConfig, make_live_execute_trial
+from .parametric_backend import (
+    PARAMETRIC_BACKEND,
+    make_parametric_execute_trial,
+    unavailable_instruments,
+)
 from .code_cad_agreement import build_agreement_summary, render_markdown_summary
 from .code_cad_arena import build_elo_leaderboard, sample_swiss_pairs
 from .code_cad_orchestrator import OrchestrationConfig, run_orchestration
@@ -302,8 +307,10 @@ def arena_run(
     """Run (or resume) the 4D arena matrix and write the objective scoreline."""
 
     is_live = backend in LIVE_BACKENDS
-    if not is_live and backend not in arena_runner.BACKEND_COMPILERS:
-        choices = sorted(arena_runner.BACKEND_COMPILERS) + list(LIVE_BACKENDS)
+    is_parametric = backend == PARAMETRIC_BACKEND
+    if not is_live and not is_parametric and backend not in arena_runner.BACKEND_COMPILERS:
+        choices = (sorted(arena_runner.BACKEND_COMPILERS) + list(LIVE_BACKENDS)
+                   + [PARAMETRIC_BACKEND])
         console.print(f"[red]unknown --backend '{backend}'; choose one of {choices}[/red]")
         raise typer.Exit(code=1)
     if backend == "openscad" and not render.openscad_available():
@@ -370,21 +377,30 @@ def arena_run(
     seed_values = tuple(int(s) for s in _split_csv(seeds))
     mapping = _load_model_map(model_map)
 
-    if not is_live:
+    if not is_live and not is_parametric:
         missing = providers.preflight_binaries(list(model_ids), model_map=mapping, stub=stub)
         if missing:
             console.print("[red]missing entrant CLIs:[/red] " + ", ".join(missing))
             raise typer.Exit(code=1)
 
     registry_payload = arena_runner.load_arena_registry(Path(registry))
+    if is_parametric:
+        no_gen = unavailable_instruments(registry_payload, instrument_ids)
+        if no_gen:
+            console.print(
+                "[red]no parametric generator for:[/red] " + ", ".join(no_gen)
+                + " — register one in makerbench/parametric_generators/."
+            )
+            raise typer.Exit(code=1)
     run_path = Path(run_dir)
     run_path.mkdir(parents=True, exist_ok=True)
 
     model_providers = {}
     for model_id in model_ids:
-        if is_live:
-            # every live entrant shares the single CAD seat; one provider key so
-            # the (serial) orchestrator + any rate-limit treat them as one lane.
+        if is_live or is_parametric:
+            # live entrants share the single CAD seat; parametric entrants are
+            # pure-compute — either way one provider key (the backend) is a fine
+            # single lane for the orchestrator + any rate-limit.
             model_providers[model_id] = backend
             continue
         overrides = dict((mapping or {}).get(model_id) or {})
@@ -392,7 +408,7 @@ def arena_run(
             "stub" if stub
             else str(overrides.get("provider") or providers.provider_for_model_id(model_id))
         )
-    generators = {} if is_live else {
+    generators = {} if (is_live or is_parametric) else {
         model_id: providers.resolve_generator(
             model_id, model_map=mapping, stub=stub, timeout_s=timeout_s, backend=backend
         )
@@ -419,6 +435,11 @@ def arena_run(
             registry=registry_payload,
             run_dir=run_path,
             config=live_config,
+        )
+    elif is_parametric:
+        execute = make_parametric_execute_trial(
+            registry=registry_payload,
+            run_dir=run_path,
         )
     else:
         execute = arena_runner.make_execute_trial(
