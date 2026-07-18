@@ -339,6 +339,8 @@ def arena_run(
                 "HWE_SW_HOST": os.environ.get("HWE_SW_HOST", "127.0.0.1"),
                 "HWE_SW_PORT": os.environ.get("HWE_SW_PORT", default_port),
                 "HWE_FUSION_TOKEN": os.environ.get("HWE_FUSION_TOKEN", ""),
+                "HWE_FUSION_HOST": os.environ.get("HWE_FUSION_HOST", "127.0.0.1"),
+                "HWE_FUSION_PORT": os.environ.get("HWE_FUSION_PORT", default_port),
             }.items() if v
         }
         live_config = LiveCadConfig(
