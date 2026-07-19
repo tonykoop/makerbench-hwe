@@ -912,3 +912,28 @@ def arena_export_winners(
         if row["status"] == "exported":
             console.print(f"  {row['instrument_id']}: {_windows_link(Path(row['dest']))}")
     console.print("[dim]exports are working-tree only — review and commit in each instrument repo yourself[/dim]")
+
+
+@arena_app.command("overnight")
+def arena_overnight(
+        queue: str = typer.Option(..., "--queue", help="Local nightly queue JSON."),
+        output_root: str = typer.Option(..., "--output-root", help="Root for timestamped nightly runs."),
+        registry: str = typer.Option(DEFAULT_REGISTRY, help="Arena registry JSON path."),
+        instruments_root: Optional[str] = typer.Option(None, "--instruments-root"),
+        lease_path: Optional[str] = typer.Option(None, "--lease-path")):
+    """Run or resume one queued overnight instrument experiment."""
+
+    from .nightly_cad import NightlyExecutor
+
+    try:
+        result = NightlyExecutor(
+            queue_path=Path(queue),
+            registry_path=Path(registry),
+            output_root=Path(output_root),
+            instruments_root=Path(instruments_root) if instruments_root else None,
+            lease_path=Path(lease_path) if lease_path else None,
+        ).run()
+    except (RuntimeError, ValueError, OSError) as exc:
+        console.print(f"[red]overnight arena failed: {exc}[/red]")
+        raise typer.Exit(code=1)
+    console.print(json.dumps(result, indent=2, sort_keys=True))
