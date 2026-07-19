@@ -107,6 +107,58 @@ class TestBlenderBackendAxis:
         assert "bpy.ops.mesh.primitive_cube_add" in gen(_request())
 
 
+class TestSolidworksFusionBackendAxis:
+    """CAD-backend axis (#627): SolidWorks VBA / Fusion Python entrants."""
+
+    def test_extract_candidate_reads_vba_fence_for_solidworks(self):
+        text = "notes\n```vba\nSub BuildPart()\n    ' body\nEnd Sub\n```\ntrailer"
+        assert (
+            providers.extract_candidate(text, "solidworks")
+            == "Sub BuildPart()\n    ' body\nEnd Sub"
+        )
+
+    def test_extract_candidate_reads_fusion_python_fence_for_fusion(self):
+        text = "notes\n```fusion-python\ndef build(app, design):\n    pass\n```\ntrailer"
+        assert (
+            providers.extract_candidate(text, "fusion")
+            == "def build(app, design):\n    pass"
+        )
+
+    def test_fusion_python_fence_does_not_collide_with_blender_python_fence(self):
+        # A bare ```python fence (no "fusion-python" label) must still be
+        # extracted correctly for each backend's own regex, and must not
+        # silently cross-match content meant for the other backend when a
+        # backend is explicitly selected.
+        vba_text = "```vba\nSub BuildPart()\nEnd Sub\n```"
+        fusion_text = "```fusion-python\ndef build(app, design):\n    pass\n```"
+        assert providers.extract_candidate(vba_text, "solidworks") == "Sub BuildPart()\nEnd Sub"
+        assert (
+            providers.extract_candidate(fusion_text, "fusion")
+            == "def build(app, design):\n    pass"
+        )
+        # Selecting "blender" on VBA/fusion-python source should not extract
+        # a VBA/Fusion body as if it were a bpy script.
+        assert providers.extract_candidate(vba_text, "blender") != "Sub BuildPart()\nEnd Sub"
+
+    def test_arena_prompt_uses_solidworks_system_and_vba_closing(self):
+        prompt = providers.arena_prompt(_request(), "solidworks")
+        assert "SolidWorks VBA" in prompt
+        assert "```vba block" in prompt
+        assert "OpenSCAD" not in prompt
+
+    def test_arena_prompt_uses_fusion_system_and_fusion_python_closing(self):
+        prompt = providers.arena_prompt(_request(), "fusion")
+        assert "Fusion 360" in prompt
+        assert "```fusion-python block" in prompt
+        assert "OpenSCAD" not in prompt
+
+    def test_backend_system_and_closing_and_fence_all_register_both_backends(self):
+        for backend in ("solidworks", "fusion"):
+            assert backend in providers.BACKEND_SYSTEM
+            assert backend in providers._CLOSING_INSTRUCTION
+            assert backend in providers._FENCE_RE_BY_BACKEND
+
+
 class TestClaudeGenerator:
     def test_parses_json_envelope_and_extracts_scad(self, monkeypatch):
         calls = []
