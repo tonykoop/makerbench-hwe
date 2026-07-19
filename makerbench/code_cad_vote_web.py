@@ -256,6 +256,16 @@ def serve_vote_queue(
 ) -> tuple[ThreadingHTTPServer, int]:
     """Serve the queue on 127.0.0.1 (loopback only, like every arena server)."""
 
+    # Self-host model-viewer so rotatable 3D works offline / behind ad-blockers.
+    try:
+        import shutil
+        from pathlib import Path as _P
+        _vendored = _P(__file__).resolve().parent / "assets" / "model-viewer.min.js"
+        if _vendored.is_file():
+            shutil.copyfile(_vendored, queue.run_dir.resolve() / "model-viewer.min.js")
+    except Exception:
+        pass
+
     handler = partial(
         VoteRequestHandler,
         queue=queue,
