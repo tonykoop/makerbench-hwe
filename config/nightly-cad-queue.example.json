@@ -4,7 +4,7 @@
     {
       "job_id": "sambuca-historical-photo",
       "instrument_id": "sambuca",
-      "reference_image": "C:/Users/Tony/Documents/GitHub/instruments/strings/sambuca/images/SambucaPhotobyDonHitchcock_BritishMuseum.jpg",
+      "reference_image": "/mnt/c/Users/Tony/Documents/GitHub/instruments/strings/sambuca/images/SambucaPhotobyDonHitchcock_BritishMuseum.jpg",
       "seed": 0,
       "budget_usd": 5.0,
       "status": "queued",
