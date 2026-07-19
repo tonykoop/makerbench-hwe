@@ -7,6 +7,7 @@ import itertools
 import json
 import os
 import socket
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -15,7 +16,7 @@ from typing import Callable, Iterator, Mapping, Optional
 
 from . import code_cad_arena_runner as arena_runner
 from . import code_cad_providers as providers
-from .cadam_adapter import CadamClient, CadamConfig
+from .cadam_adapter import CadamClient, CadamConfig, CadamRecoveryRequiredError
 from .code_cad_orchestrator import OrchestrationConfig, run_orchestration
 from .live_cad_runner import LiveCadConfig, connector_available, make_live_execute_trial
 from .run_log_io import atomic_write_json, file_lock
@@ -24,7 +25,6 @@ from .run_log_io import atomic_write_json, file_lock
 SCHEMA = "makerbench-nightly-cad-queue-v1"
 STATE_SCHEMA = "makerbench-nightly-cad-state-v1"
 MORNING_SCHEMA = "makerbench-nightly-cad-morning-v1"
-TERMINAL_JOB_STATES = {"votable", "blocked", "error"}
 
 
 @dataclass(frozen=True)
@@ -121,22 +121,74 @@ class BudgetGuard:
     limit_usd: float
     spent_usd: float = 0.0
     charges: list[dict] = field(default_factory=list)
+    reservations: dict[str, float] = field(default_factory=dict)
+    dispatches: dict[str, dict] = field(default_factory=dict)
+    halted_reason: Optional[str] = None
 
     def reserve(self, entrant: NightlyEntrant) -> None:
+        if self.halted_reason:
+            raise RuntimeError(f"nightly spending halted: {self.halted_reason}")
+        if entrant.entrant_id in self.reservations:
+            return
         if entrant.max_cost_usd > self.remaining_usd:
             raise RuntimeError(
                 f"paid entrant {entrant.entrant_id} maximum ${entrant.max_cost_usd:.2f} "
                 f"exceeds remaining nightly budget ${self.remaining_usd:.2f}"
             )
+        if entrant.max_cost_usd:
+            self.reservations[entrant.entrant_id] = round(entrant.max_cost_usd, 4)
 
-    def charge(self, entrant_id: str, amount_usd: float) -> None:
+    def charge(self, entrant: NightlyEntrant, amount_usd: float) -> Optional[str]:
+        for charge in self.charges:
+            if charge.get("entrant_id") == entrant.entrant_id:
+                return str(charge.get("violation")) if charge.get("violation") else None
         amount = max(0.0, float(amount_usd))
+        self.reservations.pop(entrant.entrant_id, None)
         self.spent_usd = round(self.spent_usd + amount, 4)
-        self.charges.append({"entrant_id": entrant_id, "cost_usd": amount})
+        violation = None
+        if entrant.max_cost_usd and amount > entrant.max_cost_usd:
+            violation = (
+                f"entrant {entrant.entrant_id} actual ${amount:.4f} exceeded its "
+                f"${entrant.max_cost_usd:.4f} ceiling"
+            )
+        if self.spent_usd > self.limit_usd:
+            violation = (
+                f"nightly actual ${self.spent_usd:.4f} exceeded the "
+                f"${self.limit_usd:.4f} budget"
+            )
+        record = {
+            "entrant_id": entrant.entrant_id,
+            "cost_usd": amount,
+            "max_cost_usd": entrant.max_cost_usd,
+        }
+        if violation:
+            record["violation"] = violation
+            self.halted_reason = violation
+        self.charges.append(record)
+        return violation
+
+    def prepare_dispatch(self, job: NightlyJob, entrant: NightlyEntrant) -> dict:
+        existing = self.dispatches.get(entrant.entrant_id)
+        if existing:
+            return existing
+        conversation_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"makerbench:{job.run_id}:{job.job_id}:{entrant.entrant_id}",
+            )
+        )
+        dispatch = {
+            "conversation_id": conversation_id,
+            "status": "prepared",
+            "max_cost_usd": entrant.max_cost_usd,
+        }
+        self.dispatches[entrant.entrant_id] = dispatch
+        return dispatch
 
     @property
     def remaining_usd(self) -> float:
-        return max(0.0, round(self.limit_usd - self.spent_usd, 4))
+        reserved = sum(self.reservations.values())
+        return max(0.0, round(self.limit_usd - self.spent_usd - reserved, 4))
 
 
 def _resume_budget(run_dir: Path, *, limit_usd: float) -> BudgetGuard:
@@ -150,10 +202,30 @@ def _resume_budget(run_dir: Path, *, limit_usd: float) -> BudgetGuard:
     if not isinstance(saved, Mapping):
         return BudgetGuard(limit_usd)
     charges = saved.get("charges")
+    reservations = saved.get("reservations")
+    dispatches = saved.get("dispatches")
     return BudgetGuard(
         limit_usd=limit_usd,
         spent_usd=max(0.0, float(saved.get("spent_usd") or 0.0)),
         charges=[dict(item) for item in charges or [] if isinstance(item, Mapping)],
+        reservations={
+            str(key): float(value)
+            for key, value in (reservations or {}).items()
+        }
+        if isinstance(reservations, Mapping)
+        else {},
+        dispatches={
+            str(key): dict(value)
+            for key, value in (dispatches or {}).items()
+            if isinstance(value, Mapping)
+        }
+        if isinstance(dispatches, Mapping)
+        else {},
+        halted_reason=(
+            str(saved["halted_reason"])
+            if saved.get("halted_reason")
+            else None
+        ),
     )
 
 
@@ -227,6 +299,26 @@ def _has_trial(run_log_path: Path, job: NightlyJob, entrant: NightlyEntrant) -> 
     payload = json.loads(run_log_path.read_text(encoding="utf-8"))
     expected = f"{job.instrument_id}__seed{job.seed}__rep0__{entrant.entrant_id}"
     return any(row.get("trial_id") == expected for row in payload.get("trials") or [])
+
+
+def _trial_cost(run_log_path: Path, job: NightlyJob, entrant: NightlyEntrant) -> float:
+    """Recover a completed entrant's durable cost from its provenance record."""
+
+    payload = json.loads(run_log_path.read_text(encoding="utf-8"))
+    expected = f"{job.instrument_id}__seed{job.seed}__rep0__{entrant.entrant_id}"
+    row = next(
+        (item for item in payload.get("trials") or [] if item.get("trial_id") == expected),
+        None,
+    )
+    if not isinstance(row, Mapping):
+        return 0.0
+    result = row.get("result")
+    gen = result.get("gen") if isinstance(result, Mapping) else None
+    provenance_path = gen.get("provenance_path") if isinstance(gen, Mapping) else None
+    if not provenance_path or not Path(str(provenance_path)).is_file():
+        return 0.0
+    provenance = json.loads(Path(str(provenance_path)).read_text(encoding="utf-8"))
+    return max(0.0, float(provenance.get("cost_usd") or 0.0))
 
 
 def _append_error_trial(
@@ -327,8 +419,10 @@ def finalize_morning_bundle(run_dir: Path, *, cost_usd: float) -> dict:
         "cost_usd": round(cost_usd, 4),
     }
     atomic_write_json(run_dir / "morning-summary.json", summary)
+    private_root = run_dir.parent / ".makerbench-private"
+    private_root.mkdir(parents=True, exist_ok=True)
     atomic_write_json(
-        run_dir / "reveal.json",
+        private_root / f"{run_dir.name}-reveal.json",
         {"schema": "makerbench-nightly-cad-reveal-v1", "pairs": reveals, "failures": failures},
     )
     links = "\n".join(
@@ -401,6 +495,9 @@ class NightlyExecutor:
         entrant: NightlyEntrant,
         run_dir: Path,
         registry: Mapping[str, object],
+        *,
+        dispatch: Mapping[str, object],
+        resume_only: bool,
     ) -> float:
         spec = arena_runner.instrument_spec_from_registry(registry, job.instrument_id)
         brief = str(spec.get("task_brief") or spec.get("task_brief_short") or job.instrument_id)
@@ -414,6 +511,8 @@ class NightlyExecutor:
             prompt=prompt,
             reference_image=Path(job.reference_image),
             output_dir=run_dir / "cadam" / entrant.entrant_id,
+            conversation_id=str(dispatch["conversation_id"]),
+            resume_only=resume_only,
         )
         arena_runner.ingest_candidate(
             run_log_path=run_dir / "run_log.json",
@@ -495,6 +594,7 @@ class NightlyExecutor:
             driver_model=entrant.model_id,
             connector=connector,
             images_root=images,
+            context_tier=entrant.context_tier,
             timeout_s=entrant.timeout_s or 1800,
             env={
                 key: value
@@ -546,24 +646,78 @@ class NightlyExecutor:
 
             for entrant in job.entrants:
                 if _has_trial(run_dir / "run_log.json", job, entrant):
+                    violation = None
+                    if entrant.entrant_id in budget.reservations:
+                        violation = budget.charge(
+                            entrant,
+                            _trial_cost(run_dir / "run_log.json", job, entrant),
+                        )
                     outcomes.append(
-                        {"entrant_id": entrant.entrant_id, "status": "already-complete"}
+                        {
+                            "entrant_id": entrant.entrant_id,
+                            "status": "already-complete",
+                            **({"budget_violation": violation} if violation else {}),
+                        }
                     )
+                    self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
                     continue
                 try:
                     budget.reserve(entrant)
+                    dispatch = None
+                    resume_only = False
+                    if entrant.kind == "cadam" and entrant.kind not in self.handlers:
+                        dispatch = budget.prepare_dispatch(job, entrant)
+                        resume_only = str(dispatch.get("status")) == "dispatched"
+                        if not resume_only:
+                            dispatch["status"] = "dispatched"
+                            dispatch["dispatched_utc"] = (
+                                self.now().astimezone(timezone.utc).isoformat()
+                            )
+                    # The reservation and paid-dispatch identity must be durable
+                    # before any provider request can leave this process.
+                    self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
                     handler = self.handlers.get(entrant.kind)
                     if handler is not None:
                         cost = handler(job, entrant, run_dir, registry)
                     elif entrant.kind == "cadam":
-                        cost = self._run_cadam(job, entrant, run_dir, registry)
+                        assert dispatch is not None
+                        cost = self._run_cadam(
+                            job,
+                            entrant,
+                            run_dir,
+                            registry,
+                            dispatch=dispatch,
+                            resume_only=resume_only,
+                        )
                     elif entrant.kind == "live":
                         cost = self._run_live(job, entrant, run_dir, registry)
                     else:
                         cost = self._run_arena(job, entrant, run_dir, registry)
-                    budget.charge(entrant.entrant_id, cost)
+                    violation = budget.charge(entrant, cost)
+                    if dispatch is not None:
+                        dispatch["status"] = "charged"
+                        dispatch["cost_usd"] = cost
+                    # Close the trial-row -> budget-ledger crash window before
+                    # moving to another entrant.
+                    self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
                     outcomes.append(
-                        {"entrant_id": entrant.entrant_id, "status": "complete", "cost_usd": cost}
+                        {
+                            "entrant_id": entrant.entrant_id,
+                            "status": "budget-overrun" if violation else "complete",
+                            "cost_usd": cost,
+                            **({"budget_violation": violation} if violation else {}),
+                        }
+                    )
+                except CadamRecoveryRequiredError as exc:
+                    # Do not append a terminal trial: an operator may later
+                    # recover the same persisted conversation, but automatic
+                    # reposting is permanently forbidden.
+                    outcomes.append(
+                        {
+                            "entrant_id": entrant.entrant_id,
+                            "status": "paid-dispatch-uncertain",
+                            "error": str(exc),
+                        }
                     )
                 except Exception as exc:  # noqa: BLE001 - one entrant must not kill the night.
                     _append_error_trial(run_dir / "run_log.json", job, entrant, str(exc))
@@ -581,6 +735,19 @@ class NightlyExecutor:
                 },
             )
             morning = finalize_morning_bundle(run_dir, cost_usd=budget.spent_usd)
+            uncertain_dispatch = next(
+                (
+                    row.get("error")
+                    for row in outcomes
+                    if row.get("status") == "paid-dispatch-uncertain"
+                ),
+                None,
+            )
+            safety_block = budget.halted_reason or uncertain_dispatch
+            if safety_block:
+                morning["votable"] = False
+                morning["safety_block"] = safety_block
+                atomic_write_json(run_dir / "morning-summary.json", morning)
             job.status = "votable" if morning["votable"] else "blocked"
             save_queue(self.queue_path, payload, jobs)
             self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__, morning=morning)

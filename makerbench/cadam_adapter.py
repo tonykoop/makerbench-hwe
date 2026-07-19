@@ -26,6 +26,10 @@ USD_PER_CADAM_BILLING_TOKEN = 0.01
 HttpTransport = Callable[[str, str, Mapping[str, str], Optional[bytes]], bytes]
 
 
+class CadamRecoveryRequiredError(RuntimeError):
+    """A persisted paid dispatch is unresolved and must never be auto-reposted."""
+
+
 @dataclass(frozen=True)
 class CadamConfig:
     base_url: str
@@ -212,6 +216,8 @@ class CadamClient:
         prompt: str,
         reference_image: Path,
         output_dir: Path,
+        conversation_id: Optional[str] = None,
+        resume_only: bool = False,
     ) -> CadamResult:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -221,72 +227,79 @@ class CadamClient:
             max_dimension=self.config.max_image_dimension,
             max_bytes=self.config.max_image_bytes,
         )
-        conversation_id = str(uuid.uuid4())
-        message_id = str(uuid.uuid4())
-        image_id = str(uuid.uuid4())
-        self._rest_insert(
-            "conversations",
-            {
-                "id": conversation_id,
-                "user_id": self.config.user_id,
-                "title": "MakerBench nightly arena",
-                "type": "parametric",
-                "settings": {"model": self.config.model},
-            },
-        )
-        self._upload_image(conversation_id, image_id, image_path)
-        self._rest_insert(
-            "messages",
-            {
-                "id": message_id,
-                "conversation_id": conversation_id,
-                "role": "user",
-                "parts": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "file",
-                        "mediaType": "image/jpeg",
-                        "filename": f"{image_id}.jpg",
-                        "url": (
-                            "/storage/v1/object/public/images/"
-                            f"{self.config.user_id}/{conversation_id}/{image_id}"
-                        ),
-                    },
-                ],
-                "metadata": {"model": self.config.model},
-                "parent_message_id": None,
-            },
-        )
-        stream = self.transport(
-            "POST",
-            f"{self.config.base_url.rstrip('/')}/api/parametric-chat",
-            {
-                "Authorization": f"Bearer {self.config.access_token}",
-                "Content-Type": "application/json",
-            },
-            _json_body(
-                {
-                    "conversationId": conversation_id,
-                    "model": self.config.model,
-                    "thinking": True,
-                }
-            ),
-        )
+        conversation_id = conversation_id or str(uuid.uuid4())
+        message_id = str(uuid.uuid5(uuid.UUID(conversation_id), "user-message"))
+        image_id = str(uuid.uuid5(uuid.UUID(conversation_id), "reference-image"))
         stream_path = output_dir / "cadam-stream.bin"
-        stream_path.write_bytes(stream)
 
-        rows: list[dict] = []
-        code: Optional[str] = None
-        for attempt in range(8):
-            rows = self._assistant_rows(conversation_id)
-            code = _extract_build_code(rows)
+        rows = self._assistant_rows(conversation_id)
+        code = _extract_build_code(rows)
+        if not code and not resume_only:
+            self._rest_insert(
+                "conversations",
+                {
+                    "id": conversation_id,
+                    "user_id": self.config.user_id,
+                    "title": "MakerBench nightly arena",
+                    "type": "parametric",
+                    "settings": {"model": self.config.model},
+                },
+            )
+            self._upload_image(conversation_id, image_id, image_path)
+            self._rest_insert(
+                "messages",
+                {
+                    "id": message_id,
+                    "conversation_id": conversation_id,
+                    "role": "user",
+                    "parts": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "file",
+                            "mediaType": "image/jpeg",
+                            "filename": f"{image_id}.jpg",
+                            "url": (
+                                "/storage/v1/object/public/images/"
+                                f"{self.config.user_id}/{conversation_id}/{image_id}"
+                            ),
+                        },
+                    ],
+                    "metadata": {"model": self.config.model},
+                    "parent_message_id": None,
+                },
+            )
+            stream = self.transport(
+                "POST",
+                f"{self.config.base_url.rstrip('/')}/api/parametric-chat",
+                {
+                    "Authorization": f"Bearer {self.config.access_token}",
+                    "Content-Type": "application/json",
+                },
+                _json_body(
+                    {
+                        "conversationId": conversation_id,
+                        "model": self.config.model,
+                        "thinking": True,
+                    }
+                ),
+            )
+            stream_path.write_bytes(stream)
+        elif code and not stream_path.exists():
+            stream_path.write_bytes(b"recovered from persisted assistant row\n")
+
+        attempts = 60 if resume_only else 8
+        for attempt in range(attempts):
             if code:
                 break
-            if attempt < 7:
+            rows = self._assistant_rows(conversation_id)
+            code = _extract_build_code(rows)
+            if attempt < attempts - 1:
                 self.sleep_fn(0.5)
         if not code:
-            raise RuntimeError(
-                "CADAM stream completed without a structured build_parametric_model code payload"
+            raise CadamRecoveryRequiredError(
+                "paid CADAM dispatch has no persisted structured build_parametric_model result; "
+                "refusing automatic repost "
+                f"(conversation_id={conversation_id})"
             )
 
         scad_path = output_dir / "candidate.scad"

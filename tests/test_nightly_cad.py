@@ -131,6 +131,27 @@ def test_resume_budget_restores_spend_and_charges(tmp_path):
     assert guard.charges == [{"entrant_id": "cadam", "cost_usd": 1.25}]
 
 
+def test_budget_guard_halts_after_actual_cost_exceeds_entrant_ceiling():
+    guard = BudgetGuard(5.0)
+    paid = NightlyEntrant(
+        entrant_id="cadam",
+        kind="cadam",
+        model_id="fable",
+        max_cost_usd=1.0,
+    )
+    guard.reserve(paid)
+
+    violation = guard.charge(paid, 1.25)
+
+    assert "exceeded" in violation
+    assert guard.spent_usd == 1.25
+    assert guard.halted_reason == violation
+    with pytest.raises(RuntimeError, match="spending halted"):
+        guard.reserve(
+            NightlyEntrant(entrant_id="next", kind="arena", model_id="free")
+        )
+
+
 def test_single_seat_lease_is_nonblocking(tmp_path):
     def now():
         return datetime(2026, 7, 19, tzinfo=timezone.utc)
@@ -176,9 +197,67 @@ def test_nightly_run_survives_one_failed_entrant_and_builds_blind_bundle(tmp_pat
     pair_html = (run_dir / "morning-vote" / summary["pair_files"][0]).read_text()
     assert "cadam-fable-image" not in pair_html
     assert "codex-openscad" not in pair_html
-    reveal = (run_dir / "reveal.json").read_text()
+    assert not (run_dir / "reveal.json").exists()
+    reveal = (
+        run_dir.parent / ".makerbench-private" / f"{run_dir.name}-reveal.json"
+    ).read_text()
     assert "cadam-fable-image" in reveal and "codex-openscad" in reveal
 
     saved_queue = json.loads(queue.read_text())
     assert saved_queue["jobs"][0]["status"] == "votable"
     assert executor.run() == {"status": "queue-empty"}
+
+
+def test_paid_dispatch_crash_resumes_same_conversation_without_new_identity(tmp_path):
+    def now():
+        return datetime(2026, 7, 19, 7, 30, tzinfo=timezone.utc)
+
+    class CrashExecutor(NightlyExecutor):
+        calls = []
+        crash = True
+
+        def _run_cadam(
+            self,
+            job,
+            entrant,
+            run_dir,
+            registry,
+            *,
+            dispatch,
+            resume_only,
+        ):
+            self.calls.append((dispatch["conversation_id"], resume_only))
+            if self.crash:
+                raise SystemExit("simulated process death after durable dispatch")
+            from makerbench.cadam_adapter import CadamRecoveryRequiredError
+
+            raise CadamRecoveryRequiredError("persisted paid call still unresolved")
+
+    queue = _queue(tmp_path / "queue.json", _image(tmp_path / "reference.png"))
+    kwargs = {
+        "queue_path": queue,
+        "registry_path": _registry(tmp_path / "registry.json"),
+        "output_root": tmp_path / "runs",
+        "now": now,
+        "handlers": {"arena": _synthetic_handler, "live": _synthetic_handler},
+    }
+    first = CrashExecutor(**kwargs)
+    with pytest.raises(SystemExit, match="simulated process death"):
+        first.run()
+
+    saved_queue = json.loads(queue.read_text())
+    run_dir = Path(saved_queue["jobs"][0]["run_dir"])
+    state = json.loads((run_dir / "nightly-state.json").read_text())
+    dispatch = state["budget"]["dispatches"]["cadam-fable-image"]
+    assert dispatch["status"] == "dispatched"
+    assert state["budget"]["reservations"]["cadam-fable-image"] == 3.0
+    first_call = first.calls[0]
+    CrashExecutor.calls.clear()
+
+    second = CrashExecutor(**kwargs)
+    second.crash = False
+    result = second.run()
+
+    assert first_call[1] is False
+    assert second.calls[0] == (first_call[0], True)
+    assert result["outcomes"][0]["status"] == "paid-dispatch-uncertain"

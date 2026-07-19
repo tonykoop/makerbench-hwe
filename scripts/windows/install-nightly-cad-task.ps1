@@ -6,6 +6,7 @@ param(
     [Parameter(Mandatory = $true)][string]$OutputRootWsl,
     [Parameter(Mandatory = $true)][string]$SecretsWsl,
     [string]$Distro = "Ubuntu",
+    [switch]$RequireACPower,
     [switch]$Disabled
 )
 
@@ -24,10 +25,13 @@ $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arguments
 $trigger = New-ScheduledTaskTrigger -Daily -At $StartTime
 $settings = New-ScheduledTaskSettingsSet `
     -WakeToRun `
+    -StartWhenAvailable `
     -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit (New-TimeSpan -Hours 7) `
-    -AllowStartIfOnBatteries:$false `
-    -DontStopIfGoingOnBatteries:$false
+    -AllowStartIfOnBatteries:(-not $RequireACPower.IsPresent) `
+    -DontStopIfGoingOnBatteries:(-not $RequireACPower.IsPresent)
+# InteractiveToken is intentional: Fusion and SolidWorks automation requires
+# Tony's logged-in desktop session. A locked session is fine; logged-off is not.
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
 
 Register-ScheduledTask `

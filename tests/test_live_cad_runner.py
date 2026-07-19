@@ -77,6 +77,35 @@ def test_assignment_names_connector_export_and_constraints(tmp_path):
     assert "trumpet-sheetmetal" in a
 
 
+def test_live_image_tier_requires_and_stages_mapped_reference(tmp_path):
+    image = tmp_path / "trumpet.png"
+    image.write_bytes(b"reference-bytes")
+    cfg = _config(tmp_path, runner=None)
+    cfg.context_tier = "image"
+    cfg.image_paths = {"trumpet-sheetmetal": image}
+    cfg.runner = _fake_runner_factory(cfg)
+    gen_dir = tmp_path / "run" / "gen" / "image-live-trial"
+
+    live.run_live_agent(_REGISTRY["instruments"][0], gen_dir, cfg)
+
+    staged = gen_dir / "reference-image.png"
+    assert staged.read_bytes() == b"reference-bytes"
+    assignment = (gen_dir / "assignment.md").read_text()
+    assert staged.as_posix() in assignment
+
+
+def test_live_image_tier_missing_mapping_fails_instead_of_running_unconditioned(tmp_path):
+    cfg = _config(tmp_path, runner=subprocess.run)
+    cfg.context_tier = "image"
+
+    with pytest.raises(ValueError, match="needs a readable reference"):
+        live.build_assignment(
+            _REGISTRY["instruments"][0],
+            cfg,
+            r"C:\out\trumpet\output.stl",
+        )
+
+
 def test_fusion_live_config_targets_fusion():
     cfg = live.LiveCadConfig(
         backend="fusion-live", driver_model="gpt-5.6-sol", connector="hwe-fusion"
@@ -208,6 +237,7 @@ def test_make_live_execute_trial_full_row(tmp_path):
     row = execute(trial)
     assert row["backend"] == "solidworks-live"
     assert row["tier"] == "live"
+    assert row["context_tier"] == "blind"
     assert row["status"] in {"scored", "auto_fail"}
     assert row["render_ok"] is True  # box renders/loads
     assert row["objective"]["sub_scores"]["watertight"] == 1.0
