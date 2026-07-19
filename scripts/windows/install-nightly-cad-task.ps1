@@ -5,7 +5,8 @@ param(
     [Parameter(Mandatory = $true)][string]$QueueWsl,
     [Parameter(Mandatory = $true)][string]$OutputRootWsl,
     [Parameter(Mandatory = $true)][string]$SecretsWsl,
-    [string]$Distro = "Ubuntu"
+    [string]$Distro = "Ubuntu",
+    [switch]$Disabled
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,5 +38,9 @@ Register-ScheduledTask `
     -Principal $principal `
     -Description "Run one queued MakerBench musical-instrument CAD arena at 12:30 AM." `
     -Force | Out-Null
+
+if ($Disabled) {
+    Disable-ScheduledTask -TaskName $TaskName | Out-Null
+}
 
 Get-ScheduledTask -TaskName $TaskName | Select-Object TaskName, State, TaskPath
