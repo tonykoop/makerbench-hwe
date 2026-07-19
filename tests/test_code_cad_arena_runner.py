@@ -757,6 +757,24 @@ class TestRound3Registry:
         duduk = instrument_spec_from_registry(registry, "duduk")
         assert "provenance" in duduk["constraints"]
 
+class TestRound4Registry:
+    def test_round4_instruments_resolve_with_integrity_notes(self):
+        registry = runner.load_arena_registry(ARENA_REGISTRY)
+        for instrument_id in ("brian-boru-harp", "hammered-dulcimer", "guzheng"):
+            spec = instrument_spec_from_registry(registry, instrument_id)
+            assert spec["min_wall_mm"] > 0
+            assert spec["repo_path"]
+            assert "geometry only" in spec["task_brief"].lower()
+        harp = instrument_spec_from_registry(registry, "brian-boru-harp")
+        assert "provenance" in harp["constraints"]
+        assert "display" in harp["task_brief"].lower()  # sub-mm wire strings stay display geometry
+        guzheng = instrument_spec_from_registry(registry, "guzheng")
+        text = guzheng["task_brief"]
+        assert "GUZ-REF-21" in text and "never cut authority" in text
+        assert "provenance" in guzheng["constraints"]
+        dulcimer = instrument_spec_from_registry(registry, "hammered-dulcimer")
+        assert dulcimer["min_bodies"] == 5
+
 
 class TestIngestCandidate:
     def _seeded_run(self, tmp_path):
