@@ -128,6 +128,51 @@ def test_run_live_agent_produces_stl(tmp_path):
     assert stl.exists() and stl.name == "output.stl"
     assert (gen_dir / "assignment.md").exists()
     assert (gen_dir / "build_transcript.txt").read_text().startswith("built ok")
+    assert (gen_dir / "connector-docs").is_dir()
+
+
+def test_default_driver_is_ephemeral_and_sandboxed():
+    cfg = live.LiveCadConfig(
+        backend="solidworks-live", driver_model="gpt-5.6-sol"
+    )
+    assert "--dangerously-bypass-approvals-and-sandbox" not in cfg.driver_argv
+    assert ("--sandbox", "workspace-write") == (
+        cfg.driver_argv[cfg.driver_argv.index("--sandbox")],
+        cfg.driver_argv[cfg.driver_argv.index("--sandbox") + 1],
+    )
+    assert "--ephemeral" in cfg.driver_argv
+
+
+def test_transcript_redacts_tokens_and_uses_trial_cwd(tmp_path):
+    seen = {}
+    cfg = _config(tmp_path, runner=None)
+    cfg.env = {"HWE_SW_TOKEN": "super-secret-token"}
+
+    def runner(argv, **kwargs):
+        seen["argv"] = argv
+        seen["cwd"] = kwargs["cwd"]
+        assignment = argv[-1]
+        win_stl = [
+            line for line in assignment.splitlines() if line.strip().endswith("output.stl")
+        ][-1].strip()
+        trial_id = Path(win_stl.replace("\\", "/")).parent.name
+        _write_box_stl(Path(cfg.wsl_staging_root) / trial_id / "output.stl")
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout="Authorization: Bearer super-secret-token",
+            stderr="token=super-secret-token",
+        )
+
+    cfg.runner = runner
+    gen_dir = tmp_path / "run" / "gen" / "safe-trial"
+    live.run_live_agent(_REGISTRY["instruments"][0], gen_dir, cfg)
+
+    assert seen["cwd"] == gen_dir
+    assert gen_dir.resolve().as_posix() in seen["argv"]
+    transcript = (gen_dir / "build_transcript.txt").read_text()
+    assert "super-secret-token" not in transcript
+    assert "[REDACTED]" in transcript
 
 
 def test_run_live_agent_no_stl_raises(tmp_path):
