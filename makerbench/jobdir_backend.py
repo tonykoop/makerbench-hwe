@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Callable, Optional
@@ -67,6 +68,17 @@ STATUS_DONE = "done"
 STATUS_ERROR = "error"
 _TERMINAL_STATUSES = {STATUS_DONE, STATUS_ERROR}
 _VALID_STATUSES = {STATUS_PENDING, STATUS_RUNNING, STATUS_DONE, STATUS_ERROR}
+
+
+def local_artifact_path(value: str) -> Path:
+    """Translate a Windows watcher path to the same file through WSL's mount."""
+
+    raw = str(value)
+    match = re.match(r"^([A-Za-z]):[\\/](.*)$", raw)
+    if os.name != "nt" and match:
+        drive, tail = match.groups()
+        return Path("/mnt") / drive.lower() / Path(tail.replace("\\", "/"))
+    return Path(raw)
 
 
 def jobs_root() -> Path:
@@ -148,7 +160,10 @@ def read_status(job_dir_path: Path) -> Optional[dict]:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        # Windows PowerShell 5.1's ``Set-Content -Encoding utf8`` writes a
+        # UTF-8 BOM. ``utf-8-sig`` accepts that live watcher output while
+        # remaining compatible with BOM-less JSON written by Python/PS7.
+        return json.loads(path.read_text(encoding="utf-8-sig"))
     except (json.JSONDecodeError, OSError):
         # A watcher mid-write can leave a transient partial/unreadable file;
         # treat it like "not there yet" rather than crashing the poller.
@@ -218,12 +233,18 @@ def poll_job(
 
         if status == STATUS_DONE:
             stl_path = (payload or {}).get("stl_path")
-            if not stl_path or not Path(stl_path).exists():
+            local_stl = local_artifact_path(str(stl_path)) if stl_path else None
+            if local_stl is None or not local_stl.exists():
                 raise render.CompileError(
                     f"Windows-side runner reported job {job_dir_path} 'done' but "
-                    f"stl_path {stl_path!r} does not exist"
+                    f"stl_path {stl_path!r} (local {local_stl}) does not exist"
                 )
-            return payload
+            normalized = dict(payload or {})
+            normalized["stl_path"] = local_stl.as_posix()
+            png_path = normalized.get("png_path")
+            if png_path:
+                normalized["png_path"] = local_artifact_path(str(png_path)).as_posix()
+            return normalized
 
         if status == STATUS_ERROR:
             detail = (payload or {}).get("error") or "unknown error"

@@ -32,6 +32,11 @@ class TestJobsRoot:
         monkeypatch.setenv(jd.JOBS_ROOT_ENV, str(tmp_path / "custom-jobs"))
         assert jd.jobs_root() == tmp_path / "custom-jobs"
 
+    def test_windows_artifact_path_maps_to_wsl_drive(self):
+        assert jd.local_artifact_path(
+            r"C:\Users\Tony\arena\output.stl"
+        ) == jd.Path("/mnt/c/Users/Tony/arena/output.stl")
+
 
 class TestJobdirHandoffAvailable:
     def test_false_when_no_windows_bridge(self, monkeypatch, tmp_path):
@@ -96,6 +101,16 @@ class TestWriteAndReadStatus:
         (jdir / "status.json").write_text("{not json", encoding="utf-8")
         assert jd.read_status(jdir) is None
 
+    def test_read_status_accepts_windows_powershell_utf8_bom(self, tmp_path):
+        jdir = tmp_path / "jobs" / "windows-bom"
+        jdir.mkdir(parents=True)
+        payload = {"status": "running", "trial_id": "windows-bom"}
+        (jdir / "status.json").write_bytes(
+            b"\xef\xbb\xbf" + json.dumps(payload).encode("utf-8")
+        )
+
+        assert jd.read_status(jdir) == payload
+
 
 class TestPollJob:
     def test_returns_payload_on_done(self, tmp_path):
@@ -133,6 +148,32 @@ class TestPollJob:
         assert payload["status"] == "done"
         assert payload["stl_path"] == str(stl)
         assert calls["n"] == 2
+
+    def test_done_normalizes_windows_watcher_paths_before_return(self, tmp_path, monkeypatch):
+        jdir = tmp_path / "jobs" / "trial-win"
+        stl = tmp_path / "shared" / "output.stl"
+        png = tmp_path / "shared" / "preview.png"
+        stl.parent.mkdir(parents=True)
+        stl.write_text("solid fake\nendsolid fake\n", encoding="utf-8")
+        png.write_bytes(b"png")
+        mapping = {
+            r"C:\shared\output.stl": stl,
+            r"C:\shared\preview.png": png,
+        }
+        monkeypatch.setattr(jd, "local_artifact_path", lambda value: mapping[value])
+        jd.write_status(
+            jdir,
+            status="done",
+            trial_id="trial-win",
+            backend="solidworks",
+            stl_path=r"C:\shared\output.stl",
+            png_path=r"C:\shared\preview.png",
+        )
+
+        payload = jd.poll_job(jdir, timeout_s=10)
+
+        assert payload["stl_path"] == stl.as_posix()
+        assert payload["png_path"] == png.as_posix()
 
     def test_raises_compile_error_on_error_status(self, tmp_path):
         jdir = tmp_path / "jobs" / "trial-6"
