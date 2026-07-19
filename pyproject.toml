@@ -32,6 +32,7 @@ dev = [
 makerbench = "makerbench.cli:app"
 makerbench-dfm-score = "makerbench_core.cli:main"
 makerbench-logger = "makerbench_logger.__main__:main"
+makerbench-telemetry = "telemetry.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/tonykoop/makerbench-hwe"
