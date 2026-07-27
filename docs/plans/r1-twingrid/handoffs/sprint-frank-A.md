@@ -45,4 +45,4 @@ Record 10s dummy → MP4 + sidecar w/ correct sha256 + 3 markers.
 PR `feat(recorder): 3-part session recorder + video contract` — `Refs #2`.
 
 ---
-Begin: cd /home/tony/hwe-wt/frank-a first, run qmd Step-0, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.
+Begin: cd /home/tony/hwe-wt/frank-a first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.

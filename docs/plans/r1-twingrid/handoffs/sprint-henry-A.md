@@ -46,4 +46,4 @@ Markdown lints; templates valid front-matter.
 PR `docs(workflow-track): reasoning buckets + challenge spec + templates` — `Refs #111 Refs #94 Refs #95`.
 
 ---
-Begin: cd /home/tony/hwe-wt/henry-a first, run qmd Step-0, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.
+Begin: cd /home/tony/hwe-wt/henry-a first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.

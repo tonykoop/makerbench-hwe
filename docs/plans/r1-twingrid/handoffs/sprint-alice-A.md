@@ -46,4 +46,4 @@ Additive only; do NOT break autonomous scoring or result loading; do NOT modify 
 PR `feat(workflow-track): harness_class + WORKFLOW_TRACK.md` — `Refs #87 Refs #88`.
 
 ---
-Begin: cd /home/tony/hwe-wt/alice-a first, run qmd Step-0, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.
+Begin: cd /home/tony/hwe-wt/alice-a first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.
