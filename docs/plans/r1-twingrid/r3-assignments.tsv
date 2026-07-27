@@ -1,0 +1,9 @@
+alice	makerbench-hwe	tonykoop/makerbench-hwe	80	core-cli
+bob	makerbench-hwe	tonykoop/makerbench-hwe	81	costing-adapter
+cindy	makerbench-hwe	tonykoop/makerbench-hwe	82	quote-bridge
+dan	makerbench-hwe	tonykoop/makerbench-hwe	83	closed-loop-demo
+elsa	makerbench-hwe	tonykoop/makerbench-hwe	84	solidworks-landscape
+frank	makerbench-hwe	tonykoop/makerbench-hwe	99	distribution
+gina	StudioPipeline-hwe	tonykoop/makerbench-hwe	93	reference-stack
+henry	StudioPipeline-hwe	StudioPipeline/hwe	12	sp-ci
+iris	HWE-Pipeline	tonykoop/HWE-Pipeline	6	hwe-ci
