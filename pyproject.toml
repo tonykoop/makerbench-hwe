@@ -19,6 +19,7 @@ dependencies = [
     "pydantic>=2.5",       # results schema + validation
     "typer>=0.12",         # CLI
     "rich>=13.0",          # pretty console output
+    "pillow>=10.0",        # CADAM reference-image normalization
 ]
 
 [project.optional-dependencies]
@@ -32,6 +33,7 @@ dev = [
 makerbench = "makerbench.cli:app"
 makerbench-dfm-score = "makerbench_core.cli:main"
 makerbench-logger = "makerbench_logger.__main__:main"
+makerbench-telemetry = "telemetry.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/tonykoop/makerbench-hwe"

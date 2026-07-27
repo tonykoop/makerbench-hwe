@@ -143,3 +143,57 @@ class TestModel3dVoteSurface:
         assert record["left"]["model3d_path"].endswith(".glb")
         revealed = vote.reveal_vote(pair, record)
         assert revealed["reveal"]["left"]["model3d_path"].endswith(".glb")
+
+    def _pair_with_frames(self):
+        lframes = tuple(f"blind/pair-x-left-f{i:02d}.png" for i in range(16))
+        rframes = tuple(f"blind/pair-x-right-f{i:02d}.png" for i in range(16))
+        left = vote.VoteCandidate(
+            candidate_id="a", model_id="opus", trial_id="lyre-s0-a",
+            render_path=lframes[0], model3d_path="blind/pair-x-left.glb",
+            frames=lframes,
+        )
+        right = vote.VoteCandidate(
+            candidate_id="b", model_id="glm", trial_id="lyre-s0-b",
+            render_path=rframes[0], frames=rframes,
+        )
+        return vote.build_blind_pair(left, right, pair_seed="lyre")
+
+    def test_frames_render_webgl_free_turntable_not_model_viewer(self):
+        html = vote.render_vote_surface(self._pair_with_frames())
+        # both candidates use the turntable (frames win over GLB)
+        assert html.count('class="turntable"') == 2
+        assert "data-frames=" in html
+        assert vote.TURNTABLE_JS.strip()[:20] in html
+        # no WebGL viewer: left had a GLB but frames take precedence, right had none
+        assert "<model-viewer" not in html
+        assert vote.MODEL_VIEWER_CDN not in html
+
+    def test_frames_ride_blind_and_revealed_records(self):
+        pair = self._pair_with_frames()
+        record = vote.record_vote(pair, winner="left", voter_id="tony")
+        assert len(record["left"]["frames"]) == 16
+        revealed = vote.reveal_vote(pair, record)
+        assert len(revealed["reveal"]["left"]["frames"]) == 16
+
+    def test_turntable_page_has_spin_toggle_and_pause_logic(self):
+        html = vote.render_vote_surface(self._pair_with_frames())
+        # a spin toggle control, distinct from the vote buttons
+        assert 'id="spin-toggle"' in html
+        assert 'data-role="spin"' in html
+        assert 'data-vote=' not in html.split('id="spin-toggle"')[1][:60]
+        # pause/play logic is wired in the turntable script
+        assert "Pause spin" in html
+        assert "aria-pressed" in html
+
+    def test_no_frames_no_spin_toggle(self):
+        pair = vote.build_blind_pair(
+            _candidate("a", "gpt-5.5"), _candidate("b", "sonnet"), pair_seed="lyre"
+        )
+        html = vote.render_vote_surface(pair)
+        assert "spin-toggle" not in html          # nothing to spin
+
+    def test_surface_is_responsive(self):
+        html = vote.render_vote_surface(self._pair_with_frames())
+        # narrow screens stack the pair into one column
+        assert "@media (max-width: 720px)" in html
+        assert "grid-template-columns: 1fr" in html
