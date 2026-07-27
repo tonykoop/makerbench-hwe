@@ -105,6 +105,42 @@ def render_png(source: str, out_path: str, *,
     return out_path
 
 
+def render_turntable(mesh_path: str, out_dir: str, *, frames: int = 24,
+                     size: tuple[int, int] = (480, 480), elevation: float = 60.0,
+                     timeout: int = 120) -> list[str]:
+    """Render a WebGL-free turntable: N azimuth PNGs of an existing mesh.
+
+    The vote surface swaps these frames on drag/auto-rotate so a candidate
+    "rotates" in any browser with zero WebGL — the reliable fallback when a
+    voter's GPU/RDP session can't run <model-viewer> (context-lost).
+
+    Works from any OpenSCAD-importable mesh (STL/OFF), so it retrofits onto
+    both compiled and ingested candidates. ``--viewall`` auto-fits distance so
+    the model stays centered and the same size across every azimuth.
+    """
+    os.makedirs(os.path.abspath(out_dir), exist_ok=True)
+    mesh_abs = os.path.abspath(mesh_path)
+    source = f'import("{mesh_abs}");\n'
+    with tempfile.NamedTemporaryFile("w", suffix=".scad", delete=False, encoding="utf-8") as fh:
+        fh.write(source)
+        scad_path = fh.name
+    paths: list[str] = []
+    try:
+        for i in range(frames):
+            azimuth = 360.0 * i / frames
+            out_path = os.path.join(out_dir, f"frame_{i:02d}.png")
+            args = ["-o", out_path, f"--imgsize={size[0]},{size[1]}",
+                    "--colorscheme=Tomorrow", "--viewall", "--autocenter",
+                    f"--camera=0,0,0,{elevation},0,{azimuth},0"]
+            proc = _run([*args, scad_path], timeout=timeout)
+            if proc.returncode != 0 or not os.path.exists(out_path):
+                raise CompileError(f"Turntable frame {i} failed: {proc.stderr.strip()}")
+            paths.append(out_path)
+    finally:
+        os.unlink(scad_path)
+    return paths
+
+
 def _sha256_file(path: str) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as fh:

@@ -187,6 +187,7 @@ def _stage_blind_assets(
     shutil.copyfile(candidate.render_path, png_alias)
 
     model3d_rel = None
+    frames_rel: Optional[tuple[str, ...]] = None
     stl_path = (candidate.provenance or {}).get("stl_path")
     if stl_path:
         glb = arena_export.ensure_glb(Path(str(stl_path)))
@@ -195,6 +196,16 @@ def _stage_blind_assets(
             shutil.copyfile(glb, glb_alias)
             model3d_rel = f"blind/{glb_alias.name}"
 
+        # WebGL-free turntable frames: the reliable rotatable viewer. Rendered
+        # once per candidate mesh into a content-addressed cache so relaunching
+        # vote-web is instant; only the blind aliasing runs per pair.
+        try:
+            frames_rel = _stage_turntable_frames(
+                Path(str(stl_path)), pair_hint, side, vote_pages
+            )
+        except Exception as exc:  # never let frames block voting
+            console.print(f"[dim]turntable frames skipped ({side}): {exc}[/dim]")
+
     return VoteCandidate(
         candidate_id=candidate.candidate_id,
         model_id=candidate.model_id,
@@ -202,7 +213,45 @@ def _stage_blind_assets(
         render_path=f"blind/{png_alias.name}",
         provenance=candidate.provenance,
         model3d_path=model3d_rel,
+        frames=frames_rel,
     )
+
+
+def _stage_turntable_frames(
+    stl_path: Path, pair_hint: str, side: str, vote_pages: Path, frames: int = 16
+) -> Optional[tuple[str, ...]]:
+    """Render (cached) turntable frames for a mesh, then blind-alias them.
+
+    Frames render once into ``vote_pages/frames_cache/<stl-hash>/`` (survives
+    relaunches); blind aliases under ``blind/<pair>-<side>-fNN.png`` keep the
+    entrant name out of every served path.
+    """
+    import hashlib
+    import shutil
+
+    from . import render as render_mod
+
+    stl_path = stl_path.resolve()
+    if not stl_path.is_file():
+        return None
+    key = hashlib.sha256(stl_path.as_posix().encode("utf-8")).hexdigest()[:16]
+    cache_dir = vote_pages / "frames_cache" / key
+    have = sorted(cache_dir.glob("frame_*.png")) if cache_dir.exists() else []
+    if len(have) < frames:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        render_mod.render_turntable(stl_path.as_posix(), cache_dir.as_posix(), frames=frames)
+        have = sorted(cache_dir.glob("frame_*.png"))
+    if not have:
+        return None
+
+    blind = vote_pages / "blind"
+    blind.mkdir(parents=True, exist_ok=True)
+    rel: list[str] = []
+    for i, src in enumerate(have):
+        alias = blind / f"{pair_hint}-{side}-f{i:02d}.png"
+        shutil.copyfile(src, alias)
+        rel.append(f"blind/{alias.name}")
+    return tuple(rel)
 
 
 def _voted_pair_keys(run_dir: Path, voter_id: str) -> set[tuple[str, str]]:
@@ -468,6 +517,8 @@ def arena_vote_web(
                     provenance=candidate.provenance,
                     model3d_path=(f"/vote_pages/{candidate.model3d_path}"
                                   if candidate.model3d_path else None),
+                    frames=(tuple(f"/vote_pages/{p}" for p in candidate.frames)
+                            if candidate.frames else None),
                 )
 
             pair = BlindPair(

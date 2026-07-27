@@ -24,6 +24,7 @@ class VoteCandidate:
     render_path: str
     provenance: Mapping[str, object] | None = None
     model3d_path: Optional[str] = None
+    frames: Optional[tuple[str, ...]] = None
 
     def validate(self) -> None:
         for name, value in (
@@ -80,24 +81,92 @@ def blind_pair_payload(pair: BlindPair) -> dict:
     }
 
 
-MODEL_VIEWER_CDN = "https://unpkg.com/@google/model-viewer@3.5.0/dist/model-viewer.min.js"
+# Self-hosted so rotatable 3D works on a loopback-only server with no internet /
+# ad-blockers blocking the CDN. serve_vote_queue copies the vendored JS
+# (makerbench/assets/model-viewer.min.js) into the run-dir root before serving.
+MODEL_VIEWER_CDN = "/model-viewer.min.js"
+
+
+# WebGL-free turntable: preload every azimuth PNG, swap the visible frame on
+# horizontal drag, and idle-spin until the voter grabs it. No <canvas>, no
+# GPU, so it rotates even in RDP/headless-GPU sessions that lose WebGL context.
+TURNTABLE_JS = """
+<script>
+(function () {
+  document.querySelectorAll('.turntable').forEach(function (el) {
+    var frames = (el.dataset.frames || '').split(',').filter(Boolean);
+    if (frames.length < 2) return;
+    var img = el.querySelector('img');
+    frames.forEach(function (src) { var p = new Image(); p.src = src; });
+    var idx = 0, dragging = false, lastX = 0, acc = 0, auto = null;
+    var STEP = 18;  // px of drag per frame advance
+    function show(i) {
+      idx = ((i % frames.length) + frames.length) % frames.length;
+      img.src = frames[idx];
+    }
+    function startAuto() {
+      stopAuto();
+      auto = setInterval(function () { show(idx + 1); }, 110);
+    }
+    function stopAuto() { if (auto) { clearInterval(auto); auto = null; } }
+    el.addEventListener('pointerdown', function (e) {
+      dragging = true; lastX = e.clientX; acc = 0;
+      el.classList.add('dragging'); stopAuto();
+      el.setPointerCapture(e.pointerId);
+    });
+    el.addEventListener('pointermove', function (e) {
+      if (!dragging) return;
+      acc += e.clientX - lastX; lastX = e.clientX;
+      while (Math.abs(acc) >= STEP) {
+        show(idx + (acc > 0 ? 1 : -1));
+        acc -= (acc > 0 ? STEP : -STEP);
+      }
+    });
+    function endDrag() {
+      if (!dragging) return;
+      dragging = false; el.classList.remove('dragging'); startAuto();
+    }
+    el.addEventListener('pointerup', endDrag);
+    el.addEventListener('pointercancel', endDrag);
+    el.addEventListener('pointerleave', endDrag);
+    startAuto();
+  });
+})();
+</script>
+"""
 
 
 def _candidate_figure(candidate: Mapping[str, object], side: str) -> str:
-    """One candidate cell: rotatable 3D viewer when a GLB exists, PNG otherwise.
+    """One candidate cell: a rotatable candidate model, falling back gracefully.
 
-    The static image nests inside <model-viewer> so it doubles as the fallback:
-    if the viewer script cannot load (offline, or the page opened via file://
-    where module scripts are blocked), the unknown element renders its children
-    and the voter still sees the render.
+    Preference order, each degrading to the next:
+    1. Turntable frames — pre-rendered azimuth PNGs swapped on drag/auto-rotate.
+       Pure DOM + JS, zero WebGL, so it rotates in *any* browser (including
+       GPU-less RDP sessions where <model-viewer> throws context-lost).
+    2. <model-viewer> GLB — real 3D orbit when the client's WebGL works.
+    3. Static PNG — always present, and nested inside the richer viewers so it
+       doubles as their fallback if a script can't load.
     """
 
     image = (
         f'<img src="{html.escape(str(candidate["render_path"]))}" '
         f'alt="{side.capitalize()} rendered candidate">'
     )
+    frames = candidate.get("frames")
     model3d = candidate.get("model3d_path")
-    if model3d:
+    if frames:
+        # First frame is the visible <img>; the rest are data so the turntable
+        # JS can swap src on drag. object-fit keeps every azimuth the same size.
+        first = html.escape(str(frames[0]))
+        frame_list = ",".join(html.escape(str(f)) for f in frames)
+        body = (
+            f'<div class="turntable" data-frames="{frame_list}" data-side="{side}"\n'
+            f'          title="drag to rotate">\n'
+            f'          <img src="{first}" draggable="false"\n'
+            f'            alt="{side.capitalize()} rotatable candidate (turntable)">\n'
+            f"        </div>"
+        )
+    elif model3d:
         body = (
             f'<model-viewer src="{html.escape(str(model3d))}" camera-controls auto-rotate\n'
             f'          interaction-prompt="auto" shadow-intensity="1"\n'
@@ -123,14 +192,24 @@ def render_vote_surface(pair: BlindPair) -> str:
     payload = blind_pair_payload(pair)
     left = payload["left"]
     right = payload["right"]
-    has_3d = bool(left.get("model3d_path") or right.get("model3d_path"))
-    viewer_script = (
-        f'\n  <script type="module" src="{MODEL_VIEWER_CDN}"></script>' if has_3d else ""
+    has_frames = bool(left.get("frames") or right.get("frames"))
+    # model-viewer is only needed when a candidate's chosen viewer is the GLB
+    # (i.e. it has model3d but no turntable frames). Frames never need it.
+    needs_viewer = bool(
+        (left.get("model3d_path") and not left.get("frames"))
+        or (right.get("model3d_path") and not right.get("frames"))
     )
+    viewer_script = (
+        f'\n  <script type="module" src="{MODEL_VIEWER_CDN}"></script>'
+        if needs_viewer
+        else ""
+    )
+    turntable_script = TURNTABLE_JS if has_frames else ""
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Code-CAD Arena Vote</title>{viewer_script}
   <style>
     body {{ font-family: system-ui, sans-serif; margin: 0; background: #f7f7f2; color: #17211b; }}
@@ -142,6 +221,10 @@ def render_vote_surface(pair: BlindPair) -> str:
       background: #ededdf; }}
     model-viewer {{ display: block; width: 100%; aspect-ratio: 4 / 3; background: #ededdf; }}
     model-viewer img {{ width: 100%; height: 100%; }}
+    .turntable {{ display: block; width: 100%; aspect-ratio: 4 / 3; background: #ededdf;
+      cursor: grab; touch-action: pan-y; user-select: none; position: relative; }}
+    .turntable.dragging {{ cursor: grabbing; }}
+    .turntable img {{ aspect-ratio: 4 / 3; pointer-events: none; }}
     .controls {{ display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }}
     button {{ min-height: 40px; padding: 8px 14px; border: 1px solid #17211b;
       background: #17211b; color: white; }}
@@ -158,7 +241,7 @@ def render_vote_surface(pair: BlindPair) -> str:
       <button data-vote="draw">Draw</button>
       <button data-vote="right">Right</button>
     </section>
-  </main>
+  </main>{turntable_script}
 </body>
 </html>
 """
@@ -217,6 +300,8 @@ def _blind_candidate(candidate: VoteCandidate) -> dict:
     }
     if candidate.model3d_path:
         payload["model3d_path"] = candidate.model3d_path
+    if candidate.frames:
+        payload["frames"] = list(candidate.frames)
     return payload
 
 
