@@ -8,10 +8,42 @@ no vendor promises, and no leaderboard score semantics.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any, Literal
+from dataclasses import dataclass, field, fields
+from typing import Any, Literal, TypeVar
 
 ManufacturingProcess = Literal["cnc_milling", "sheet_laser", "additive_3d_print"]
+
+_T = TypeVar("_T")
+
+
+def _from_mapping(cls: type[_T], data: dict[str, Any]) -> _T:
+    """Build a dataclass from a JSON-style mapping, single-source friendly.
+
+    Only declared ``init`` fields are read, so a caller (e.g. an HWE-Pipeline
+    profile registry) may carry extra annotation keys without breaking. Tuple
+    fields are restored from JSON lists.
+    """
+
+    tuple_fields = {f.name for f in fields(cls) if f.type == "tuple[str, ...]"}
+    kwargs: dict[str, Any] = {}
+    for f in fields(cls):
+        if not f.init or f.name not in data:
+            continue
+        value = data[f.name]
+        if f.name in tuple_fields and isinstance(value, list):
+            value = tuple(value)
+        kwargs[f.name] = value
+    return cls(**kwargs)
+
+
+def _to_mapping(obj: object) -> dict[str, Any]:
+    """JSON-friendly mapping: tuples become lists; everything else verbatim."""
+
+    payload: dict[str, Any] = {}
+    for f in fields(obj):  # type: ignore[arg-type]
+        value = getattr(obj, f.name)
+        payload[f.name] = list(value) if isinstance(value, tuple) else value
+    return payload
 
 
 @dataclass(frozen=True)
@@ -40,6 +72,15 @@ class GeometryCostMetrics:
                 raise ValueError(f"{name} must be non-negative")
         if not 0 < self.sheet_nesting_yield <= 1:
             raise ValueError("sheet_nesting_yield must be > 0 and <= 1")
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-friendly mapping for single-sourcing across tools/repos."""
+        return _to_mapping(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "GeometryCostMetrics":
+        """Rebuild metrics from a mapping, ignoring unknown annotation keys."""
+        return _from_mapping(cls, data)
 
 
 @dataclass(frozen=True)
@@ -83,6 +124,15 @@ class ProcessRateProfile:
             raise ValueError("removal_rate_cm3_per_min must be positive when set")
         if self.cut_speed_mm_per_min is not None and self.cut_speed_mm_per_min <= 0:
             raise ValueError("cut_speed_mm_per_min must be positive when set")
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-friendly mapping a downstream pipeline can persist/single-source."""
+        return _to_mapping(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ProcessRateProfile":
+        """Rebuild a rate profile from a mapping, ignoring unknown keys."""
+        return _from_mapping(cls, data)
 
 
 @dataclass(frozen=True)
@@ -459,3 +509,146 @@ def _public_numbers(obj: object) -> dict[str, float]:
         for name, value in vars(obj).items()
         if isinstance(value, (int, float)) and not isinstance(value, bool)
     }
+
+
+# --- Single-source interface for downstream pipelines (e.g. HWE-Pipeline #24) ---
+#
+# These are the canonical, vendor-neutral building blocks a sourcing/TPM cost
+# layer can single-source instead of re-deriving rate tables:
+#   * ADAPTERS / adapter_for() / estimate_cost(): one entrypoint that maps a
+#     process_id to the right deterministic adapter.
+#   * PROFILE_PRESETS / get_profile() / list_profiles(): a starter library of
+#     illustrative generic rate profiles. They are deliberately NOT vendor
+#     quotes — calibrate the rates locally. Vendor-specific profiles
+#     (e.g. SendCutSend sheet rules) belong in the consuming repo, not here.
+
+ADAPTERS: dict[ManufacturingProcess, type[CostingAdapter]] = {
+    "cnc_milling": CncCostingAdapter,
+    "sheet_laser": SheetLaserCostingAdapter,
+    "additive_3d_print": AdditivePrintCostingAdapter,
+}
+
+
+def adapter_for(process_id: ManufacturingProcess) -> CostingAdapter:
+    """Return a fresh CostingAdapter instance for ``process_id``."""
+    try:
+        return ADAPTERS[process_id]()
+    except KeyError:
+        raise ValueError(
+            f"no costing adapter for process_id={process_id!r}; "
+            f"known processes: {sorted(ADAPTERS)}"
+        ) from None
+
+
+def estimate_cost(
+    metrics: GeometryCostMetrics,
+    profile: ProcessRateProfile,
+) -> ManufacturingCostEstimate:
+    """Single entrypoint: dispatch to the adapter matching ``profile.process_id``.
+
+    Downstream callers can rely on this instead of importing each adapter class.
+    """
+    return adapter_for(profile.process_id).estimate(metrics, profile)
+
+
+_GENERIC = "illustrative generic baseline rate; calibrate locally, not a vendor quote"
+
+PROFILE_PRESETS: dict[str, ProcessRateProfile] = {
+    profile.profile_id: profile
+    for profile in (
+        ProcessRateProfile(
+            process_id="cnc_milling",
+            profile_id="cnc-aluminum-3axis-v1",
+            material_id="6061-aluminum",
+            material_usd_per_cm3=0.30,
+            machine_usd_per_hour=75.0,
+            removal_rate_cm3_per_min=8.0,
+            setup_fee_usd=0.0,
+            setup_time_minutes=15.0,
+            tool_change_time_minutes=0.5,
+            hole_usd_each=0.50,
+            min_job_fee_usd=35.0,
+            assumptions=(_GENERIC, "3-axis prismatic part, single fixturing"),
+        ),
+        ProcessRateProfile(
+            process_id="cnc_milling",
+            profile_id="cnc-mild-steel-3axis-v1",
+            material_id="1018-mild-steel",
+            material_usd_per_cm3=0.12,
+            machine_usd_per_hour=85.0,
+            removal_rate_cm3_per_min=3.0,
+            setup_fee_usd=0.0,
+            setup_time_minutes=20.0,
+            tool_change_time_minutes=0.75,
+            hole_usd_each=0.75,
+            min_job_fee_usd=45.0,
+            assumptions=(_GENERIC, "slower removal vs aluminum, harder tooling"),
+        ),
+        ProcessRateProfile(
+            process_id="sheet_laser",
+            profile_id="sheet-laser-mild-steel-v1",
+            material_id="1.5mm-mild-steel-sheet",
+            sheet_material_usd_per_cm2=0.015,
+            machine_usd_per_hour=120.0,
+            cut_speed_mm_per_min=4000.0,
+            setup_fee_usd=0.0,
+            bend_usd_each=1.25,
+            hole_usd_each=0.10,
+            min_job_fee_usd=25.0,
+            assumptions=(_GENERIC, "fiber-laser cut, press-brake bends"),
+        ),
+        ProcessRateProfile(
+            process_id="sheet_laser",
+            profile_id="sheet-laser-aluminum-v1",
+            material_id="2mm-aluminum-sheet",
+            sheet_material_usd_per_cm2=0.022,
+            machine_usd_per_hour=120.0,
+            cut_speed_mm_per_min=3000.0,
+            setup_fee_usd=0.0,
+            bend_usd_each=1.50,
+            hole_usd_each=0.10,
+            min_job_fee_usd=25.0,
+            assumptions=(_GENERIC, "aluminum cuts slower than equivalent steel gauge"),
+        ),
+        ProcessRateProfile(
+            process_id="additive_3d_print",
+            profile_id="fdm-pla-v1",
+            material_id="pla-filament",
+            material_usd_per_cm3=0.05,
+            consumable_usd_per_cm3=0.05,
+            print_usd_per_hour=3.0,
+            setup_fee_usd=0.0,
+            setup_time_minutes=5.0,
+            min_job_fee_usd=5.0,
+            assumptions=(_GENERIC, "desktop FDM; print time from a slicer profile"),
+        ),
+        ProcessRateProfile(
+            process_id="additive_3d_print",
+            profile_id="sla-resin-v1",
+            material_id="standard-resin",
+            material_usd_per_cm3=0.18,
+            consumable_usd_per_cm3=0.18,
+            print_usd_per_hour=4.0,
+            setup_fee_usd=0.0,
+            setup_time_minutes=8.0,
+            min_job_fee_usd=8.0,
+            assumptions=(_GENERIC, "MSLA resin; supports priced as consumable volume"),
+        ),
+    )
+}
+
+
+def get_profile(profile_id: str) -> ProcessRateProfile:
+    """Return a copy-safe preset rate profile by id."""
+    try:
+        return PROFILE_PRESETS[profile_id]
+    except KeyError:
+        raise ValueError(
+            f"unknown profile_id={profile_id!r}; "
+            f"known presets: {sorted(PROFILE_PRESETS)}"
+        ) from None
+
+
+def list_profiles() -> list[str]:
+    """List the available preset profile ids."""
+    return sorted(PROFILE_PRESETS)

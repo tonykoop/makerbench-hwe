@@ -1,8 +1,8 @@
 """makerbench-logger CLI.
 
-The ``makerbench logger emit ...`` command, runnable standalone as::
+The installed ``makerbench-logger emit ...`` command, runnable standalone as::
 
-    python -m makerbench_logger emit --tool-call-log calls.json -o workflow_manifest.json
+    makerbench-logger emit --tool-call-log calls.json -o workflow_manifest.json
 
 Reads a JSON tool-call log (a list of calls, or an object with stack/metrics +
 ``tool_call_log``), assembles a :class:`WorkflowManifest`, writes it, and
@@ -105,18 +105,18 @@ def _cmd_emit(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    hii = manifest["human_intervention_index"]
+    hii = manifest["hii"]
     print(
         f"wrote {args.output}  "
         f"(tool_calls={manifest['metrics']['tool_calls_count']}, "
-        f"HII={hii['overall']}, autonomy_ratio={hii['autonomy_ratio']})"
+        f"HII={hii['highest_level']}, autonomy_ratio={hii['autonomy_ratio']})"
     )
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="makerbench logger",
+        prog="makerbench-logger",
         description="Emit a WorkflowManifest (mb#89) from an agent's tool-call log.",
     )
     parser.add_argument("--version", action="version", version=f"makerbench-logger {__version__}")

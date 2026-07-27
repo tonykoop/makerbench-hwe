@@ -82,6 +82,9 @@ rerun, and easier for neighbouring projects to adopt.
 
 ## Collaboration Opportunities
 
+- **Outreach packet.** Copy/paste-ready notes for the target communities below
+  live in [OUTREACH_PACKET.md](OUTREACH_PACKET.md). They include public-claim
+  guardrails and should be refreshed against live project pages before sending.
 - **CADGenBench / Hugging Face.** CADGenBench is tool-agnostic STEP-in/STEP-out,
   and its reference baseline uses build123d, the same stack as MakerBench's
   B-rep profile. Good collaboration targets include cross-submission,
@@ -95,6 +98,21 @@ rerun, and easier for neighbouring projects to adopt.
   easier and give appropriate credit to adjacent work.
 - **GenCAD-3D.** Its planned scanned physical-part set is directly relevant to
   MakerBench's reverse-engineering family.
+- **MARB / CADCLAW (Sunnyday Technologies).** The closest neighbour yet to
+  MakerBench's level-based framing, and MIT-licensed. MARB grades macro-assembly
+  / system integrity (placement, collision, connectivity) on an L0–L7 ladder
+  mapped to TRL/MRL/IRL; MakerBench grades micro process-DFM on each part. The
+  two are complementary, not competitive: **MakerBench is the per-part "is this
+  buildable?" gate that fills the space between a MARB L1 *placed* assembly and
+  an L3/L5 mechanically-valid, *manufacturable* machine** — a design can clear
+  CADCLAW's Interference/Floating gates and still fail MakerBench DFM on an
+  un-manufacturable bend radius or non-catalog thread. Both are deterministic,
+  tool-agnostic, STEP-in graders that keep effort (time/tokens/attempts) out of
+  the artifact score — a shared discipline worth aligning on. Good first targets:
+  a shared "deterministic hardware-agent evaluation" framing and grading one STEP
+  artifact through both gates. Outreach is tracked in #74; adapter work in #76.
+  Credit MARB's L0–L7 ladder explicitly and avoid asserting any head-to-head
+  neither project has run.
 
 ## Roadmap Implications
 
@@ -150,7 +168,9 @@ Steps 2–3 have a maintainer checklist in
 - Do not cite CADSmith as a VLM-judged evaluation. Its VLM judge is part of the
   method's repair loop; its reported metrics are deterministic.
 - Treat promised-but-not-shipped releases as dated observations, not permanent
-  facts. UniCAD, Physics-in-the-Loop, Hephaestus-CCX, and GenCAD-3D may change
-  quickly.
+  facts. UniCAD, Physics-in-the-Loop, and GenCAD-3D remain promised-only as of
+  2026-06-20. Hephaestus-CCX v2 (2026-05-27) released its benchmark per
+  abstract language ("we release … paired with CalculiX evaluation kits") but
+  no public repo URL was confirmed; paper still marked "work in progress".
 - Re-check leaderboard counts, top scores, validation policies, and release
   links before quoting them in outreach or papers.

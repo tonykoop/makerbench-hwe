@@ -1,0 +1,26 @@
+mpn: GENERIC-LQFP-64
+manufacturer: "(generic)"
+description: Generic LQFP-64 microcontroller, 0.5 mm pitch, 10x10 mm body.
+category: electronic
+package: "LQFP-64"
+files:
+  symbol: symbol.json
+  footprint: footprint.kicad_mod
+  model_step: model.step
+physical:
+  length_mm: 12.0
+  width_mm: 12.0
+  height_mm: 1.4
+physics:
+  package_material: "epoxy mold compound"
+  max_junction_temp_c: 150
+  theta_ja_c_per_w: 45
+electrical:
+  type: mcu
+  pin_count: 64
+provenance:
+  license: CC-BY-4.0
+  redistributable: true
+  source: "first-party (parametric LQFP-64 package, authored for offtheshelf)"
+  source_url: null
+tags: [active, mcu, smd, "lqfp-64"]

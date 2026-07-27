@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
@@ -150,3 +151,57 @@ def test_score_band_buckets():
     assert library.score_band(0.5) == "0.5-0.7"
     assert library.score_band(0.1) == "<0.5"
     assert library.score_band(None) == "ungraded"
+
+
+# --------------------------------------------------------------------------
+# CLI / on-disk outputs (main() entry points)
+# --------------------------------------------------------------------------
+
+def test_explorer_cli_writes_explorer_html(tmp_path):
+    """`generate_run_explorer.py <run_dir>` writes explorer.html next to run.json."""
+    run_dir = tmp_path / "run_alpha_vented_plate"
+    shutil.copytree(ALPHA, run_dir)
+    rc = explorer.main([str(run_dir)])
+    assert rc == 0
+    out = run_dir / "explorer.html"
+    assert out.exists()
+    _assert_html(out.read_text(encoding="utf-8"))
+
+
+def test_library_cli_emits_manifest_and_explorers(tmp_path):
+    """`generate_run_library.py <runs_root> --make-explorers` writes the full two-tier
+    bundle: library.html + runs-manifest.json at the root and an explorer.html per run."""
+    runs_root = tmp_path / "runs"
+    shutil.copytree(FIXTURES, runs_root)
+    rc = library.main([str(runs_root), "--make-explorers"])
+    assert rc == 0
+
+    lib = runs_root / "library.html"
+    manifest_path = runs_root / "runs-manifest.json"
+    assert lib.exists() and manifest_path.exists()
+    _assert_html(lib.read_text(encoding="utf-8"))
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["schema"] == "makerbench-runs-manifest-v1"
+    assert manifest["count"] == 2
+    # --make-explorers wrote a per-run explorer.html the manifest can point at,
+    # and the manifest's explorer paths resolve relative to the runs root.
+    for entry in manifest["runs"]:
+        assert (runs_root / entry["explorer"]).exists()
+
+
+def test_library_cli_honors_explicit_output_paths(tmp_path):
+    """--output-html / --output-manifest override the default in-root locations."""
+    runs_root = tmp_path / "runs"
+    shutil.copytree(FIXTURES, runs_root)
+    out_html = tmp_path / "site" / "run-library.html"
+    out_manifest = tmp_path / "site" / "runs-manifest.json"
+    out_html.parent.mkdir(parents=True)
+    rc = library.main([
+        str(runs_root),
+        "--output-html", str(out_html),
+        "--output-manifest", str(out_manifest),
+    ])
+    assert rc == 0
+    assert out_html.exists() and out_manifest.exists()
+    assert json.loads(out_manifest.read_text(encoding="utf-8"))["count"] == 2

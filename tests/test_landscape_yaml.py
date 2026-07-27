@@ -30,6 +30,7 @@ yaml = pytest.importorskip(
 ROOT = Path(__file__).resolve().parents[1]
 LANDSCAPE_YAML = ROOT / "docs" / "landscape.yaml"
 LANDSCAPE_MD = ROOT / "docs" / "LANDSCAPE.md"
+LANDSCAPE_SWEEP_MD = ROOT / "docs" / "LANDSCAPE_SWEEP.md"
 EVIDENCE_DIR = ROOT / "docs" / "landscape-evidence"
 
 # Documented in the landscape.yaml header. `type` is strictly enumerated.
@@ -43,6 +44,17 @@ ALLOWED_TYPES = {
     "method+dataset",
     "product",
 }
+
+ALLOWED_AXIS = {
+    "spatial-intelligence",
+    "hardware-engineering",
+    "code-cad",
+    "dfm",
+    "reverse-engineering",
+    "physics-sim",
+}
+
+ALLOWED_KIND = {"benchmark", "method", "dataset"}
 
 # Documented `grading` vocabulary. The data also uses descriptive free text
 # (e.g. "executability + numeric correctness", "n/a (method; ...)"), which is
@@ -66,6 +78,8 @@ _VOCAB_TOKEN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 REQUIRED_FIELDS = {
     "name",
     "type",
+    "axis",
+    "kind",
     "source",
     "date",
     "recent",
@@ -76,6 +90,28 @@ REQUIRED_FIELDS = {
     "scope",
     "openness",
     "backing",
+}
+
+REQUIRED_SWEEP_CHECKS = {
+    "reverify_sources",
+    "hunt_new_entries",
+    "flag_recent_entries",
+    "refresh_promised_releases",
+    "refresh_cadgenbench_leaderboard",
+    "refresh_muse_grading",
+    "diff_landscape_yaml",
+    "append_what_changed",
+    "refresh_strategy_rankings",
+    "verify_benchmark_vs_method_labels",
+}
+
+REQUIRED_VOLATILE_WATCHLIST = {
+    "UniCAD",
+    "Physics-in-the-Loop",
+    "Hephaestus-CCX",
+    "GenCAD-3D",
+    "CADGenBench",
+    "MUSE",
 }
 
 # LANDSCAPE.md table rows whose display name differs from the YAML `name`.
@@ -105,6 +141,49 @@ def test_top_level_structure():
     assert isinstance(
         sweep_date, _dt.date
     ), "sweep.date must be a YYYY-MM-DD date (YAML date scalar)"
+
+
+def test_quarterly_sweep_process_metadata():
+    data = _load_landscape()
+    sweep = data["sweep"]
+    sweep_date = sweep["date"]
+    next_due = sweep.get("next_due")
+
+    assert isinstance(
+        next_due, _dt.date
+    ), "sweep.next_due must be a YYYY-MM-DD date (YAML date scalar)"
+    assert next_due > sweep_date, "sweep.next_due must be after sweep.date"
+    assert 80 <= (next_due - sweep_date).days <= 110, (
+        "sweep.next_due should remain roughly quarterly after sweep.date"
+    )
+    assert sweep.get("cadence") == "quarterly"
+    assert sweep.get("process_doc") == "docs/LANDSCAPE_SWEEP.md"
+    assert sweep.get("evidence_template") == (
+        "docs/landscape-evidence/<YYYY-MM-DD>.yaml"
+    )
+    assert REQUIRED_SWEEP_CHECKS <= set(sweep.get("required_checks", []))
+    assert REQUIRED_VOLATILE_WATCHLIST <= set(sweep.get("volatile_watchlist", []))
+
+
+def test_quarterly_watchlist_names_are_landscape_entries():
+    data = _load_landscape()
+    entry_names = {entry["name"] for entry in data["entries"]}
+    watchlist = set(data["sweep"].get("volatile_watchlist", []))
+
+    assert watchlist
+    assert watchlist <= entry_names, (
+        f"sweep.volatile_watchlist contains names with no entry: "
+        f"{sorted(watchlist - entry_names)}"
+    )
+
+
+def test_landscape_markdown_links_quarterly_runbook():
+    md_text = LANDSCAPE_MD.read_text(encoding="utf-8")
+    runbook_text = LANDSCAPE_SWEEP_MD.read_text(encoding="utf-8")
+
+    assert "[`LANDSCAPE_SWEEP.md`](LANDSCAPE_SWEEP.md)" in md_text
+    assert "Next full sweep due: 2026-09-10" in runbook_text
+    assert "python -m pytest tests/test_landscape_yaml.py" in runbook_text
 
 
 def test_every_entry_has_required_fields():
@@ -141,6 +220,28 @@ def test_type_uses_documented_vocabulary():
             f"{entry['name']}: type {entry['type']!r} not in documented "
             f"vocabulary {sorted(ALLOWED_TYPES)} (extend the header vocab "
             "and this test together if a new type is genuinely needed)"
+        )
+
+
+def test_axis_uses_documented_vocabulary():
+    for entry in _entries():
+        axis = entry["axis"]
+        assert isinstance(axis, list), (
+            f"{entry['name']}: `axis` must be a YAML list"
+        )
+        assert axis, f"{entry['name']}: `axis` must have at least one value"
+        for item in axis:
+            assert item in ALLOWED_AXIS, (
+                f"{entry['name']}: axis value {item!r} not in documented vocabulary "
+                f"{sorted(ALLOWED_AXIS)}"
+            )
+
+
+def test_kind_uses_documented_vocabulary():
+    for entry in _entries():
+        assert entry["kind"] in ALLOWED_KIND, (
+            f"{entry['name']}: kind {entry['kind']!r} not in documented vocabulary "
+            f"{sorted(ALLOWED_KIND)}"
         )
 
 
@@ -218,3 +319,153 @@ def test_evidence_sidecars_parse_and_reference_real_entries():
                 f"{path.name}: {name}: `supports` names unknown landscape.yaml "
                 f"fields {sorted(unknown)}"
             )
+
+
+def _entry_by_name(name: str) -> dict:
+    for entry in _entries():
+        if entry["name"] == name:
+            return entry
+    raise AssertionError(f"no landscape.yaml entry named {name!r}")
+
+
+def test_marb_entry_is_assembly_integrity_neighbour():
+    """MARB/CADCLAW (issue #77) is the macro-assembly neighbour: it must be
+    typed as an assembly-integrity, deterministic, MIT-licensed entry so it is
+    not silently miscategorised as a process-DFM competitor."""
+    marb = _entry_by_name("MARB / CADCLAW")
+
+    assert marb["scope"] == "assembly-integrity", (
+        "MARB grades macro-assembly/system integrity, not micro process-DFM; "
+        "scope must be assembly-integrity to keep the boundary explicit"
+    )
+    assert marb["type"] == "benchmark+method"
+    assert marb["grading"] == "deterministic-geometric"
+    assert marb["recent"] is True
+    # CADCLAW is the open-source engine; the openness note must record MIT.
+    assert "MIT" in str(marb["openness"])
+    # Both primary sources (landing page + engine repo) must be captured.
+    assert str(marb["source"]).startswith("https://")
+    assert str(marb["source_alt"]).startswith("https://")
+
+
+def test_marb_scope_token_is_documented_in_header():
+    """The `assembly-integrity` scope token MARB introduces must be listed in
+    the landscape.yaml header vocabulary, so the data and its documented
+    vocabulary stay in sync."""
+    header = LANDSCAPE_YAML.read_text(encoding="utf-8").split("entries:", 1)[0]
+    assert "assembly-integrity" in header, (
+        "scope token `assembly-integrity` is used but not documented in the "
+        "landscape.yaml header `scope:` vocabulary"
+    )
+
+
+def test_marb_has_dated_primary_source_evidence():
+    """Acceptance criterion for #77: the MARB entry ships with a dated evidence
+    sidecar citing the fetched primary sources."""
+    evidence_files = sorted(EVIDENCE_DIR.glob("*.yaml"))
+    marb_evidence = []
+    for path in evidence_files:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for item in data["entries"]:
+            if item["name"] == "MARB / CADCLAW":
+                marb_evidence.append((path, item))
+
+    assert marb_evidence, "no evidence sidecar entry for 'MARB / CADCLAW'"
+    _, item = marb_evidence[0]
+    hosts = " ".join(item["sources"])
+    assert "marb.cadclaw.io" in hosts, "evidence must cite the MARB landing page"
+    assert "CADCLAW" in hosts, "evidence must cite the CADCLAW engine repo"
+
+
+_SOLIDWORKS_COMPANIONS_NAME = "SOLIDWORKS AI Virtual Companions (LEO / AURA / MARIE)"
+
+
+def test_solidworks_companions_entry_is_proprietary_product_boundary():
+    """Issue #84 positions LEO/AURA/MARIE as an incumbent product signal, not a
+    public benchmark. The landscape row must keep that boundary explicit."""
+    entry = _entry_by_name(_SOLIDWORKS_COMPANIONS_NAME)
+
+    assert entry["kind"] == "method"
+    assert entry["type"] == "product"
+    assert entry["recent"] is True
+    assert str(entry["grading"]).startswith("n/a"), (
+        "SOLIDWORKS companions have no public reproducible benchmark score"
+    )
+    assert "proprietary" in str(entry["openness"]).lower()
+    assert "vendor-neutral referee" in str(entry["note"])
+    assert "Mistral" in str(entry["note"])
+    assert "Outscale" in str(entry["note"])
+
+
+def test_solidworks_companions_have_dated_primary_source_evidence():
+    """Acceptance criterion for #84: the SOLIDWORKS companion entry ships with a
+    dated evidence sidecar citing the product page and independent trade reports."""
+    evidence_files = sorted(EVIDENCE_DIR.glob("*.yaml"))
+    evidence = []
+    for path in evidence_files:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for item in data["entries"]:
+            if item["name"] == _SOLIDWORKS_COMPANIONS_NAME:
+                evidence.append((path, item))
+
+    assert evidence, f"no evidence sidecar entry for {_SOLIDWORKS_COMPANIONS_NAME!r}"
+    _, item = evidence[0]
+    hosts = " ".join(item["sources"])
+    claims = " ".join(item["claims"])
+    volatility = " ".join(item["volatility"])
+    assert "solidworks.com" in hosts
+    assert "develop3d.com" in hosts
+    assert "engineering.com" in hosts
+    assert "AURA" in claims and "LEO" in claims and "MARIE" in claims
+    assert "Mistral" in claims and "Outscale" in claims
+    assert "re-check SOLIDWORKS release pages" in volatility
+
+
+_DRACO_NAME = "Multi-model fusion-panel evaluation (DRACO)"
+
+
+def test_draco_fusion_panel_entry_is_present_and_well_formed():
+    """Acceptance criterion for #283: the multi-model fusion-panel (DRACO-style)
+    adjacent reference is present, well-formed, and typed as a method — never as
+    a CAD/hardware benchmark."""
+    entry = _entry_by_name(_DRACO_NAME)
+
+    # All required fields present and non-empty (covered broadly elsewhere, but
+    # asserted here so this entry is a standalone deterministic check).
+    for field in REQUIRED_FIELDS:
+        assert entry.get(field) not in (None, "", []), f"DRACO entry missing {field}"
+
+    # It is an evaluation method/paradigm, not a benchmark we score against.
+    assert entry["kind"] == "method"
+    assert entry["type"] == "method"
+    # Non-deterministic judge grading — the thing MakerBench core does NOT adopt.
+    assert entry["grading"] == "llm-judge"
+    # Primary sources are URLs (the DRACO paper + public dataset).
+    assert str(entry["source"]).startswith("https://")
+    assert str(entry["source_alt"]).startswith("https://")
+    assert "draco" in str(entry["source_alt"]).lower()
+
+
+def test_draco_entry_renders_in_landscape_markdown_as_adjacent():
+    """The DRACO row renders in LANDSCAPE.md and is framed as adjacent (not a
+    benchmark MakerBench competes with or whose grading it adopts)."""
+    md_text = LANDSCAPE_MD.read_text(encoding="utf-8")
+    assert _DRACO_NAME in md_text, "DRACO fusion-panel row missing from LANDSCAPE.md"
+    assert "Adjacent reference, not an endorsement" in md_text
+    assert "exported artifact" in md_text and "deterministic" in md_text
+
+
+def test_draco_entry_has_dated_primary_source_evidence():
+    """The DRACO addendum ships a dated evidence sidecar citing fetched sources."""
+    evidence_files = sorted(EVIDENCE_DIR.glob("*.yaml"))
+    found = []
+    for path in evidence_files:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for item in data["entries"]:
+            if item["name"] == _DRACO_NAME:
+                found.append(item)
+
+    assert found, "no evidence sidecar entry for the DRACO fusion-panel addendum"
+    hosts = " ".join(found[0]["sources"])
+    assert "arxiv.org/abs/2602.11685" in hosts, "evidence must cite the DRACO paper"
+    assert "perplexity-ai/draco" in hosts, "evidence must cite the public dataset"

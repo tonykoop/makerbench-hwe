@@ -1,0 +1,105 @@
+{
+  "footprint": {
+    "courtyard_height_mm": 1.4,
+    "courtyard_width_mm": 2.2,
+    "footprint_id": "Resistor_SMD:R_0603_1608Metric",
+    "format": "pcb-footprint",
+    "metadata": {},
+    "model_3d": null,
+    "pads": [
+      {
+        "drill_diameter_mm": null,
+        "electrically_connected": true,
+        "height_mm": 0.95,
+        "layers": [
+          "F.Cu",
+          "F.Paste",
+          "F.Mask"
+        ],
+        "number": "1",
+        "shape": "rect",
+        "type": "smd",
+        "width_mm": 0.9,
+        "x_mm": -0.8,
+        "y_mm": 0.0
+      },
+      {
+        "drill_diameter_mm": null,
+        "electrically_connected": true,
+        "height_mm": 0.95,
+        "layers": [
+          "F.Cu",
+          "F.Paste",
+          "F.Mask"
+        ],
+        "number": "2",
+        "shape": "rect",
+        "type": "smd",
+        "width_mm": 0.9,
+        "x_mm": 0.8,
+        "y_mm": 0.0
+      }
+    ],
+    "units": "mm"
+  },
+  "metadata": {
+    "category": "resistor",
+    "component_id": "mb-passive-resistor-0603",
+    "datasheet_url": null,
+    "description": "Public example resistor component for schema validation.",
+    "display_name": "0603 resistor",
+    "manufacturer": "Generic",
+    "manufacturer_part_number": "RES-0603",
+    "tags": [
+      "passive",
+      "smd",
+      "0603"
+    ]
+  },
+  "pin_pad_map": [
+    {
+      "footprint_pad": "1",
+      "net_role": "signal",
+      "symbol_pin": "1"
+    },
+    {
+      "footprint_pad": "2",
+      "net_role": "signal",
+      "symbol_pin": "2"
+    }
+  ],
+  "schema_version": "makerbench-unified-component-v1",
+  "symbol": {
+    "format": "sch-symbol-json",
+    "graphics": {
+      "body": {
+        "height_mm": 1.27,
+        "shape": "zigzag",
+        "width_mm": 3.81
+      }
+    },
+    "pins": [
+      {
+        "electrical_type": "passive",
+        "length_mm": 2.54,
+        "name": "A",
+        "number": "1",
+        "orientation": "left",
+        "x_mm": 0.0,
+        "y_mm": 0.0
+      },
+      {
+        "electrical_type": "passive",
+        "length_mm": 2.54,
+        "name": "B",
+        "number": "2",
+        "orientation": "right",
+        "x_mm": 0.0,
+        "y_mm": 0.0
+      }
+    ],
+    "reference_prefix": "R",
+    "symbol_id": "Device:R",
+    "units": "mm"
+  }
+}

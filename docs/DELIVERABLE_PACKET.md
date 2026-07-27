@@ -62,8 +62,9 @@ for a complete instance.
 
 ## Completeness hooks
 
-`assess_packet_completeness(dossier, spec)` returns a `DossierCategoryResult`
-(category `deliverable_packet`) with these checks:
+`assess_packet_completeness(dossier, spec=None)` returns a `DossierCategoryResult`
+(category `deliverable_packet`) with these checks (the `spec` argument is
+optional and unused — the hooks read only the dossier):
 
 | Check | What it verifies |
 | --- | --- |
@@ -76,6 +77,29 @@ A check that does not apply — an absent optional deliverable, no declared
 bounds — is treated as satisfied, because the packet is optional everywhere. The
 result's `passed`/`missing_fields` are a review signal; they never change the
 geometry score.
+
+## Validating a packet from the CLI
+
+The same disclosure-grade hooks are runnable without writing Python:
+
+```
+makerbench packet-check <dossier.json>          # human-readable PASS/FAIL per hook
+makerbench packet-check --json <dossier.json>   # the full DossierCategoryResult
+makerbench packet-check --strict <dossier.json> # exit non-zero if incomplete (CI use)
+```
+
+The argument is a `DesignDossier` JSON carrying a `packet` (a submission's
+dossier). As a convenience a bare `DeliverablePacket` JSON is also accepted and
+wrapped in a minimal dossier — but the BOM-vs-assembly cross-check needs the
+surrounding dossier, so a bare packet reports that one hook as unmet. Because the
+check is disclosure-grade, the command exits `0` even when incomplete; `--strict`
+is opt-in for pipelines that want a gate of their own. Try it against the bundled
+examples:
+
+```
+makerbench packet-check examples/deliverable_packet_dossier.example.json  # complete
+makerbench packet-check examples/deliverable_packet.example.json          # bare packet
+```
 
 ## Public / private boundary
 

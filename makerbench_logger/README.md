@@ -21,8 +21,9 @@ log.emit("workflow_manifest.json")  # writes the manifest; returns the dict
 ```
 
 That records every tool-call with its **Human Intervention Index** level, computes
-the **autonomy ratio**, captures wall-clock + tool-call count, and writes a
-manifest with `stack` / `metrics` / `human_intervention_index` / `provenance_trace`.
+the weighted **autonomy ratio**, captures wall-clock + tool-call count, and writes
+a manifest with `stack` / `metrics` / `hii` / `provenance_trace` in the exact
+shape `makerbench.schema.WorkflowManifest` (mb#89) expects.
 
 ## Human Intervention Index (mb#89)
 
@@ -32,12 +33,27 @@ manifest with `stack` / `metrics` / `human_intervention_index` / `provenance_tra
 | `L1`  | Light NL steering between iterations |
 | `L2`  | Heavy copilot / manual geometry edits |
 
-`overall` is the highest level observed in the run; `autonomy_ratio` is the
-fraction of tool-calls that ran at `L0` (1.0 = no human in the loop).
+The emitted `hii` block carries per-tier event counts
+(`l0_autonomous_events` / `l1_nl_steering_events` / `l2_copilot_manual_events`),
+the `highest_level` observed, and a weighted `autonomy_ratio` where an L0 event
+contributes full autonomy (1.0), an L1 half (0.5), and an L2 none (0.0) — so
+`1.0` means no human in the loop. This weighting and field shape match the
+authoritative schema exactly, so the disclosed steering survives the round-trip
+into the benchmark (an integrity requirement: a manifest that lost its HII would
+silently rank an assisted run as autonomous).
 
 ## CLI
 
-Build a manifest from a recorded tool-call log (the `makerbench logger emit` form):
+Build a manifest from a recorded tool-call log:
+
+```bash
+makerbench-logger emit \
+    --tool-call-log calls.json \
+    --task-id bracket_v1 --seed 0 \
+    -o workflow_manifest.json
+```
+
+Without an installed console script, the module form is equivalent:
 
 ```bash
 python -m makerbench_logger emit \
@@ -73,5 +89,9 @@ manifest = log.to_dict()                       # in-memory dict, no file write
 
 ## Status
 
-`schema_version` `0.1`. Tracks mb#92; the WorkflowManifest contract is owned by
-mb#89 — this SDK ships a forward-compatible local mirror and aligns at merge.
+`schema_version` `0.1` (SDK `0.2.0`). Tracks mb#92; the WorkflowManifest contract
+is owned by mb#89. The SDK emits the authoritative `hii` shape and round-trips
+losslessly through `makerbench.schema.WorkflowManifest` — `emit()` raises if the
+disclosed steering would not survive validation. A worked end-to-end example
+wrapping a real agent stack lives in
+[`examples/blender_mcp_stack/`](../examples/blender_mcp_stack/) (mb#93).

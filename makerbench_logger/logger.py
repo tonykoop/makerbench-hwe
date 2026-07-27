@@ -24,12 +24,15 @@ from typing import Any, Optional, Union
 
 from .manifest import (
     HII_L0,
+    HII_L1,
+    HII_L2,
     HumanInterventionIndex,
     Metrics,
     ProvenanceTrace,
     Stack,
     ToolCall,
     WorkflowManifest,
+    validate_fail_closed,
     validate_with_schema,
 )
 
@@ -76,6 +79,8 @@ class WorkflowLogger:
         self._start_perf: Optional[float] = None
         self._wall_clock_seconds: Optional[float] = None
         self._iteration = 0
+        # Result of the most recent emit() validation: (ok, reason).
+        self.last_validation: tuple[bool, Optional[str]] = (True, None)
 
     # -- lifecycle -----------------------------------------------------------
     def start(self) -> "WorkflowLogger":
@@ -168,7 +173,7 @@ class WorkflowLogger:
             created_at=self._created_at,
             stack=self.stack,
             metrics=metrics,
-            human_intervention_index=HumanInterventionIndex.from_calls(self._calls),
+            hii=HumanInterventionIndex.from_calls(self._calls),
             provenance_trace=self._provenance,
             tool_call_log=list(self._calls),
             artifacts=list(self._artifacts),
@@ -183,19 +188,33 @@ class WorkflowLogger:
         path: Union[str, Path],
         *,
         indent: int = 2,
-        validate: bool = True,
+        validate: Union[bool, str] = True,
         write_mbc: bool = False,
     ) -> dict[str, Any]:
         """Write ``workflow_manifest.json`` and return the manifest dict.
 
-        When ``validate`` is set and the authoritative ``makerbench.schema`` is
-        importable, the dict is round-tripped through it and a ``ValueError`` is
-        raised on mismatch. ``write_mbc`` optionally calls bob's ``write_mbc()``
-        (mb#109) if that helper is importable — a no-op otherwise.
+        ``validate`` controls schema enforcement:
+
+        * ``True`` (default) — round-trip through the authoritative
+          ``makerbench.schema`` (when importable) and **raise ``ValueError``** on
+          mismatch. Backward-compatible strict behavior.
+        * ``False`` — skip validation entirely.
+        * ``"soft"`` — **fail closed without raising**: validate via
+          :func:`validate_fail_closed`, still write the manifest to disk so the
+          (possibly malformed) evidence is preserved, and record the outcome on
+          ``self.last_validation`` (a ``(ok, reason)`` tuple). A grader can then
+          treat ``ok is False`` as an automatic zero instead of crashing on a
+          garbled agent submission.
+
+        ``write_mbc`` optionally calls bob's ``write_mbc()`` (mb#109) if that
+        helper is importable — a no-op otherwise.
         """
         manifest = self.build().to_dict()
-        if validate:
-            ok, reason = validate_with_schema(manifest)
+        if validate == "soft":
+            self.last_validation = validate_fail_closed(manifest)
+        elif validate:
+            self.last_validation = validate_with_schema(manifest)
+            ok, reason = self.last_validation
             if not ok:
                 raise ValueError(f"WorkflowManifest failed makerbench.schema validation: {reason}")
         out = Path(path)

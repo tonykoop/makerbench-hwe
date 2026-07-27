@@ -1,0 +1,277 @@
+"""Browser-native blind voting for the Code-CAD Arena (#602 follow-on).
+
+``arena vote-web`` serves one loopback URL; the voter steps through blind
+pairs entirely in the browser — the Left/Draw/Right buttons on the vote page
+POST back to this server, which appends the same ``votes.blind.jsonl`` /
+``votes.revealed.jsonl`` records the terminal flow writes. No terminal
+round-trips (Round 2 voter feedback).
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+from dataclasses import dataclass, field
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Optional
+
+from .code_cad_vote_surface import (
+    BlindPair,
+    append_vote_record,
+    record_vote,
+    render_vote_surface,
+    reveal_vote,
+)
+
+
+# Structured per-candidate defect/disposition flags (Round 4 voter feedback).
+# ids are stable vocabulary for analysis; labels are what the voter reads.
+VOTE_FLAGS: tuple[tuple[str, str], ...] = (
+    ("missing_critical_components", "missing critical components"),
+    ("misaligned_assembly", "components misaligned in the assembly"),
+    ("insufficient_detail", "insufficient detail"),
+    ("wrong_proportions", "wrong proportions / scale"),
+    ("save_for_later", "save for later"),
+    ("delete_immediately", "delete immediately"),
+)
+
+VOTE_FLAG_IDS = frozenset(flag_id for flag_id, _ in VOTE_FLAGS)
+
+
+def _flag_fieldset(side: str) -> str:
+    boxes = "\n".join(
+        f'      <label><input type="checkbox" name="flag" value="{flag_id}"> {label}</label>'
+        for flag_id, label in VOTE_FLAGS
+    )
+    return (
+        f'\n    <fieldset class="flags" data-flag-side="{side}">\n'
+        f"      <legend>flags ({side})</legend>\n{boxes}\n    </fieldset>\n  "
+    )
+
+
+VOTE_JS = """
+<script>
+function sideFlags(side) {
+  return Array.from(document.querySelectorAll(
+    '[data-flag-side="' + side + '"] input[name="flag"]:checked')).map(cb => cb.value);
+}
+function cast(winner) {
+  fetch('/vote', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pair_id: document.querySelector('main').dataset.pairId,
+                          winner: winner,
+                          flags: {left: sideFlags('left'), right: sideFlags('right')}})
+  }).then(r => r.json()).then(() => { window.location = '/queue'; });
+}
+document.querySelectorAll('button[data-vote]').forEach(b =>
+  b.addEventListener('click', () => cast(b.dataset.vote)));
+document.addEventListener('keydown', (e) => {
+  if (e.target && e.target.tagName === 'INPUT') return;  // don't hijack checkbox focus
+  const map = {l: 'left', ArrowLeft: 'left', d: 'draw', ArrowDown: 'draw',
+               r: 'right', ArrowRight: 'right'};
+  if (map[e.key]) cast(map[e.key]);
+});
+</script>
+"""
+
+# The shared vote page is sized for the file:// terminal flow; the web queue
+# should use the whole viewport (Round 2 voter feedback: "way too small").
+WEB_CSS = """
+<style>
+  main { max-width: none !important; margin: 0 !important;
+         padding: 8px 24px 16px !important;
+         height: calc(100vh - 60px); display: flex; flex-direction: column; }
+  .grid { flex: 1; min-height: 0; }
+  figure { display: flex; flex-direction: column; min-height: 0; }
+  figcaption { flex: 0 0 auto; }
+  model-viewer, figure > img {
+    flex: 1; min-height: 0; height: 100% !important;
+    aspect-ratio: auto !important; width: 100%; object-fit: contain; }
+  .controls { justify-content: center; margin-top: 12px !important; }
+  .controls button { min-width: 160px; min-height: 56px; font-size: 19px;
+                     cursor: pointer; }
+  fieldset.flags { flex: 0 0 auto; margin: 6px 10px 10px; padding: 6px 10px;
+                   border: 1px solid #c8c8bd; display: flex; flex-wrap: wrap;
+                   gap: 4px 16px; font: 13px/1.5 system-ui; background: #fafaf5; }
+  fieldset.flags legend { font-weight: 700; padding: 0 6px; }
+  fieldset.flags label { cursor: pointer; white-space: nowrap; }
+</style>
+"""
+
+
+@dataclass
+class QueueItem:
+    pair: BlindPair
+    meta: dict  # instrument_id / seed / rep / round
+
+
+@dataclass
+class VoteQueue:
+    """Ordered blind pairs plus the vote-append bookkeeping."""
+
+    run_dir: Path
+    voter: str
+    items: list[QueueItem] = field(default_factory=list)
+    voted_pair_ids: set = field(default_factory=set)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def next_unvoted(self) -> Optional[QueueItem]:
+        for item in self.items:
+            if item.pair.pair_id not in self.voted_pair_ids:
+                return item
+        return None
+
+    def progress(self) -> tuple[int, int]:
+        done = sum(1 for item in self.items if item.pair.pair_id in self.voted_pair_ids)
+        return done, len(self.items)
+
+    def cast(self, pair_id: str, winner: str, flags: Optional[dict] = None) -> bool:
+        """Record one vote (plus optional per-side flags); False for unknown/duplicate pairs."""
+
+        with self.lock:
+            item = next(
+                (i for i in self.items if i.pair.pair_id == pair_id), None
+            )
+            if item is None or pair_id in self.voted_pair_ids:
+                return False
+            vote = record_vote(item.pair, winner=winner, voter_id=self.voter)
+            clean_flags = _normalize_flags(flags)
+            if clean_flags:
+                vote["flags"] = clean_flags
+            append_vote_record(self.run_dir / "votes.blind.jsonl", vote)
+            revealed = reveal_vote(item.pair, vote)
+            revealed.update(item.meta)
+            if clean_flags:
+                revealed["flags"] = clean_flags
+            append_vote_record(self.run_dir / "votes.revealed.jsonl", revealed)
+            self.voted_pair_ids.add(pair_id)
+            return True
+
+
+def _normalize_flags(flags: Optional[dict]) -> dict:
+    """Keep only known flag ids per side; drop empty sides entirely."""
+
+    if not isinstance(flags, dict):
+        return {}
+    out = {}
+    for side in ("left", "right"):
+        raw = flags.get(side)
+        if isinstance(raw, (list, tuple)):
+            kept = [f for f in raw if isinstance(f, str) and f in VOTE_FLAG_IDS]
+            if kept:
+                out[side] = kept
+    return out
+
+
+def render_queue_page(queue: VoteQueue) -> str:
+    """The next pair as a self-voting page, or the all-done summary."""
+
+    item = queue.next_unvoted()
+    done, total = queue.progress()
+    if item is None:
+        return f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>Arena voting complete</title></head>
+<body style="font-family: system-ui; max-width: 640px; margin: 80px auto; text-align: center;">
+<h1>All {total} pairs voted &#127881;</h1>
+<p>Run <code>makerbench arena leaderboard</code> and <code>arena agreement</code>
+for the scorelines, or <code>arena report</code> for the full page.</p>
+</body></html>"""
+    page = render_vote_surface(item.pair)
+    banner = (
+        f'<p style="text-align:center;font-family:system-ui;color:#555;margin:10px 0 4px">'
+        f"pair {done + 1} of {total} &middot; "
+        f'{item.meta.get("instrument_id")} seed={item.meta.get("seed")} '
+        f'round={item.meta.get("round")} &middot; '
+        f"keys: L / D / R</p>"
+    )
+    page = page.replace("</head>", WEB_CSS + "</head>", 1)
+    page = page.replace("<main", banner + "\n  <main", 1)
+    # Per-candidate flag checkboxes just inside each figure (Round 4 feedback).
+    parts = page.split("</figure>")
+    if len(parts) == 3:
+        page = (
+            parts[0] + _flag_fieldset("left") + "</figure>"
+            + parts[1] + _flag_fieldset("right") + "</figure>"
+            + parts[2]
+        )
+    return page.replace("</body>", VOTE_JS + "</body>")
+
+
+class VoteRequestHandler(SimpleHTTPRequestHandler):
+    """Static file server for run-dir assets + /queue and /vote endpoints."""
+
+    queue: VoteQueue  # injected via partial
+
+    def __init__(self, *args, queue: VoteQueue, **kwargs):
+        self.queue = queue
+        super().__init__(*args, **kwargs)
+
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+        pass
+
+    def _send_html(self, html: str, status: int = 200) -> None:
+        body = html.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):  # noqa: N802 - stdlib naming
+        if self.path in ("/", "/queue"):
+            self._send_html(render_queue_page(self.queue))
+            return
+        super().do_GET()
+
+    def do_POST(self):  # noqa: N802 - stdlib naming
+        if self.path != "/vote":
+            self.send_error(404)
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            payload = json.loads(self.rfile.read(length))
+            winner = str(payload.get("winner"))
+            if winner not in {"left", "right", "draw"}:
+                raise ValueError("winner must be left/right/draw")
+            ok = self.queue.cast(
+                str(payload.get("pair_id")), winner, flags=payload.get("flags")
+            )
+        except (ValueError, json.JSONDecodeError) as exc:
+            body = json.dumps({"ok": False, "error": str(exc)}).encode()
+            self.send_response(400)
+        else:
+            body = json.dumps({"ok": ok}).encode()
+            self.send_response(200 if ok else 409)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def serve_vote_queue(
+    queue: VoteQueue, port: int = 0
+) -> tuple[ThreadingHTTPServer, int]:
+    """Serve the queue on 127.0.0.1 (loopback only, like every arena server)."""
+
+    # Self-host model-viewer so rotatable 3D works offline / behind ad-blockers.
+    try:
+        import shutil
+        from pathlib import Path as _P
+        _vendored = _P(__file__).resolve().parent / "assets" / "model-viewer.min.js"
+        if _vendored.is_file():
+            shutil.copyfile(_vendored, queue.run_dir.resolve() / "model-viewer.min.js")
+    except Exception:
+        pass
+
+    handler = partial(
+        VoteRequestHandler,
+        queue=queue,
+        directory=queue.run_dir.resolve().as_posix(),
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, server.server_address[1]

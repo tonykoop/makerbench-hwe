@@ -26,11 +26,15 @@ def _spec(**overrides) -> EvaluatorSpec:
     return EvaluatorSpec(**base)
 
 
-def test_builtin_manifest_is_empty_but_valid():
+def test_builtin_manifest_declares_kicad_optional_local_and_valid():
     manifest = builtin_evaluator_manifest()
 
-    # Core grading is not yet a registered plugin: the registry exists, empty.
-    assert manifest.evaluators == []
+    by_name = {ev.name: ev for ev in manifest.evaluators}
+    kicad = by_name["kicad_erc_drc"]
+    assert kicad.runtime == "optional_local"
+    assert kicad.artifact_formats == ["kicad_sch", "kicad_pcb"]
+    assert kicad.dependencies == ["kicad-cli"]
+    assert kicad.entry_point == "makerbench.kicad_cli:run_kicad_erc_drc"
     assert validate_evaluator_manifest(manifest) == []
     assert is_evaluator_manifest_valid(manifest)
 

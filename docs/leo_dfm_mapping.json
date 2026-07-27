@@ -1,0 +1,68 @@
+{
+  "schema_version": "leo-dfm-mapping-v1",
+  "description": "Machine-readable map of SOLIDWORKS LEO reported capabilities to MakerBench's deterministic DFM rule catalog. Prose source of truth: docs/LEO_DFM_COMPARISON.md; rule IDs are defined in docs/DFM_RULES.md.",
+  "source_doc": "docs/LEO_DFM_COMPARISON.md",
+  "rules_doc": "docs/DFM_RULES.md",
+  "leo_is_a_makerbench_grader": false,
+  "solidworks_is_a_core_dependency": false,
+  "channel": "optional-local",
+  "coverage_levels": ["strong", "partial", "limited"],
+  "rule_families": [
+    "3d_printing",
+    "sheet_metal",
+    "laser_vector",
+    "catalog_bom",
+    "cnc"
+  ],
+  "capabilities": [
+    {
+      "leo_capability": "Design-error repair and validation",
+      "makerbench_rules": ["A1", "A2", "A3", "A4", "A5"],
+      "rule_families": ["3d_printing", "sheet_metal", "laser_vector", "cnc"],
+      "coverage": "strong",
+      "gap": "LEO warns during feature creation; MakerBench scores the exported file. Compare whether LEO warnings predict actual L1/L2 failures."
+    },
+    {
+      "leo_capability": "Manufacturing limits / unmachinable features",
+      "makerbench_rules": ["B1", "C4", "C5", "C6", "C7", "D3", "F2", "F4"],
+      "rule_families": ["3d_printing", "sheet_metal", "laser_vector", "cnc"],
+      "coverage": "strong",
+      "gap": "LEO thresholds are not public; MakerBench publishes thresholds as task parameters, so disagreement is logged as a threshold/context mismatch."
+    },
+    {
+      "leo_capability": "Over-tight tolerances / fits",
+      "makerbench_rules": ["E1", "E2", "E3", "E4", "E5"],
+      "rule_families": ["catalog_bom"],
+      "coverage": "strong",
+      "gap": "MakerBench grades specific maker-scale catalog fits, not a full GD&T tolerance-stack engine; a future cetol-tolerance pack can cover datum/stack comparisons."
+    },
+    {
+      "leo_capability": "Sheet-metal manufacturability",
+      "makerbench_rules": ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8"],
+      "rule_families": ["sheet_metal"],
+      "coverage": "strong",
+      "gap": "MakerBench grades the exported geometry and declared manifest, so it independently catches 'looks OK in CAD, wrong flat pattern'."
+    },
+    {
+      "leo_capability": "Assembly structure and sequence",
+      "makerbench_rules": ["A4", "E1", "E2", "E3", "E4", "E5", "E6"],
+      "rule_families": ["catalog_bom"],
+      "coverage": "partial",
+      "gap": "Sequence plausibility stays a dossier/workflow-track field until a deterministic sequence grader lands."
+    },
+    {
+      "leo_capability": "STEP and image-to-geometry workflows",
+      "makerbench_rules": ["A1"],
+      "rule_families": ["cnc"],
+      "coverage": "strong",
+      "gap": "makerbench-core scores exported STEP envelope/shape tokens; deeper B-rep topology remains the optional-local brep-build123d path. Never requires a live SOLIDWORKS seat."
+    },
+    {
+      "leo_capability": "Simulation assistance",
+      "makerbench_rules": ["A7"],
+      "rule_families": ["3d_printing"],
+      "coverage": "limited",
+      "gap": "Only typed, exported requirements are comparable today; deeper parity waits on an open solver profile (future simulation-fea pack)."
+    }
+  ]
+}

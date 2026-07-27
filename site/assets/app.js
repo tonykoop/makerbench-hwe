@@ -342,10 +342,12 @@
       return;
     }
 
-    // Sort. Control rows are a reference, not a competitor — always pin them to
-    // the bottom regardless of the active column, then sort the rest.
+    // Sort. Reference rows (deterministic control + human/expert baseline, #24)
+    // are anchors, not competitors — always pin them to the bottom regardless of
+    // the active column (human baseline above control), then sort the rest.
+    function refRank(m) { return m.is_control ? 2 : (m.is_human_baseline ? 1 : 0); }
     models = models.slice().sort(function (a, b) {
-      if (a.is_control !== b.is_control) return a.is_control ? 1 : -1;
+      if (refRank(a) !== refRank(b)) return refRank(a) - refRank(b);
       var av = sortValue(a, SORT.key), bv = sortValue(b, SORT.key);
       if (av == null && bv == null) return 0;
       if (av == null) return 1;
@@ -401,11 +403,13 @@
         var tr = m.tracks[TRACK];
         var classes = [];
         if (m.is_control) classes.push("is-control");
+        if (m.is_human_baseline) classes.push("is-human");
         if (m.result_provenance === "official") classes.push("is-official");
         html += "<tr" + (classes.length ? ' class="' + classes.join(" ") + '"' : "") + ">";
         html += '<td class="model-col"><a class="model-name" href="' + m.model_page + '">' +
           modelLabel(m) + "</a>" +
           (m.is_control ? '<span class="badge badge-control">control</span>' : "") +
+          (m.is_human_baseline ? '<span class="badge badge-human">human</span>' : "") +
           "</td>";
         fams.forEach(function (f) {
           html += cellHTML(tr.families[f.id]);
@@ -518,6 +522,7 @@
 
   function modelColor(idx, model) {
     if (model && model.is_control) return cssVar("--control") || "#6b46c1";
+    if (model && model.is_human_baseline) return cssVar("--human") || "#b45309";
     return PALETTE[idx % PALETTE.length];
   }
 
@@ -1115,6 +1120,54 @@
     }).join("");
   }
 
+  // ---- tracks & leagues explainer (mb#171) --------------------------------
+  // Narrative IA layer: names every track the benchmark spans and the
+  // controlled-variable rationale for why leagues never cross-rank. Live/upcoming
+  // status is derived in build_data.py from real league row counts, so a track
+  // can't render "live" before any results back it.
+  function renderTrackExplainer() {
+    var grid = document.getElementById("track-grid");
+    if (!grid) return;
+    var data = DATA.track_explainer || {};
+    var tracks = data.tracks || [];
+    if (!tracks.length) { grid.innerHTML = ""; return; }
+    grid.innerHTML = tracks.map(function (t) {
+      var live = t.status === "live";
+      var badge = '<span class="track-badge ' + (live ? "is-live" : "is-upcoming") +
+        '">' + (live ? "live" : "upcoming") + "</span>";
+      var rows = (live && t.row_count)
+        ? '<span class="track-rows">' + t.row_count + " row" +
+          (t.row_count === 1 ? "" : "s") + "</span>"
+        : "";
+      var highlights = (t.highlights || []).map(function (h) {
+        return "<li>" + escapeHTML(h) + "</li>";
+      }).join("");
+      var links = [];
+      if (t.board && t.board.href) {
+        var boardStatus = t.board.status === "planned" ? " planned" : "";
+        links.push('<a class="track-link track-board" href="' + escapeHTML(t.board.href) +
+          '">' + escapeHTML(t.board.label || "Board") + boardStatus + " &rarr;</a>");
+      }
+      (t.docs || []).forEach(function (d) {
+        if (!d || !d.href) return;
+        var external = /^https?:/.test(d.href);
+        links.push('<a class="track-link" href="' + escapeHTML(d.href) + '"' +
+          (external ? ' rel="noopener"' : "") + ">" + escapeHTML(d.label || "Docs") + "</a>");
+      });
+      return '<article class="track-card">' +
+        '<div class="track-head"><h3>' + escapeHTML(t.label) + "</h3>" + badge + rows + "</div>" +
+        '<p class="track-tagline">' + escapeHTML(t.tagline || "") + "</p>" +
+        '<p class="track-variable"><span class="track-vk">Variable under test</span> ' +
+        escapeHTML(t.variable || "") + "</p>" +
+        '<p class="track-detail">' + escapeHTML(t.detail || "") + "</p>" +
+        (highlights ? '<ul class="track-highlights">' + highlights + "</ul>" : "") +
+        '<div class="track-links">' + links.join("") + "</div>" +
+        "</article>";
+    }).join("");
+    var guard = document.getElementById("track-guardrail");
+    if (guard) { guard.textContent = data.guardrail || ""; }
+  }
+
   // ---- extended / diagnostic families (off-Core, score-only) --------------
   function renderExtended() {
     var grid = document.getElementById("extended-grid");
@@ -1135,6 +1188,405 @@
     }).join("");
   }
 
+  // ---- delta-dossier regression tracker (mb#108) --------------------------
+  // Renders DATA.delta_dossier: one card per disclosed stack, one row per
+  // comparable task/track/seed-ordinal series. Trend chips read the payload's
+  // delta.*_trend fields directly (improved/regressed/stable/down/up/unknown);
+  // we never recompute or rank here. Read-only ergonomics view — score_impact
+  // is always "none". Degrades to an empty-state when nothing repeats.
+  var DD_TREND_CLASS = {
+    improved: "is-good", down: "is-good",
+    regressed: "is-bad", up: "is-bad",
+    stable: "is-flat", unknown: "is-flat",
+  };
+  // Arrows encode *betterness*, not literal metric direction: an improvement is
+  // always ↑ (green), a regression ↓ (red). "improved"/"down" (HII) are both
+  // better; "regressed"/"up" both worse. The numeric value text still carries
+  // the literal sign, so e.g. a faster run reads "wall ↑ −16.67%".
+  var DD_TREND_ARROW = {
+    improved: "↑", down: "↑",
+    regressed: "↓", up: "↓",
+    stable: "→", unknown: "–",
+  };
+
+  function ddChip(label, trend, valueText) {
+    var t = trend || "unknown";
+    var cls = DD_TREND_CLASS[t] || "is-flat";
+    var arrow = DD_TREND_ARROW[t] || "–";
+    var val = valueText ? ' <span class="dd-chip-val">' + escapeHTML(valueText) + "</span>" : "";
+    return '<span class="dd-chip ' + cls + '" title="' + escapeHTML(label + ": " + t) + '">' +
+      '<span class="dd-chip-k">' + escapeHTML(label) + "</span>" +
+      '<span class="dd-chip-arrow">' + arrow + "</span>" + val + "</span>";
+  }
+
+  function ddNum(value, suffix) {
+    if (value === null || value === undefined) return "";
+    var n = Math.round(value * 100) / 100;
+    return (n > 0 ? "+" : "") + n + (suffix || "");
+  }
+
+  function ddPct(value) {
+    if (value === null || value === undefined) return "";
+    return (value > 0 ? "−" : "+") + Math.abs(value) + "%"; // reduction shown as −%
+  }
+
+  function renderDeltaDossier() {
+    var grid = document.getElementById("delta-dossier-grid");
+    var empty = document.getElementById("delta-dossier-empty");
+    if (!grid) return;
+    var data = DATA.delta_dossier || {};
+    var stacks = (data.stacks || []).filter(function (s) {
+      return (s.series || []).some(function (ser) { return (ser.n_revisions || 0) >= 2; });
+    });
+    if (!stacks.length) {
+      grid.innerHTML = "";
+      if (empty) empty.hidden = false;
+      return;
+    }
+    if (empty) empty.hidden = true;
+    grid.innerHTML = stacks.map(function (stack) {
+      var series = (stack.series || [])
+        .filter(function (ser) { return (ser.n_revisions || 0) >= 2; })
+        .map(function (ser) {
+          var d = ser.delta || {};
+          var chips = [
+            ddChip("score", d.score_trend, ddNum(d.score)),
+            ddChip("wall", d.wall_time_trend, d.wall_time_reduction_pct != null ? ddPct(d.wall_time_reduction_pct) : ddNum(d.wall_time_s, "s")),
+            ddChip("tools", d.tool_call_trend, d.tool_call_reduction_pct != null ? ddPct(d.tool_call_reduction_pct) : ddNum(d.tool_calls)),
+            ddChip("HII", d.hii_trend, ser.latest && ser.latest.hii_level ? ser.latest.hii_level : ""),
+          ].join("");
+          return '<li class="dd-series">' +
+            '<div class="dd-series-head">' +
+            '<code class="dd-task">' + escapeHTML(ser.task_id) + "</code>" +
+            '<span class="dd-meta">' + escapeHTML(ser.track) + " · seed #" +
+            (ser.seed_ordinal == null ? "?" : ser.seed_ordinal) + " · " +
+            (ser.n_revisions || 0) + " revisions</span></div>" +
+            '<div class="dd-chips">' + chips + "</div></li>";
+        }).join("");
+      return '<article class="dd-card">' +
+        '<div class="dd-head"><h3>' + escapeHTML(stack.stack_label) +
+        '</h3><span class="dd-key" title="disclosed stack key">' +
+        escapeHTML(stack.stack_key) + "</span></div>" +
+        '<ul class="dd-list">' + series + "</ul></article>";
+    }).join("");
+  }
+
+  // ---- Code-CAD Arena scorelines (#591) -----------------------------------
+  // Reads the opt-in DATA.arena payload. Renders the two scorelines as SEPARATE
+  // tables (subjective Elo, objective pass-rate) plus a standalone Spearman rho
+  // — never a blended/composite score. Single-voter Elo is badged "directional"
+  // and its ranks are withheld from being presented as an official ranking. The
+  // whole section stays hidden unless a published arena payload is present.
+  function arenaNum(value, digits) {
+    if (value == null || value === "") return "–";
+    var n = Number(value);
+    if (isNaN(n)) return "–";
+    return n.toFixed(digits == null ? 2 : digits);
+  }
+
+  function arenaEloTable(run) {
+    var directional = !!run.directional;
+    var rows = (run.subjective_elo || []).map(function (r) {
+      var rank = directional ? "—" : escapeHTML(String(r.rank == null ? "–" : r.rank));
+      return "<tr><td class=\"mono\">" + escapeHTML(String(r.entrant)) + "</td>" +
+        "<td class=\"num\">" + arenaNum(r.rating, 1) + "</td>" +
+        "<td class=\"num\">" + rank + "</td>" +
+        "<td class=\"num\">" + escapeHTML(String(r.games || 0)) + "</td></tr>";
+    }).join("");
+    var badge = directional
+      ? "<span class=\"arena-badge arena-badge-warn\" title=\"" +
+        escapeHTML(run.withheld_reason || "Single-voter Elo is directional.") +
+        "\">directional · single-voter</span>"
+      : "<span class=\"arena-badge\">" + escapeHTML(String(run.voters)) + " voters · " +
+        escapeHTML(String(run.votes)) + " votes</span>";
+    return "<div class=\"arena-scoreline\"><h4>Subjective — blind-vote Elo " + badge + "</h4>" +
+      "<table><thead><tr><th>Entrant</th><th class=\"num\">Elo</th>" +
+      "<th class=\"num\">Rank</th><th class=\"num\">Votes</th></tr></thead>" +
+      "<tbody>" + rows + "</tbody></table></div>";
+  }
+
+  function arenaObjectiveTable(run) {
+    var rows = (run.objective_pass_rate || []).map(function (r) {
+      return "<tr><td class=\"mono\">" + escapeHTML(String(r.entrant)) + "</td>" +
+        "<td class=\"num\">" + arenaNum(r.objective_pass_rate, 2) + "</td>" +
+        "<td class=\"num\">" + escapeHTML(String(r.n_objective_trials || 0)) + "</td></tr>";
+    }).join("");
+    return "<div class=\"arena-scoreline\"><h4>Objective — render / DFM pass-rate</h4>" +
+      "<table><thead><tr><th>Entrant</th><th class=\"num\">Pass-rate</th>" +
+      "<th class=\"num\">Trials</th></tr></thead>" +
+      "<tbody>" + rows + "</tbody></table></div>";
+  }
+
+  function arenaRunCard(run) {
+    var ag = run.agreement || {};
+    var rho = ag.rho == null ? "n/a" : arenaNum(ag.rho, 3);
+    var interp = ag.interpretation ? " · " + escapeHTML(String(ag.interpretation).replace(/_/g, " ")) : "";
+    var prov = run.provenance || {};
+    return "<article class=\"arena-card\">" +
+      "<div class=\"arena-head\"><h3 class=\"mono\">" + escapeHTML(String(run.run_id)) + "</h3>" +
+      "<span class=\"arena-meta\">" + escapeHTML(String(prov.matrix || "")) + "</span></div>" +
+      "<div class=\"arena-tables\">" + arenaEloTable(run) + arenaObjectiveTable(run) + "</div>" +
+      "<p class=\"arena-rho\">Rank agreement (Spearman ρ): <strong>" + rho + "</strong>" + interp +
+      " — the two scorelines are reported separately and never blended.</p>" +
+      "</article>";
+  }
+
+  function renderArena() {
+    var section = document.getElementById("arena");
+    var host = document.getElementById("arena-runs");
+    var empty = document.getElementById("arena-empty");
+    if (!section || !host) return;
+    var data = DATA.arena || null;
+    var runs = data && data.runs ? data.runs : [];
+    if (!runs.length) {
+      host.innerHTML = "";
+      if (empty) empty.hidden = false;
+      section.hidden = true;  // nothing published → stay hidden
+      return;
+    }
+    if (empty) empty.hidden = true;
+    host.innerHTML = runs.map(arenaRunCard).join("");
+    section.hidden = false;
+  }
+
+  // ---- ecosystem: the repo family (mb#170) --------------------------------
+  // Themeable + responsive: the SVG carries no hard-coded colors — every fill
+  // and stroke is a CSS class resolved against the [data-theme] tokens, so the
+  // diagram tracks the theme toggle with no JS re-render. The grid cards below
+  // are the accessible, link-bearing source of truth; the map is the picture.
+  function ecoKindLabel(kind) {
+    return { harness: "Harness", integrity: "Private integrity",
+      satellite: "Capability repo", surface: "Interactive surface" }[kind] || kind;
+  }
+
+  function buildEcosystemMap(nodes) {
+    var fig = document.getElementById("eco-map");
+    if (!fig) return;
+    var hub = nodes.filter(function (n) { return n.kind === "harness"; })[0];
+    var spokes = nodes.filter(function (n) { return n.kind !== "harness"; });
+    if (!hub) { fig.innerHTML = ""; return; }
+
+    var W = 920, H = 480, cx = W / 2, cy = H / 2;
+    var rx = 332, ry = 168;
+    var bw = 176, bh = 48, hubW = 212, hubH = 80;
+    var edges = "", boxes = "";
+
+    spokes.forEach(function (n, i) {
+      // Distribute on an ellipse, starting at the top and going clockwise.
+      var a = -Math.PI / 2 + (i + 0.5) / spokes.length * Math.PI * 2;
+      var x = cx + rx * Math.cos(a), y = cy + ry * Math.sin(a);
+      var ecls = "eco-edge" + (n.private ? " private" : "");
+      edges += '<line class="' + ecls + '" x1="' + cx + '" y1="' + cy +
+        '" x2="' + x.toFixed(1) + '" y2="' + y.toFixed(1) + '" />';
+      var bcls = "eco-box eco-box-" + n.kind + (n.private ? " integrity" : "");
+      boxes += '<g>' +
+        '<rect class="' + bcls + '" x="' + (x - bw / 2).toFixed(1) + '" y="' +
+        (y - bh / 2).toFixed(1) + '" width="' + bw + '" height="' + bh +
+        '" rx="9" />' +
+        '<text class="eco-label" x="' + x.toFixed(1) + '" y="' + (y - 3).toFixed(1) +
+        '" text-anchor="middle">' + escapeHTML(n.name) + '</text>' +
+        '<text class="eco-sub" x="' + x.toFixed(1) + '" y="' + (y + 12).toFixed(1) +
+        '" text-anchor="middle">' + escapeHTML(n.role) + '</text>' +
+        '</g>';
+    });
+
+    var statLine = (hub.stats || []).map(function (s) {
+      return s.value + " " + s.label;
+    }).join("  ·  ");
+    var hub_g = '<g>' +
+      '<rect class="eco-box hub" x="' + (cx - hubW / 2) + '" y="' + (cy - hubH / 2) +
+      '" width="' + hubW + '" height="' + hubH + '" rx="11" />' +
+      '<text class="eco-label hub-label" x="' + cx + '" y="' + (cy - 6) +
+      '" text-anchor="middle">' + escapeHTML(hub.name) + '</text>' +
+      '<text class="eco-sub" x="' + cx + '" y="' + (cy + 10) +
+      '" text-anchor="middle">' + escapeHTML(hub.role) + '</text>' +
+      (statLine ? '<text class="eco-stat" x="' + cx + '" y="' + (cy + 26) +
+        '" text-anchor="middle">' + escapeHTML(statLine) + '</text>' : '') +
+      '</g>';
+
+    fig.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" ' +
+      'aria-label="MakerBench repo family: the makerbench-hwe harness at the ' +
+      'centre, connected to its private integrity repos, sibling capability ' +
+      'repos, and an interactive Space.">' +
+      '<desc>Hub-and-spoke diagram of the MakerBench repo family.</desc>' +
+      edges + boxes + hub_g + '</svg>';
+  }
+
+  function renderEcosystem() {
+    var data = DATA.ecosystem;
+    var grid = document.getElementById("ecosystem-grid");
+    if (!grid) return;
+    if (!data || !data.nodes || !data.nodes.length) {
+      grid.innerHTML = '<p class="muted-note">No ecosystem data.</p>';
+      return;
+    }
+    if (data.intro) {
+      var intro = document.getElementById("ecosystem-intro");
+      if (intro) {
+        intro.innerHTML = escapeHTML(data.intro) + ' See the full positioning in ' +
+          '<a href="https://github.com/tonykoop/makerbench-hwe/blob/main/docs/LANDSCAPE.md" ' +
+          'rel="noopener">docs/LANDSCAPE.md</a>.';
+      }
+    }
+
+    buildEcosystemMap(data.nodes);
+
+    // Legend, one entry per kind actually present, in canonical order.
+    var legend = document.getElementById("eco-legend");
+    if (legend) {
+      var kinds = [];
+      ["harness", "satellite", "surface", "integrity"].forEach(function (k) {
+        if (data.nodes.some(function (n) { return n.kind === k; })) kinds.push(k);
+      });
+      legend.innerHTML = kinds.map(function (k) {
+        return '<span class="eco-key"><span class="eco-sw eco-sw-' + k +
+          '"></span>' + escapeHTML(ecoKindLabel(k)) + '</span>';
+      }).join("");
+    }
+
+    grid.innerHTML = data.nodes.map(function (n) {
+      var tags = "";
+      if (n.private) tags += '<span class="eco-tag private" title="Access-gated; ' +
+        'contents never reach the sandbox or this site">private</span>';
+      if (n.status === "planned") tags += '<span class="eco-tag planned">planned</span>';
+      var stats = (n.stats || []).map(function (s) {
+        return '<span class="eco-stat-chip"><strong>' + escapeHTML(String(s.value)) +
+          '</strong> ' + escapeHTML(s.label) + '</span>';
+      }).join("");
+      return '<a class="eco-node eco-node-' + n.kind + '" href="' + escapeHTML(n.url) +
+        '" rel="noopener"><div class="eco-top"><h3>' + escapeHTML(n.name) + '</h3>' +
+        tags + '</div>' +
+        '<span class="eco-role">' + escapeHTML(n.role) + '</span>' +
+        '<p>' + escapeHTML(n.blurb) + '</p>' +
+        (stats ? '<div class="eco-stats">' + stats + '</div>' : '') + '</a>';
+    }).join("");
+  }
+
+  // ---- "What we've learned" findings teasers ------------------------------
+  // Blog-derived data (data/findings.json), independent of the per-version
+  // leaderboard payload. The section stays hidden unless real findings load, so
+  // a missing file or a file:// fetch block degrades to nothing showing.
+  function findingCardHTML(f) {
+    var thumb = f.thumb && f.thumb.src
+      ? '<img class="gallery-img" src="' + escapeHTML(f.thumb.src) + '" alt="' +
+        escapeHTML(f.thumb.alt || "") + '" loading="lazy" />'
+      : "";
+    var stat = f.stat
+      ? '<span class="tier finding-stat">' + escapeHTML(f.stat) + "</span>" : "";
+    return '<a class="task finding-card" href="' + escapeHTML(f.href) + '">' +
+      thumb +
+      '<div class="top"><div><h3>' + escapeHTML(f.headline) + "</h3></div>" +
+      stat + "</div>" +
+      "<p>" + escapeHTML(f.detail || "") + "</p>" +
+      '<div class="tracks"><span class="chip">read the writeup &rarr;</span></div></a>';
+  }
+
+  function renderFindings() {
+    var section = document.getElementById("findings");
+    var grid = document.getElementById("findings-grid");
+    if (!section || !grid) return;
+    fetch("data/findings.json", { cache: "no-cache" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        var findings = data && data.findings;
+        if (!findings || !findings.length) return;  // leave the section hidden
+        var sec = data.section || {};
+        if (sec.eyebrow) document.getElementById("findings-eyebrow").textContent = sec.eyebrow;
+        if (sec.title) document.getElementById("findings-title").textContent = sec.title;
+        document.getElementById("findings-lede").textContent = sec.lede || "";
+        grid.innerHTML = findings.map(findingCardHTML).join("");
+        section.hidden = false;
+      })
+      .catch(function () { /* leave the section hidden on any error */ });
+  }
+
+  // ---- roadmap & status (issue #185) --------------------------------------
+  function renderRoadmap() {
+    var roadmap = DATA.roadmap;
+    if (!roadmap) return;
+    var status = roadmap.status || {};
+
+    var strip = document.getElementById("status-strip");
+    if (strip) {
+      var stats = [
+        [status.benchmark_version ? "v" + status.benchmark_version : "—", "version"],
+        [status.benchmark_profile || "—", "profile"],
+        [status.n_task_families, "live task families"],
+        [status.n_packs_live + " / " + status.n_packs, "packs live"],
+        [status.n_capability_axes, "capability axes"],
+        [status.n_scoring_categories, "scoring categories"],
+      ];
+      strip.innerHTML = stats.map(function (s) {
+        return '<div class="status-cell"><div class="n">' + escapeHTML(s[0]) +
+          '</div><div class="l">' + escapeHTML(s[1]) + "</div></div>";
+      }).join("");
+    }
+
+    var packGrid = document.getElementById("pack-grid");
+    if (packGrid) {
+      packGrid.innerHTML = (roadmap.packs || []).map(function (p) {
+        var live = p.live;
+        var state = '<span class="pack-state ' + (live ? "is-live" : "is-planned") +
+          '">' + (live ? "live" : "planned") + "</span>";
+        var familyText = live
+          ? p.n_families + " famil" + (p.n_families === 1 ? "y" : "ies")
+          : "scaffolded · " + (p.status || "planned");
+        return '<article class="pack-card' + (live ? " pack-live" : "") + '">' +
+          '<div class="pack-top"><h3>' + escapeHTML(p.title || p.id) + "</h3>" +
+          state + "</div>" +
+          "<p>" + escapeHTML(p.summary || "") + "</p>" +
+          '<span class="pack-fam">' + escapeHTML(familyText) + "</span></article>";
+      }).join("");
+    }
+
+    var rail = document.getElementById("phase-rail");
+    if (rail) {
+      rail.innerHTML = (roadmap.phases || []).map(function (ph) {
+        return '<div class="phase"><div class="phase-dot"></div>' +
+          '<div class="phase-body"><h3>' + escapeHTML(ph.title) + "</h3>" +
+          "<p>" + escapeHTML(ph.summary) + "</p></div></div>";
+      }).join("");
+    }
+
+    var horizon = document.getElementById("horizon-list");
+    if (horizon) {
+      horizon.innerHTML = (roadmap.horizon || []).map(function (h) {
+        var tier = h.tier != null
+          ? '<span class="chip horizon-tier">tier ' + escapeHTML(h.tier) + "</span> "
+          : "";
+        return "<li>" + tier + escapeHTML(h.text || "") + "</li>";
+      }).join("");
+    }
+
+    var docs = document.getElementById("roadmap-docs");
+    if (docs) {
+      var base = "https://github.com/tonykoop/makerbench-hwe/blob/main/";
+      docs.innerHTML = "Full plan: " +
+        '<a href="' + base + escapeHTML(roadmap.design_doc) + '" rel="noopener">' +
+        escapeHTML(roadmap.design_doc) + "</a> · " +
+        '<a href="' + base + escapeHTML(roadmap.roadmap_doc) + '" rel="noopener">' +
+        escapeHTML(roadmap.roadmap_doc) + "</a>.";
+    }
+  }
+
+  // ---- about / cite (issue #185) ------------------------------------------
+  function renderCitation() {
+    var cite = DATA.citation;
+    if (!cite) return;
+    var bib = document.getElementById("cite-bibtex");
+    if (bib) bib.textContent = cite.bibtex || "";
+    var apa = document.getElementById("cite-apa");
+    if (apa) apa.textContent = cite.apa || "";
+    var summary = document.getElementById("cite-summary");
+    if (summary) {
+      var bits = [];
+      if (cite.version) bits.push("v" + cite.version);
+      if (cite.license) bits.push(cite.license + " licensed");
+      summary.textContent = "If you report results on the leaderboard, please cite MakerBench" +
+        (bits.length ? " (" + bits.join(" · ") + ")" : "") + ".";
+    }
+  }
+
   // ---- model picker -------------------------------------------------------
   function fillHistPicker() {
     var sel = document.getElementById("hist-model");
@@ -1142,15 +1594,34 @@
     var prev = sel.value;
     sel.innerHTML = models.map(function (m) {
       return '<option value="' + m.row_id + '">' + modelText(m) +
-        (m.is_control ? " (control)" : "") + "</option>";
+        (m.is_control ? " (control)" : (m.is_human_baseline ? " (human)" : "")) + "</option>";
     }).join("");
-    // keep selection if still valid, else pick first non-control
+    // keep selection if still valid, else pick first non-reference model
     var ids = models.map(function (m) { return m.row_id; });
     if (ids.indexOf(prev) !== -1) { sel.value = prev; }
     else {
-      var firstReal = models.filter(function (m) { return !m.is_control; })[0];
+      var firstReal = models.filter(function (m) { return !m.is_control && !m.is_human_baseline; })[0];
       sel.value = firstReal ? firstReal.row_id : (ids[0] || "");
     }
+  }
+
+  // ---- hero stat strip ----------------------------------------------------
+  // Data-driven headline numbers (DATA.hero_stats). Hidden when absent so older
+  // archived payloads — which predate the field — degrade cleanly.
+  function renderHeroStats() {
+    var el = document.getElementById("hero-stats");
+    if (!el) return;
+    var hs = DATA.hero_stats;
+    var stats = hs && hs.stats;
+    if (!stats || !stats.length) { el.hidden = true; el.innerHTML = ""; return; }
+    el.hidden = false;
+    el.innerHTML = stats.map(function (s) {
+      return '<div class="stat">' +
+        '<dt class="stat-val">' + escapeHTML(s.display) + "</dt>" +
+        '<dd class="stat-label">' + escapeHTML(s.label) +
+        (s.detail ? '<span class="stat-detail">' + escapeHTML(s.detail) + "</span>" : "") +
+        "</dd></div>";
+    }).join("");
   }
 
   // ---- track toggle -------------------------------------------------------
@@ -1170,11 +1641,18 @@
   function applyData(data) {
     DATA = data;
     document.getElementById("headline").textContent = data.headline || "";
+    renderHeroStats();
     if (data.benchmark_version) {
       document.getElementById("bench-version").textContent = "v" + data.benchmark_version;
     }
     renderTasks();
+    renderTrackExplainer();
     renderExtended();
+    renderDeltaDossier();
+    renderArena();
+    renderEcosystem();
+    renderRoadmap();
+    renderCitation();
     setTrack(TRACK);
   }
 
@@ -1220,6 +1698,79 @@
   }
 
   // ---- boot ---------------------------------------------------------------
+  // ---- Get-started hub (#173) ----
+  // Progressive enhancement: the panels render stacked in plain HTML. JS turns
+  // them into a tabbed view, wires copy buttons, and fills status/links from
+  // data/get_started.json (fetched separately so the leaderboard payload is
+  // untouched). Everything degrades to the static markup if JS or data is absent.
+  function showGetStartedPanel(id) {
+    Array.prototype.forEach.call(document.querySelectorAll("#gs-tabs button"), function (b) {
+      b.setAttribute("aria-pressed", String(b.getAttribute("data-panel") === id));
+    });
+    Array.prototype.forEach.call(document.querySelectorAll(".gs-panel"), function (p) {
+      p.hidden = p.getAttribute("data-panel") !== id;
+    });
+  }
+
+  function initGetStarted() {
+    var tabs = document.getElementById("gs-tabs");
+    if (tabs) {
+      tabs.setAttribute("data-enhanced", "true");
+      Array.prototype.forEach.call(tabs.querySelectorAll("button"), function (b) {
+        b.addEventListener("click", function () {
+          showGetStartedPanel(b.getAttribute("data-panel"));
+        });
+      });
+      var active = tabs.querySelector('button[aria-pressed="true"]');
+      showGetStartedPanel(active ? active.getAttribute("data-panel") : "cli");
+    }
+    // Copy-to-clipboard on every code block.
+    Array.prototype.forEach.call(document.querySelectorAll(".code-wrap .copy-btn"), function (btn) {
+      btn.addEventListener("click", function () {
+        var pre = btn.parentNode.querySelector("pre.code");
+        if (!pre || !navigator.clipboard) return;
+        navigator.clipboard.writeText(pre.innerText).then(function () {
+          var original = btn.textContent;
+          btn.textContent = "Copied";
+          btn.classList.add("is-copied");
+          setTimeout(function () {
+            btn.textContent = original;
+            btn.classList.remove("is-copied");
+          }, 1400);
+        }).catch(function () {});
+      });
+    });
+  }
+
+  function renderGetStarted(data) {
+    if (!data) return;
+    if (data.repo_url) {
+      var nav = document.getElementById("repo-link");
+      if (nav) nav.href = data.repo_url;
+    }
+    (data.paths || []).forEach(function (path) {
+      var badge = document.querySelector('[data-gs-status="' + path.id + '"]');
+      if (badge) {
+        badge.textContent = path.status_label || path.status || "";
+        badge.className = "gs-status is-" + (path.status || "available");
+      }
+      var links = document.querySelector('[data-gs-links="' + path.id + '"]');
+      if (links) {
+        links.innerHTML = (path.links || []).map(function (l) {
+          return '<a href="' + escapeHTML(l.href) + '" rel="noopener">' +
+            escapeHTML(l.label) + "</a>";
+        }).join("");
+      }
+    });
+  }
+
+  function loadGetStarted() {
+    fetch("data/get_started.json", { cache: "no-cache" })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(renderGetStarted)
+      .catch(function () { /* static markup already covers the no-data case */ });
+  }
+
   function boot(data) {
     // One-time listeners (they read DATA/TRACK dynamically, so they survive a
     // version switch without rebinding).
@@ -1239,7 +1790,13 @@
 
     applyData(data);
     initVersionPicker();
+    renderFindings();
   }
+
+  // The get-started hub is independent of the leaderboard payload, so wire it up
+  // unconditionally — it must work even if leaderboard.json fails to load.
+  initGetStarted();
+  loadGetStarted();
 
   fetch("data/leaderboard.json", { cache: "no-cache" })
     .then(function (r) {

@@ -61,7 +61,7 @@ jobs:
             --jq '"sha=\(.headRefOid)\nbase=\(.baseRefName)"' >> "$GITHUB_OUTPUT"
 
       - name: Check out public metadata-only PR
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ steps.pr.outputs.sha }}
           fetch-depth: 0
@@ -88,7 +88,7 @@ jobs:
       - name: Install OpenSCAD
         run: sudo apt-get update && sudo apt-get install -y openscad
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
