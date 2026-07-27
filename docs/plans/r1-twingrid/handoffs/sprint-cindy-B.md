@@ -46,4 +46,4 @@ Unit: fixture packet scores complete; mismatched BOM flags incomplete.
 PR `feat(workflow-track): deliverable packet (GD&T+STL+G-code)` — `Refs #103`.
 
 ---
-Begin: cd /home/tony/hwe-wt/cindy-b first, run qmd Step-0, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.
+Begin: cd /home/tony/hwe-wt/cindy-b first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.

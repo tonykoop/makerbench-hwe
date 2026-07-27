@@ -46,4 +46,4 @@ Do NOT edit the marketplace repo/manifest — the MANAGER vendors the winning sk
 PR `feat: evolution-pipeline skill v0.1.0 + Alpha compiler` — `Refs` claude-skills#206.
 
 ---
-Begin: cd /home/tony/hwe-wt/gina-b first, run qmd Step-0, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.
+Begin: cd /home/tony/hwe-wt/gina-b first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.

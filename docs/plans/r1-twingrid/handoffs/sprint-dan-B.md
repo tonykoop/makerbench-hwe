@@ -46,4 +46,4 @@ Run both against 2 fixture run dirs → valid HTML + manifest w/ 2 entries.
 PR `feat(workflow-track): run explorer + library generators` — `Refs #104`.
 
 ---
-Begin: cd /home/tony/hwe-wt/dan-b first, run qmd Step-0, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.
+Begin: cd /home/tony/hwe-wt/dan-b first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.

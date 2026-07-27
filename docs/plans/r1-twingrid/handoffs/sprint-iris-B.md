@@ -46,4 +46,4 @@ Must work standalone (graceful fallback if makerbench.schema absent) so it's pip
 PR `feat: makerbench-logger SDK` — `Refs #92`.
 
 ---
-Begin: cd /home/tony/hwe-wt/iris-b first, run qmd Step-0, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.
+Begin: cd /home/tony/hwe-wt/iris-b first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.

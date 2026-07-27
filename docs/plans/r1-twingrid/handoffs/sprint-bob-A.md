@@ -46,4 +46,4 @@ Round-trip test: build manifest, write+verify `.mbc`, mutate a byte → verify f
 PR `feat(workflow-track): WorkflowManifest + HII + .mbc` — `Refs #89 Refs #109`.
 
 ---
-Begin: cd /home/tony/hwe-wt/bob-a first, run qmd Step-0, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.
+Begin: cd /home/tony/hwe-wt/bob-a first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.
