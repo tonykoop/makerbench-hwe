@@ -175,6 +175,157 @@ def load_registry(registry_path: Path) -> dict:
     return {"task_families": families, "capability_axes": axes}
 
 
+# Public GitHub source root for the full task brief / doc deep-links. Defined again
+# here (mirrors REPO_SOURCE_URL below) so doc URLs resolve regardless of read order.
+REPO_DOC_URL = "https://github.com/tonykoop/makerbench/blob/main"
+
+
+def _alpha_family_blocks(registry: dict) -> dict[str, dict]:
+    """Map every pack alpha-block task family id -> its alpha block.
+
+    Alpha/runnable/scaffold families (native vector, assembly, B-rep, image
+    reverse-engineering, ...) live inside ``task_packs[*]`` sub-dicts that carry a
+    ``task_families`` list, deliberately kept out of the scored ``task_families``
+    array. The showcase surfaces them as live capability without leaderboard churn.
+    """
+    blocks: dict[str, dict] = {}
+    for pack in registry.get("task_packs", []):
+        if not isinstance(pack, dict):
+            continue
+        for value in pack.values():
+            if not isinstance(value, dict):
+                continue
+            fam_ids = value.get("task_families")
+            if isinstance(fam_ids, list):
+                for fid in fam_ids:
+                    blocks.setdefault(fid, value)
+    return blocks
+
+
+def build_domain_showcase(registry_path, mesh_manifest: dict | None = None) -> dict:
+    """Front-page 'What MakerBench covers' breadth gallery (#169).
+
+    Data-driven from ``registry.json``'s ``domain_showcase`` block, cross-checked
+    against the live registry so the gallery can never drift: every ``live`` card
+    must reference a real scored family, a frontier-ladder rung with ``status:
+    live``, or a pack alpha family. Each card carries a public doc deep-link, an
+    icon key, the input modalities it exercises, and a representative thumbnail
+    mesh when one was exported for a referenced family. ``coming`` cards are
+    roadmap domains with no runnable family yet, rendered as a distinct rail.
+
+    Returns ``{}`` when the registry has no ``domain_showcase`` block (e.g. the
+    minimal registries used in unit tests), keeping the payload byte-stable.
+    """
+    registry = json.loads(Path(registry_path).read_text(encoding="utf-8"))
+    block = registry.get("domain_showcase")
+    if not isinstance(block, dict):
+        return {}
+
+    by_task = (mesh_manifest or {}).get("by_task", {})
+
+    family_meta = {f["id"]: f for f in registry.get("task_families", [])}
+    family_ids = set(family_meta)
+    live_rung_ids = {
+        rung["id"]
+        for ladder in registry.get("frontier_ladders", {}).get("ladders", [])
+        for rung in ladder.get("rungs", [])
+        if rung.get("status") == "live"
+    }
+    alpha_blocks = _alpha_family_blocks(registry)
+    alpha_ids = set(alpha_blocks)
+
+    def _doc_url(doc: str) -> str:
+        if not doc:
+            return ""
+        if doc.startswith("private/") or "private/oracles" in doc:
+            raise ValueError(f"domain_showcase doc must be public, got {doc!r}")
+        return f"{REPO_DOC_URL}/{doc}"
+
+    def _modalities(card: dict) -> list[str]:
+        mods: list[str] = []
+        sources = [family_meta.get(fid, {}) for fid in card.get("families", [])]
+        sources += [alpha_blocks.get(fid, {}) for fid in card.get("alpha", [])]
+        for src in sources:
+            for mod in src.get("input_modalities", ["text"]):
+                if mod not in mods:
+                    mods.append(mod)
+        return mods or ["text"]
+
+    def _thumb(card: dict) -> tuple[str, str]:
+        """Representative mesh URL + task id from meshes.json, if any was exported."""
+        for fid in list(card.get("families", [])) + list(card.get("alpha", [])):
+            entry = by_task.get(fid)
+            if entry and entry.get("mesh"):
+                return entry["mesh"], fid
+        return "", ""
+
+    live_cards = []
+    for card in block.get("live", []):
+        fams = card.get("families", [])
+        rungs = card.get("ladder_rungs", [])
+        alphas = card.get("alpha", [])
+        if not (fams or rungs or alphas):
+            raise ValueError(
+                f"domain_showcase live card {card['id']!r} references no family/rung/alpha"
+            )
+        for fid in fams:
+            if fid not in family_ids:
+                raise ValueError(
+                    f"domain_showcase {card['id']!r} references unknown task family {fid!r}"
+                )
+        for rid in rungs:
+            if rid not in live_rung_ids:
+                raise ValueError(
+                    f"domain_showcase {card['id']!r} references non-live frontier rung {rid!r}"
+                )
+        for aid in alphas:
+            if aid not in alpha_ids:
+                raise ValueError(
+                    f"domain_showcase {card['id']!r} references unknown alpha family {aid!r}"
+                )
+        doc_url = _doc_url(card.get("doc", ""))
+        mesh, mesh_task = _thumb(card)
+        # Deep-link a scored family to its on-site task page (brief + 3D viewer);
+        # ladder/alpha-only cards link to the public ladder doc.
+        href = f"tasks/{fams[0]}/" if fams else doc_url
+        live_cards.append(
+            {
+                "id": card["id"],
+                "title": card["title"],
+                "one_line": card["one_line"],
+                "icon": card.get("icon", "default"),
+                "status": "live",
+                "href": href,
+                "doc_url": doc_url,
+                "modalities": _modalities(card),
+                "mesh": mesh,
+                "mesh_task": mesh_task,
+            }
+        )
+
+    coming_cards = []
+    for card in block.get("coming", []):
+        doc_url = _doc_url(card.get("doc", ""))
+        entry = {
+            "id": card["id"],
+            "title": card["title"],
+            "one_line": card["one_line"],
+            "icon": card.get("icon", "default"),
+            "status": "coming",
+            "href": doc_url,
+            "doc_url": doc_url,
+        }
+        if card.get("issue"):
+            entry["issue"] = card["issue"]
+        coming_cards.append(entry)
+
+    return {
+        "summary": block.get("summary", ""),
+        "live": live_cards,
+        "coming": coming_cards,
+    }
+
+
 def build_capability_axes(registry: dict) -> list[dict]:
     """Chart-ready capability spokes for the radar chart.
 
@@ -848,7 +999,7 @@ def build_extended_families(results_dir: Path, registry_path: Path) -> list[dict
     return out
 
 
-def build_payload(results_dir: Path, registry_path: Path) -> dict:
+def build_payload(results_dir: Path, registry_path: Path, mesh_manifest: dict | None = None) -> dict:
     registry = load_registry(registry_path)
     families = registry["task_families"]
     family_ids = [f["id"] for f in families]
@@ -1116,6 +1267,7 @@ def build_payload(results_dir: Path, registry_path: Path) -> dict:
         "tracks": tracks_present,
         "task_families": families,
         "extended_families": extended,
+        "domain_showcase": build_domain_showcase(registry_path, mesh_manifest),
         "capability_axes": all_axes,
         # The two never-cross-ranked leaderboard leagues (mb#90). Each model row
         # carries a `league` id that keys into this list for display grouping.
@@ -2393,12 +2545,13 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    payload = build_payload(args.results_dir, args.registry)
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    write_json(args.out, payload)
     # Read the viewer mesh manifest (produced by makerbench/viewer_export.py) if
-    # present; absent → no viewers, pages stay byte-stable.
+    # present; absent → no viewers/thumbnails, pages stay byte-stable. Loaded before
+    # the payload so the domain showcase can wire representative thumbnails.
     mesh_manifest = load_mesh_manifest(args.out.parent / "meshes.json")
+    payload = build_payload(args.results_dir, args.registry, mesh_manifest)
+    write_json(args.out, payload)
     badge_dir = args.badge_dir or (args.out.parent / "badges")
     write_adoption_artifacts(
         payload,

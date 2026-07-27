@@ -1140,6 +1140,77 @@
     }).join("");
   }
 
+  // ---- domain-breadth showcase ("What MakerBench covers", #169) -----------
+  // Inline, theme-aware line glyphs keyed by the registry's `icon`. Deterministic
+  // and dependency-free — no per-card 3D viewer. Cards deep-link to the family
+  // page / ladder doc resolved server-side in build_data.build_domain_showcase.
+  var DOMAIN_ICONS = {
+    enclosure: '<rect x="4" y="7" width="16" height="12" rx="1.5"/><path d="M4 11h16M9 7V5h6v2"/>',
+    sheet_metal: '<path d="M3 15l7-3 4 5 7-3"/><path d="M3 15V9l7-3 4 5 7-3v6"/>',
+    laser_vector: '<rect x="4" y="4" width="16" height="16" rx="1.5"/><rect x="9" y="8" width="6" height="2.4"/><rect x="9" y="13.6" width="6" height="2.4"/>',
+    woodworking: '<path d="M4 8h4v3H4zM10 8h4v3h-4zM16 8h4v3h-4z"/><path d="M6 11v5M12 11v5M18 11v5"/>',
+    acoustics: '<circle cx="9" cy="12" r="6"/><circle cx="9" cy="12" r="1.6"/><path d="M15 6l4-2v14"/>',
+    assembly: '<circle cx="7" cy="12" r="3"/><circle cx="17" cy="12" r="3"/><path d="M10 12h4"/>',
+    brep: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 3v18M4 7.5l8 4.5 8-4.5"/>',
+    reverse: '<path d="M4 9a8 8 0 0114-5l2 2"/><path d="M20 4v4h-4"/><circle cx="11" cy="14" r="4"/>',
+    catalog: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5"/><path d="M12 5v2M12 17v2M5 12h2M17 12h2"/>',
+    casting: '<path d="M5 4h14l-2 6a5 5 0 01-10 0z"/><path d="M9 16h6v4H9z"/>',
+    robotics: '<rect x="6" y="9" width="12" height="9" rx="1.5"/><path d="M9 9V6h6v3M12 3v3"/><circle cx="9.5" cy="13" r="1"/><circle cx="14.5" cy="13" r="1"/>',
+    glass_ceramics: '<path d="M8 3h8l-1 6a3 3 0 01-6 0z"/><path d="M12 12v7M9 21h6"/>',
+    pcb: '<rect x="4" y="4" width="16" height="16" rx="1.5"/><path d="M8 4v3h3M16 20v-3h-3M4 13h3v3"/><circle cx="9" cy="9" r="1"/><circle cx="15" cy="15" r="1"/>',
+    injection: '<path d="M4 8h10v8H4z"/><path d="M14 10h3l3 2-3 2h-3"/>',
+    fea: '<path d="M4 18L9 7l4 7 3-4 4 8z"/>',
+    cam: '<path d="M4 6h16M6 6v9a3 3 0 003 3h6"/><path d="M15 15l3 3 2-2-3-3z"/>',
+    tolerance: '<path d="M3 8h18v4H3z"/><path d="M6 8v4M10 8v3M14 8v4M18 8v3"/>',
+    default: '<rect x="4" y="4" width="16" height="16" rx="2"/>'
+  };
+
+  function domainGlyph(icon) {
+    var inner = DOMAIN_ICONS[icon] || DOMAIN_ICONS.default;
+    return '<svg class="domain-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      inner + "</svg>";
+  }
+
+  function renderDomains() {
+    // Breadth coverage is benchmark-wide, not version-specific. Archived payloads
+    // predate domain_showcase, so on a version switch we keep the current gallery
+    // rather than blanking it.
+    var show = DATA.domain_showcase;
+    if (!show || !show.live) return;
+    var liveGrid = document.getElementById("domain-grid");
+    if (liveGrid) {
+      var live = show.live || [];
+      liveGrid.innerHTML = live.length ? live.map(function (d) {
+        var mods = (d.modalities || []).filter(function (m) { return m !== "text"; })
+          .map(function (m) { return '<span class="chip chip-mod">' + escapeHTML(m) + "</span>"; }).join("");
+        var thumb = d.mesh
+          ? '<span class="domain-thumb domain-thumb-3d" title="3D preview on the task page">' + domainGlyph(d.icon) + '<span class="thumb-tag">3D</span></span>'
+          : '<span class="domain-thumb">' + domainGlyph(d.icon) + "</span>";
+        return '<a class="domain-card" href="' + escapeHTML(d.href) + '">' +
+          '<div class="domain-top">' + thumb +
+          '<div class="domain-id"><h3>' + escapeHTML(d.title) + "</h3>" +
+          '<span class="domain-status live">live</span></div></div>' +
+          "<p>" + escapeHTML(d.one_line) + "</p>" +
+          '<div class="domain-foot">' + mods +
+          '<span class="domain-doc">docs &#8599;</span></div></a>';
+      }).join("") : '<p class="muted-note">No domain showcase data — run <code>python site/build_data.py</code>.</p>';
+    }
+    var comingRail = document.getElementById("domain-coming");
+    if (comingRail) {
+      var coming = show.coming || [];
+      comingRail.innerHTML = coming.map(function (d) {
+        var issue = d.issue ? '<span class="domain-issue">#' + d.issue + "</span>" : "";
+        return '<a class="domain-card coming" href="' + escapeHTML(d.href) + '">' +
+          '<div class="domain-top"><span class="domain-thumb">' + domainGlyph(d.icon) + "</span>" +
+          '<div class="domain-id"><h3>' + escapeHTML(d.title) + "</h3>" +
+          '<span class="domain-status coming">roadmap</span></div></div>' +
+          "<p>" + escapeHTML(d.one_line) + "</p>" +
+          '<div class="domain-foot">' + issue + "</div></a>";
+      }).join("");
+    }
+  }
+
   // ---- model picker -------------------------------------------------------
   function fillHistPicker() {
     var sel = document.getElementById("hist-model");
@@ -1178,6 +1249,7 @@
     if (data.benchmark_version) {
       document.getElementById("bench-version").textContent = "v" + data.benchmark_version;
     }
+    renderDomains();
     renderTasks();
     renderExtended();
     setTrack(TRACK);

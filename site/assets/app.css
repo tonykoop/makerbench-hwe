@@ -279,6 +279,48 @@ tr.is-official td.model-col { border-left: 3px solid var(--good); }
 .tracks { margin-top: 12px; display: flex; gap: 6px; }
 .chip { font-size: 0.72rem; padding: 2px 9px; border-radius: 999px; background: var(--bg-soft); color: var(--text-soft); border: 1px solid var(--border); }
 
+/* ---- domain-breadth showcase ("What MakerBench covers", #169) ---- */
+.domain-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.domain-card {
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px; box-shadow: var(--shadow); display: flex; flex-direction: column;
+  color: inherit; text-decoration: none; transition: border-color .15s, transform .15s;
+}
+.domain-card:hover { border-color: var(--border-strong); transform: translateY(-2px); text-decoration: none; }
+.domain-top { display: flex; gap: 12px; align-items: center; }
+.domain-thumb {
+  position: relative; flex: 0 0 auto; width: 44px; height: 44px; display: grid; place-items: center;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--bg-soft); color: var(--accent);
+}
+.domain-glyph { width: 26px; height: 26px; }
+.domain-thumb-3d { color: var(--accent); }
+.domain-thumb .thumb-tag {
+  position: absolute; bottom: -6px; right: -6px; font-size: 0.55rem; font-weight: 700; letter-spacing: .04em;
+  background: var(--accent); color: #fff; border-radius: 999px; padding: 1px 5px;
+}
+.domain-id { min-width: 0; }
+.domain-id h3 { margin: 0; font-size: 1rem; color: var(--accent); line-height: 1.2; }
+.domain-status {
+  display: inline-block; margin-top: 3px; font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .06em; padding: 1px 7px; border-radius: 999px;
+}
+.domain-status.live { background: var(--accent-soft); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+.domain-status.coming { background: var(--bg-soft); color: var(--text-faint); border: 1px dashed var(--border-strong); }
+.domain-card p { color: var(--text-soft); font-size: 0.86rem; margin: 11px 0 0; }
+.domain-foot { margin-top: auto; padding-top: 12px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.chip-mod { background: var(--accent-soft); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); text-transform: uppercase; letter-spacing: .04em; font-weight: 700; }
+.domain-doc { margin-left: auto; font-size: 0.72rem; color: var(--text-faint); font-family: var(--mono); }
+.domain-issue { font-size: 0.72rem; color: var(--text-faint); font-family: var(--mono); }
+
+.coming-head { margin: 30px 0 4px; font-size: 1.05rem; }
+.coming-lede { margin-top: 0; }
+.coming-rail { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.domain-card.coming { background: var(--bg-soft); border-style: dashed; box-shadow: none; padding: 14px; }
+.domain-card.coming .domain-thumb { color: var(--text-faint); background: var(--bg); border-style: dashed; width: 38px; height: 38px; }
+.domain-card.coming .domain-glyph { width: 22px; height: 22px; }
+.domain-card.coming .domain-id h3 { color: var(--text-soft); font-size: 0.92rem; }
+.domain-card.coming p { font-size: 0.8rem; }
+
 /* ---- methodology ladder ---- */
 .ladder { display: grid; gap: 10px; margin: 6px 0 22px; }
 .rung { display: grid; grid-template-columns: 44px 150px 1fr; gap: 14px; align-items: center;
@@ -374,6 +416,8 @@ table.dt td.seedlist { font-variant-numeric: tabular-nums; color: var(--text-sof
 /* ---- responsive ---- */
 @media (max-width: 760px) {
   .chart-grid, .profile-grid, .task-grid, .cols2 { grid-template-columns: 1fr; }
+  .domain-grid { grid-template-columns: 1fr; }
+  .coming-rail { grid-template-columns: repeat(2, 1fr); }
   .chart-card-head { display: block; }
   .chart-card-head .seg { margin-top: 12px; max-width: 100%; overflow-x: auto; }
   .chart-box-frontier { height: 320px; }
