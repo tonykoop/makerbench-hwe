@@ -64,6 +64,9 @@ def test_issue_172_committed_findings_cover_headlines_and_resolve_posts():
     assert "BOM" in by_key["bom-omission"]["headline"]
     assert "Perception" in by_key["perception-lift"]["headline"]
     assert "budgets" in by_key["token-cost-gap"]["headline"]
+    arena_detail = by_key["elo-objective-decorrelation"]["detail"]
+    assert "five directly comparable three-entrant rounds" in arena_detail
+    assert "Across six" in arena_detail
 
 
 def test_issue_172_failure_gallery_thumbnails_resolve_to_public_assets():
