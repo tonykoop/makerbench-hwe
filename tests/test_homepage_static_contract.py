@@ -68,7 +68,35 @@ def test_homepage_hero_exposes_front_door_and_data_stat_hook():
     )
     assert {"#leaderboard", "#why", "#get-started"}.issubset(parsed.links)
     assert {"hero", "hero-cta", "stat-strip"}.issubset(parsed.classes)
-    assert any(attrs.get("id") == "hero-stats" and "hidden" in attrs for attrs in parsed.dl_attrs)
+    # mb#670: the stat strip is prerendered at build time so no-JS visitors and
+    # crawlers see it — it must NOT ship hidden (app.js re-renders it on load).
+    assert any(
+        attrs.get("id") == "hero-stats" and "hidden" not in attrs
+        for attrs in parsed.dl_attrs
+    )
+
+
+def test_homepage_carries_prerendered_static_fallback():
+    """mb#670: crawlers/no-JS visitors must see real results, not 'Loading…'.
+
+    site/build_data.py bakes content between `<!-- prerender:NAME -->` marker
+    pairs; the committed index.html is drift-guarded against leaderboard.json
+    by site/check_data_drift.py, so real model names/scores must be present.
+    """
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+
+    for name in ("headline", "hero-stats", "leaderboard", "tracks", "track-guardrail"):
+        assert f"<!-- prerender:{name} -->" in html, name
+        assert f"<!-- /prerender:{name} -->" in html, name
+
+    payload = json.loads(
+        (ROOT / "site" / "data" / "leaderboard.json").read_text(encoding="utf-8")
+    )
+    if payload.get("models"):
+        assert "Loading current results…" not in html
+        assert 'class="model-name"' in html  # static top-N leaderboard rows
+        assert 'class="stat-val"' in html  # hero stat strip values
+        assert 'class="track-card"' in html  # track explainer cards
 
 
 def test_homepage_why_section_carries_all_issue_168_value_props():
