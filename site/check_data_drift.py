@@ -42,6 +42,12 @@ BUILD_DATA_INPUTS = ("meshes.json", "opportunity-matrix.json")
 # any non-Pages mirror) can show wrong/missing model+task pages (#224).
 GENERATED_PAGE_TREES = ("models", "tasks")
 
+# The landing page carries prerendered static leaderboard/hero/track blocks
+# between `<!-- prerender:* -->` markers (mb#670). It is commit-and-check like
+# the trees above: the committed file must byte-match a fresh build, so the
+# static no-JS fallback can never drift from data/leaderboard.json.
+PRERENDERED_INDEX = "index.html"
+
 
 @dataclass(frozen=True)
 class DriftReport:
@@ -118,6 +124,10 @@ def _run_build_data(repo_root: Path, generated_site: Path) -> None:
         str(source_data / "failure_gallery.json"),
         "--findings-out",
         str(generated_data / "findings.json"),
+        "--index-html",
+        str(source_site / PRERENDERED_INDEX),
+        "--index-html-out",
+        str(generated_site / PRERENDERED_INDEX),
     ]
     subprocess.run(cmd, cwd=repo_root, check=True)
 
@@ -199,6 +209,24 @@ def compare_site_pages(committed_site: Path, generated_site: Path) -> DriftRepor
     )
 
 
+def compare_prerendered_index(committed_site: Path, generated_site: Path) -> DriftReport:
+    """Fail if the committed landing page's static prerender blocks are stale.
+
+    build_data.py rewrites site/index.html in place between the prerender
+    markers (mb#670); the drift build re-renders it from the committed file
+    into a temp tree, so any divergence from data/leaderboard.json shows up
+    as a byte mismatch here.
+    """
+    committed = committed_site / PRERENDERED_INDEX
+    generated = generated_site / PRERENDERED_INDEX
+    label = f"site/{PRERENDERED_INDEX}"
+    if not generated.exists():
+        return DriftReport(changed=(), missing=(label,), extra=())
+    if not filecmp.cmp(committed, generated, shallow=False):
+        return DriftReport(changed=(label,), missing=(), extra=())
+    return DriftReport(changed=(), missing=(), extra=())
+
+
 def check_build_data_drift(repo_root: Path = REPO_ROOT) -> DriftReport:
     repo_root = repo_root.resolve()
     with tempfile.TemporaryDirectory(prefix="makerbench-site-data-") as tmp:
@@ -209,10 +237,11 @@ def check_build_data_drift(repo_root: Path = REPO_ROOT) -> DriftReport:
             generated_site / "data",
         )
         pages = compare_site_pages(repo_root / "site", generated_site)
+        index = compare_prerendered_index(repo_root / "site", generated_site)
         return DriftReport(
-            changed=tuple(sorted(data.changed + pages.changed)),
-            missing=tuple(sorted(data.missing + pages.missing)),
-            extra=tuple(sorted(data.extra + pages.extra)),
+            changed=tuple(sorted(data.changed + pages.changed + index.changed)),
+            missing=tuple(sorted(data.missing + pages.missing + index.missing)),
+            extra=tuple(sorted(data.extra + pages.extra + index.extra)),
         )
 
 
