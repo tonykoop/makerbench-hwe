@@ -1635,6 +1635,26 @@
     rerenderCharts();
   }
 
+  // ---- freshness signals (mb#671) -----------------------------------------
+  // Benchmark version + last-updated date (data_updated: newest result-row
+  // runtime stamp baked into leaderboard.json) + row counters, mirrored in the
+  // hero (#freshness) and footer (#site-freshness). Matches the prerendered
+  // text from site/build_data.py _prerender_freshness_html().
+  function renderFreshness(data) {
+    var parts = [];
+    if (data.benchmark_version) parts.push("benchmark v" + data.benchmark_version);
+    if (data.data_updated) parts.push("updated " + String(data.data_updated).slice(0, 10));
+    if (data.models && data.models.length) parts.push(data.models.length + " model rows");
+    if (data.arena && data.arena.runs && data.arena.runs.length) {
+      parts.push(data.arena.runs.length + " arena rounds");
+    }
+    if (!parts.length) return;
+    ["freshness", "site-freshness", "bench-version"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.textContent = parts.join(" · ");
+    });
+  }
+
   // ---- version archive ----------------------------------------------------
   // Render a (possibly archived) leaderboard payload. Keeps the active track so
   // switching versions doesn't bounce the user back to Blind.
@@ -1642,9 +1662,7 @@
     DATA = data;
     document.getElementById("headline").textContent = data.headline || "";
     renderHeroStats();
-    if (data.benchmark_version) {
-      document.getElementById("bench-version").textContent = "v" + data.benchmark_version;
-    }
+    renderFreshness(data);
     renderTasks();
     renderTrackExplainer();
     renderExtended();

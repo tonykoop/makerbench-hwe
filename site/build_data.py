@@ -26,6 +26,7 @@ import json
 import re
 import sys
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -801,6 +802,22 @@ def _run_excluded(path: Path, model_identifier: str | None) -> bool:
     return model_identifier in _EXCLUDED_MODEL_IDS
 
 
+def _parse_result_timestamp(value) -> datetime | None:
+    """Parse an ISO-8601 runtime stamp from a result row; None when absent/bad.
+
+    Timestamps are normalized to UTC so mixed-offset bundles compare correctly.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def scan_results(results_dir: Path) -> dict:
     """Walk run files and bucket every graded cell by (model, effort, track, task).
 
@@ -818,6 +835,10 @@ def scan_results(results_dir: Path) -> dict:
     model_meta: dict[str, dict] = {}
     benchmark_version = None
     row_candidates: list[dict] = []
+    # Freshness stamp (mb#671): newest per-row runtime timestamp across all
+    # ingested (non-excluded) rows. Data-derived, so it is deterministic for a
+    # fixed results tree — a wall-clock build date would break the drift guard.
+    latest_row_stamp: datetime | None = None
 
     for path in sorted(results_dir.rglob("*.json")):
         try:
@@ -889,6 +910,14 @@ def scan_results(results_dir: Path) -> dict:
             track = row.get("track") or grade.get("track")
             if not task_id or not track:
                 continue
+            runtime = row.get("runtime") or {}
+            row_stamp = _parse_result_timestamp(
+                runtime.get("finished_at") or runtime.get("started_at")
+            )
+            if row_stamp is not None and (
+                latest_row_stamp is None or row_stamp > latest_row_stamp
+            ):
+                latest_row_stamp = row_stamp
             row_candidates.append(
                 {
                     "path": path,
@@ -980,6 +1009,11 @@ def scan_results(results_dir: Path) -> dict:
         "cells": cells,
         "model_meta": model_meta,
         "benchmark_version": benchmark_version,
+        "data_updated": (
+            latest_row_stamp.strftime("%Y-%m-%dT%H:%M:%SZ")
+            if latest_row_stamp is not None
+            else None
+        ),
     }
 
 
@@ -1981,6 +2015,11 @@ def build_payload(
 
     payload = {
         "_generated": "Built by site/build_data.py from results/. Do not edit by hand.",
+        # Machine-readable freshness stamp (mb#671): ISO-8601 UTC timestamp of
+        # the newest runtime stamp across ingested result rows. Derived from the
+        # data (not the wall clock) so a rebuild of an unchanged results tree
+        # stays byte-identical for the drift guard.
+        "data_updated": scan["data_updated"],
         "benchmark_version": scan["benchmark_version"],
         "benchmark_profile": roadmap["status"].get("benchmark_profile"),
         "tracks": tracks_present,
@@ -3961,6 +4000,29 @@ def _prerender_tracks_html(payload: dict) -> str:
     return "".join(cards)
 
 
+def _prerender_freshness_html(payload: dict) -> str:
+    """Freshness line (mb#671): benchmark version + updated date + counters.
+
+    Mirrors renderFreshness() in assets/app.js. The date is the payload's
+    ``data_updated`` stamp (newest result-row runtime), so the line is
+    deterministic for a fixed results tree.
+    """
+    parts = []
+    version = payload.get("benchmark_version")
+    if version:
+        parts.append(f"benchmark v{_esc(str(version))}")
+    updated = payload.get("data_updated") or ""
+    if updated:
+        parts.append(f"updated {_esc(updated[:10])}")
+    models = payload.get("models") or []
+    if models:
+        parts.append(f"{len(models)} model rows")
+    arena_runs = (payload.get("arena") or {}).get("runs") or []
+    if arena_runs:
+        parts.append(f"{len(arena_runs)} arena rounds")
+    return " · ".join(parts)
+
+
 def prerender_blocks(payload: dict, top_n: int = PRERENDER_TOP_N) -> dict[str, str]:
     """The static HTML injected between each prerender marker pair."""
     explainer = payload.get("track_explainer") or {}
@@ -3970,6 +4032,7 @@ def prerender_blocks(payload: dict, top_n: int = PRERENDER_TOP_N) -> dict[str, s
         "leaderboard": _prerender_leaderboard_html(payload, top_n),
         "tracks": _prerender_tracks_html(payload),
         "track-guardrail": _esc(explainer.get("guardrail", "")),
+        "freshness": _prerender_freshness_html(payload),
     }
 
 

@@ -15,6 +15,8 @@ EXPECTED_KEYS = {
     "bom-omission",
     "perception-lift",
     "token-cost-gap",
+    # mb#671: first arena finding — Elo vs objective mesh-gate decorrelation.
+    "elo-objective-decorrelation",
 }
 
 
