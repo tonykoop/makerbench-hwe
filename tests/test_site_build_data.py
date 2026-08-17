@@ -2702,11 +2702,21 @@ def test_site_payload_emits_data_updated_from_newest_runtime_stamp(tmp_path):
         results_dir / "new.json", "model-b", None, 3,
         row_fields={"runtime": {"started_at": "2026-03-04T03:06:07+02:00"}},
     )
+    # A malformed finished_at must not hide a valid started_at fallback.
+    _write_run(
+        results_dir / "fallback.json", "model-c", None, 2,
+        row_fields={
+            "runtime": {
+                "finished_at": "not-a-date",
+                "started_at": "2026-04-05T06:07:08Z",
+            }
+        },
+    )
     registry = tmp_path / "registry.json"
     _single_family_registry(registry)
 
     payload = build_data.build_payload(results_dir, registry)
-    assert payload["data_updated"] == "2026-03-04T01:06:07Z"
+    assert payload["data_updated"] == "2026-04-05T06:07:08Z"
     # Deterministic for fixed inputs.
     again = build_data.build_payload(results_dir, registry)
     assert again["data_updated"] == payload["data_updated"]
@@ -2728,6 +2738,8 @@ def test_parse_result_timestamp_rejects_garbage():
     assert build_data._parse_result_timestamp("") is None
     assert build_data._parse_result_timestamp("not-a-date") is None
     assert build_data._parse_result_timestamp(1234) is None
+    assert build_data._parse_result_timestamp("0001-01-01T00:00:00+23:59") is None
+    assert build_data._parse_result_timestamp("9999-12-31T23:59:59-23:59") is None
 
 
 def test_prerender_freshness_line_carries_version_date_and_counters():

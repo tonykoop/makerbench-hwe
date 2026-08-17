@@ -811,11 +811,11 @@ def _parse_result_timestamp(value) -> datetime | None:
         return None
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (ValueError, OverflowError):
         return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
 
 
 def scan_results(results_dir: Path) -> dict:
@@ -910,10 +910,12 @@ def scan_results(results_dir: Path) -> dict:
             track = row.get("track") or grade.get("track")
             if not task_id or not track:
                 continue
-            runtime = row.get("runtime") or {}
-            row_stamp = _parse_result_timestamp(
-                runtime.get("finished_at") or runtime.get("started_at")
-            )
+            runtime = row.get("runtime")
+            if not isinstance(runtime, dict):
+                runtime = {}
+            row_stamp = _parse_result_timestamp(runtime.get("finished_at"))
+            if row_stamp is None:
+                row_stamp = _parse_result_timestamp(runtime.get("started_at"))
             if row_stamp is not None and (
                 latest_row_stamp is None or row_stamp > latest_row_stamp
             ):
