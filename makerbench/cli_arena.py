@@ -953,3 +953,51 @@ def arena_overnight(
         console.print(f"[red]overnight arena failed: {exc}[/red]")
         raise typer.Exit(code=1)
     console.print(json.dumps(result, indent=2, sort_keys=True))
+
+
+@arena_app.command("preflight")
+def arena_preflight(
+        secrets: str = typer.Option(..., "--secrets", help="Path to the external nightly-cad secrets env file (values are classified, never printed)."),
+        queue: str = typer.Option(..., "--queue", help="Nightly queue JSON path."),
+        output_root: str = typer.Option(..., "--output-root", help="Root for timestamped nightly runs (holds .nightly-cad.lock)."),
+        repo_root: Optional[str] = typer.Option(None, "--repo-root", help="Repo checkout root (defaults to the current directory)."),
+        runner_script: Optional[str] = typer.Option(None, "--runner-script", help="Windows runner script path (defaults to <repo-root>/scripts/windows/run-nightly-cad-arena.ps1)."),
+        instruments_root: Optional[str] = typer.Option(None, "--instruments-root", help="Instrument build-repo root to include in the path audit."),
+        lock: Optional[str] = typer.Option(None, "--lock", help="Lock file path (defaults to <output-root>/.nightly-cad.lock).")):
+    """Redacted GO/NO-GO audit of nightly-arena activation state (#658).
+
+    Reports secrets (PRESENT/MISSING/PLACEHOLDER — values are never echoed),
+    single-seat lock ownership (absent / live PID / stale), per-job queue
+    status, and required-path existence. Read-only: never mutates the queue
+    or the lock. Exits non-zero when any gate fails so rehearsal scripts can
+    chain it.
+    """
+
+    from . import nightly_preflight
+
+    repo_path = Path(repo_root) if repo_root else Path.cwd()
+    runner_path = (
+        Path(runner_script)
+        if runner_script
+        else repo_path / "scripts" / "windows" / "run-nightly-cad-arena.ps1"
+    )
+    output_path = Path(output_root)
+    named_paths = {
+        "runner_script": runner_path,
+        "repo_root": repo_path,
+        "queue": Path(queue),
+        "output_root": output_path,
+    }
+    if instruments_root:
+        named_paths["instruments_root"] = Path(instruments_root)
+
+    report = nightly_preflight.build_report(
+        secrets_path=Path(secrets),
+        lock_path=Path(lock) if lock else output_path / ".nightly-cad.lock",
+        queue_path=Path(queue),
+        named_paths=named_paths,
+    )
+    for line in nightly_preflight.render_report_lines(report):
+        console.print(line, markup=False, highlight=False)
+    if not report.ok:
+        raise typer.Exit(code=1)
