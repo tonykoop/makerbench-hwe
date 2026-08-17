@@ -85,7 +85,14 @@ def test_homepage_carries_prerendered_static_fallback():
     """
     html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
 
-    for name in ("headline", "hero-stats", "leaderboard", "tracks", "track-guardrail"):
+    for name in (
+        "headline",
+        "hero-stats",
+        "leaderboard",
+        "tracks",
+        "track-guardrail",
+        "freshness",
+    ):
         assert f"<!-- prerender:{name} -->" in html, name
         assert f"<!-- /prerender:{name} -->" in html, name
 
@@ -199,3 +206,33 @@ def test_about_cite_section_html_and_data_hooks():
     app_js = (ROOT / "site" / "assets" / "app.js").read_text(encoding="utf-8")
     assert "var cite = DATA.citation;" in app_js
     assert 'document.getElementById("cite-bibtex")' in app_js
+
+
+def test_homepage_freshness_signals_show_updated_date_and_version():
+    """mb#671: header + footer carry a human-readable 'updated YYYY-MM-DD'
+    plus the benchmark version, prerendered from leaderboard.json's
+    machine-readable ``data_updated`` stamp."""
+    import re
+
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    payload = json.loads(
+        (ROOT / "site" / "data" / "leaderboard.json").read_text(encoding="utf-8")
+    )
+    stamp = payload.get("data_updated")
+    assert stamp, "leaderboard.json must carry a machine-readable data_updated"
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", stamp)
+    date = stamp[:10]
+    # Hero (header area) + footer both carry the prerendered freshness line.
+    assert html.count(f"updated {date}") >= 2
+    version = payload.get("benchmark_version")
+    assert version and f"benchmark v{version}" in html
+
+
+def test_blog_index_lists_a_dated_post():
+    """mb#671 acceptance: the blog index lists at least one dated post."""
+    import re
+
+    html = (ROOT / "site" / "blog" / "index.html").read_text(encoding="utf-8")
+    assert re.search(r'<time datetime="\d{4}-\d{2}-\d{2}">\d{4}-\d{2}-\d{2}</time>', html)
+    assert 'href="arena-elo-decorrelation.html"' in html
+    assert (ROOT / "site" / "blog" / "arena-elo-decorrelation.html").exists()

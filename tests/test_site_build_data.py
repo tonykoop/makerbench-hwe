@@ -2679,3 +2679,106 @@ def test_arena_section_skips_run_with_broken_provenance(tmp_path):
     (run_dir / "votes.revealed.jsonl").write_text("", encoding="utf-8")
 
     assert build_data.build_arena_section(runs_dir) is None
+
+
+# --------------------------------------------------------------------------- #
+# mb#671: machine-readable freshness stamp + prerendered freshness line
+# --------------------------------------------------------------------------- #
+
+def test_site_payload_emits_data_updated_from_newest_runtime_stamp(tmp_path):
+    """data_updated is the newest per-row runtime stamp, normalized to UTC.
+
+    Data-derived (never wall-clock), so a rebuild of an unchanged results tree
+    is byte-identical — the property the drift guard depends on.
+    """
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    _write_run(
+        results_dir / "old.json", "model-a", None, 4,
+        row_fields={"runtime": {"finished_at": "2026-01-02T03:04:05Z"}},
+    )
+    # Newer row: offset-bearing stamp must be normalized to UTC (01:06:07Z).
+    _write_run(
+        results_dir / "new.json", "model-b", None, 3,
+        row_fields={"runtime": {"started_at": "2026-03-04T03:06:07+02:00"}},
+    )
+    # A malformed finished_at must not hide a valid started_at fallback.
+    _write_run(
+        results_dir / "fallback.json", "model-c", None, 2,
+        row_fields={
+            "runtime": {
+                "finished_at": "not-a-date",
+                "started_at": "2026-04-05T06:07:08Z",
+            }
+        },
+    )
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    payload = build_data.build_payload(results_dir, registry)
+    assert payload["data_updated"] == "2026-04-05T06:07:08Z"
+    # Deterministic for fixed inputs.
+    again = build_data.build_payload(results_dir, registry)
+    assert again["data_updated"] == payload["data_updated"]
+
+
+def test_site_payload_data_updated_is_null_without_runtime_stamps(tmp_path):
+    """Legacy bundles without runtime telemetry yield data_updated=None."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    _write_run(results_dir / "run.json", "model-a", None, 4)
+    registry = tmp_path / "registry.json"
+    _single_family_registry(registry)
+
+    assert build_data.build_payload(results_dir, registry)["data_updated"] is None
+
+
+def test_parse_result_timestamp_rejects_garbage():
+    assert build_data._parse_result_timestamp(None) is None
+    assert build_data._parse_result_timestamp("") is None
+    assert build_data._parse_result_timestamp("not-a-date") is None
+    assert build_data._parse_result_timestamp(1234) is None
+    assert build_data._parse_result_timestamp("0001-01-01T00:00:00+23:59") is None
+    assert build_data._parse_result_timestamp("9999-12-31T23:59:59-23:59") is None
+
+
+def test_prerender_freshness_line_carries_version_date_and_counters():
+    payload = {
+        "benchmark_version": "0.1.0",
+        "data_updated": "2026-06-13T20:42:10Z",
+        "models": [{"identifier": "m1"}, {"identifier": "m2"}],
+        "arena": {"runs": [{"run_id": "r1"}, {"run_id": "r2"}, {"run_id": "r3"}]},
+    }
+    line = build_data._prerender_freshness_html(payload)
+    assert line == (
+        "benchmark v0.1.0 · updated 2026-06-13 · 2 model rows · 3 arena rounds"
+    )
+    # Missing pieces drop out instead of rendering placeholders.
+    assert build_data._prerender_freshness_html({}) == ""
+    assert (
+        build_data._prerender_freshness_html({"data_updated": "2026-06-13T20:42:10Z"})
+        == "updated 2026-06-13"
+    )
+
+
+def test_inject_prerendered_fills_freshness_markers_everywhere():
+    """Both the hero and footer freshness marker pairs get the same line."""
+    template = (
+        '<p id="freshness"><!-- prerender:freshness --><!-- /prerender:freshness --></p>'
+        '<p id="headline"><!-- prerender:headline --><!-- /prerender:headline --></p>'
+        '<dl><!-- prerender:hero-stats --><!-- /prerender:hero-stats --></dl>'
+        '<div><!-- prerender:leaderboard --><!-- /prerender:leaderboard --></div>'
+        '<div><!-- prerender:tracks --><!-- /prerender:tracks --></div>'
+        '<p><!-- prerender:track-guardrail --><!-- /prerender:track-guardrail --></p>'
+        '<span id="site-freshness"><!-- prerender:freshness --><!-- /prerender:freshness --></span>'
+    )
+    payload = {
+        "benchmark_version": "0.1.0",
+        "data_updated": "2026-06-13T20:42:10Z",
+        "models": [],
+        "headline": "h",
+        "hero_stats": {"stats": []},
+        "track_explainer": {"tracks": [], "guardrail": "g"},
+    }
+    out = build_data.inject_prerendered(template, payload)
+    assert out.count("updated 2026-06-13") == 2
