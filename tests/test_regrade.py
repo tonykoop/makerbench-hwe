@@ -589,6 +589,63 @@ def test_source_artifact_accepts_vector_formats_and_rejects_scad_only():
         _source_artifact(row, row_label="x", formats=("scad",))
 
 
+def test_regrade_dispatches_kicad_source_to_source_text_grader(tmp_path, monkeypatch):
+    import makerbench.regrade as regrade
+
+    source = "(kicad_pcb (version 20221018))\n"
+    result_path = _write_bundle(tmp_path, source=source)
+    scad_path = tmp_path / "results/example-model/artifacts/vented_plate_seed0_blind.scad"
+    kicad_path = scad_path.with_suffix(".kicad_pcb")
+    scad_path.rename(kicad_path)
+
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+    source_artifact = payload["results"][0]["dossier"]["artifacts"][0]
+    source_artifact["path"] = (
+        "results/example-model/artifacts/vented_plate_seed0_blind.kicad_pcb"
+    )
+    source_artifact["format"] = "kicad_pcb"
+    result_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    seen = {}
+
+    def grade_source(source_text, spec, *, track):
+        seen.update(source=source_text, task_id=spec.task_id, track=track)
+        return _grade()
+
+    task = SimpleNamespace(
+        artifact_kind="kicad_pcb",
+        source_format="kicad_pcb",
+        make_spec=lambda seed: TaskSpec(
+            task_id="vented_plate",
+            seed=seed,
+            params={},
+            brief="",
+        ),
+        module=SimpleNamespace(grade_source=grade_source),
+    )
+    monkeypatch.setattr(regrade, "load_task", lambda task_id: task)
+    monkeypatch.setattr(
+        regrade,
+        "evaluate",
+        lambda *args, **kwargs: pytest.fail("mesh evaluator must not handle KiCad source"),
+    )
+    monkeypatch.setattr(
+        regrade,
+        "evaluate_vector",
+        lambda *args, **kwargs: pytest.fail("vector evaluator must not handle KiCad source"),
+    )
+
+    report = regrade_result_files([result_path], repo_root=tmp_path)
+
+    assert report.ok, [failure.message for failure in report.failures]
+    assert report.checked_rows == 1
+    assert seen == {
+        "source": source,
+        "task_id": "vented_plate",
+        "track": "blind",
+    }
+
+
 def test_regrade_skips_infra_agent_error_rows(tmp_path, monkeypatch):
     """An agent_error/infra row has no reproducible artifact by design; regrade
     skips it rather than failing the bundle (it is already score-excluded)."""
