@@ -1,5 +1,5 @@
 {
-  "_comment": "GENERATED from docs/landscape.yaml by site/landscape_data.py — do not edit by hand; re-run on each quarterly sweep.",
+  "_comment": "GENERATED from docs/landscape.yaml (+ docs/landscape-captures/) by site/landscape_data.py — do not edit by hand; re-run on each quarterly sweep or when a capture doc lands.",
   "sweep": {
     "date": "2026-06-10",
     "next_due": "2026-09-10",
@@ -28,7 +28,7 @@
     ],
     "method": "Primary-source verification (arXiv abstract pages, GitHub READMEs, HF Space cards/datasets) via fetch + quote; adversarial 3-vote verification for the claims that reached the deep-research pipeline. Abstract-level only; paper bodies may add detail."
   },
-  "count": 28,
+  "count": 31,
   "entries": [
     {
       "name": "MakerBench-HWE",
@@ -388,12 +388,12 @@
       "grading": "simulation-fea",
       "grading_detail": "gmsh meshing -> CalculiX (*STATIC, *BUCKLE) -> typed-requirement pass/fail; strict pass = all requirements",
       "agentic": "tool-use (feedback-driven iteration loop)",
-      "openness": "release stated; no public URL verifiable; \"work in progress\"",
+      "openness": "benchmark released per abstract (\"we release Hephaestus-CCX … paired with CalculiX evaluation kits\"); no public repo URL confirmed from abstract page as of 2026-06-20; paper marked \"work in progress\"",
       "backing": "academic (SNU, OneLineAI, SKKU)",
       "dataset_scale": "50 briefs (20 single-part, 30 multi-part) with CalculiX evaluation kits",
       "integrity": "none claimed",
       "anti_memorization": "partial - self-contained briefs, inline numeric limits, authoring scrub pass; no formal protocol",
-      "note": "Headline - Codex (GPT-5.5) and Claude Code (Opus-4.7) produced zero strict-passing artifacts first-attempt; best config ~20% of typed requirements. Most significant new neighbour on the physics flank.",
+      "note": "Headline - Codex (GPT-5.5) and Claude Code (Opus-4.7) produced zero strict-passing artifacts first-attempt; best config ~20% of typed requirements. Most significant new neighbour on the physics flank. v2 released 2026-05-27.",
       "kind": "benchmark",
       "axis": [
         "physics-sim",
@@ -533,11 +533,11 @@
       "type": "method+benchmark",
       "source": "https://arxiv.org/abs/2605.19717",
       "date": "2026-05-19",
-      "framing_own": "Hybrid agentic architecture for validated CAD engineering design; physical verification in the loop; introduces benchmark dataset + functional-validity metrics.",
+      "framing_own": "Hybrid agentic architecture for validated CAD engineering design; physical verification in the loop; introduces benchmark dataset + functional-validity metrics. Accepted at IJCAI-ECAI 2026 Special Track on AI4Tech.",
       "scope": "physics",
       "grading": "in-loop physics verification + compile rate",
       "agentic": "tool-use",
-      "openness": "promised (\"will be made publicly available\")",
+      "openness": "promised (\"will be made publicly available\"); no release URL as of 2026-06-20",
       "backing": "academic",
       "dataset_scale": "not stated in abstract",
       "integrity": "none claimed",
@@ -892,6 +892,102 @@
       "fab_processes": [],
       "recent": false,
       "is_self": false
+    },
+    {
+      "name": "IterCAD-Bench",
+      "type": "method+benchmark",
+      "source": "https://arxiv.org/abs/2606.13368",
+      "date": "2026-06-11",
+      "framing_own": "Closed-loop evaluation suite for three CAD tasks: Drawing-to-Code, Text-to-Code, and Interactive Editing; proposes CD-TR (Chamfer Distance Tolerance-Recall) metric that jointly measures code executability and geometric precision without survivor bias.",
+      "scope": "shape",
+      "grading": "deterministic-geometric",
+      "grading_detail": "CD-TR metric — Chamfer Distance Tolerance-Recall; measures executability + geometric precision jointly",
+      "agentic": "perception-loop",
+      "openness": "no release URL confirmed from abstract page as of 2026-06-20",
+      "backing": "academic",
+      "dataset_scale": "not stated in abstract",
+      "integrity": "none claimed",
+      "anti_memorization": "none claimed",
+      "kind": "benchmark",
+      "axis": [
+        "code-cad",
+        "spatial-intelligence"
+      ],
+      "input_modality": [
+        "engineering-drawing",
+        "text"
+      ],
+      "output_representation": [
+        "cad-code"
+      ],
+      "fab_processes": [],
+      "recent": true,
+      "is_self": false
+    },
+    {
+      "name": "PDAGENT-BENCH",
+      "type": "benchmark",
+      "source": "https://arxiv.org/abs/2606.17253",
+      "date": "2026-06-15",
+      "framing_own": "353-problem benchmark for LLM/VLM agents on VLSI physical design automation across five capability dimensions (foundational knowledge, report comprehension, root-cause analysis, script generation, full-flow implementation); best model 42.2% on Innovus script generation.",
+      "scope": "workflow",
+      "grading": "task-completion",
+      "agentic": "single-shot",
+      "openness": "open-source release forthcoming (stated in abstract)",
+      "backing": "academic",
+      "dataset_scale": "353 problems / 5 dimensions / 11 models evaluated",
+      "integrity": "none claimed",
+      "anti_memorization": "none claimed",
+      "note": "Adjacent: VLSI physical design (EDA tooling, place-and-route) rather than mechanical/hardware CAD. Different domain from MakerBench but confirms the broader trend of agentic benchmarks for engineering-toolchain use.",
+      "kind": "benchmark",
+      "axis": [
+        "hardware-engineering"
+      ],
+      "input_modality": [
+        "text",
+        "design-reports"
+      ],
+      "output_representation": [
+        "eda-scripts",
+        "workflow-actions"
+      ],
+      "fab_processes": [],
+      "recent": true,
+      "is_self": false
+    },
+    {
+      "name": "BIM-Edit",
+      "type": "benchmark",
+      "source": "https://arxiv.org/abs/2606.20146",
+      "date": "2026-06-18",
+      "framing_own": "324-task benchmark for LLM-driven natural-language editing of existing Building Information Models (IFC format); evaluates geometric accuracy, semantic validity, and topological consistency; best model 49.5%, no model completes more than 3.4% of tasks fully.",
+      "scope": "shape (AEC/BIM editing)",
+      "grading": "deterministic-geometric",
+      "grading_detail": "geometric accuracy + semantic validity + topological consistency checks on IFC output",
+      "agentic": "single-shot",
+      "openness": "no release URL confirmed from abstract page as of 2026-06-20",
+      "backing": "academic",
+      "dataset_scale": "324 tasks / 11 realistic + 36 synthetic building scenes",
+      "integrity": "none claimed",
+      "anti_memorization": "none claimed",
+      "note": "Adjacent: architectural/AEC engineering editing rather than mechanical CAD or DFM. Highlights the \"edit an existing model\" capability gap (vs. MakerBench's current generation-from-brief framing).",
+      "kind": "benchmark",
+      "axis": [
+        "hardware-engineering",
+        "spatial-intelligence"
+      ],
+      "input_modality": [
+        "text",
+        "ifc-building-model"
+      ],
+      "output_representation": [
+        "ifc-building-model"
+      ],
+      "fab_processes": [],
+      "recent": true,
+      "is_self": false
     }
-  ]
+  ],
+  "captures_count": 0,
+  "captures": []
 }
