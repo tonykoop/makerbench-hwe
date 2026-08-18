@@ -413,3 +413,59 @@ def test_write_domains_creates_parent_dirs(tmp_path):
     out = tmp_path / "nested" / "deeply" / "domains.json"
     write_domains(out, payload)  # must not raise
     assert out.exists()
+
+
+# ---------------------------------------------------------------------------
+# 10. Truth-up guard (#673): claims must match the registry
+# ---------------------------------------------------------------------------
+
+def test_every_registry_pack_with_families_is_bucketed():
+    """Every landed task pack appears in a covered domain — none silently absent."""
+    registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+    payload = build_domain_gallery(REGISTRY)
+    landed_family_ids = set()
+    for pack in registry.get("task_packs", []):
+        landed_family_ids.update(pack.get("task_families", []))
+    covered_ids = {
+        entry["id"] for domain in payload["domains"] for entry in domain["entries"]
+    }
+    missing = landed_family_ids - covered_ids
+    assert not missing, f"Registry task families absent from the domains gallery: {sorted(missing)}"
+
+
+def test_landed_domains_are_not_horizon_candidates():
+    """#673 regression: PCB / injection molding / ceramics landed and must not be 'coming'."""
+    payload = build_domain_gallery(REGISTRY)
+    horizon_keys = {item["key"] for item in payload["horizon"]}
+    assert not {"pcb_kicad", "injection_molding", "ceramics"} & horizon_keys
+    covered_keys = {d["key"] for d in payload["domains"]}
+    assert {"pcb_electronics", "injection_molding", "casting", "glass_ceramics"} <= covered_keys
+
+
+def test_guard_raises_on_unmapped_pack(tmp_path):
+    """A registry pack with families but no domain bucket fails the build."""
+    import pytest
+
+    registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+    registry["task_packs"].append({
+        "id": "brand-new-pack",
+        "status": "alpha",
+        "task_families": ["brand_new_family"],
+    })
+    bad = tmp_path / "registry.json"
+    bad.write_text(json.dumps(registry), encoding="utf-8")
+    with pytest.raises(ValueError, match="brand-new-pack"):
+        build_domain_gallery(bad)
+
+
+def test_guard_raises_on_landed_horizon_candidate(tmp_path):
+    """A horizon candidate whose probe id lands in the registry fails the build."""
+    import pytest
+
+    registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+    probe = domains_data.HORIZON_CANDIDATES[0]["registry_probes"][0]
+    registry["task_families"].append({"id": probe, "pack": "core-3d-print"})
+    bad = tmp_path / "registry.json"
+    bad.write_text(json.dumps(registry), encoding="utf-8")
+    with pytest.raises(ValueError, match="coming next"):
+        build_domain_gallery(bad)
