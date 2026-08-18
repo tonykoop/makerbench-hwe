@@ -14,11 +14,19 @@ updated ``docs/landscape.yaml`` (``site/data`` is a committed, served directory)
 
 Wiring hook for the front-end refresh work: the site fetches ``data/landscape.json``;
 this script is the only thing that writes it.
+
+Capture-cluster ingest (issue #674): markdown capture docs dropped into
+``docs/landscape-captures/`` (competitive scans #610, competitor teardowns #611,
+prior-art writeups #612 — see that directory's README for the file convention)
+are scanned into a ``captures`` array so the landscape page can list them with
+links. An empty/missing directory yields an empty array; nothing blocks on the
+capture issues landing.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -59,20 +67,76 @@ def _normalize(entry: dict) -> dict:
     return out
 
 
-def build(yaml_path: Path) -> dict:
+# Capture docs live here (repo-relative); links point at the main-branch blobs.
+CAPTURES_DIR = Path("docs") / "landscape-captures"
+_REPO_BLOB_BASE = "https://github.com/tonykoop/makerbench-hwe/blob/main/"
+_SUMMARY_MAX = 280
+
+
+def _capture_summary(lines: list[str]) -> str:
+    """First non-heading, non-blank paragraph line, collapsed and truncated."""
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        text = _collapse(stripped)
+        if len(text) > _SUMMARY_MAX:
+            text = text[: _SUMMARY_MAX - 1].rstrip() + "…"
+        return text
+    return ""
+
+
+def collect_captures(captures_dir: Path) -> list[dict]:
+    """Scan ``docs/landscape-captures/*.md`` into the ``captures`` payload.
+
+    Deterministic (sorted by filename), README excluded, tolerant of an
+    absent directory so the site build never blocks on #610/#611/#612.
+    """
+    if not captures_dir.is_dir():
+        return []
+    captures: list[dict] = []
+    for path in sorted(captures_dir.glob("*.md")):
+        if path.name.lower() == "readme.md":
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines()
+        title = path.stem
+        for line in lines:
+            if line.startswith("# "):
+                title = _collapse(line[2:])
+                break
+        entry: dict = {
+            "title": title,
+            "summary": _capture_summary(lines),
+            "path": str(CAPTURES_DIR / path.name).replace("\\", "/"),
+            "url": _REPO_BLOB_BASE + str(CAPTURES_DIR / path.name).replace("\\", "/"),
+        }
+        issue_match = re.match(r"^(\d+)-", path.name)
+        if issue_match:
+            entry["issue"] = int(issue_match.group(1))
+        captures.append(entry)
+    return captures
+
+
+def build(yaml_path: Path, captures_dir: Path | None = None) -> dict:
     doc = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
     entries = [_normalize(e) for e in (doc.get("entries") or [])]
     sweep = dict(doc.get("sweep") or {})
     if isinstance(sweep.get("method"), str):
         sweep["method"] = _collapse(sweep["method"])
+    if captures_dir is None:
+        captures_dir = yaml_path.resolve().parent.parent / CAPTURES_DIR
+    captures = collect_captures(captures_dir)
     return {
         "_comment": (
-            "GENERATED from docs/landscape.yaml by site/landscape_data.py — "
-            "do not edit by hand; re-run on each quarterly sweep."
+            "GENERATED from docs/landscape.yaml (+ docs/landscape-captures/) "
+            "by site/landscape_data.py — do not edit by hand; re-run on each "
+            "quarterly sweep or when a capture doc lands."
         ),
         "sweep": sweep,
         "count": len(entries),
         "entries": entries,
+        "captures_count": len(captures),
+        "captures": captures,
     }
 
 
@@ -81,6 +145,10 @@ def main() -> None:
     repo_root = script_dir.parent
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--yaml", type=Path, default=repo_root / "docs" / "landscape.yaml")
+    parser.add_argument(
+        "--captures", type=Path, default=repo_root / CAPTURES_DIR,
+        help="capture-docs directory to ingest (default: docs/landscape-captures)",
+    )
     parser.add_argument("--out", type=Path, default=script_dir / "data" / "landscape.json")
     parser.add_argument(
         "--check", action="store_true",
@@ -88,7 +156,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    payload = build(args.yaml)
+    payload = build(args.yaml, captures_dir=args.captures)
     # default=str coerces YAML-parsed datetime.date values (bare 2026-06-10) to
     # ISO strings so the payload is JSON-serializable and deterministic.
     text = json.dumps(payload, indent=2, ensure_ascii=False, default=str) + "\n"
@@ -109,6 +177,7 @@ def main() -> None:
     args.out.write_text(text, encoding="utf-8")
     print(
         f"Wrote {args.out} ({payload['count']} entries; "
+        f"{payload['captures_count']} capture docs; "
         f"sweep {payload['sweep'].get('date', '?')})."
     )
 

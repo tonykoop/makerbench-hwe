@@ -274,6 +274,27 @@
     ROOT.innerHTML = html;
   }
 
+  // Capture-cluster docs (#674): competitive scans / teardowns / prior-art
+  // writeups ingested from docs/landscape-captures/. Rendered once into a
+  // sibling of ROOT so table re-renders don't wipe it; hidden when empty.
+  function renderCaptures(captures) {
+    if (!captures || !captures.length) return;
+    var box = document.createElement("div");
+    box.className = "lscape-captures";
+    var html = '<h3>Capture docs</h3>' +
+      '<p class="muted-note">Competitive scans, teardowns, and prior-art writeups feeding this index.</p><ul>';
+    captures.forEach(function (c) {
+      html += '<li><a href="' + esc(safeUrl(c.url)) + '" target="_blank" rel="noopener">' +
+        esc(c.title) + '</a>' +
+        (c.issue ? ' <span class="muted-note">(#' + esc(c.issue) + ')</span>' : '') +
+        (c.summary ? ' — ' + esc(c.summary) : '') +
+      '</li>';
+    });
+    html += '</ul>';
+    box.innerHTML = html;
+    ROOT.parentNode.insertBefore(box, ROOT.nextSibling);
+  }
+
   fetch("data/landscape.json", { cache: "no-cache" })
     .then(function (r) {
       if (!r.ok) throw new Error("HTTP " + r.status);
@@ -289,6 +310,8 @@
         var sd = data.sweep && data.sweep.date ? data.sweep.date : "";
         META.textContent = data.count + " projects" + (sd ? " · last sweep " + sd : "");
       }
+
+      renderCaptures(data.captures);
 
       var controls = buildControls(entries);
       controls.axisEl.addEventListener("change", function (e) {
