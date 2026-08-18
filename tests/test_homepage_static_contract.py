@@ -68,7 +68,42 @@ def test_homepage_hero_exposes_front_door_and_data_stat_hook():
     )
     assert {"#leaderboard", "#why", "#get-started"}.issubset(parsed.links)
     assert {"hero", "hero-cta", "stat-strip"}.issubset(parsed.classes)
-    assert any(attrs.get("id") == "hero-stats" and "hidden" in attrs for attrs in parsed.dl_attrs)
+    # mb#670: the stat strip is prerendered at build time so no-JS visitors and
+    # crawlers see it — it must NOT ship hidden (app.js re-renders it on load).
+    assert any(
+        attrs.get("id") == "hero-stats" and "hidden" not in attrs
+        for attrs in parsed.dl_attrs
+    )
+
+
+def test_homepage_carries_prerendered_static_fallback():
+    """mb#670: crawlers/no-JS visitors must see real results, not 'Loading…'.
+
+    site/build_data.py bakes content between `<!-- prerender:NAME -->` marker
+    pairs; the committed index.html is drift-guarded against leaderboard.json
+    by site/check_data_drift.py, so real model names/scores must be present.
+    """
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+
+    for name in (
+        "headline",
+        "hero-stats",
+        "leaderboard",
+        "tracks",
+        "track-guardrail",
+        "freshness",
+    ):
+        assert f"<!-- prerender:{name} -->" in html, name
+        assert f"<!-- /prerender:{name} -->" in html, name
+
+    payload = json.loads(
+        (ROOT / "site" / "data" / "leaderboard.json").read_text(encoding="utf-8")
+    )
+    if payload.get("models"):
+        assert "Loading current results…" not in html
+        assert 'class="model-name"' in html  # static top-N leaderboard rows
+        assert 'class="stat-val"' in html  # hero stat strip values
+        assert 'class="track-card"' in html  # track explainer cards
 
 
 def test_homepage_why_section_carries_all_issue_168_value_props():
@@ -171,3 +206,33 @@ def test_about_cite_section_html_and_data_hooks():
     app_js = (ROOT / "site" / "assets" / "app.js").read_text(encoding="utf-8")
     assert "var cite = DATA.citation;" in app_js
     assert 'document.getElementById("cite-bibtex")' in app_js
+
+
+def test_homepage_freshness_signals_show_updated_date_and_version():
+    """mb#671: header + footer carry a human-readable 'updated YYYY-MM-DD'
+    plus the benchmark version, prerendered from leaderboard.json's
+    machine-readable ``data_updated`` stamp."""
+    import re
+
+    html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    payload = json.loads(
+        (ROOT / "site" / "data" / "leaderboard.json").read_text(encoding="utf-8")
+    )
+    stamp = payload.get("data_updated")
+    assert stamp, "leaderboard.json must carry a machine-readable data_updated"
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", stamp)
+    date = stamp[:10]
+    # Hero (header area) + footer both carry the prerendered freshness line.
+    assert html.count(f"updated {date}") >= 2
+    version = payload.get("benchmark_version")
+    assert version and f"benchmark v{version}" in html
+
+
+def test_blog_index_lists_a_dated_post():
+    """mb#671 acceptance: the blog index lists at least one dated post."""
+    import re
+
+    html = (ROOT / "site" / "blog" / "index.html").read_text(encoding="utf-8")
+    assert re.search(r'<time datetime="\d{4}-\d{2}-\d{2}">\d{4}-\d{2}-\d{2}</time>', html)
+    assert 'href="arena-elo-decorrelation.html"' in html
+    assert (ROOT / "site" / "blog" / "arena-elo-decorrelation.html").exists()

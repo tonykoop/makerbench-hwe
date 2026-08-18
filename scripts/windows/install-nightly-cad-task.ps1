@@ -1,3 +1,22 @@
+<#
+.SYNOPSIS
+Registers the Windows scheduled task for the MakerBench nightly CAD arena.
+
+.DESCRIPTION
+Canonical invocation (run from an elevated PowerShell in the canonical
+checkout C:\Users\Tony\Documents\GitHub\makerbench_ecosystem\makerbench-hwe):
+
+  powershell.exe -NoProfile -ExecutionPolicy Bypass `
+    -File scripts\windows\install-nightly-cad-task.ps1 `
+    -RunnerScript C:\Users\Tony\Documents\GitHub\makerbench_ecosystem\makerbench-hwe\scripts\windows\run-nightly-cad-arena.ps1 `
+    -QueueWsl /mnt/c/.../queue.json `
+    -OutputRootWsl /mnt/c/.../runs `
+    -SecretsWsl /mnt/c/.../nightly-cad-secrets.env `
+    -Disabled
+
+-RunnerScript is validated at registration time; a nonexistent path aborts
+instead of baking a dead action into the task. See docs/NIGHTLY_CAD_TASK.md.
+#>
 param(
     [string]$TaskName = "makerbench-nightly-cad",
     [string]$StartTime = "00:30",
@@ -11,6 +30,15 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# Validate the runner script at registration time so we never bake a dead
+# path into the scheduled task action (the legacy-checkout failure mode).
+if (-not (Test-Path -LiteralPath $RunnerScript -PathType Leaf)) {
+    throw ("RunnerScript not found: '$RunnerScript'. Pass the absolute path to " +
+        "scripts\windows\run-nightly-cad-arena.ps1 inside the canonical checkout " +
+        "(see docs/NIGHTLY_CAD_TASK.md).")
+}
+
 $arguments = @(
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
