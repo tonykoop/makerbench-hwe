@@ -296,6 +296,9 @@ table.lb tbody tr:hover td.model-col { background: var(--bg-soft); }
 .arena-badge { border-radius: 999px; padding: 1px 8px; font-size: 0.68rem; font-weight: 600; border: 1px solid var(--border-strong); color: var(--text-soft); }
 .arena-badge-warn { border-color: color-mix(in srgb, var(--mid) 55%, transparent); background: color-mix(in srgb, var(--mid) 14%, transparent); color: var(--text); }
 .arena-rho { margin: 12px 0 0; font-size: 0.82rem; color: var(--text-soft); }
+.arena-headline { border-left: 3px solid var(--accent, var(--border-strong)); }
+.arena-headline .arena-rho { margin-top: 0; color: var(--text); }
+.arena-head h3 .arena-badge { font-weight: 600; vertical-align: middle; margin-left: 6px; }
 
 /* ---- ecosystem: the repo family (mb#170) ---- */
 /* The SVG uses only theme-token classes, so it re-themes with no JS re-render. */

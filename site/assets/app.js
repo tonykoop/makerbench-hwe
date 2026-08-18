@@ -1271,12 +1271,13 @@
     }).join("");
   }
 
-  // ---- Code-CAD Arena scorelines (#591) -----------------------------------
-  // Reads the opt-in DATA.arena payload. Renders the two scorelines as SEPARATE
-  // tables (subjective Elo, objective pass-rate) plus a standalone Spearman rho
-  // — never a blended/composite score. Single-voter Elo is badged "directional"
-  // and its ranks are withheld from being presented as an official ranking. The
-  // whole section stays hidden unless a published arena payload is present.
+  // ---- Code-CAD Arena objective scorelines (#669) ---------------------------
+  // Renders from the CHECKED-IN data/arena.json — sanitized aggregates only:
+  // per-round objective mesh-gate scorelines, modality labels, and the
+  // per-round Spearman rho vs the (off-site) blind preference ordering.
+  // HARD RULE: single-voter Elo numbers and voter identity are never published,
+  // so this section renders no subjective scoreline at all. The section stays
+  // hidden until the arena payload loads (independent of leaderboard.json).
   function arenaNum(value, digits) {
     if (value == null || value === "") return "–";
     var n = Number(value);
@@ -1284,51 +1285,52 @@
     return n.toFixed(digits == null ? 2 : digits);
   }
 
-  function arenaEloTable(run) {
-    var directional = !!run.directional;
-    var rows = (run.subjective_elo || []).map(function (r) {
-      var rank = directional ? "—" : escapeHTML(String(r.rank == null ? "–" : r.rank));
-      return "<tr><td class=\"mono\">" + escapeHTML(String(r.entrant)) + "</td>" +
-        "<td class=\"num\">" + arenaNum(r.rating, 1) + "</td>" +
-        "<td class=\"num\">" + rank + "</td>" +
-        "<td class=\"num\">" + escapeHTML(String(r.games || 0)) + "</td></tr>";
-    }).join("");
-    var badge = directional
-      ? "<span class=\"arena-badge arena-badge-warn\" title=\"" +
-        escapeHTML(run.withheld_reason || "Single-voter Elo is directional.") +
-        "\">directional · single-voter</span>"
-      : "<span class=\"arena-badge\">" + escapeHTML(String(run.voters)) + " voters · " +
-        escapeHTML(String(run.votes)) + " votes</span>";
-    return "<div class=\"arena-scoreline\"><h4>Subjective — blind-vote Elo " + badge + "</h4>" +
-      "<table><thead><tr><th>Entrant</th><th class=\"num\">Elo</th>" +
-      "<th class=\"num\">Rank</th><th class=\"num\">Votes</th></tr></thead>" +
-      "<tbody>" + rows + "</tbody></table></div>";
-  }
-
-  function arenaObjectiveTable(run) {
-    var rows = (run.objective_pass_rate || []).map(function (r) {
+  function arenaObjectiveTable(round) {
+    var rows = (round.scoreline || []).map(function (r) {
       return "<tr><td class=\"mono\">" + escapeHTML(String(r.entrant)) + "</td>" +
         "<td class=\"num\">" + arenaNum(r.objective_pass_rate, 2) + "</td>" +
         "<td class=\"num\">" + escapeHTML(String(r.n_objective_trials || 0)) + "</td></tr>";
     }).join("");
-    return "<div class=\"arena-scoreline\"><h4>Objective — render / DFM pass-rate</h4>" +
+    return "<div class=\"arena-scoreline\"><h4>Objective — render / DFM mesh-gate pass-rate</h4>" +
       "<table><thead><tr><th>Entrant</th><th class=\"num\">Pass-rate</th>" +
       "<th class=\"num\">Trials</th></tr></thead>" +
       "<tbody>" + rows + "</tbody></table></div>";
   }
 
-  function arenaRunCard(run) {
-    var ag = run.agreement || {};
+  function arenaRoundCard(round) {
+    var ag = round.agreement || {};
     var rho = ag.rho == null ? "n/a" : arenaNum(ag.rho, 3);
     var interp = ag.interpretation ? " · " + escapeHTML(String(ag.interpretation).replace(/_/g, " ")) : "";
-    var prov = run.provenance || {};
+    var meta = [];
+    if (round.theme) meta.push(String(round.theme));
+    if (round.matrix) meta.push(String(round.matrix));
     return "<article class=\"arena-card\">" +
-      "<div class=\"arena-head\"><h3 class=\"mono\">" + escapeHTML(String(run.run_id)) + "</h3>" +
-      "<span class=\"arena-meta\">" + escapeHTML(String(prov.matrix || "")) + "</span></div>" +
-      "<div class=\"arena-tables\">" + arenaEloTable(run) + arenaObjectiveTable(run) + "</div>" +
-      "<p class=\"arena-rho\">Rank agreement (Spearman ρ): <strong>" + rho + "</strong>" + interp +
-      " — the two scorelines are reported separately and never blended.</p>" +
+      "<div class=\"arena-head\"><h3>Round " + escapeHTML(String(round.round)) +
+      " <span class=\"arena-badge\">" + escapeHTML(String(round.modality || "")) + "</span></h3>" +
+      "<span class=\"arena-meta\">" + escapeHTML(meta.join(" · ")) + "</span></div>" +
+      "<div class=\"arena-tables\">" + arenaObjectiveTable(round) + "</div>" +
+      "<p class=\"arena-rho\">Rank agreement vs blind preference (Spearman ρ): <strong>" +
+      rho + "</strong>" + interp +
+      " — the preference scoreline itself is single-voter and stays off-site.</p>" +
       "</article>";
+  }
+
+  function arenaHeadlineHTML(page) {
+    var h = page.headline;
+    if (!h || h.value == null) return "";
+    var sign = Number(h.value) >= 0 ? "+" : "";
+    return "<div class=\"arena-card arena-headline\">" +
+      "<p class=\"arena-rho\"><strong>Headline: mean Spearman ρ ≈ " + sign +
+      arenaNum(h.value, 2) + "</strong> across rounds " +
+      escapeHTML((h.rounds_used || []).join(", ")) + " — " +
+      escapeHTML(String(h.insight || "")) + "</p></div>";
+  }
+
+  function arenaPendingHTML(page) {
+    var pending = page.pending_rounds || [];
+    if (!pending.length) return "";
+    return "<p class=\"muted-note\">Pending rounds (ran, objective scoreline not yet published): " +
+      escapeHTML(pending.map(function (n) { return "R" + n; }).join(", ")) + ".</p>";
   }
 
   function renderArena() {
@@ -1336,17 +1338,21 @@
     var host = document.getElementById("arena-runs");
     var empty = document.getElementById("arena-empty");
     if (!section || !host) return;
-    var data = DATA.arena || null;
-    var runs = data && data.runs ? data.runs : [];
-    if (!runs.length) {
-      host.innerHTML = "";
-      if (empty) empty.hidden = false;
-      section.hidden = true;  // nothing published → stay hidden
-      return;
-    }
-    if (empty) empty.hidden = true;
-    host.innerHTML = runs.map(arenaRunCard).join("");
-    section.hidden = false;
+    fetch("data/arena.json", { cache: "no-cache" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (page) {
+        var rounds = page && page.rounds ? page.rounds : [];
+        if (!rounds.length) {
+          if (empty) empty.hidden = false;
+          return;  // leave the section hidden
+        }
+        if (empty) empty.hidden = true;
+        host.innerHTML = arenaHeadlineHTML(page) +
+          rounds.map(arenaRoundCard).join("") +
+          arenaPendingHTML(page);
+        section.hidden = false;
+      })
+      .catch(function () { /* leave the section hidden on any error */ });
   }
 
   // ---- ecosystem: the repo family (mb#170) --------------------------------
@@ -1667,7 +1673,6 @@
     renderTrackExplainer();
     renderExtended();
     renderDeltaDossier();
-    renderArena();
     renderEcosystem();
     renderRoadmap();
     renderCitation();
@@ -1811,10 +1816,12 @@
     renderFindings();
   }
 
-  // The get-started hub is independent of the leaderboard payload, so wire it up
-  // unconditionally — it must work even if leaderboard.json fails to load.
+  // The get-started hub and the arena page are independent of the leaderboard
+  // payload, so wire them up unconditionally — they must work even if
+  // leaderboard.json fails to load.
   initGetStarted();
   loadGetStarted();
+  renderArena();
 
   fetch("data/leaderboard.json", { cache: "no-cache" })
     .then(function (r) {
