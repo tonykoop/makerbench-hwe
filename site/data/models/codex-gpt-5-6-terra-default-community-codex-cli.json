@@ -1332,7 +1332,7 @@
         }
       }
     },
-    "verification_status": "unverified"
+    "verification_status": "public-regrade-verified"
   },
   "task_families": [
     {
