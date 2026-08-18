@@ -353,26 +353,31 @@
   </section>
 
   <!-- ================= CODE-CAD ARENA ================= -->
-  <!-- Reads the opt-in top-level `arena` payload from data/leaderboard.json
-       (only present when site/build_data.py is run with --runs-dir). The two
-       scorelines are rendered as SEPARATE tables and are NEVER blended; the
-       Spearman rho is a standalone stat. Single-voter Elo is badged directional.
-       The section stays hidden until a published arena payload loads. -->
+  <!-- Renders from the checked-in data/arena.json (#669) — sanitized,
+       objective-only aggregates regenerated locally with
+       `site/build_data.py --runs-dir runs/`. Per-round mesh-gate scorelines,
+       modality labels, and the per-round Spearman rho vs the off-site blind
+       preference ordering. HARD RULE: single-voter Elo numbers and voter
+       identity never appear here. Hidden until the arena payload loads. -->
   <section id="arena" hidden>
     <div class="wrap">
       <div class="eyebrow">Blind preference vs. objective DFM</div>
       <h2>Code-CAD Arena</h2>
       <p class="lede">
         The arena scores generated CAD two ways at once and
-        <strong>keeps them separate</strong>: subjective blind-vote Elo and
-        objective render/DFM mesh pass-rate. They are never blended into one
-        number — when the rankings disagree, that disagreement is evidence, not a
-        defect. Rank agreement is reported as a Spearman <em>ρ</em>.
+        <strong>keeps them separate</strong>. This page publishes the objective
+        scoreline only — the deterministic render/DFM mesh-gate pass-rate per
+        entrant, per round. The subjective blind-preference scoreline is
+        single-voter, so its Elo numbers stay off the site by policy; its rank
+        agreement with the mesh gate is reported as a per-round Spearman
+        <em>ρ</em> instead. When the eye and the gate disagree, that
+        disagreement is evidence, not a defect.
       </p>
       <div id="arena-runs"></div>
       <p class="muted-note" id="arena-empty" hidden>
-        No published arena run yet. Multi-voter runs appear here once ingested
-        with <code>site/build_data.py --runs-dir runs/</code>.
+        Arena scorelines load from <code>data/arena.json</code>, regenerated
+        with <code>site/build_data.py --runs-dir runs/</code>. Rounds without
+        published objective data are listed as pending.
       </p>
     </div>
   </section>

@@ -418,6 +418,10 @@ def build_delta_dossier(results_dir: Path) -> dict:
 # the public site: per-entrant Elo rows, per-entrant objective pass-rate rows,
 # and the Spearman rho. Candidate source artifacts (STL/SCAD/PNG paths in the
 # run log) are never carried out (AGENTS.md rule 3).
+# NOTE (#669): this payload is no longer reachable from the CLI or rendered by
+# the site — the public arena page reads the objective-only ``arena.json``
+# built by ``build_arena_page`` below, so single-voter Elo stays off the site.
+# ``build_arena_section`` remains as the library-level aggregation API.
 ARENA_SECTION_SCHEMA = "makerbench-site-arena-v1"
 
 
@@ -595,6 +599,226 @@ def build_arena_section(runs_dir: Path) -> dict | None:
         },
         "runs": entries,
     }
+
+
+# --- Arena objective-scoreline page data (#669, epic #666) -------------------
+# The public arena page renders from a CHECKED-IN ``site/data/arena.json`` so
+# the site never depends on the gitignored ``runs/`` tree at deploy time. That
+# file is regenerated locally with ``site/build_data.py --runs-dir runs/`` and
+# carries ONLY sanitized aggregates, built field-by-field from a whitelist:
+#   - per-round objective mesh-gate scorelines (entrant, pass-rate, trials),
+#   - round provenance (modality label, instruments, matrix, declared entrants),
+#   - the per-round subjective-vs-objective rank agreement as a Spearman rho.
+# HARD RULE (#669): single-voter Elo numbers and voter identity NEVER cross
+# onto the site. This builder never opens ``elo_leaderboard.json`` or the vote
+# JSONL files, and ``audit_arena_page_public`` fails the build if a banned key
+# ever appears in the payload. Model/entrant names are public by design.
+ARENA_PAGE_SCHEMA = "makerbench-site-arena-page-v1"
+ARENA_EXPECTED_ROUNDS = 14
+_ARENA_ROUND_DIR_RE = re.compile(r"^round(\d+)$")
+
+# Modality label per round. Every published round so far ran the blind CLI
+# lane (fixed text prompt -> OpenSCAD source, no images, no live CAD session);
+# rounds run under another modality get an explicit entry here when published.
+ARENA_DEFAULT_MODALITY = "blind-cli · text prompt → OpenSCAD"
+ARENA_ROUND_MODALITIES: dict[int, str] = {}
+
+# Short human theme per round, describing the instrument set in the brief.
+ARENA_ROUND_THEMES: dict[int, str] = {
+    1: "Starter mix — winds & percussion",
+    2: "Strings & shell percussion",
+    3: "Vessel percussion & winds",
+    4: "Harps & hammered strings",
+    5: "Bowed strings",
+    6: "Harps",
+    7: "Keyboard & wheel strings",
+    8: "Zithers & hybrids",
+    9: "Guitars & lutes",
+    10: "Basses & large strings",
+}
+
+# Key tokens that must never appear anywhere in the published arena payload.
+_ARENA_BANNED_KEY_TOKENS = (
+    "elo",
+    "vote",  # also covers "voter" / "votes"
+    "rating",
+    "subjective",
+    "winner",
+    "ballot",
+    "judge",
+)
+
+
+def audit_arena_page_public(payload: dict) -> None:
+    """Fail loudly if the arena page payload carries non-public material.
+
+    Scans every key (recursively) for banned tokens — Elo, votes/voters,
+    ratings, and other subjective-scoreline residue — and every string value
+    for absolute-path shapes that would leak local filesystem layout.
+    """
+    problems: list[str] = []
+
+    def walk(obj, path):
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                lowered = str(key).lower()
+                for token in _ARENA_BANNED_KEY_TOKENS:
+                    if token in lowered:
+                        problems.append(f"banned key {path}.{key!r} (token {token!r})")
+                walk(value, f"{path}.{key}")
+        elif isinstance(obj, list):
+            for i, value in enumerate(obj):
+                walk(value, f"{path}[{i}]")
+        elif isinstance(obj, str):
+            if obj.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:[\\/]", obj):
+                problems.append(f"path-like value at {path}: {obj[:60]!r}")
+
+    walk(payload, "$")
+    if problems:
+        raise ValueError(
+            "arena page payload failed the public-data audit: " + "; ".join(problems)
+        )
+
+
+def _arena_read_json(path: Path) -> dict:
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _arena_page_round(number: int, run_dir: Path) -> dict | None:
+    """Fold one round directory into a public, objective-only round entry.
+
+    Reads only ``objective_scoreline.json`` (whitelisted fields), the run-log
+    ``config`` block (provenance), and the ``agreement`` statistic (rho/n/
+    interpretation — never the per-entrant rankings, which carry Elo).
+    Returns ``None`` when the round has no objective scoreline yet.
+    """
+    scoreline = _arena_read_json(run_dir / "objective_scoreline.json")
+    rows = []
+    for row in scoreline.get("rows") or []:
+        if not isinstance(row, dict) or not row.get("entrant"):
+            continue
+        rows.append(
+            {
+                "entrant": str(row["entrant"]),
+                "objective_pass_rate": row.get("objective_pass_rate"),
+                "n_objective_trials": int(row.get("n_objective_trials") or 0),
+            }
+        )
+    if not rows:
+        return None
+    rows.sort(key=lambda r: (-(r["objective_pass_rate"] or 0.0), r["entrant"]))
+
+    config = _arena_read_json(run_dir / "run_log.json").get("config") or {}
+    stat = _arena_read_json(run_dir / "agreement.json").get("agreement") or {}
+    return {
+        "round": number,
+        "round_id": f"round{number}",
+        "modality": ARENA_ROUND_MODALITIES.get(number, ARENA_DEFAULT_MODALITY),
+        "theme": ARENA_ROUND_THEMES.get(number),
+        "instruments": [str(i) for i in (config.get("instrument_ids") or [])],
+        "matrix": _arena_matrix_label(config) if config else None,
+        "entrants": [str(m) for m in (config.get("model_ids") or [])],
+        # Objective mesh-gate scoreline — the only ranking this page publishes.
+        "scoreline": rows,
+        # Rank agreement between the (off-site) blind preference ordering and
+        # the objective ordering — a standalone statistic, never a score.
+        "agreement": {
+            "rho": stat.get("rho"),
+            "n": stat.get("n"),
+            "interpretation": stat.get("interpretation"),
+        },
+    }
+
+
+def _arena_page_headline(rounds: list[dict]) -> dict | None:
+    """The decorrelation headline: mean Spearman rho over comparable rounds.
+
+    Matches the published finding (see blog/arena-elo-decorrelation.html): the
+    R5–R10 head-to-head window, keeping only rounds where the agreement rank
+    has at least three comparable entrants (two-entrant rho is degenerate).
+    """
+    used: list[dict] = []
+    for entry in rounds:
+        if not 5 <= entry["round"] <= 10:
+            continue
+        stat = entry["agreement"]
+        if stat.get("rho") is None or (stat.get("n") or 0) < 3:
+            continue
+        used.append(entry)
+    if not used:
+        return None
+    mean_rho = sum(e["agreement"]["rho"] for e in used) / len(used)
+    return {
+        "metric": "mean_spearman_rho",
+        "value": round(mean_rho, 4),
+        "rounds_used": [e["round"] for e in used],
+        "window": (
+            "R5–R10 head-to-head rounds with ≥3 comparable entrants "
+            "(two-entrant rounds excluded as degenerate)"
+        ),
+        "insight": (
+            "Blind human preference and the objective mesh gate rank the same "
+            "entrants almost independently — looking right and being buildable "
+            "are different capabilities."
+        ),
+    }
+
+
+def build_arena_page(runs_dir: Path) -> dict | None:
+    """Build the sanitized, objective-only arena page payload from ``runs_dir``.
+
+    Accepts either a bare ``runs/`` tree (rounds under ``runs/code_cad_arena/``)
+    or the ``code_cad_arena`` directory directly. Only ``round<N>`` directories
+    count as rounds — smoke/pilot runs are never published. Returns ``None``
+    when no round has an objective scoreline.
+    """
+    runs_dir = Path(runs_dir)
+    found: dict[int, Path] = {}
+    for base in (runs_dir, runs_dir / "code_cad_arena"):
+        if not base.is_dir():
+            continue
+        for child in sorted(base.iterdir()):
+            match = _ARENA_ROUND_DIR_RE.match(child.name)
+            if match and child.is_dir():
+                found[int(match.group(1))] = child
+    rounds = []
+    for number in sorted(found):
+        entry = _arena_page_round(number, found[number])
+        if entry is not None:
+            rounds.append(entry)
+    if not rounds:
+        return None
+    published = {entry["round"] for entry in rounds}
+    horizon = max(ARENA_EXPECTED_ROUNDS, max(published))
+    payload = {
+        "schema": ARENA_PAGE_SCHEMA,
+        "policy": (
+            "Objective mesh-gate scorelines only. The arena's blind-preference "
+            "scoreline is single-voter, so its Elo numbers stay off the public "
+            "site by policy; what is published instead is the per-round rank "
+            "agreement (Spearman rho) between preference and gate. Entrant "
+            "model names are public; no voter identity and no raw run data "
+            "cross onto the site."
+        ),
+        "metric": {
+            "name": "objective_pass_rate",
+            "definition": (
+                "Share of a round's trials that clear the deterministic "
+                "render/DFM mesh gate — renderability, geometric validity, and "
+                "manufacturability constraints computed over the emitted mesh."
+            ),
+        },
+        "headline": _arena_page_headline(rounds),
+        "expected_rounds": horizon,
+        "pending_rounds": [n for n in range(1, horizon + 1) if n not in published],
+        "rounds": rounds,
+    }
+    audit_arena_page_public(payload)
+    return payload
 
 
 def _load_hii_badges_module():
@@ -4086,8 +4310,16 @@ def main() -> None:
         type=Path,
         default=None,
         help="Code-CAD Arena runs directory (gitignored runs/). When given, "
-        "published arena scorelines are ingested into the payload's `arena` key; "
-        "omit it and the arena section is simply absent (default: None).",
+        "sanitized objective-only arena scorelines are written to --arena-out "
+        "(#669); Elo and voter data never cross onto the site. Omit it and the "
+        "checked-in arena.json is left untouched (default: None).",
+    )
+    parser.add_argument(
+        "--arena-out",
+        type=Path,
+        default=script_dir / "data" / "arena.json",
+        help="Arena objective-scoreline page output, only written when "
+        "--runs-dir is given (default: site/data/arena.json).",
     )
     parser.add_argument(
         "--out",
@@ -4176,9 +4408,25 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    payload = build_payload(args.results_dir, args.registry, runs_dir=args.runs_dir)
+    # The public leaderboard payload is always built WITHOUT the runs tree:
+    # the Elo-bearing `arena` key (#591) never reaches the committed site data.
+    # The arena page (#669) is emitted separately below as sanitized aggregates.
+    payload = build_payload(args.results_dir, args.registry)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     write_json(args.out, payload)
+    if args.runs_dir:
+        arena_page = build_arena_page(args.runs_dir)
+        if arena_page is None:
+            print(
+                f"No arena rounds with objective scorelines under {args.runs_dir}; "
+                f"{args.arena_out} not written."
+            )
+        else:
+            write_json(args.arena_out, arena_page)
+            print(
+                f"Wrote {args.arena_out} ({len(arena_page['rounds'])} rounds published, "
+                f"{len(arena_page['pending_rounds'])} pending)."
+            )
     # "Get started" install hub data (#173) — its own file so the leaderboard
     # payload diff stays clean and meaningful.
     write_json(args.out.parent / "get_started.json", build_get_started(args.registry))

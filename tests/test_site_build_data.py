@@ -2681,6 +2681,150 @@ def test_arena_section_skips_run_with_broken_provenance(tmp_path):
     assert build_data.build_arena_section(runs_dir) is None
 
 
+# --- Arena objective-scoreline page (#669, epic #666) -----------------------
+
+def _write_arena_round(round_dir, *, entrants, rates, rho=None, n=None,
+                       instruments=("flute",), interpretation=None):
+    """Write a synthetic ``round<N>`` dir with the real on-disk artifact shapes.
+
+    Deliberately includes an ``elo_leaderboard.json``, vote JSONL files, and
+    Elo-bearing ``agreement.rankings`` rows so the tests prove none of that
+    material ever reaches the published page.
+    """
+    round_dir.mkdir(parents=True, exist_ok=True)
+    (round_dir / "objective_scoreline.json").write_text(json.dumps({
+        "schema": "makerbench-code-cad-objective-scoreline-v1",
+        "rows": [
+            {"entrant": e, "n_objective_trials": 8, "objective_pass_rate": rates[e]}
+            for e in entrants
+        ],
+    }), encoding="utf-8")
+    (round_dir / "run_log.json").write_text(json.dumps({
+        "schema": "makerbench-code-cad-orchestration-v1",
+        "config": {"model_ids": list(entrants), "instrument_ids": list(instruments),
+                   "seeds": [0, 1], "reps": 1},
+        "trials": [],
+    }), encoding="utf-8")
+    (round_dir / "agreement.json").write_text(json.dumps({
+        "schema": "makerbench-code-cad-agreement-v1",
+        "agreement": {"rho": rho, "n": n, "interpretation": interpretation,
+                      "entrants": list(entrants)},
+        "rankings": [  # Elo-bearing — must NEVER cross onto the page.
+            {"entrant": e, "subjective_elo": 1500.0, "subjective_rank": i + 1,
+             "n_subjective_votes": 4}
+            for i, e in enumerate(entrants)
+        ],
+    }), encoding="utf-8")
+    (round_dir / "elo_leaderboard.json").write_text(json.dumps({
+        "leaderboard": [{"entrant": e, "rating": 1500.0} for e in entrants],
+        "voters": 1, "voter_ids": ["solo-voter"],
+    }), encoding="utf-8")
+    (round_dir / "votes.revealed.jsonl").write_text(
+        json.dumps({"winner": "left", "voter_id": "solo-voter"}) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_arena_page_publishes_objective_scorelines_only(tmp_path):
+    runs_dir = tmp_path / "runs" / "code_cad_arena"
+    _write_arena_round(runs_dir / "round1", entrants=["alpha", "beta"],
+                       rates={"alpha": 0.5, "beta": 0.875}, rho=-0.2, n=2)
+    _write_arena_round(runs_dir / "round3", entrants=["alpha", "beta", "gamma"],
+                       rates={"alpha": 1.0, "beta": 0.25, "gamma": 0.75},
+                       rho=0.5, n=3, interpretation="weak_or_mixed_alignment")
+    # Smoke/pilot dirs are never published as rounds.
+    _write_arena_round(runs_dir / "smoke0", entrants=["alpha"], rates={"alpha": 1.0})
+
+    page = build_data.build_arena_page(tmp_path / "runs")
+    assert page is not None
+    assert page["schema"] == "makerbench-site-arena-page-v1"
+    assert [r["round"] for r in page["rounds"]] == [1, 3]
+
+    r3 = page["rounds"][1]
+    # Scoreline is objective-only, sorted best-first.
+    assert [row["entrant"] for row in r3["scoreline"]] == ["alpha", "gamma", "beta"]
+    assert r3["scoreline"][0]["objective_pass_rate"] == 1.0
+    assert r3["agreement"] == {"rho": 0.5, "n": 3,
+                               "interpretation": "weak_or_mixed_alignment"}
+    # Every round carries a modality label.
+    assert all(r["modality"] for r in page["rounds"])
+    # Missing rounds through the R14 horizon are reported as pending.
+    assert 2 in page["pending_rounds"]
+    assert page["expected_rounds"] >= 14
+    assert set(page["pending_rounds"]) == set(range(1, page["expected_rounds"] + 1)) - {1, 3}
+
+
+def test_arena_page_never_leaks_elo_votes_or_voters(tmp_path):
+    runs_dir = tmp_path / "runs" / "code_cad_arena"
+    _write_arena_round(runs_dir / "round1", entrants=["alpha", "beta"],
+                       rates={"alpha": 0.5, "beta": 0.875}, rho=-1.0, n=2)
+    page = build_data.build_arena_page(tmp_path / "runs")
+
+    # The structural audit passes (it raised otherwise) — and a raw scan of
+    # every key in the payload confirms the hard rule (#669).
+    build_data.audit_arena_page_public(page)
+    banned = ("elo", "vote", "voter", "rating", "subjective", "winner")
+
+    def all_keys(obj):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                yield str(k).lower()
+                yield from all_keys(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                yield from all_keys(v)
+
+    for key in all_keys(page):
+        assert not any(tok in key for tok in banned), f"leaked key: {key}"
+    # And the audit itself catches a violation if one is ever introduced.
+    with pytest.raises(ValueError):
+        build_data.audit_arena_page_public({"rounds": [{"subjective_elo": 1500}]})
+    with pytest.raises(ValueError):
+        build_data.audit_arena_page_public({"note": "/home/someone/private/path"})
+
+
+def test_arena_page_headline_mean_rho_over_comparable_rounds(tmp_path):
+    runs_dir = tmp_path / "runs" / "code_cad_arena"
+    rates = {"a": 1.0, "b": 0.5, "c": 0.25}
+    # R5 is two-entrant (degenerate) — excluded from the headline window.
+    _write_arena_round(runs_dir / "round5", entrants=["a", "b"],
+                       rates=rates, rho=-1.0, n=2)
+    _write_arena_round(runs_dir / "round6", entrants=["a", "b", "c"],
+                       rates=rates, rho=-0.5, n=3)
+    _write_arena_round(runs_dir / "round7", entrants=["a", "b", "c"],
+                       rates=rates, rho=0.9, n=3)
+    # R1 sits outside the R5–R10 window.
+    _write_arena_round(runs_dir / "round1", entrants=["a", "b", "c"],
+                       rates=rates, rho=1.0, n=3)
+
+    page = build_data.build_arena_page(tmp_path / "runs")
+    headline = page["headline"]
+    assert headline["metric"] == "mean_spearman_rho"
+    assert headline["rounds_used"] == [6, 7]
+    assert headline["value"] == pytest.approx(0.2, abs=1e-9)
+
+
+def test_arena_page_absent_without_rounds(tmp_path):
+    (tmp_path / "runs" / "code_cad_arena").mkdir(parents=True)
+    assert build_data.build_arena_page(tmp_path / "runs") is None
+
+
+def test_committed_arena_json_is_sanitized_and_renders_rounds():
+    """The checked-in site/data/arena.json is the page's source of truth:
+    it must exist, pass the public-data audit, and carry publishable rounds."""
+    path = ROOT / "site" / "data" / "arena.json"
+    assert path.is_file(), "site/data/arena.json must be committed (#669)"
+    page = json.loads(path.read_text(encoding="utf-8"))
+    assert page["schema"] == "makerbench-site-arena-page-v1"
+    build_data.audit_arena_page_public(page)
+    assert page["rounds"], "committed arena.json publishes at least one round"
+    for entry in page["rounds"]:
+        assert entry["modality"]
+        assert entry["scoreline"]
+        for row in entry["scoreline"]:
+            assert set(row) == {"entrant", "objective_pass_rate", "n_objective_trials"}
+
+
 # --------------------------------------------------------------------------- #
 # mb#671: machine-readable freshness stamp + prerendered freshness line
 # --------------------------------------------------------------------------- #
