@@ -96,7 +96,12 @@ time — no separate log-scrape needed when the harness drives the CLI:
   unrecognized, or present but all-zero, which is how Go serializes an unpopulated
   struct → `subscription_opaque` with null tokens and no cost object, because an
   all-zero block is an absent measurement rather than a measured zero and must
-  never become a `$0.00` API-equivalent figure; **(c)** the installed
+  never become a `$0.00` API-equivalent figure. The same rule decides *which*
+  block survives: a `stream-json` run's terminal `result` envelope normally wins
+  over the per-message blocks (it is the session total, and summing both would
+  inflate the estimate), but only when it is populated — an all-zero terminal
+  envelope never evicts real per-message counts, and when nothing anywhere is
+  populated the row is `subscription_opaque` (unknown), never zero. **(c)** the installed
   `agy` predates `--output-format` and rejects the flag → the flag is dropped, the
   call re-issued once, and the row recorded `subscription_opaque` — asking for
   telemetry must never break a working install. That last one only holds if the

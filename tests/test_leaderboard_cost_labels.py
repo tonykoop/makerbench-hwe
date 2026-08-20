@@ -31,6 +31,7 @@ _FUNCTIONS = (
     "hasLocalLogTokens",
     "costMissingReason",
     "costMissingTitle",
+    "normalizedMissingReason",
 )
 
 
@@ -60,7 +61,9 @@ def _eval(track: dict) -> dict:
             f"var track = {json.dumps(track)};",
             "console.log(JSON.stringify({"
             "  reason: costMissingReason(track),"
-            "  title: costMissingTitle(track)"
+            "  title: costMissingTitle(track),"
+            "  perDollar: normalizedMissingReason(track, 'score_per_dollar'),"
+            "  perTokens: normalizedMissingReason(track, 'score_per_million_tokens')"
             "}));",
         ]
     )
@@ -105,6 +108,34 @@ def test_mixed_track_reports_the_unpriced_model_and_still_counts_the_opaque_rows
 def test_track_with_nothing_recorded_falls_back_to_the_neutral_label():
     out = _eval({"usage_reporting": {}})
     assert out["title"] == "Mean estimated cost — not available"
+
+
+def test_score_per_dollar_gives_the_same_reason_as_the_cost_cell():
+    """Score-per-dollar divides by cost, so it must not blame the token source.
+
+    On a mixed track the Cost cell reads "model unpriced" while the Tokens cell
+    shows captured local-log tokens; a Score-per-dollar cell two columns over that
+    read "subscription quota" would reproduce exactly the contradiction the Cost
+    fix removed -- one row simultaneously showing tokens and claiming no token
+    source existed.
+    """
+    mixed = {
+        "usage_reporting": {"n_subscription_opaque": 318, "n_local_log": 12},
+        "local_log_token_usage": {"mean_total_tokens": 1265},
+        "mean_api_equivalent_usd": None,
+    }
+    out = _eval(mixed)
+    assert out["perDollar"] == "model unpriced"
+    assert out["perDollar"] == out["reason"]
+    # Tokens *were* captured, so the quota is not why a token-normalized metric
+    # is missing either.
+    assert out["perTokens"] == "unknown"
+
+
+def test_score_per_dollar_still_blames_the_quota_when_no_tokens_were_captured():
+    out = _eval({"usage_reporting": {"n_subscription_opaque": 318}})
+    assert out["perDollar"] == "subscription quota"
+    assert out["perTokens"] == "subscription quota"
 
 
 def test_app_js_passes_node_syntax_check():

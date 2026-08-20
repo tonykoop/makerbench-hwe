@@ -828,6 +828,69 @@ def test_a_zero_block_does_not_suppress_a_real_one():
     assert acc["input"] == 300 and acc["output"] == 60
 
 
+def test_an_all_zero_terminal_result_does_not_evict_populated_per_message_usage():
+    """The *selection* layer must prefer real telemetry over an unpopulated struct.
+
+    Dropping zeros in `_accumulate_usage` is not enough: `_parse_print_envelope`
+    decides which blocks survive first, and a terminal `result` envelope carrying
+    an all-zero Go struct used to win that selection outright and throw the
+    measured per-message counts away -- reporting no tokens for a run whose real
+    counts were sitting in the stream.
+    """
+    stream = "\n".join([
+        json.dumps({"type": "assistant", "message": {"content": "thinking"},
+                    "usage": {"input_tokens": 1500, "output_tokens": 400}}),
+        json.dumps({"type": "assistant", "message": {"content": "more"},
+                    "usage": {"input_tokens": 900, "output_tokens": 150}}),
+        json.dumps({"type": "result", "result": "```scad\ncube(1);\n```",
+                    "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}}),
+    ])
+
+    text, usages = agy._parse_print_envelope(stream)
+    acc = agy._new_usage_acc()
+    for usage in usages:
+        agy._accumulate_usage(acc, usage)
+    report = agy._usage_report(acc)
+
+    assert agy._extract_scad(text) == "cube(1);"
+    assert report.source == "local_log"
+    assert report.input_tokens == 2400
+    assert report.output_tokens == 550
+    assert report.total_tokens == 2950
+
+
+def test_a_populated_terminal_result_still_wins_over_per_message_usage():
+    """The session total must not be summed with the per-message blocks."""
+    stream = "\n".join([
+        json.dumps({"type": "assistant", "message": {"content": "a"},
+                    "usage": {"input_tokens": 100, "output_tokens": 10}}),
+        json.dumps({"type": "result", "result": "```scad\ncube(2);\n```",
+                    "usage": {"input_tokens": 130, "output_tokens": 14}}),
+    ])
+    _text, usages = agy._parse_print_envelope(stream)
+    assert usages == [{"input_tokens": 130, "output_tokens": 14}]
+
+
+def test_all_zero_everywhere_reports_unknown_rather_than_zero():
+    """When every source is unpopulated the answer is *unknown*, never a zero."""
+    stream = "\n".join([
+        json.dumps({"type": "assistant", "message": {"content": "a"},
+                    "usage": {"input_tokens": 0, "output_tokens": 0}}),
+        json.dumps({"type": "result", "result": "```scad\ncube(3);\n```",
+                    "usage": {"input_tokens": 0, "output_tokens": 0}}),
+    ])
+    _text, usages = agy._parse_print_envelope(stream)
+    acc = agy._new_usage_acc()
+    for usage in usages:
+        agy._accumulate_usage(acc, usage)
+    report = agy._usage_report(acc)
+
+    assert usages == []
+    assert report.source == "subscription_opaque"
+    assert report.total_tokens is None
+    assert agy._cost_report(report) is None
+
+
 # --------------------------------------------------------------------------
 # regression: a pretty-printed envelope wrapped in banner lines
 # --------------------------------------------------------------------------
@@ -877,3 +940,63 @@ def test_json_inside_a_plain_text_answer_is_not_mistaken_for_an_envelope():
     assert usages == []
     assert text == answer
     assert agy._extract_scad(text).startswith("difference()")
+
+
+def test_usage_shaped_json_quoted_mid_sentence_is_not_telemetry():
+    """An answer that *talks about* a usage record must not become a usage record.
+
+    This is the `--output-format text` path, where stdout is the model's prose.
+    Lifting these numbers out would invent a `local_log` row and price a cost from
+    the model's own words -- fabricated telemetry, which is worse than none.
+    """
+    answer = (
+        "I logged the call as:\n"
+        'usage record -> {"usage": {"input_tokens": 99, "output_tokens": 99}} (from my notes)\n'
+        "```scad\ncube(2);\n```\n"
+    )
+    text, usages = agy._parse_print_envelope(answer)
+
+    assert agy._scan_json_objects(answer) == []
+    assert usages == []
+    assert text == answer
+    assert agy._extract_scad(text) == "cube(2);"
+
+
+def test_a_quoted_result_object_never_replaces_the_answer():
+    """A scanned object must never overwrite the scored OpenSCAD answer.
+
+    An answer that quotes `{"type": "result", "result": "..."}` used to have its
+    real fenced block swapped for the quoted string -- a guaranteed compile
+    failure, and the exact scored-output corruption the fallback was meant to
+    prevent, only in the opposite direction.
+    """
+    answer = (
+        'The tool replied: {"type": "result", "result": "nothing to do"} -- ignore that.\n'
+        "```scad\ncube(7);\n```\n"
+    )
+    text, usages = agy._parse_print_envelope(answer)
+
+    assert usages == []
+    assert agy._extract_scad(text) == "cube(7);"
+
+
+def test_a_pretty_printed_result_object_inside_prose_is_left_alone():
+    """Own-line is not enough when the answer's own fence sits outside the JSON.
+
+    A fence in the residual text proves stdout is prose, not a banner-wrapped
+    envelope (whose fence lives *inside* the JSON string), so the scan gives up:
+    no usage, and the answer survives byte-for-byte.
+    """
+    quoted = json.dumps(
+        {"type": "result", "result": "nothing to do",
+         "usage": {"input_tokens": 42, "output_tokens": 7}},
+        indent=2,
+    )
+    answer = f"Here is what the tool printed:\n{quoted}\nAnyway, the part is:\n```scad\ncube(9);\n```\n"
+
+    text, usages = agy._parse_print_envelope(answer)
+
+    assert agy._scan_json_objects(answer) == []
+    assert usages == []
+    assert text == answer
+    assert agy._extract_scad(text) == "cube(9);"

@@ -330,11 +330,25 @@
     return "Mean estimated cost — not available";
   }
 
+  // Why a normalized-efficiency cell is empty. Score-per-dollar divides by cost,
+  // so it goes missing for exactly the reasons the Cost column goes missing and
+  // must give the same reason -- otherwise a mixed track reads "model unpriced"
+  // in the Cost cell and "subscription quota" two columns over, the same
+  // self-contradiction the Cost fix removed. Score-per-1M-tokens divides by
+  // tokens, so the usage reason applies -- unless local-log tokens were in fact
+  // captured, in which case the token source is not what is missing and blaming
+  // the quota would contradict the Tokens column.
+  function normalizedMissingReason(track, key) {
+    if (key === "score_per_dollar") return costMissingReason(track);
+    if (hasLocalLogTokens(track)) return "unknown";
+    return usageMissingReason(track);
+  }
+
   function normalizedScoreCell(tr, key) {
     var metric = efficiencyMetric(tr, key);
     var label = key === "score_per_dollar" ? "Score per dollar" : "Score per 1M tokens";
     if (!metric.available || metric.value == null) {
-      return metricCell(null, label + " unavailable", usageMissingReason(tr));
+      return metricCell(null, label + " unavailable", normalizedMissingReason(tr, key));
     }
     var title = label + " = overall score divided by " +
       (key === "score_per_dollar" ? "mean cost" : "mean tokens / 1,000,000") +
