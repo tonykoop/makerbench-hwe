@@ -92,12 +92,19 @@ time — no separate log-scrape needed when the harness drives the CLI:
   into `cost.api_equivalent_usd` only — `total_cost_usd` stays null. Three honest
   outcomes, never a fabricated one: **(a)** envelope carries usage → `local_log`
   tokens + API-equivalent cost; **(b)** the run completes but the envelope carries
-  no `usage` (`--output-format text`, or a build that omits it) →
-  `subscription_opaque` with null tokens and no cost object; **(c)** the installed
+  no *usable* `usage` — absent (`--output-format text`, or a build that omits it),
+  unrecognized, or present but all-zero, which is how Go serializes an unpopulated
+  struct → `subscription_opaque` with null tokens and no cost object, because an
+  all-zero block is an absent measurement rather than a measured zero and must
+  never become a `$0.00` API-equivalent figure; **(c)** the installed
   `agy` predates `--output-format` and rejects the flag → the flag is dropped, the
   call re-issued once, and the row recorded `subscription_opaque` — asking for
-  telemetry must never break a working install. Any *other* non-zero exit raises
-  after one retry rather than logging zeros. `antigravity-gemini-3.5-flash` and
+  telemetry must never break a working install. That last one only holds if the
+  rejection is recognized, so detection reads the rejected flag name out of the
+  CLI's *error line* (`flags provided but not defined: -output-format` on agy
+  v1.1.13) rather than searching its output for the string, which would also match
+  the usage dump the CLI prints on **any** bad flag. Any *other* non-zero exit
+  raises after one retry rather than logging zeros. `antigravity-gemini-3.5-flash` and
   `antigravity-gemini-3-flash` are priced in `pricing/google-2026-08-19.json` at
   the matching public Gemini list rates; `antigravity-gemini-default` and
   `antigravity-gemini-3.1-pro` are deliberately left unpriced because the

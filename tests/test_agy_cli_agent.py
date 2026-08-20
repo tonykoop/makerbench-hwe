@@ -649,3 +649,231 @@ def test_envelope_metadata_never_reaches_the_result_bundle(monkeypatch):
         assert secret not in telemetry
     # And nothing beyond the declared schema fields rides along.
     assert set(attempt.usage.model_dump()) == set(UsageReport.model_fields)
+
+
+# --------------------------------------------------------------------------
+# regressions: the fallback ladder against the *real* CLI's wording
+#
+# The stderr fixtures below reproduce what agy v1.1.13 actually prints for a bad
+# flag, captured offline from `agy --nonexistent-flag-xyz` -- a flag-parse error,
+# so no prompt, no model call, nothing billed. Two properties matter and neither
+# was covered before: the wording is plural ("flags provided but not defined")
+# with a single dash, and the CLI dumps its whole usage text on *any* flag error,
+# which itself contains a `--output-format` line. Both fixtures are hand-written
+# from that public help surface; no session output is involved.
+# --------------------------------------------------------------------------
+
+_AGY_USAGE_DUMP = "\n".join([
+    "Usage of agy:",
+    "  --effort                        Reasoning effort for the current CLI session",
+    "  --model                         Model for the current CLI session",
+    "  --output-format                 Output format for print mode "
+    "(text, json, stream-json) (default text)",
+    "  --print                         Run a single prompt non-interactively",
+    "  --print-timeout                 Timeout for print mode wait (default 5m0s)",
+])
+
+
+def _agy_flag_error(flag: str, *, plural: bool = True) -> str:
+    """agy's real bad-flag stderr: one diagnostic line + the full usage dump."""
+    word = "flags" if plural else "flag"
+    return f"{word} provided but not defined: {flag}\n{_AGY_USAGE_DUMP}\n"
+
+
+def test_real_agy_plural_flag_wording_is_recognized_and_the_flag_is_dropped(monkeypatch):
+    """The headline guarantee, against the wording this CLI really emits.
+
+    agy says `flags provided but not defined: -output-format` -- plural, single
+    dash. A detector keyed on the singular phrasing never matches it, so the flag
+    would never be dropped and enabling telemetry would hard-fail every run on an
+    agy build that predates the flag.
+    """
+    mod = _load_agent_module(monkeypatch, model="antigravity-gemini-3.5-flash")
+    calls = _fake_runner(mod, monkeypatch, [
+        _FakeResult(returncode=2, stderr=_agy_flag_error("-output-format")),
+        _FakeResult(stdout="```scad\ncube(1);\n```"),
+    ])
+
+    text, usages = mod._call_agy("build a cube")
+
+    assert len(calls) == 2
+    assert "--output-format" in calls[0]
+    assert "--output-format" not in calls[1]
+    assert "cube(1)" in text
+    assert usages == []
+    assert mod._OUTPUT_FORMAT_SUPPORTED is False
+
+
+def test_singular_flag_wording_is_recognized_too(monkeypatch):
+    # Go's stdlib `flag` package words it in the singular; both must work.
+    mod = _load_agent_module(monkeypatch, model="antigravity-gemini-3.5-flash")
+    calls = _fake_runner(mod, monkeypatch, [
+        _FakeResult(returncode=2, stderr=_agy_flag_error("-output-format", plural=False)),
+        _FakeResult(stdout="```scad\ncube(1);\n```"),
+    ])
+
+    mod._call_agy("build a cube")
+
+    assert len(calls) == 2
+    assert "--output-format" not in calls[1]
+
+
+def test_usage_dump_mentioning_output_format_does_not_swallow_another_flags_error(monkeypatch):
+    """A typo'd MAKERBENCH_AGY_ARGS must fail loudly, not disable telemetry.
+
+    The CLI prints its entire usage text on any flag error, and that text lists
+    `--output-format`. Detection therefore has to key on the flag named in the
+    *error line*, not on the string appearing anywhere in the output.
+    """
+    mod = _load_agent_module(monkeypatch, model="antigravity-gemini-3.5-flash")
+    calls = _fake_runner(mod, monkeypatch, [
+        _FakeResult(returncode=2, stderr=_agy_flag_error("-effort-typo")),
+    ])
+
+    try:
+        mod._call_agy("build a cube")
+    except RuntimeError as exc:
+        assert "rc=2" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
+
+    assert len(calls) == 2                       # original + one retry, no flag-drop
+    assert all("--output-format" in call for call in calls)
+    assert mod._OUTPUT_FORMAT_SUPPORTED is True  # telemetry stays on for the run
+
+
+def test_rejected_flags_reads_only_diagnostic_lines():
+    # A help/usage listing of a flag is not a rejection of it.
+    listing = subprocess.CompletedProcess(
+        args=[], returncode=2, stdout="", stderr=_AGY_USAGE_DUMP,
+    )
+    assert agy._rejected_flags(listing) == set()
+    assert agy._is_unsupported_output_format(listing) is False
+
+    rejection = subprocess.CompletedProcess(
+        args=[], returncode=2, stdout="",
+        stderr=_agy_flag_error("-output-format"),
+    )
+    assert "output-format" in agy._rejected_flags(rejection)
+
+
+def test_did_you_mean_hint_is_not_read_as_the_rejected_flag():
+    hinted = subprocess.CompletedProcess(
+        args=[], returncode=2, stdout="",
+        stderr="unknown flag: --output-fmt (did you mean --output-format?)\n",
+    )
+    assert agy._rejected_flags(hinted) == {"output-fmt"}
+    assert agy._is_unsupported_output_format(hinted) is False
+
+
+# --------------------------------------------------------------------------
+# regression: an all-zero usage block is an absent measurement, never a $0.00
+# --------------------------------------------------------------------------
+
+def test_all_zero_usage_block_is_not_counted_as_a_measurement():
+    acc = agy._new_usage_acc()
+    agy._accumulate_usage(acc, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
+    assert acc["any"] is False
+
+
+def test_all_zero_envelope_stays_opaque_and_never_prices_to_zero(monkeypatch):
+    """Go serializes an unpopulated usage struct as zeros (no `omitempty`).
+
+    Counting that would flip the row to `local_log` with input=0/output=0 and hand
+    pricing an `api_equivalent_usd` of 0.0, which site/build_data.py folds into
+    `mean_api_equivalent_usd` and the leaderboard renders as `~$0.00` -- a
+    fabricated zero, the precise thing this adapter promises never to produce.
+    """
+    mod = _load_agent_module(monkeypatch, model="antigravity-gemini-3.5-flash")
+    envelope = json.dumps({
+        "type": "result",
+        "result": "```scad\ncube(1);\n```",
+        "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+    })
+    _text, usages = mod._parse_print_envelope(envelope)
+    acc = mod._new_usage_acc()
+    for usage in usages:
+        mod._accumulate_usage(acc, usage)
+
+    report = mod._usage_report(acc)
+    assert report.source == "subscription_opaque"
+    assert report.input_tokens is None and report.output_tokens is None
+    assert mod._cost_report(report) is None
+
+
+def test_agent_records_opaque_row_for_an_all_zero_envelope(monkeypatch):
+    mod = _load_agent_module(monkeypatch, model="antigravity-gemini-3.5-flash")
+    envelope = json.dumps({
+        "type": "result",
+        "result": "```scad\ncube(1);\n```",
+        "usage": {"input_tokens": 0, "output_tokens": 0},
+    })
+    monkeypatch.setattr(mod, "_call_agy",
+                        lambda prompt, retries=1: mod._parse_print_envelope(envelope))
+
+    attempt = mod.agent(_task(), track="blind", tools={}, perceive=None, budget=1)
+
+    assert attempt.source == "cube(1);"
+    assert attempt.usage.source == "subscription_opaque"
+    assert attempt.usage.total_tokens is None
+    assert attempt.cost is None
+
+
+def test_a_zero_block_does_not_suppress_a_real_one():
+    # Zeros are dropped, not poisonous: a later populated block still counts.
+    acc = agy._new_usage_acc()
+    agy._accumulate_usage(acc, {"input_tokens": 0, "output_tokens": 0})
+    agy._accumulate_usage(acc, {"input_tokens": 300, "output_tokens": 60})
+    assert acc["any"] is True
+    assert acc["input"] == 300 and acc["output"] == 60
+
+
+# --------------------------------------------------------------------------
+# regression: a pretty-printed envelope wrapped in banner lines
+# --------------------------------------------------------------------------
+
+def test_pretty_printed_envelope_with_banner_keeps_usage_and_scad():
+    """Neither whole-text nor per-line JSON parsing sees a multi-line envelope
+    that is preceded or followed by a banner line, and the fallout is worse than
+    losing usage: the raw envelope becomes the submitted OpenSCAD.
+    """
+    envelope = json.dumps({
+        "type": "result",
+        "result": "```scad\ncube([1,2,3]);\n```",
+        "usage": {"input_tokens": 1000, "output_tokens": 200},
+    }, indent=2)
+    stdout = f"Antigravity CLI v1.1.13\n{envelope}\nSession saved.\n"
+
+    text, usages = agy._parse_print_envelope(stdout)
+
+    assert agy._extract_scad(text) == "cube([1,2,3]);"
+    assert usages and usages[0]["input_tokens"] == 1000
+
+
+def test_pretty_printed_envelope_without_banner_still_parses():
+    envelope = json.dumps({
+        "type": "result",
+        "result": "```scad\ncube(4);\n```",
+        "usage": {"input_tokens": 12, "output_tokens": 3},
+    }, indent=2)
+    text, usages = agy._parse_print_envelope(envelope)
+    assert agy._extract_scad(text) == "cube(4);"
+    assert usages and usages[0]["input_tokens"] == 12
+
+
+def test_json_inside_a_plain_text_answer_is_not_mistaken_for_an_envelope():
+    """The banner-tolerant scan must not hijack a plain `--output-format text` run.
+
+    OpenSCAD answers are full of braces, and an answer may quote JSON outright.
+    Nothing there is telemetry, and the answer text must survive untouched.
+    """
+    answer = (
+        "Here is the manifest I embedded:\n"
+        '{"part": "vented_plate", "qty": 2}\n'
+        "```scad\ndifference() { cube([10,10,2]); cylinder(h=3, r=1); }\n```\n"
+    )
+    text, usages = agy._parse_print_envelope(answer)
+
+    assert usages == []
+    assert text == answer
+    assert agy._extract_scad(text).startswith("difference()")

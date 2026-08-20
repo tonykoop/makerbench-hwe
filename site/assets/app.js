@@ -289,13 +289,41 @@
     // No actual cost and no API-equivalent estimate. Name the reason instead of
     // leaving a bare blank: a subscription-quota run with no local token source
     // is a known state, not missing data — and it is never $0.
-    return metricCell(null, costMissingTitle(tr), usageMissingReason(tr));
+    return metricCell(null, costMissingTitle(tr), costMissingReason(tr));
+  }
+
+  // A cost can be missing for two different reasons, and they must not be
+  // conflated. "subscription quota" means no per-run token source existed at all.
+  // But a track can have local-log tokens captured and *still* no cost, because
+  // the model id has no pricing entry (an alias whose underlying model is not
+  // pinned) — and a mixed track carries both states at once, since
+  // n_subscription_opaque counts historical rows while local_log_token_usage
+  // comes from newer ones. Blaming the quota there contradicts the Tokens column
+  // on the same row, which is simultaneously showing "est · local logs".
+  function hasLocalLogTokens(track) {
+    return ((track && track.local_log_token_usage) || {}).mean_total_tokens != null;
+  }
+
+  function costMissingReason(track) {
+    if (hasLocalLogTokens(track)) return "model unpriced";
+    return usageMissingReason(track);
   }
 
   function costMissingTitle(track) {
     var reporting = (track && track.usage_reporting) || {};
-    if (reporting.n_subscription_opaque) {
-      return "No cost available: " + reporting.n_subscription_opaque +
+    var opaque = reporting.n_subscription_opaque || 0;
+    if (hasLocalLogTokens(track)) {
+      var why = "No cost available: tokens were captured from the runtime's own " +
+        "usage output, but this model id has no pricing entry, so no API-equivalent " +
+        "figure is computed. Unknown, not free — never $0.";
+      if (opaque) {
+        why += " (" + opaque + " further row(s) in this track ran on a subscription " +
+          "quota with no local token source at all.)";
+      }
+      return why;
+    }
+    if (opaque) {
+      return "No cost available: " + opaque +
         " row(s) ran on a subscription quota with no local token source, so " +
         "per-run spend is not separable from the plan. Unknown, not free — never $0.";
     }
