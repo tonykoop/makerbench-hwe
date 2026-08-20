@@ -5,16 +5,17 @@ Phoenix-bench is direct prior art for evaluating repository-scale hardware-engin
 ## Evidence status
 
 Published-benchmark figures below are quoted from the papers themselves and are
-version-sensitive: arXiv abstracts get revised, so every quoted number is pinned
-to the version it came from. The Foam-Agent figures were rechecked against the
-current version on 2026-08-19; the remaining citations carry the dates recorded
-where they appear. Vendor product descriptions are marked as such and are not
-treated as independent success-rate evidence.
+version-sensitive: arXiv abstracts get revised, so arXiv links here are pinned
+to a specific version. The Foam-Agent figures were rechecked against the v3 PDF
+on 2026-08-19 and are quoted from it; the Phoenix-bench and OpenFOAMGPT figures
+carry the versions their links pin but were not re-verified against the PDFs in
+that pass. Vendor product descriptions are marked as such and are not treated as
+independent success-rate evidence.
 
 ## Phoenix-bench
 
 The May 2026 paper
-["Is Agentic AI Ready for Real-World Hardware Engineering?"](https://arxiv.org/abs/2605.15226)
+["Is Agentic AI Ready for Real-World Hardware Engineering?"](https://arxiv.org/abs/2605.15226v1)
 introduces Phoenix-bench with:
 
 - 511 verified Verilator instances from 114 GitHub repositories;
@@ -60,15 +61,18 @@ Three public surfaces illustrate different evidence levels:
    decomposition but not independent success-rate evidence.
 2. [Foam-Agent](https://arxiv.org/abs/2505.04997v3) is an academic framework
    with hierarchical retrieval, dependency-aware OpenFOAM file generation, and
-   iterative error correction. On its own FoamBench harness the current paper
-   (v3, 2026-08-13) reports an 88.2% execution success rate on the 110
-   Basic-tier tasks and 62.5% on the out-of-distribution Advanced tier, naming
-   no LLM backbone in the abstract; code is linked from the paper. Quote both
-   tiers or neither — the Advanced-tier number is the one that speaks to
-   generalization, which is why this cluster cites the paper at all. (The
-   earlier v1, May 2025, reported 83.6% with Claude 3.5 Sonnet; that figure is
-   superseded, so pin the version whenever it is cited.)
-3. [OpenFOAMGPT 2.0](https://arxiv.org/abs/2504.19338) describes specialized
+   iterative error correction. It is evaluated on FoamBench, which its paper
+   describes as "the end-to-end OpenFOAM simulation benchmark of the
+   CFDLLMBench suite" — a separately published benchmark, not a harness the
+   framework authors scored themselves on. The current version (v3,
+   2026-08-13) reports "an 88.2% execution success rate on the 110 Basic-tier
+   tasks and 62.5% on the out-of-distribution Advanced tier ... both with
+   Claude 3.5 Sonnet"; code is linked from the paper. Quote both tiers or
+   neither — the Advanced-tier number is the one that speaks to
+   generalization, which is why this cluster cites the paper at all. (v1, May
+   2025, reported 83.6% on the same backbone; pin the version whenever the
+   number is cited.)
+3. [OpenFOAMGPT 2.0](https://arxiv.org/abs/2504.19338v1) describes specialized
    preprocessing, prompt, simulation, and postprocessing agents for end-to-end
    CFD. Its published evidence is a case-study/repetition suite, not a direct
    leaderboard comparison with MakerBench.
