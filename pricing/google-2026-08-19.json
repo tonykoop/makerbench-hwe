@@ -1,0 +1,20 @@
+{
+  "provider": "google",
+  "effective_date": "2026-08-19",
+  "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
+  "notes": "Antigravity CLI model aliases only. These are NOT a new Google price snapshot: each entry carries the same public Gemini Developer API list rates as the identically-named gemini-* entry in the immutable pricing/google-2026-06-02.json, so an antigravity run whose tokens were captured from the `agy` print envelope can be priced into cost.api_equivalent_usd. Antigravity is a subscription surface with no per-run bill, so these rates are only ever a public-rate what-if figure and never an actual charge (see docs/USAGE_TELEMETRY.md). This file deliberately omits the gemini-* keys so direct-API rows keep resolving to the 2026-06-02 snapshot unchanged; when Google's published rates change, add a new dated file covering the gemini-* keys and these aliases together. Model ids whose underlying Gemini model is not pinned (antigravity-gemini-default, antigravity-gemini-3.1-pro) are intentionally absent: guessing their rate would invent a cost, so those rows surface tokens with no cost at all.",
+  "models": {
+    "antigravity-gemini-3.5-flash": {
+      "input_usd_per_1m_tokens": 1.5,
+      "cached_input_usd_per_1m_tokens": 0.15,
+      "output_usd_per_1m_tokens": 9.0,
+      "notes": "Alias of gemini-3.5-flash public list rates; output price includes thinking tokens. API-equivalent what-if only, never a subscription bill."
+    },
+    "antigravity-gemini-3-flash": {
+      "input_usd_per_1m_tokens": 0.5,
+      "cached_input_usd_per_1m_tokens": 0.05,
+      "output_usd_per_1m_tokens": 3.0,
+      "notes": "Alias of gemini-3-flash-preview public list rates; output price includes thinking tokens. API-equivalent what-if only, never a subscription bill."
+    }
+  }
+}

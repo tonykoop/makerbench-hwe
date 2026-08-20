@@ -51,6 +51,12 @@ To keep attribution honest, a `local_log` row records **`usage.measurement_sourc
 MakerBench harness identity: a row can read `measurement_tool="ccusage"`,
 `measurement_source="codex"`, `agent_identifier="codex_cli"`.
 
+When the counts come from the CLI's *own* structured output instead of `ccusage`,
+the same two fields keep the same meaning: `measurement_tool` names the parser
+(`codex_cli_json`, `agy_cli_json`) and `measurement_source` names the channel the
+counts were read from (`codex`, `antigravity`). Either way the pair answers "who
+counted these, and for which surface?" — never "who was billed".
+
 **Per-row counts must come from a source-specific export**, filtered to the
 benchmarked harness/channel (e.g. `ccusage codex daily` for a Codex row). Never
 attach an all-sources ccusage aggregate to a single MakerBench row — that would mix
@@ -76,13 +82,35 @@ time — no separate log-scrape needed when the harness drives the CLI:
 - **Claude (`agents/claude_cli_agent.py`)** — `claude -p --output-format json` returns
   `usage` plus a `total_cost_usd`; recorded as `measured` tokens + an API-equivalent
   cost (see the agent docstring).
-- **Antigravity / Gemini (`agents/agy_cli_agent.py`)** — the antigravity CLI exposes
-  **no** per-run token counts locally (neither in its conversation stores nor a usage
-  log), so these rows stay `subscription_opaque` with null tokens. This is a known
-  limitation, not a bug: there is currently no honest local token source for it, and
-  a fuzzy estimate is deliberately avoided. Account-level Google billing can
-  reconcile aggregate spend, but it cannot attribute tokens or cost to one
-  MakerBench row; do not convert it into row-level usage.
+- **Antigravity / Gemini (`agents/agy_cli_agent.py`)** — antigravity writes **no**
+  per-run token counts to its local conversation stores, so there is no log to
+  scrape (this is what issue #12 recorded). It does expose a structured print
+  envelope: `agy --output-format json|stream-json`, verified present in **agy
+  v1.1.13**. The agent asks for `json` and sums the envelope's `usage` block across
+  the draft + perception calls into a `local_log` UsageReport
+  (`measurement_tool="agy_cli_json"`, `measurement_source="antigravity"`), priced
+  into `cost.api_equivalent_usd` only — `total_cost_usd` stays null. Three honest
+  outcomes, never a fabricated one: **(a)** envelope carries usage → `local_log`
+  tokens + API-equivalent cost; **(b)** the run completes but the envelope carries
+  no `usage` (`--output-format text`, or a build that omits it) →
+  `subscription_opaque` with null tokens and no cost object; **(c)** the installed
+  `agy` predates `--output-format` and rejects the flag → the flag is dropped, the
+  call re-issued once, and the row recorded `subscription_opaque` — asking for
+  telemetry must never break a working install. Any *other* non-zero exit raises
+  after one retry rather than logging zeros. `antigravity-gemini-3.5-flash` and
+  `antigravity-gemini-3-flash` are priced in `pricing/google-2026-08-19.json` at
+  the matching public Gemini list rates; `antigravity-gemini-default` and
+  `antigravity-gemini-3.1-pro` are deliberately left unpriced because the
+  underlying model is not pinned, so those rows surface tokens with a null
+  `api_equivalent_usd` rather than an invented cost.
+
+  Two things remain out of bounds. Account-level Google billing can reconcile
+  aggregate spend but cannot attribute tokens or dollars to one MakerBench row; do
+  **not** spread an account total across rows. And the capture applies to *future*
+  runs only — antigravity bundles recorded before this landed stay
+  `subscription_opaque`, and those recorded before the `model=` fix additionally
+  carry `usage.model: null` (a historical artifact). Neither is retroactively
+  recoverable without re-running against a paid surface, and neither is backfilled.
 
 ## Why `cost_usd` stays null for subscription runs
 

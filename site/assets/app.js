@@ -286,7 +286,20 @@
         "API-equiv. est"
       );
     }
-    return metricCell(null, "Mean estimated cost", "not available");
+    // No actual cost and no API-equivalent estimate. Name the reason instead of
+    // leaving a bare blank: a subscription-quota run with no local token source
+    // is a known state, not missing data — and it is never $0.
+    return metricCell(null, costMissingTitle(tr), usageMissingReason(tr));
+  }
+
+  function costMissingTitle(track) {
+    var reporting = (track && track.usage_reporting) || {};
+    if (reporting.n_subscription_opaque) {
+      return "No cost available: " + reporting.n_subscription_opaque +
+        " row(s) ran on a subscription quota with no local token source, so " +
+        "per-run spend is not separable from the plan. Unknown, not free — never $0.";
+    }
+    return "Mean estimated cost — not available";
   }
 
   function normalizedScoreCell(tr, key) {
@@ -307,9 +320,12 @@
     return metricCell(shown, title, "not available");
   }
 
+  // Why a metric is absent. "subscription quota" is a *state* we can name -- the
+  // run went through a plan that exposes no per-run token source -- and is kept
+  // distinct from "unknown", where the runtime simply reported nothing.
   function usageMissingReason(track) {
     var reporting = (track && track.usage_reporting) || {};
-    if (reporting.n_subscription_opaque) return "opaque";
+    if (reporting.n_subscription_opaque) return "subscription quota";
     if (reporting.n_not_reported) return "unknown";
     return "unknown";
   }
