@@ -194,3 +194,91 @@ def test_canary_guard_skips_non_bundle_json(tmp_path):
     disk.parent.mkdir(parents=True, exist_ok=True)
     disk.write_text(json.dumps({"rows": [1, 2, 3]}), encoding="utf-8")
     assert audit.audit_result_canaries([path], repo_root=tmp_path) == []
+
+
+# --- host-absolute path guard (#684) ----------------------------------------
+def _leaky_bundle(path: Path, values: list[str], *, repo_root: Path):
+    """Write a bundle whose perception trace carries ``values`` as warnings."""
+    disk = repo_root / path
+    disk.parent.mkdir(parents=True, exist_ok=True)
+    disk.write_text(
+        json.dumps({"results": [{"perception_trace": [{"warnings": values}]}]}),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_host_path_guard_flags_posix_home_and_windows_user_paths(tmp_path):
+    """RED control: the audit must fail on a host-absolute path in any JSON value."""
+    path = _leaky_bundle(
+        Path("results/model/r_leaky.json"),
+        [
+            "iso: Render failed: Can't parse file '/tmp/tmpr72t7bwb.scad'!",
+            r"top: Can't parse file 'C:\Users\Tony\AppData\Local\Temp\tmp8.scad'!",
+            "/home/tony/bench-wt/runs/m/t/perceive/iter_1/section_x.png",
+        ],
+        repo_root=tmp_path,
+    )
+
+    details = _details(audit.audit_public_json_files([path], repo_root=tmp_path))
+
+    assert len(details) == 3, details
+    assert all(audit.HOST_PATH_DETAIL_PREFIX in item for item in details)
+    # The operator's username must be named in the violation so it is actionable.
+    assert any("Users" in item and "Tony" in item for item in details)
+
+
+def test_host_path_guard_allows_repo_relative_and_run_scoped_values(tmp_path):
+    """The canonical forms — repo-relative and run-scoped — must not trip it."""
+    path = _leaky_bundle(
+        Path("results/model/r_clean.json"),
+        [
+            "runs/m/t__seed0__perception__abc/perceive/iter_1/section_x.png",
+            "results/model/artifacts/render.png",
+            "iso: Render failed: Can't parse file '<redacted-host-path>'!",
+            "https://api.github.com/users/tonykoop",
+        ],
+        repo_root=tmp_path,
+    )
+
+    assert audit.audit_public_json_files([path], repo_root=tmp_path) == []
+
+
+def test_host_path_guard_forgives_only_the_grandfathered_count(tmp_path):
+    """A pending-re-attestation bundle tolerates its known leaks and no more."""
+    rel, allowance = next(iter(sorted(audit.PENDING_HOST_PATH_REDACTION.items())))
+    leaks = [f"/home/tony/run-{index}/x.scad" for index in range(allowance)]
+
+    path = _leaky_bundle(Path(rel), leaks, repo_root=tmp_path)
+    assert audit.audit_public_json_files([path], repo_root=tmp_path) == []
+
+    # One more than the recorded count is a *new* leak and must fail, so the
+    # entry grandfathers a known state rather than muting the file wholesale.
+    _leaky_bundle(Path(rel), [*leaks, "/home/tony/brand-new/leak.scad"], repo_root=tmp_path)
+    details = _details(audit.audit_public_json_files([path], repo_root=tmp_path))
+    assert len(details) == 1
+    assert "exceed the" in details[0]
+
+
+def test_host_path_guard_still_reports_other_violations_in_grandfathered_files(tmp_path):
+    """The allowance covers host paths only — it must not mask a different leak."""
+    rel = next(iter(sorted(audit.PENDING_HOST_PATH_REDACTION)))
+    disk = tmp_path / rel
+    disk.parent.mkdir(parents=True, exist_ok=True)
+    disk.write_text(
+        json.dumps({"results": [{"input_params": {"width_mm": 42}}]}),
+        encoding="utf-8",
+    )
+
+    details = _details(audit.audit_public_json_files([Path(rel)], repo_root=tmp_path))
+
+    assert any("forbidden public JSON key" in item for item in details)
+
+
+def test_pending_host_path_redaction_entries_are_public_result_bundles():
+    """Guard against the debt map drifting into a blanket suppression list."""
+    for rel in audit.PENDING_HOST_PATH_REDACTION:
+        assert rel.startswith("results/"), rel
+        assert rel.endswith(".json"), rel
+        assert audit._is_public_json_path(rel), rel
+    assert all(count > 0 for count in audit.PENDING_HOST_PATH_REDACTION.values())

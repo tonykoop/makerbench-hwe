@@ -21,7 +21,7 @@ The instrument repos live *outside* this repository, so the committed manifest
 has the library checked out:
 
     python scripts/build_instrument_corpus.py \
-        --root /mnt/c/Users/Tony/Documents/GitHub/instruments \
+        --root /mnt/c/Users/<you>/Documents/GitHub/instruments \
         --out tasks/instrument_corpus.json
 
 `--check` regenerates in memory and fails if the committed manifest has drifted.

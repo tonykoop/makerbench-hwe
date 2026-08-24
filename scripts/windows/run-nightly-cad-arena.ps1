@@ -4,7 +4,7 @@ Runs one queued MakerBench nightly musical-instrument CAD arena via WSL.
 
 .DESCRIPTION
 Canonical invocation (from the canonical checkout
-C:\Users\Tony\Documents\GitHub\makerbench_ecosystem\makerbench-hwe):
+C:\Users\<you>\Documents\GitHub\makerbench_ecosystem\makerbench-hwe):
 
   powershell.exe -NoProfile -ExecutionPolicy Bypass `
     -File scripts\windows\run-nightly-cad-arena.ps1 `
