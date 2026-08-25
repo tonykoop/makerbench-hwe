@@ -16,6 +16,7 @@ added `str` field must land in one of two buckets or fail CI.
 
 from __future__ import annotations
 
+import json
 import typing
 
 import pytest
@@ -48,10 +49,55 @@ def _reachable_models() -> list[type[BaseModel]]:
 
 
 def _publishes_host_path(model: type[BaseModel], field: str) -> bool:
-    """Does a host path in this field survive into serialized output?"""
-    instance = model.model_construct(**{field: PROBE})
+    """Does a host path in this field survive into serialized output?
+
+    Serializes the whole field and scans the rendered JSON, so a leak inside a
+    list or dict is caught the same as a bare string.
+    """
+    probe = _probe_for(model.model_fields[field].annotation)
+    if probe is None:
+        return False
+    instance = model.model_construct(**{field: probe})
     published = instance.model_dump(mode="json").get(field)
-    return isinstance(published, str) and bool(find_host_paths(published))
+    return bool(find_host_paths(json.dumps(published, default=str)))
+
+
+def _carries_str(annotation: object) -> bool:
+    """Does this annotation carry free text anywhere a host path could hide?
+
+    `field.annotation is str` was too narrow: it made `list[str]`,
+    `dict[str, str]` and `Optional[str]` invisible to *both* halves of the
+    partition — neither required to be redacted nor visible for allowlisting.
+    `PerceptionObservation.warnings: list[str]` is exactly that shape, and it is
+    the field #686 was originally about.
+    """
+    if annotation is str:
+        return True
+    origin = typing.get_origin(annotation)
+    args = [a for a in typing.get_args(annotation) if a is not type(None)]
+    if origin is dict:
+        # Only the *value* type counts. Keys in every published dict here are
+        # controlled vocabularies (metric and check names), and treating them as
+        # carriers would demand redacting `dict[str, bool]` and
+        # `dict[str, float]`, whose values cannot hold a path at all.
+        return bool(args[1:]) and _carries_str(args[1])
+    return any(_carries_str(arg) for arg in args)
+
+
+def _probe_for(annotation: object):
+    """A value of the right shape carrying the probe path."""
+    if annotation is str:
+        return PROBE
+    origin = typing.get_origin(annotation)
+    args = [a for a in typing.get_args(annotation) if a is not type(None)]
+    if origin in (list, set, tuple):
+        return [PROBE]
+    if origin is dict:
+        return {"probe": _probe_for(args[1])} if args[1:] else None
+    for arg in args:                      # Optional[...] / Union[...]
+        if _carries_str(arg):
+            return _probe_for(arg)
+    return None
 
 
 def _str_fields() -> list[tuple[type[BaseModel], str]]:
@@ -59,7 +105,7 @@ def _str_fields() -> list[tuple[type[BaseModel], str]]:
         (model, name)
         for model in _reachable_models()
         for name, field in model.model_fields.items()
-        if field.annotation is str
+        if _carries_str(field.annotation)
     ]
 
 
