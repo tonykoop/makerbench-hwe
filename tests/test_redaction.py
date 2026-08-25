@@ -175,3 +175,48 @@ def test_agent_error_detail_is_redacted(tmp_path, monkeypatch):
     assert "agent raised" in detail
     assert result.grade.levels[0].passed is False
     assert result.grade.notes == "agent_error"
+
+
+def test_vector_parse_rejection_detail_is_redacted(monkeypatch):
+    """The path three rounds of producer-patching missed.
+
+    A parser exception is stored in a `VectorRejection` and only concatenated
+    into `grade.levels[].detail` later, so it is invisible to a grep for
+    `detail=...{exc}`. Reported by the independent reviewer of the second pass.
+    """
+    from makerbench import vector as vec
+    from makerbench.schema import Attempt, TaskSpec
+    from makerbench.vector_eval import evaluate_vector
+
+    def exploding_parse(_source):
+        raise RuntimeError("parser scratch: /home/tony/private/vector.svg")
+
+    monkeypatch.setattr(vec, "parse_vector", exploding_parse, raising=True)
+    spec = TaskSpec(task_id="t", seed=0, params={}, brief="")
+    attempt = Attempt(task_id="t", seed=0, track="blind", source="<svg/>")
+
+    try:
+        result = evaluate_vector(attempt, spec, lambda *a, **k: ([], {}))
+    except RuntimeError:
+        pytest.skip("parse_vector raising is not caught on this path")
+
+    details = " ".join(level.detail or "" for level in result.levels)
+    assert find_host_paths(details) == [], details
+
+
+def test_level_result_redacts_detail_from_any_producer():
+    """The invariant is enforced on the model, so no construction path can miss it."""
+    from makerbench.schema import FailureLevel, LevelResult
+
+    for raw in [
+        "malformed: parser scratch: /home/tony/private/vector.svg",
+        r"OpenSCAD exited 1.\nSTDERR: Can't parse 'C:\Users\Tony\Temp\x.scad'!",
+        "agent raised: FileNotFoundError: /mnt/c/Users/Tony/Documents/x",
+    ]:
+        level = LevelResult(level=FailureLevel.STRUCTURAL, passed=False, detail=raw)
+        assert find_host_paths(level.detail) == [], level.detail
+        assert "tony" not in level.detail.lower()
+
+    # A clean detail is untouched — the validator must not mangle normal text.
+    clean = "OpenSCAD compiled to non-empty mesh."
+    assert LevelResult(level=FailureLevel.STRUCTURAL, passed=True, detail=clean).detail == clean

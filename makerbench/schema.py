@@ -97,6 +97,27 @@ class LevelResult(BaseModel):
     detail: str = ""
     checks: dict[str, bool] = Field(default_factory=dict)
 
+    @field_validator("detail", mode="after")
+    @classmethod
+    def _redact_host_paths(cls, value: str) -> str:
+        """Strip host-absolute paths from the published failure detail (#684).
+
+        Enforced on the model rather than at each producer because `detail` is
+        assembled from exception text by at least five call sites, and two of
+        them reach it *indirectly* — a parser exception is stored in a
+        `VectorRejection` and only concatenated into `detail` later, which is
+        invisible to any grep for the obvious pattern. Three successive rounds
+        of patching individual producers each missed one.
+
+        This is the single boundary every construction path must cross, so the
+        invariant holds regardless of how the text was built or what is added
+        later. Producers may still redact earlier; this makes it unnecessary
+        rather than wrong.
+        """
+        from .redaction import redact_host_paths
+
+        return redact_host_paths(value)
+
 
 class GradeResult(BaseModel):
     """What the evaluator returns for one attempt on one task."""
