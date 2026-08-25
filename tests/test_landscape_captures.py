@@ -91,7 +91,7 @@ def test_committed_json_has_captures_keys():
     )
     assert "captures" in data
     assert data["captures_count"] == len(data["captures"])
-    # No capture docs have landed yet (#610/#611/#612 in flight); whatever is
-    # committed must match a fresh scan of the documented directory.
+    # Whatever is committed must match a fresh scan of the documented
+    # directory (#610/#611/#612 captures have landed).
     fresh = landscape_data.collect_captures(REPO_ROOT / "docs" / "landscape-captures")
     assert data["captures"] == fresh

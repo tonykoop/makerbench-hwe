@@ -34,8 +34,11 @@ python site/landscape_data.py
   links and published claims only — no private run data, no personal paths,
   no unpublished contact info scraped from feeds.
 
-## Status
+## Captures
 
-No capture docs have landed yet — #610/#611/#612 are still in flight
-(lane-W6). The pipeline ingests whatever is present here; an empty directory
-yields an empty `captures` array and the site section stays hidden.
+- [`610-ai-cad-competitive-scan.md`](610-ai-cad-competitive-scan.md)
+- [`611-tye-teardown.md`](611-tye-teardown.md)
+- [`612-phoenix-agentic-sim-prior-art.md`](612-phoenix-agentic-sim-prior-art.md)
+
+The pipeline ingests whatever is present here; an empty directory still yields
+an empty `captures` array and the site section stays hidden.
