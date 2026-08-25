@@ -44,6 +44,7 @@ from .regrade import changed_result_paths, regrade_result_files
 from .video_evidence import assess_video_protocol
 from .runner import TASKS_ROOT, load_task, run_one, selftest
 from .seed_policy import PUBLIC_DEV_SEEDS, resolve_run_seeds
+from .redaction import run_relative_path
 from .schema import Attempt, DeliverablePacket, DesignDossier, RunResults, TaskResult, WorkflowManifest
 from .task_packs import load_task_registry
 
@@ -857,7 +858,12 @@ def _source_artifact_path(out: str, task: str, seed: int, track: str) -> str:
         try:
             return artifact_path.resolve().relative_to(Path.cwd().resolve()).as_posix()
         except ValueError:
-            return artifact_path.as_posix()
+            # `out` is outside the cwd — a normal pattern for a script writing to
+            # a scratch dir before copying the finished JSON into results/.
+            # Returning the absolute path here published the operator's home
+            # directory through `ArtifactFile.path` (#684); keep the run-scoped
+            # tail instead, which is what a reader of the bundle actually needs.
+            return run_relative_path(artifact_path.as_posix())
     return artifact_path.as_posix()
 
 
