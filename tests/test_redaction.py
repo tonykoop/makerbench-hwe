@@ -104,3 +104,50 @@ def test_non_string_values_pass_through(value):
     assert redact_host_paths(value) is value
     assert run_relative_path(value) is value
     assert find_host_paths(value) == []
+
+
+# --- grade.levels[].detail is a published field too (#684 follow-up) ---------
+def test_compile_error_detail_is_redacted_before_publication(tmp_path):
+    """A failing compile publishes OpenSCAD stderr into `grade.levels[].detail`.
+
+    The perception funnel was redacted in the first pass; this path was not, so a
+    fresh run still recorded the temp file the parser choked on. Caught while
+    redacting PR #683, whose bundles carry three of these.
+    """
+    from makerbench.evaluator import evaluate
+    from makerbench.schema import Attempt, TaskSpec
+
+    spec = TaskSpec(task_id="t", seed=0, params={}, brief="")
+    attempt = Attempt(
+        task_id="t", seed=0, track="blind",
+        source="this is not valid openscad ((((",
+    )
+
+    result = evaluate(attempt, spec, lambda *a, **k: ([], {}),
+                      work_dir=str(tmp_path))
+
+    structural = result.levels[0]
+    assert structural.passed is False
+    detail = structural.detail or ""
+    # The diagnosis survives; the host path does not.
+    assert find_host_paths(detail) == [], detail
+    if detail:
+        assert "/tmp/" not in detail and "\\Users\\" not in detail
+
+
+def test_grader_crash_detail_is_redacted(tmp_path):
+    """`Grader raised: {exc}` can carry a path out of any grader traceback."""
+    from makerbench.evaluator import evaluate
+    from makerbench.schema import Attempt, TaskSpec
+
+    def exploding_grader(*_args, **_kwargs):
+        raise RuntimeError("failed reading /home/tony/bench-wt/runs/x/input.scad")
+
+    spec = TaskSpec(task_id="t", seed=0, params={}, brief="")
+    attempt = Attempt(task_id="t", seed=0, track="blind", source="cube([1,1,1]);")
+
+    result = evaluate(attempt, spec, exploding_grader, work_dir=str(tmp_path))
+
+    details = " ".join(level.detail or "" for level in result.levels)
+    assert "tony" not in details.lower(), details
+    assert find_host_paths(details) == []
