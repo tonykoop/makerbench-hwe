@@ -286,14 +286,69 @@
         "API-equiv. est"
       );
     }
-    return metricCell(null, "Mean estimated cost", "not available");
+    // No actual cost and no API-equivalent estimate. Name the reason instead of
+    // leaving a bare blank: a subscription-quota run with no local token source
+    // is a known state, not missing data — and it is never $0.
+    return metricCell(null, costMissingTitle(tr), costMissingReason(tr));
+  }
+
+  // A cost can be missing for two different reasons, and they must not be
+  // conflated. "subscription quota" means no per-run token source existed at all.
+  // But a track can have local-log tokens captured and *still* no cost, because
+  // the model id has no pricing entry (an alias whose underlying model is not
+  // pinned) — and a mixed track carries both states at once, since
+  // n_subscription_opaque counts historical rows while local_log_token_usage
+  // comes from newer ones. Blaming the quota there contradicts the Tokens column
+  // on the same row, which is simultaneously showing "est · local logs".
+  function hasLocalLogTokens(track) {
+    return ((track && track.local_log_token_usage) || {}).mean_total_tokens != null;
+  }
+
+  function costMissingReason(track) {
+    if (hasLocalLogTokens(track)) return "model unpriced";
+    return usageMissingReason(track);
+  }
+
+  function costMissingTitle(track) {
+    var reporting = (track && track.usage_reporting) || {};
+    var opaque = reporting.n_subscription_opaque || 0;
+    if (hasLocalLogTokens(track)) {
+      var why = "No cost available: tokens were captured from the runtime's own " +
+        "usage output, but this model id has no pricing entry, so no API-equivalent " +
+        "figure is computed. Unknown, not free — never $0.";
+      if (opaque) {
+        why += " (" + opaque + " further row(s) in this track ran on a subscription " +
+          "quota with no local token source at all.)";
+      }
+      return why;
+    }
+    if (opaque) {
+      return "No cost available: " + opaque +
+        " row(s) ran on a subscription quota with no local token source, so " +
+        "per-run spend is not separable from the plan. Unknown, not free — never $0.";
+    }
+    return "Mean estimated cost — not available";
+  }
+
+  // Why a normalized-efficiency cell is empty. Score-per-dollar divides by cost,
+  // so it goes missing for exactly the reasons the Cost column goes missing and
+  // must give the same reason -- otherwise a mixed track reads "model unpriced"
+  // in the Cost cell and "subscription quota" two columns over, the same
+  // self-contradiction the Cost fix removed. Score-per-1M-tokens divides by
+  // tokens, so the usage reason applies -- unless local-log tokens were in fact
+  // captured, in which case the token source is not what is missing and blaming
+  // the quota would contradict the Tokens column.
+  function normalizedMissingReason(track, key) {
+    if (key === "score_per_dollar") return costMissingReason(track);
+    if (hasLocalLogTokens(track)) return "unknown";
+    return usageMissingReason(track);
   }
 
   function normalizedScoreCell(tr, key) {
     var metric = efficiencyMetric(tr, key);
     var label = key === "score_per_dollar" ? "Score per dollar" : "Score per 1M tokens";
     if (!metric.available || metric.value == null) {
-      return metricCell(null, label + " unavailable", usageMissingReason(tr));
+      return metricCell(null, label + " unavailable", normalizedMissingReason(tr, key));
     }
     var title = label + " = overall score divided by " +
       (key === "score_per_dollar" ? "mean cost" : "mean tokens / 1,000,000") +
@@ -307,9 +362,12 @@
     return metricCell(shown, title, "not available");
   }
 
+  // Why a metric is absent. "subscription quota" is a *state* we can name -- the
+  // run went through a plan that exposes no per-run token source -- and is kept
+  // distinct from "unknown", where the runtime simply reported nothing.
   function usageMissingReason(track) {
     var reporting = (track && track.usage_reporting) || {};
-    if (reporting.n_subscription_opaque) return "opaque";
+    if (reporting.n_subscription_opaque) return "subscription quota";
     if (reporting.n_not_reported) return "unknown";
     return "unknown";
   }

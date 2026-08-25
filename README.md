@@ -341,6 +341,16 @@ If your `agy` install uses a different headless command shape, override
 used for a run, pass `--reasoning-level` so rows with different effort settings
 do not get conflated.
 
+Token telemetry: the agent requests `--output-format json` (verified on agy
+v1.1.13) and reads the print envelope's `usage` block into `local_log` tokens plus
+an API-equivalent cost. Override with `--agy-output-format stream-json`, or
+`--agy-output-format ''` to turn the request off entirely. An `agy` too old to
+know the flag is detected and re-invoked without it, so nothing breaks; a run with
+no usage block is recorded as an honest `subscription_opaque` row with null tokens
+and no cost rather than as zeros. See
+[`docs/USAGE_TELEMETRY.md`](docs/USAGE_TELEMETRY.md) for what these numbers do and
+do not claim — they are never an actual bill.
+
 ## Design dossier
 
 MakerBench grades the primary artifact, but a useful maker agent should also
