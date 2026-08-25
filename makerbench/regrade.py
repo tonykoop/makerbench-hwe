@@ -133,19 +133,15 @@ def _discover_result_paths(
     changed = [Path(p) for p in changed_paths]
     result_paths = result_paths_for_changed_paths(changed, repo_root=root)
 
-    # Independent, deliberately naive check that discovery didn't drop an
-    # existing result bundle: any changed path that is itself an existing
-    # results/**/*.json file (outside artifacts/) must show up in the
-    # discovered set. If it doesn't, discovery disagrees with the diff it was
-    # given, and that disagreement is the bug, not a legitimate zero.
+    # Independent check that discovery didn't drop an existing result bundle:
+    # any changed path that _is_result_json itself would classify as a result
+    # bundle must show up in the discovered set. Reuses the same predicate
+    # `result_paths_for_changed_paths` uses (rather than re-deriving it here)
+    # so the two can't drift apart and flag a path — e.g. an existing, non-
+    # bundle `results/catalog.json` at depth 2 — that the project's own
+    # classification says isn't a result bundle in the first place.
     expected_json = {
-        path
-        for path in changed
-        if path.parts
-        and path.parts[0] == "results"
-        and path.suffix.lower() == ".json"
-        and "artifacts" not in path.parts
-        and (root / path).exists()
+        path for path in changed if _is_result_json(path) and (root / path).exists()
     }
     missing = sorted(str(path) for path in expected_json - set(result_paths))
     if missing:
