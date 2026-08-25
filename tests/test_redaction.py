@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from makerbench.redaction import (
@@ -220,3 +222,68 @@ def test_level_result_redacts_detail_from_any_producer():
     # A clean detail is untouched — the validator must not mangle normal text.
     clean = "OpenSCAD compiled to non-empty mesh."
     assert LevelResult(level=FailureLevel.STRUCTURAL, passed=True, detail=clean).detail == clean
+
+
+# --- the publication boundary, not just construction (#684, third review) ----
+def _published_detail(level):
+    """What actually lands in a committed bundle."""
+    return level.model_dump(mode="json")["detail"]
+
+
+def test_model_copy_update_cannot_publish_a_host_path():
+    """`model_copy(update=...)` does not re-run field validators."""
+    from makerbench.schema import FailureLevel, LevelResult
+
+    clean = LevelResult(level=FailureLevel.STRUCTURAL, passed=False, detail="clean")
+    leaked = clean.model_copy(update={"detail": "/home/tony/private/copied.scad"})
+
+    assert find_host_paths(_published_detail(leaked)) == []
+
+
+def test_attribute_assignment_cannot_publish_a_host_path():
+    """Plain assignment does not re-run field validators without validate_assignment."""
+    from makerbench.schema import FailureLevel, LevelResult
+
+    level = LevelResult(level=FailureLevel.GEOMETRIC, passed=False, detail="clean")
+    level.detail = "/mnt/c/Users/Tony/private/assigned.scad"
+
+    assert find_host_paths(_published_detail(level)) == []
+
+
+def test_escapes_survive_nesting_into_a_full_run_bundle():
+    """The end-to-end shape the reviewer demonstrated: nested, then dumped."""
+    from makerbench.schema import FailureLevel, GradeResult, LevelResult
+
+    clean = LevelResult(level=FailureLevel.STRUCTURAL, passed=False, detail="clean")
+    copied = clean.model_copy(update={"detail": "/home/tony/private/copied.scad"})
+    assigned = LevelResult(level=FailureLevel.GEOMETRIC, passed=False, detail="clean")
+    assigned.detail = "/mnt/c/Users/Tony/private/assigned.scad"
+
+    # GradeResult accepts already-built LevelResults without revalidating them.
+    grade = GradeResult(task_id="t", track="blind", levels=[copied, assigned])
+    payload = json.dumps(grade.model_dump(mode="json"))
+
+    assert find_host_paths(payload) == [], payload
+    assert "tony" not in payload.lower()
+
+
+def test_grade_notes_is_protected_too():
+    """Latent today — the only writer is static — but the same published class."""
+    from makerbench.schema import GradeResult
+
+    grade = GradeResult(task_id="t", track="blind", levels=[])
+    grade.notes = "crashed reading /home/tony/private/x.scad"
+
+    assert find_host_paths(grade.model_dump(mode="json")["notes"]) == []
+
+
+def test_serializer_leaves_clean_text_byte_identical():
+    """Redaction must not mangle an ordinary detail or note."""
+    from makerbench.schema import FailureLevel, GradeResult, LevelResult
+
+    detail = "OpenSCAD compiled to non-empty mesh; bbox=120.00x55.00, cutouts=3/3"
+    level = LevelResult(level=FailureLevel.STRUCTURAL, passed=True, detail=detail)
+    assert _published_detail(level) == detail
+
+    grade = GradeResult(task_id="t", track="blind", levels=[level], notes="agent_error")
+    assert grade.model_dump(mode="json")["notes"] == "agent_error"

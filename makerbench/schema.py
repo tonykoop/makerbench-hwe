@@ -11,7 +11,8 @@ from __future__ import annotations
 from enum import IntEnum
 from typing import Any, Callable, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (BaseModel, Field, field_serializer, field_validator,
+                      model_validator)
 
 from .canary import CANARY
 
@@ -99,20 +100,34 @@ class LevelResult(BaseModel):
 
     @field_validator("detail", mode="after")
     @classmethod
-    def _redact_host_paths(cls, value: str) -> str:
-        """Strip host-absolute paths from the published failure detail (#684).
+    def _redact_detail_on_construction(cls, value: str) -> str:
+        """Strip host-absolute paths from the failure detail at construction (#684).
 
-        Enforced on the model rather than at each producer because `detail` is
-        assembled from exception text by at least five call sites, and two of
-        them reach it *indirectly* — a parser exception is stored in a
-        `VectorRejection` and only concatenated into `detail` later, which is
-        invisible to any grep for the obvious pattern. Three successive rounds
-        of patching individual producers each missed one.
+        `detail` is assembled from exception text by at least five call sites,
+        and two reach it *indirectly* — a parser exception is stored in a
+        `VectorRejection` and only concatenated in later, which is invisible to
+        any grep for `detail=...{exc}`. Patching producers one at a time missed
+        a site three rounds running, so the rule lives on the model instead.
+        """
+        from .redaction import redact_host_paths
 
-        This is the single boundary every construction path must cross, so the
-        invariant holds regardless of how the text was built or what is added
-        later. Producers may still redact earlier; this makes it unnecessary
-        rather than wrong.
+        return redact_host_paths(value)
+
+    @field_serializer("detail")
+    def _redact_detail_on_serialization(self, value: str) -> str:
+        """Redact again on the way out — this is the actual publication boundary.
+
+        Construction-time validation is not sufficient on its own: Pydantic
+        re-runs neither `field_validator` on plain attribute assignment (absent
+        `validate_assignment`) nor on `model_copy(update=...)`, and `GradeResult`
+        accepts an already-built `LevelResult` without revalidating it. All three
+        escapes were demonstrated publishing raw host paths through
+        `model_dump(mode="json")`.
+
+        Serialization is the one step a value cannot skip on its way into a
+        committed bundle, so the invariant is enforced there. The validator is
+        kept as well: it kee­ps the in-memory value clean for anything that reads
+        `detail` without dumping it.
         """
         from .redaction import redact_host_paths
 
@@ -133,6 +148,20 @@ class GradeResult(BaseModel):
     # 2 = v2 geometric-summary (retriangulation-invariant, adopted in #151).
     artifact_hash_version: Optional[int] = None
     notes: str = ""
+
+    @field_serializer("notes")
+    def _redact_notes_on_serialization(self, value: str) -> str:
+        """Same publication boundary as `LevelResult.detail` (#684).
+
+        Today the only in-repo writer passes the static string ``"agent_error"``,
+        so this is latent rather than an active leak. It is protected anyway
+        because the lesson of this issue is that enumerating current producers is
+        not a durable guarantee — a future writer putting exception text here
+        would reproduce the whole bug on a field nobody was watching.
+        """
+        from .redaction import redact_host_paths
+
+        return redact_host_paths(value)
 
     @property
     def passed_levels(self) -> list[int]:
