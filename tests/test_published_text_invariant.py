@@ -71,16 +71,22 @@ def _carries_str(annotation: object) -> bool:
     `PerceptionObservation.warnings: list[str]` is exactly that shape, and it is
     the field #686 was originally about.
     """
-    if annotation is str:
+    if annotation is str or annotation is typing.Any:
+        # `Any` has no args, so recursing through get_args() silently treated
+        # `dict[str, Any]` as text-free. PerceptionObservation.metrics is exactly
+        # that shape, is populated straight from the agent payload, and is live
+        # in 1000+ committed rows (#684).
         return True
     origin = typing.get_origin(annotation)
     args = [a for a in typing.get_args(annotation) if a is not type(None)]
     if origin is dict:
-        # Only the *value* type counts. Keys in every published dict here are
-        # controlled vocabularies (metric and check names), and treating them as
-        # carriers would demand redacting `dict[str, bool]` and
-        # `dict[str, float]`, whose values cannot hold a path at all.
-        return bool(args[1:]) and _carries_str(args[1])
+        # Keys count as well as values. Maps on models with no in-harness
+        # constructor (VerificationReport.checks/.metrics) are built purely from
+        # agent-submitted JSON, so the submitter picks the key — a path can ride
+        # in the key of a dict[str, bool] whose values cannot hold one. The CI
+        # audit did not scan key text either, making that the one gap in this
+        # chain with no backstop (#684).
+        return True
     return any(_carries_str(arg) for arg in args)
 
 
@@ -93,7 +99,9 @@ def _probe_for(annotation: object):
     if origin in (list, set, tuple):
         return [PROBE]
     if origin is dict:
-        return {"probe": _probe_for(args[1])} if args[1:] else None
+        # Probe the key as well; a value-only probe missed the key channel.
+        value_probe = _probe_for(args[1]) if args[1:] else None
+        return {PROBE: value_probe if value_probe is not None else True}
     for arg in args:                      # Optional[...] / Union[...]
         if _carries_str(arg):
             return _probe_for(arg)
