@@ -151,3 +151,27 @@ def test_grader_crash_detail_is_redacted(tmp_path):
     details = " ".join(level.detail or "" for level in result.levels)
     assert "tony" not in details.lower(), details
     assert find_host_paths(details) == []
+
+
+def test_agent_error_detail_is_redacted(tmp_path, monkeypatch):
+    """An agent crash publishes its exception text into `grade.levels[].detail`.
+
+    Found by the independent reviewer of the first pass at this fix: redacting
+    the evaluator's three sites left `runner._error_result` untouched, and an
+    agent traceback carrying a path reached the published grade the same way.
+    Redaction lives inside `_error_result` so any future caller is covered too.
+    """
+    from makerbench import runner
+
+    result = runner._error_result(
+        "vented_plate", 0, "blind",
+        "agent raised: FileNotFoundError: /home/tony/bench-wt/runs/x/input.scad",
+    )
+
+    detail = result.grade.levels[0].detail or ""
+    assert find_host_paths(detail) == [], detail
+    assert "tony" not in detail.lower()
+    # The failure is still legible and still scored as a failure.
+    assert "agent raised" in detail
+    assert result.grade.levels[0].passed is False
+    assert result.grade.notes == "agent_error"

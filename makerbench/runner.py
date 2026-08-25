@@ -139,7 +139,12 @@ def _error_result(
     runtime: Optional[RuntimeReport] = None,
 ) -> TaskResult:
     grade = GradeResult(task_id=family, track=track, levels=[LevelResult(
-        level=FailureLevel.STRUCTURAL, passed=False, detail=detail,
+        # Redacted here rather than at the call site: `detail` is caller-supplied
+        # text built from an exception (an agent crash, a CLI failure), and this
+        # is the boundary where it becomes a published grade field. Doing it here
+        # covers every future caller too (#684).
+        level=FailureLevel.STRUCTURAL, passed=False,
+        detail=redact_host_paths(detail),
         checks={"agent_ok": False})], notes="agent_error")
     grade.compute_score()
     return TaskResult(
