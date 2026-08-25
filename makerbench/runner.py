@@ -38,6 +38,7 @@ from .vector_eval import evaluate_vector
 from . import vector as vec
 from .parts import PartsLibrary, as_tool
 from .render import perceive as perceive_source
+from .redaction import redact_host_paths, run_relative_path
 from .schema import (ArtifactFile, Attempt, AgentFn, DesignDossier, FailureLevel,
                      GradeResult, LevelResult, PerceptionObservation, RuntimeReport, TaskResult,
                      Track, TaskSpec)
@@ -188,7 +189,9 @@ def run_one(family: str, seed: int, track: Track, agent: AgentFn, *,
                 os.path.join(out_dir, "perceive", f"iter_{iteration}"),
             )
             perception_trace.append(
-                _perception_observation_from_payload(observation, iteration)
+                _perception_observation_from_payload(
+                    observation, iteration, base_dir=out_dir
+                )
             )
             return observation
 
@@ -296,6 +299,7 @@ def _isoformat_z(value: datetime) -> str:
 def _perception_observation_from_payload(
     payload: dict,
     iteration: int,
+    base_dir: Optional[str] = None,
 ) -> PerceptionObservation:
     artifacts = payload.get("artifacts") if isinstance(payload, dict) else None
     if not isinstance(artifacts, list):
@@ -314,10 +318,54 @@ def _perception_observation_from_payload(
         iteration=iteration,
         compiled=bool(payload.get("compiled")) if isinstance(payload, dict) else False,
         bbox_mm=bbox_mm,
-        warnings=[str(warning) for warning in warnings],
-        artifacts=artifacts,
+        # Both fields carry host-absolute paths straight out of the renderer:
+        # `warnings` embeds OpenSCAD stderr naming the temp file it failed to
+        # parse, and each artifact `path` is the local run directory. This is the
+        # single funnel every perception observation passes through on its way
+        # into a published bundle, so it is where the host detail is dropped —
+        # artifact paths keep their reproducible run-scoped tail, free-text
+        # warnings collapse to a redaction token (#684).
+        warnings=[redact_host_paths(str(warning)) for warning in warnings],
+        artifacts=[_redacted_artifact(artifact, base_dir) for artifact in artifacts],
         metrics=metrics,
     )
+
+
+def _redacted_artifact(artifact: object, base_dir: Optional[str] = None) -> object:
+    """Rewrite an artifact's ``path`` to its run-relative form, leaving all else be.
+
+    ``base_dir`` is the run's own output directory, so the artifact's location
+    inside it (``perceive/iter_1/view_iso.png``) is exact provenance that costs
+    nothing to publish. Falling back to a ``runs/``-anchored tail and then to a
+    flat token covers artifacts written outside the run directory, where there is
+    no reliable structure left to keep.
+
+    Non-dict entries and entries without a string ``path`` pass through untouched
+    so a malformed payload reaches schema validation as-is rather than raising a
+    different error here.
+    """
+    if not isinstance(artifact, dict):
+        return artifact
+    path = artifact.get("path")
+    if not isinstance(path, str):
+        return artifact
+    scoped = _run_relative_artifact_path(path, base_dir)
+    if scoped == path:
+        return artifact
+    return {**artifact, "path": scoped}
+
+
+def _run_relative_artifact_path(path: str, base_dir: Optional[str]) -> str:
+    if base_dir:
+        try:
+            relative = os.path.relpath(os.path.abspath(path), os.path.abspath(base_dir))
+        except (OSError, ValueError):
+            relative = None
+        # `..` means the artifact sits outside the run directory, so the relative
+        # form would still walk the host tree — reject it and fall through.
+        if relative and not relative.startswith(".."):
+            return Path(relative).as_posix()
+    return run_relative_path(path)
 
 
 def _write_source_artifact(

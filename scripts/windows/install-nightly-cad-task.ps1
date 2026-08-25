@@ -4,11 +4,11 @@ Registers the Windows scheduled task for the MakerBench nightly CAD arena.
 
 .DESCRIPTION
 Canonical invocation (run from an elevated PowerShell in the canonical
-checkout C:\Users\Tony\Documents\GitHub\makerbench_ecosystem\makerbench-hwe):
+checkout C:\Users\<you>\Documents\GitHub\makerbench_ecosystem\makerbench-hwe):
 
   powershell.exe -NoProfile -ExecutionPolicy Bypass `
     -File scripts\windows\install-nightly-cad-task.ps1 `
-    -RunnerScript C:\Users\Tony\Documents\GitHub\makerbench_ecosystem\makerbench-hwe\scripts\windows\run-nightly-cad-arena.ps1 `
+    -RunnerScript C:\Users\<you>\Documents\GitHub\makerbench_ecosystem\makerbench-hwe\scripts\windows\run-nightly-cad-arena.ps1 `
     -QueueWsl /mnt/c/.../queue.json `
     -OutputRootWsl /mnt/c/.../runs `
     -SecretsWsl /mnt/c/.../nightly-cad-secrets.env `

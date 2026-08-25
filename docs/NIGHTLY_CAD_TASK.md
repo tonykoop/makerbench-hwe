@@ -19,8 +19,8 @@ Windows side, both in `scripts/windows/`:
 
 The canonical repo checkout is:
 
-- Windows: `C:\Users\Tony\Documents\GitHub\makerbench_ecosystem\makerbench-hwe`
-- WSL: `/mnt/c/Users/Tony/Documents/GitHub/makerbench_ecosystem/makerbench-hwe`
+- Windows: `C:\Users\<you>\Documents\GitHub\makerbench_ecosystem\makerbench-hwe`
+- WSL: `/mnt/c/Users/<you>/Documents/GitHub/makerbench_ecosystem/makerbench-hwe`
 
 The pre-2026-07 `Documents/GitHub/makerbench-hwe` checkout is dead. The runner
 no longer hardcodes any checkout: when `-RepoWsl` is not supplied it derives
@@ -35,8 +35,8 @@ Run the arena once, manually (from the canonical checkout):
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File scripts\windows\run-nightly-cad-arena.ps1 `
-  -QueueWsl /mnt/c/Users/Tony/Documents/GitHub/makerbench_ecosystem/makerbench-hwe/runs/nightly-cad-queue.json `
-  -OutputRootWsl /mnt/c/Users/Tony/Documents/GitHub/makerbench_ecosystem/makerbench-hwe/runs `
+  -QueueWsl /mnt/c/Users/<you>/Documents/GitHub/makerbench_ecosystem/makerbench-hwe/runs/nightly-cad-queue.json `
+  -OutputRootWsl /mnt/c/Users/<you>/Documents/GitHub/makerbench_ecosystem/makerbench-hwe/runs `
   -SecretsWsl <path to nightly-cad secrets env file>
 ```
 
@@ -45,7 +45,7 @@ Register the scheduled task (elevated PowerShell; keep `-Disabled` until GO):
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File scripts\windows\install-nightly-cad-task.ps1 `
-  -RunnerScript C:\Users\Tony\Documents\GitHub\makerbench_ecosystem\makerbench-hwe\scripts\windows\run-nightly-cad-arena.ps1 `
+  -RunnerScript C:\Users\<you>\Documents\GitHub\makerbench_ecosystem\makerbench-hwe\scripts\windows\run-nightly-cad-arena.ps1 `
   -QueueWsl <queue json, WSL path> `
   -OutputRootWsl <output root, WSL path> `
   -SecretsWsl <secrets env file, WSL path> `

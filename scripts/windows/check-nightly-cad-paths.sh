@@ -23,7 +23,7 @@ done
 if [ "$missing" -ne 0 ]; then
     {
         echo "Nightly CAD arena aborted before launch: fix the missing path(s) above."
-        echo "Canonical repo checkout: /mnt/c/Users/Tony/Documents/GitHub/makerbench_ecosystem/makerbench-hwe"
+        echo "Canonical repo checkout: /mnt/c/Users/<you>/Documents/GitHub/makerbench_ecosystem/makerbench-hwe"
         echo "See docs/NIGHTLY_CAD_TASK.md for the canonical invocation."
     } >&2
     exit 1

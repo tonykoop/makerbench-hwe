@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import os
 import threading
+import pytest
 from types import SimpleNamespace
 
 from makerbench import runner
@@ -396,3 +397,66 @@ def test_run_one_vector_svg_source_gets_svg_suffix(tmp_path, monkeypatch):
     assert result.dossier.artifacts[0].path.endswith(".svg")
     assert scad_named_path.with_suffix(".svg").exists()
     assert result.dossier.artifacts[0].format == "svg"
+
+
+# --- host-path redaction at the publication funnel (#684) -------------------
+def test_perception_observation_scrubs_host_paths_from_warnings_and_artifacts():
+    """Every perception observation passes through here on its way to a bundle.
+
+    Redacting at this funnel rather than at the renderer keeps local debugging
+    output intact while guaranteeing nothing host-absolute reaches a published
+    result.
+    """
+    observation = runner._perception_observation_from_payload(
+        {
+            "compiled": False,
+            "warnings": [
+                "iso: Render failed: ERROR: Parser error: syntax error in file "
+                "../../../../../../../tmp/tmpr72t7bwb.scad, line 1\n"
+                "Can't parse file '/tmp/tmpr72t7bwb.scad'!"
+            ],
+            "artifacts": [
+                {
+                    "label": "iso",
+                    "role": "render",
+                    "format": "png",
+                    "sha256": "abc123",
+                    "path": "/home/tony/bench-wt/runs/m/t__seed0__perception__x/"
+                    "perceive/iter_1/view_iso.png",
+                }
+            ],
+            "metrics": {},
+        },
+        1,
+    )
+
+    assert "tony" not in str(observation.warnings).lower()
+    assert "/tmp/" not in str(observation.warnings)
+    # Run-scoped tail survives, so the iteration is still identifiable.
+    assert observation.artifacts[0].path == (
+        "runs/m/t__seed0__perception__x/perceive/iter_1/view_iso.png"
+    )
+    # Everything else about the artifact is preserved, hash included.
+    assert observation.artifacts[0].sha256 == "abc123"
+    assert observation.artifacts[0].label == "iso"
+
+
+@pytest.mark.parametrize("artifact", ["not-a-dict", 42, {"role": "render"}, {"path": None}])
+def test_redacted_artifact_passes_malformed_entries_through(artifact):
+    """Redaction must not pre-empt schema validation with an error of its own.
+
+    Entries that are not a dict, or carry no string ``path``, come back
+    untouched so the payload still reaches pydantic and fails there — with the
+    field-level message a caller can act on.
+    """
+    assert runner._redacted_artifact(artifact, "/run/dir") is artifact
+
+
+def test_redacted_artifact_rejects_paths_outside_the_run_directory():
+    """A `..` relative form would still walk the host tree, so it is refused."""
+    scoped = runner._redacted_artifact(
+        {"path": "/home/tony/elsewhere/view.png"}, "/home/tony/bench-wt/runs/m/t"
+    )
+
+    assert ".." not in scoped["path"]
+    assert "tony" not in scoped["path"].lower()
