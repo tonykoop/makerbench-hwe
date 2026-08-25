@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,6 +45,18 @@ class RegradeMismatch(RegradeError):
 
 class RegradeInfrastructureError(RegradeError):
     """The regrade environment could not run the public grader."""
+
+
+class DiscoveryDisagreement(RegradeError):
+    """Changed-path discovery dropped an existing results/**/*.json bundle.
+
+    Raised instead of silently returning an empty result list: an empty list
+    makes `regrade-results`/`verify-attestations` take their early-success
+    exit, which reports PASS having checked nothing.
+    """
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -99,7 +112,58 @@ def changed_result_paths(base: str = "origin/main", repo_root: Path | str = ".")
         stderr=subprocess.PIPE,
     )
     changed_paths = [Path(line) for line in proc.stdout.splitlines() if line.strip()]
-    return result_paths_for_changed_paths(changed_paths, repo_root=root)
+    return _discover_result_paths(changed_paths, repo_root=root, base=base)
+
+
+def _discover_result_paths(
+    changed_paths: list[Path | str],
+    *,
+    repo_root: Path | str = ".",
+    base: str = "origin/main",
+) -> list[Path]:
+    """Map changed paths to result files, failing closed on a discovery gap.
+
+    Wraps `result_paths_for_changed_paths` with two safeguards `changed_result_paths`
+    needs but pure path-mapping tests don't: (1) refuse to return an empty list
+    when the change set plainly touches results/**/*.json, since an empty list
+    makes callers report PASS having checked nothing; (2) always log the
+    discovered count so a legitimate zero is visible in CI output.
+    """
+    root = Path(repo_root)
+    changed = [Path(p) for p in changed_paths]
+    result_paths = result_paths_for_changed_paths(changed, repo_root=root)
+
+    # Independent, deliberately naive check that discovery didn't drop an
+    # existing result bundle: any changed path that is itself an existing
+    # results/**/*.json file (outside artifacts/) must show up in the
+    # discovered set. If it doesn't, discovery disagrees with the diff it was
+    # given, and that disagreement is the bug, not a legitimate zero.
+    expected_json = {
+        path
+        for path in changed
+        if path.parts
+        and path.parts[0] == "results"
+        and path.suffix.lower() == ".json"
+        and "artifacts" not in path.parts
+        and (root / path).exists()
+    }
+    missing = sorted(str(path) for path in expected_json - set(result_paths))
+    if missing:
+        raise DiscoveryDisagreement(
+            f"changed_result_paths diffed {base!r}...HEAD and found "
+            f"{len(missing)} existing results/**/*.json path(s) that discovery "
+            f"failed to map to a result bundle: {missing}. Refusing to report "
+            "0 discovered bundles when the change set touches results/**."
+        )
+
+    logger.info(
+        "changed_result_paths: discovered %d result bundle(s) from %d changed "
+        "path(s) against %s",
+        len(result_paths),
+        len(changed),
+        base,
+    )
+    return result_paths
 
 
 def result_paths_for_changed_paths(
@@ -443,10 +507,12 @@ def _private_artifact_path(
 
 
 def _is_result_json(path: Path) -> bool:
+    parts = path.parts
     return (
-        len(path.parts) == 3
-        and path.parts[0] == "results"
+        len(parts) >= 3
+        and parts[0] == "results"
         and path.suffix.lower() == ".json"
+        and "artifacts" not in parts
     )
 
 
