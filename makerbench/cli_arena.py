@@ -1001,3 +1001,27 @@ def arena_preflight(
         console.print(line, markup=False, highlight=False)
     if not report.ok:
         raise typer.Exit(code=1)
+
+
+@arena_app.command("studio")
+def arena_studio(
+        run_dir: Optional[str] = typer.Option(
+            None, "--run-dir", help="Initial run directory to load in Arena Studio."),
+        host: str = typer.Option("127.0.0.1", "--host", help="Bind host."),
+        port: int = typer.Option(8080, "--port", help="Bind port."),
+        registry: str = typer.Option(DEFAULT_REGISTRY, "--registry", help="Arena registry JSON path.")):
+    """Launch the MakerBench Arena Studio web interface (Issue #696)."""
+
+    try:
+        import uvicorn
+    except ImportError:
+        console.print("[red]uvicorn is required to run Arena Studio: pip install uvicorn[/red]")
+        raise typer.Exit(code=1)
+
+    from .arena_studio import create_studio_app
+
+    run_path = Path(run_dir) if run_dir else None
+    app = create_studio_app(default_run_dir=run_path, registry_path=Path(registry))
+    console.print(f"[bold green]MakerBench Arena Studio running at http://{host}:{port}/[/bold green]")
+    uvicorn.run(app, host=host, port=port)
+
