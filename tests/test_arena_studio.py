@@ -218,6 +218,7 @@ def test_competition_launch_and_status(client: TestClient):
         "max_turns": 16,
         "timeout_s": 300,
         "seed": 0,
+        "skip_image_gate": True,
     }
     response = client.post("/api/competitions/launch", json=payload)
     assert response.status_code == 200
@@ -237,4 +238,82 @@ def test_competition_launch_and_status(client: TestClient):
     lines = logs_res.json().get("lines") or []
     assert len(lines) >= 1
     assert any("LAUNCHING ARENA COMPETITION" in line for line in lines)
+
+
+def test_reference_gatekeeper_and_approval_flow(client: TestClient):
+    """Test Story #697: Reference image gatekeeper check and approval flow."""
+    # 1. Check initial reference status
+    ref_res = client.get("/api/tasks/kora/reference")
+    assert ref_res.status_code == 200
+    ref_data = ref_res.json()
+    assert ref_data["task_id"] == "kora"
+    assert "prompt_cmd" in ref_data
+
+    # Prompt endpoint
+    prompt_res = client.get("/api/tasks/kora/prompt-reference")
+    assert prompt_res.status_code == 200
+    assert "agy -p" in prompt_res.json()["prompt_cmd"]
+
+    # 2. Gatekeeper rejection when unapproved
+    client.post("/api/tasks/kora/approve?approved=false")
+    launch_payload = {
+        "run_id": "test_gated_round",
+        "instruments": ["kora"],
+        "models": ["claude-opus-5", "cadam-fable-5.1"],
+        "context_tier": "image",
+        "skip_image_gate": False,
+    }
+    blocked_res = client.post("/api/competitions/launch", json=launch_payload)
+    assert blocked_res.status_code == 200
+    assert blocked_res.json()["success"] is False
+    assert "Visual Reference Gatekeeper" in blocked_res.json()["error"]
+
+    # 3. Approve and retry
+    client.post("/api/tasks/kora/approve?approved=true")
+    allowed_res = client.post("/api/competitions/launch", json=launch_payload)
+    assert allowed_res.status_code == 200
+    assert allowed_res.json()["success"] is True
+
+
+def test_export_winners_and_report(client: TestClient, fake_run: Path):
+    """Test Story #699: Winner export and markdown report generation."""
+    # Export winners
+    exp_res = client.post(f"/api/runs/{fake_run.name}/export-winners")
+    assert exp_res.status_code == 200
+    data = exp_res.json()
+    assert data["success"] is True
+    assert data["exported_count"] >= 1
+
+    # Export report
+    rep_res = client.get(f"/api/runs/{fake_run.name}/export-report")
+    assert rep_res.status_code == 200
+    report_text = rep_res.text
+    assert f"# MakerBench Arena Studio — Report: {fake_run.name}" in report_text
+    assert "Elo Leaderboard" in report_text
+    assert "Agreement Analysis" in report_text
+
+
+def test_vote_with_structured_defect_flags(client: TestClient, fake_run: Path):
+    """Test Story #698: Voting with structured defect and disposition flags."""
+    # Get pending pair from queue
+    queue_res = client.get(f"/api/runs/{fake_run.name}/queue?voter=alice")
+    assert queue_res.status_code == 200
+    queue_data = queue_res.json()
+    assert queue_data.get("has_next") is True
+    pair_id = queue_data["current_pair"]["pair_id"]
+
+    # Cast vote with defect checklist and disposition flags
+    vote_payload = {
+        "pair_id": pair_id,
+        "winner": "left",
+        "voter": "alice",
+        "flags": {
+            "left": ["missing_critical_components", "save_for_later"],
+            "right": ["wrong_proportions", "delete_immediately"],
+        },
+    }
+    res = client.post(f"/api/runs/{fake_run.name}/vote", json=vote_payload)
+    assert res.status_code == 200
+    assert res.json()["success"] is True
+
 

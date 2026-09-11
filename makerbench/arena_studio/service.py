@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import threading
 import time
 from datetime import datetime, timezone
@@ -19,7 +20,10 @@ from makerbench.cli_arena import (
     _stage_blind_assets,
     _voted_pair_keys,
 )
-from makerbench.code_cad_agreement import build_agreement_summary
+from makerbench.code_cad_agreement import (
+    build_agreement_summary,
+    render_markdown_summary,
+)
 from makerbench.code_cad_vote_surface import (
     BlindPair,
     VoteCandidate,
@@ -257,6 +261,75 @@ class ArenaStudioService:
         success = queue.cast(pair_id=pair_id, winner=winner, flags=flags)
         return success
 
+    def _get_approvals_path(self) -> Path:
+        p = self.repo_root / ".makerbench" / "reference_approvals.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+
+    def _load_approvals(self) -> dict[str, bool]:
+        p = self._get_approvals_path()
+        if p.exists():
+            try:
+                return json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return {}
+
+    def _save_approvals(self, approvals: dict[str, bool]) -> None:
+        p = self._get_approvals_path()
+        try:
+            p.write_text(json.dumps(approvals, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def get_task_reference(self, task_id: str) -> dict[str, Any]:
+        """Check reference visual assets and gatekeeper approval status (Story #697)."""
+        approvals = self._load_approvals()
+
+        candidate_paths = [
+            self.repo_root / "tasks" / task_id / "reference.png",
+            self.repo_root / "tasks" / task_id / "assets" / "reference.png",
+            self.repo_root / "tasks" / "code_cad_arena" / "references" / f"{task_id}.png",
+            self.repo_root / "instruments" / task_id / "reference.png",
+        ]
+
+        img_path = None
+        for cp in candidate_paths:
+            if cp.exists():
+                img_path = cp
+                break
+
+        tasks = self.get_registry_tasks()
+        task_info = next((t for t in tasks if t.get("id") == task_id), None) or {}
+        envelope = task_info.get("envelope_mm") or [100, 100, 100]
+
+        has_image = img_path is not None
+        # Tasks with an existing image default to approved; others require inspection
+        approved = approvals.get(task_id, has_image)
+
+        prompt_cmd = (
+            f"agy -p \"Generate high-fidelity photorealistic reference view of acoustic instrument "
+            f"'{task_id}' (envelope: {envelope[0]}x{envelope[1]}x{envelope[2]}mm, family: {task_info.get('family', 'acoustic')}) "
+            f"on neutral dark studio background for visual ground truth comparison.\""
+        )
+
+        return {
+            "task_id": task_id,
+            "has_image": has_image,
+            "image_path": str(img_path) if img_path else None,
+            "approved": approved,
+            "envelope_mm": envelope,
+            "family": task_info.get("family", "general"),
+            "prompt_cmd": prompt_cmd,
+        }
+
+    def set_task_approval(self, task_id: str, approved: bool) -> dict[str, Any]:
+        """Approve or reject a reference image for competition gatekeeping (Story #697)."""
+        approvals = self._load_approvals()
+        approvals[task_id] = approved
+        self._save_approvals(approvals)
+        return {"task_id": task_id, "approved": approved}
+
     def launch_competition(self, config: dict[str, Any]) -> dict[str, Any]:
         """Initialize and launch an arena competition run."""
         run_id = config.get("run_id") or f"rounds_{int(time.time())}"
@@ -269,6 +342,20 @@ class ArenaStudioService:
         max_turns = int(config.get("max_turns") or 16)
         timeout_s = int(config.get("timeout_s") or 300)
         seed = int(config.get("seed") or 0)
+
+        # Gatekeeper Check (Story #697): enforce reference inspection when in image mode
+        skip_image_gate = config.get("skip_image_gate", False)
+        if context_tier == "image" and not skip_image_gate:
+            unapproved = [inst for inst in instruments if not self.get_task_reference(inst)["approved"]]
+            if unapproved:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Visual Reference Gatekeeper: {len(unapproved)} instrument(s) ({', '.join(unapproved[:3])}) "
+                        "have not been visually inspected and approved. Please approve reference images before launching."
+                    ),
+                    "unapproved": unapproved,
+                }
 
         # Locate run directory
         run_dir = self.repo_root / "runs" / "code_cad_arena" / run_id
@@ -365,4 +452,104 @@ class ArenaStudioService:
             return lines[-tail:]
         except Exception:
             return []
+
+    def export_winners(self, run_dir: Path) -> dict[str, Any]:
+        """Export winning CAD models from a run into the instruments repository (Story #699)."""
+        summary = self.get_run_summary(run_dir)
+        trials = summary.get("trials") or []
+        leaderboard = self.get_run_leaderboard(run_dir).get("leaderboard") or []
+
+        rank_order = {entry["entrant"]: idx for idx, entry in enumerate(leaderboard)}
+
+        by_inst: dict[str, list[dict]] = {}
+        for t in trials:
+            inst = t.get("instrument_id")
+            if inst:
+                by_inst.setdefault(inst, []).append(t)
+
+        exported: list[dict[str, Any]] = []
+        for inst, inst_trials in by_inst.items():
+            inst_trials.sort(
+                key=lambda tr: (
+                    not (tr.get("grade") or {}).get("compiled", False),
+                    not (tr.get("grade") or {}).get("manifold", False),
+                    rank_order.get(tr.get("model_id"), 999),
+                )
+            )
+            best = inst_trials[0] if inst_trials else None
+            if not best:
+                continue
+
+            target_dir = self.repo_root / "instruments" / inst
+            target_dir.mkdir(parents=True, exist_ok=True)
+            artifacts = (best.get("result") or {}).get("artifacts") or {}
+            scad_src = artifacts.get("scad_path")
+
+            dest_scad = target_dir / "winner.scad"
+            if scad_src and Path(scad_src).exists():
+                shutil.copyfile(scad_src, dest_scad)
+                exported.append({
+                    "instrument_id": inst,
+                    "model_id": best.get("model_id"),
+                    "trial_id": best.get("trial_id"),
+                    "exported_path": str(dest_scad),
+                })
+            else:
+                code = best.get("code") or f"// Winning model: {best.get('model_id')} for {inst}\n"
+                dest_scad.write_text(code, encoding="utf-8")
+                exported.append({
+                    "instrument_id": inst,
+                    "model_id": best.get("model_id"),
+                    "trial_id": best.get("trial_id"),
+                    "exported_path": str(dest_scad),
+                })
+
+        return {
+            "success": True,
+            "run_id": run_dir.name,
+            "exported_count": len(exported),
+            "winners": exported,
+        }
+
+    def export_report(self, run_dir: Path) -> str:
+        """Export a self-contained Markdown report for the run (Story #699)."""
+        summary = self.get_run_summary(run_dir)
+        agreement = self.get_run_agreement(run_dir)
+        leaderboard_data = self.get_run_leaderboard(run_dir)
+        rated = leaderboard_data.get("leaderboard") or []
+        unrated = leaderboard_data.get("unrated_entrants") or []
+
+        lines = [
+            f"# MakerBench Arena Studio — Report: {run_dir.name}",
+            f"Generated at: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%SZ')}",
+            "",
+            "## Summary",
+            f"- Total Trials: {summary.get('trials_count', 0)}",
+            f"- Total Votes Cast: {summary.get('votes_count', 0)}",
+            f"- Compiled Models: {summary.get('compiled_count', 0)}",
+            f"- Manifold Meshes: {summary.get('manifold_count', 0)}",
+            "",
+            "## Elo Leaderboard",
+            "| Rank | Entrant | Elo | Wins | Losses | Ties |",
+            "|------|---------|-----|------|--------|------|",
+        ]
+        for idx, row in enumerate(rated, 1):
+            lines.append(
+                f"| {idx} | `{row.get('entrant')}` | {row.get('elo', 1500):.1f} | {row.get('wins', 0)} | {row.get('losses', 0)} | {row.get('ties', 0)} |"
+            )
+
+        if unrated:
+            lines.extend([
+                "",
+                "### Unrated Entrants (0 Votes Cast)",
+                ", ".join(f"`{e}`" for e in unrated),
+            ])
+
+        lines.extend([
+            "",
+            "## Agreement Analysis (Spearman Rank Correlation)",
+            render_markdown_summary(agreement),
+        ])
+
+        return "\n".join(lines)
 

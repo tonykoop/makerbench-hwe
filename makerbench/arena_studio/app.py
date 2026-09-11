@@ -7,7 +7,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -35,6 +35,7 @@ class CompetitionLaunchPayload(BaseModel):
     max_turns: int = 16
     timeout_s: int = 300
     seed: int = 0
+    skip_image_gate: bool = False
 
 
 def create_studio_app(
@@ -203,6 +204,34 @@ def create_studio_app(
         if not asset.exists() or not asset.is_file():
             raise HTTPException(status_code=404, detail="Asset not found")
         return FileResponse(str(asset))
+
+    # Story #697: Reference Image Gatekeeper Endpoints
+    @app.get("/api/tasks/{task_id}/reference")
+    def get_task_reference(task_id: str):
+        return service.get_task_reference(task_id)
+
+    @app.post("/api/tasks/{task_id}/approve")
+    def approve_task_reference(task_id: str, approved: bool = Query(True)):
+        return service.set_task_approval(task_id, approved)
+
+    @app.get("/api/tasks/{task_id}/prompt-reference")
+    def get_task_prompt_reference(task_id: str):
+        ref = service.get_task_reference(task_id)
+        return {"task_id": task_id, "prompt_cmd": ref["prompt_cmd"]}
+
+    # Story #699: Export Winners & Reports
+    @app.post("/api/runs/{run_id}/export-winners")
+    def export_run_winners(run_id: str):
+        run_path = _resolve_run_dir(run_id)
+        return service.export_winners(run_path)
+
+    @app.get("/api/runs/{run_id}/export-report")
+    def export_run_report(run_id: str, fmt: str = Query("markdown")):
+        run_path = _resolve_run_dir(run_id)
+        report_text = service.export_report(run_path)
+        if fmt == "markdown":
+            return PlainTextResponse(report_text, media_type="text/markdown")
+        return {"run_id": run_id, "report": report_text}
 
     # Main Dashboard Single-Page UI
     @app.get("/", response_class=HTMLResponse)
@@ -508,6 +537,13 @@ def _render_studio_html() -> str:
     .badge-api { background: #854d0e; color: #fde047; }
     .badge-mcp { background: #581c87; color: #d8b4fe; }
     .badge-paused { background: #991b1b; color: #fca5a5; }
+
+    @media (max-width: 768px) {
+      .vote-stage { flex-direction: column !important; }
+      .grid-3, .grid-4, .grid-2 { grid-template-columns: 1fr !important; }
+      header { flex-direction: column; height: auto !important; padding: 12px !important; gap: 10px; }
+      .nav-tabs { flex-wrap: wrap; }
+    }
   </style>
 </head>
 <body>
@@ -601,6 +637,19 @@ def _render_studio_html() -> str:
           <div class="scroll-list" id="launcherTaskList">
             <!-- Dynamic task items -->
           </div>
+
+          <!-- Story #697: Visual Reference Gatekeeper Inspector -->
+          <div id="refInspectorCard" style="background: #111823; border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-top: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span style="font-size: 12px; font-weight: 700;">🖼️ Reference Gatekeeper</span>
+              <span id="refStatusBadge" class="badge badge-sub">Ready</span>
+            </div>
+            <p id="refTaskName" style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">Click any task above to inspect or approve its visual reference.</p>
+            <div style="display: flex; gap: 8px;">
+              <button id="btnApproveRef" class="btn btn-primary" style="font-size: 11px; padding: 4px 10px;" onclick="approveActiveReference()">✅ Approve Image</button>
+              <button class="btn btn-secondary" style="font-size: 11px; padding: 4px 10px;" onclick="copyAgyPrompt()">🎨 agy Prompt</button>
+            </div>
+          </div>
         </div>
 
         <!-- Col 2: Models, Engines & Levels -->
@@ -628,6 +677,14 @@ def _render_studio_html() -> str:
           <div class="check-card">
             <label><input type="checkbox" name="launchModel" value="codex"> Codex (CLI)</label>
             <span class="badge badge-sub">Sub $0</span>
+          </div>
+          <div class="check-card" style="opacity: 0.55; cursor: not-allowed;" title="Strictly paused per Tony's quota directive">
+            <label style="cursor: not-allowed;"><input type="checkbox" name="launchModel" value="gpt-5.6-turbo" disabled> GPT-5.6 Turbo</label>
+            <span class="badge badge-paused">PAUSED (Quota)</span>
+          </div>
+          <div class="check-card" style="opacity: 0.55; cursor: not-allowed;" title="Strictly paused per Tony's quota directive">
+            <label style="cursor: not-allowed;"><input type="checkbox" name="launchModel" value="gpt-5.6-pro" disabled> GPT-5.6 Pro</label>
+            <span class="badge badge-paused">PAUSED (Quota)</span>
           </div>
 
           <div style="font-size: 12px; font-weight: 700; color: var(--text-muted); margin: 12px 0 6px; text-transform: uppercase;">CAD Engine / MCP Connector</div>
@@ -715,9 +772,19 @@ def _render_studio_html() -> str:
 
     <!-- VOTING ARENA TAB -->
     <section id="pane-arena" class="tab-pane">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-        <div id="voteProgress" style="font-weight: 600; color: var(--text-muted);">Pair 0 of 0</div>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div id="voteProgress" style="font-weight: 600; color: var(--text-muted);">Pair 0 of 0</div>
+          <div class="filter-pills" style="margin: 0;">
+            <button id="btnTurntableMode" class="pill active" onclick="setViewerMode('turntable')">🔄 24-Frame Turntable (Zero-WebGL)</button>
+            <button id="btnWebglMode" class="pill" onclick="setViewerMode('webgl')">🧊 Interactive 3D (WebGL)</button>
+          </div>
+        </div>
         <div style="font-size: 13px; color: var(--text-muted);">Shortcuts: <b>L</b> = Left, <b>D</b> = Draw, <b>R</b> = Right</div>
+      </div>
+
+      <div id="webglNotice" style="display:none; background: #854d0e; color: #fde047; padding: 8px 14px; border-radius: 6px; font-size: 12px; margin-bottom: 12px;">
+        ⚠️ WebGL hardware context not available or lost in current session. Automatic fallback to zero-WebGL 24-frame DOM turntable active.
       </div>
 
       <div class="vote-stage" id="voteStage">
@@ -731,10 +798,13 @@ def _render_studio_html() -> str:
             <img id="imgLeft" src="" alt="Candidate Left" />
           </div>
           <div class="flags-box" id="flagsLeft">
+            <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">Defect Checklist</div>
             <label><input type="checkbox" value="missing_critical_components"> Missing parts</label>
-            <label><input type="checkbox" value="misaligned_assembly"> Misaligned</label>
-            <label><input type="checkbox" value="insufficient_detail"> Low detail</label>
-            <label><input type="checkbox" value="wrong_proportions"> Proportions</label>
+            <label><input type="checkbox" value="misaligned_assembly"> Misaligned / collisions</label>
+            <label><input type="checkbox" value="wrong_proportions"> Distorted proportions</label>
+            <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); margin: 6px 0 4px; text-transform: uppercase;">Disposition</div>
+            <label><input type="checkbox" value="save_for_later"> Save for later</label>
+            <label><input type="checkbox" value="delete_immediately"> Reject candidate</label>
           </div>
         </div>
 
@@ -748,10 +818,13 @@ def _render_studio_html() -> str:
             <img id="imgRight" src="" alt="Candidate Right" />
           </div>
           <div class="flags-box" id="flagsRight">
+            <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">Defect Checklist</div>
             <label><input type="checkbox" value="missing_critical_components"> Missing parts</label>
-            <label><input type="checkbox" value="misaligned_assembly"> Misaligned</label>
-            <label><input type="checkbox" value="insufficient_detail"> Low detail</label>
-            <label><input type="checkbox" value="wrong_proportions"> Proportions</label>
+            <label><input type="checkbox" value="misaligned_assembly"> Misaligned / collisions</label>
+            <label><input type="checkbox" value="wrong_proportions"> Distorted proportions</label>
+            <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); margin: 6px 0 4px; text-transform: uppercase;">Disposition</div>
+            <label><input type="checkbox" value="save_for_later"> Save for later</label>
+            <label><input type="checkbox" value="delete_immediately"> Reject candidate</label>
           </div>
         </div>
       </div>
@@ -765,19 +838,43 @@ def _render_studio_html() -> str:
 
     <!-- LEADERBOARD TAB -->
     <section id="pane-leaderboard" class="tab-pane">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 8px;">
+        <div>
+          <h2 style="font-size: 18px; font-weight: 700;">Arena Analytics & Agreement Studio</h2>
+          <span style="font-size: 12px; color: var(--text-muted);">Human subjective preference vs objective compilation and physics gates</span>
+        </div>
+        <div style="display: flex; gap: 10px;">
+          <button class="btn btn-secondary" onclick="exportWinnersAction()">📥 Export Winners</button>
+          <button class="btn btn-secondary" onclick="exportReportAction()">📄 Download Report</button>
+        </div>
+      </div>
+
       <div class="grid-2">
         <div class="card">
-          <h3 style="margin-bottom: 16px;">Subjective Elo Leaderboard</h3>
+          <h3 style="margin-bottom: 12px;">Subjective Elo Leaderboard</h3>
           <table id="tableElo">
             <thead>
               <tr><th>Rank</th><th>Entrant</th><th>Rating</th><th>W-L-D</th><th>Games</th></tr>
             </thead>
             <tbody><tr><td colspan="5">Loading...</td></tr></tbody>
           </table>
+
+          <div id="unratedContainer" style="display: none; margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px;">
+            <div style="font-size: 12px; font-weight: 700; color: var(--text-muted); margin-bottom: 6px; text-transform: uppercase;">Unrated Ghost Entrants (0 Votes)</div>
+            <div id="unratedList" style="font-size: 12px; color: var(--text-muted);"></div>
+          </div>
         </div>
+
         <div class="card">
-          <h3 style="margin-bottom: 16px;">Dual-Scoreline Agreement</h3>
+          <h3 style="margin-bottom: 12px;">Dual-Scoreline Agreement & Scatter</h3>
           <div id="agreementMetric" style="margin-bottom: 12px; font-weight: 600; color: var(--accent);">-</div>
+
+          <div id="scatterWrapper" style="background: #090d14; border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-bottom: 12px; text-align: center;">
+            <svg id="scatterSvg" width="100%" height="220" viewBox="0 0 460 220" style="overflow: visible;">
+              <!-- Dynamic SVG Scatter Plot -->
+            </svg>
+          </div>
+
           <table id="tableAgreement">
             <thead>
               <tr><th>Entrant</th><th>Subj Rank</th><th>Obj Rank</th><th>Pass Rate</th></tr>
@@ -920,6 +1017,7 @@ def _render_studio_html() -> str:
         const div = document.createElement('div');
         div.className = 'task-item';
         div.onclick = (e) => {
+          inspectTask(t.id);
           if (e.target.tagName !== 'INPUT') {
             const cb = div.querySelector('input[type="checkbox"]');
             cb.checked = !cb.checked;
@@ -936,6 +1034,53 @@ def _render_studio_html() -> str:
         list.appendChild(div);
       });
       updateTaskCount();
+      if (filtered.length > 0 && !activeInspectTask) {
+        inspectTask(filtered[0].id);
+      }
+    }
+
+    let activeInspectTask = null;
+
+    async function inspectTask(taskId) {
+      activeInspectTask = taskId;
+      try {
+        const res = await fetch(`/api/tasks/${taskId}/reference`);
+        const data = await res.json();
+        document.getElementById('refTaskName').innerHTML = `<b>${data.task_id}</b> (${data.family}, ${data.envelope_mm.join('×')}mm)`;
+        const badge = document.getElementById('refStatusBadge');
+        if (data.approved) {
+          badge.className = 'badge badge-sub';
+          badge.textContent = 'Approved';
+        } else {
+          badge.className = 'badge badge-paused';
+          badge.textContent = 'Needs Inspection';
+        }
+      } catch (e) {
+        console.error('Failed to inspect task reference', e);
+      }
+    }
+
+    async function approveActiveReference() {
+      if (!activeInspectTask) {
+        const checked = document.querySelector('input[name="launchTask"]:checked');
+        if (checked) activeInspectTask = checked.value;
+        else return;
+      }
+      await fetch(`/api/tasks/${activeInspectTask}/approve?approved=true`, { method: 'POST' });
+      inspectTask(activeInspectTask);
+      alert(`Visual reference for '${activeInspectTask}' marked as APPROVED.`);
+    }
+
+    async function copyAgyPrompt() {
+      if (!activeInspectTask) {
+        const checked = document.querySelector('input[name="launchTask"]:checked');
+        if (checked) activeInspectTask = checked.value;
+        else return;
+      }
+      const res = await fetch(`/api/tasks/${activeInspectTask}/prompt-reference`);
+      const data = await res.json();
+      navigator.clipboard.writeText(data.prompt_cmd);
+      alert('Copied agy generation command to clipboard:\n\n' + data.prompt_cmd);
     }
 
     function updateTaskCount() {
@@ -1023,11 +1168,15 @@ def _render_studio_html() -> str:
           body: JSON.stringify(payload)
         });
         const data = await res.json();
+        if (!data.success) {
+          terminal.textContent += `[GATEKEEPER WARNING] ${data.error}\n`;
+          alert(data.error);
+          return;
+        }
         terminal.textContent += `[OK] ${data.message}\n`;
         terminal.textContent += `Run Path: ${data.path}\n`;
         terminal.textContent += `Streaming active job logs...\n\n`;
 
-        // Poll logs for the run
         const pollInterval = setInterval(async () => {
           const logRes = await fetch(`/api/competitions/${runId}/logs?tail=30`);
           const logData = await logRes.json();
@@ -1037,11 +1186,87 @@ def _render_studio_html() -> str:
           }
         }, 2000);
 
-        // Refresh run dropdown after a moment
         setTimeout(init, 3000);
       } catch (err) {
         terminal.textContent += `[ERROR] Failed to launch: ${err.message}\n`;
       }
+    }
+
+    /* Dual-Mode Viewport & WebGL Check (Story #698) */
+    let webglSupported = false;
+    let activeViewerMode = 'turntable';
+
+    function checkWebGLSupport() {
+      try {
+        const canvas = document.createElement('canvas');
+        webglSupported = !!(window.WebGL2RenderingContext && (canvas.getContext('webgl2') || canvas.getContext('experimental-webgl2')));
+      } catch (e) {
+        webglSupported = false;
+      }
+      return webglSupported;
+    }
+
+    function setViewerMode(mode) {
+      if (mode === 'webgl') {
+        if (!checkWebGLSupport()) {
+          document.getElementById('webglNotice').style.display = 'block';
+          document.getElementById('webglNotice').textContent = '⚠️ WebGL2 hardware acceleration is unavailable in current browser/RDP session. Active mode: zero-WebGL 24-frame turntable.';
+          return;
+        }
+      }
+      activeViewerMode = mode;
+      document.getElementById('webglNotice').style.display = 'none';
+      document.getElementById('btnTurntableMode').classList.toggle('active', mode === 'turntable');
+      document.getElementById('btnWebglMode').classList.toggle('active', mode === 'webgl');
+      if (currentPair) {
+        setupTurntable('imgLeft', currentPair.left.frames, currentPair.left.render_path);
+        setupTurntable('imgRight', currentPair.right.frames, currentPair.right.render_path);
+      }
+    }
+
+    /* Agreement Studio & Analytics (Story #699) */
+    function renderScatterPlot(rankings, rho) {
+      const svg = document.getElementById('scatterSvg');
+      if (!svg || !rankings || rankings.length === 0) return;
+
+      const valid = rankings.filter(r => r.subjective_elo != null && r.objective_pass_rate != null);
+      if (valid.length === 0) {
+        svg.innerHTML = '<text x="230" y="110" fill="#94a3b8" text-anchor="middle" font-size="12">Insufficient dual-scoreline data to plot scatter.</text>';
+        return;
+      }
+
+      const minElo = Math.min(...valid.map(r => r.subjective_elo)) - 50;
+      const maxElo = Math.max(...valid.map(r => r.subjective_elo)) + 50;
+      const eloSpan = Math.max(1, maxElo - minElo);
+
+      const padL = 45, padR = 25, padT = 20, padB = 35;
+      const w = 460 - padL - padR;
+      const h = 220 - padT - padB;
+
+      let html = `
+        <line x1="${padL}" y1="${padT + h}" x2="${padL + w}" y2="${padT + h}" stroke="#263345" stroke-width="1.5" />
+        <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + h}" stroke="#263345" stroke-width="1.5" />
+        <line x1="${padL + w/2}" y1="${padT}" x2="${padL + w/2}" y2="${padT + h}" stroke="#263345" stroke-dasharray="3,3" />
+        <line x1="${padL}" y1="${padT + h/2}" x2="${padL + w}" y2="${padT + h/2}" stroke="#263345" stroke-dasharray="3,3" />
+        <text x="${padL + w/2}" y="${220 - 8}" fill="#94a3b8" font-size="10" text-anchor="middle">Objective Pass Rate (%) →</text>
+        <text x="12" y="${padT + h/2}" fill="#94a3b8" font-size="10" text-anchor="middle" transform="rotate(-90 12,${padT + h/2})">Elo →</text>
+      `;
+
+      valid.forEach((row, i) => {
+        const x = padL + (row.objective_pass_rate * w);
+        const y = padT + h - (((row.subjective_elo - minElo) / eloSpan) * h);
+        const color = i % 2 === 0 ? '#38bdf8' : '#86efac';
+        html += `
+          <g>
+            <circle cx="${x}" cy="${y}" r="6" fill="${color}" stroke="#0f141c" stroke-width="1.5">
+              <title>${row.entrant}: Elo ${row.subjective_elo.toFixed(1)}, Pass Rate ${(row.objective_pass_rate * 100).toFixed(0)}%</title>
+            </circle>
+            <text x="${x + 8}" y="${y + 4}" fill="#e2e8f0" font-size="10" font-weight="600">${row.entrant}</text>
+          </g>
+        `;
+      });
+
+      svg.innerHTML = html;
     }
 
     async function loadLeaderboard() {
@@ -1061,17 +1286,48 @@ def _render_studio_html() -> str:
         eloBody.appendChild(tr);
       });
 
+      const unrated = eloData.unrated_entrants || [];
+      const unratedBox = document.getElementById('unratedContainer');
+      if (unrated.length > 0) {
+        unratedBox.style.display = 'block';
+        document.getElementById('unratedList').innerHTML = unrated.map(e => `<span class="badge" style="background:#1e293b; color:#94a3b8; margin-right:4px;">${e}</span>`).join(' ');
+      } else {
+        unratedBox.style.display = 'none';
+      }
+
       const agrBody = document.querySelector('#tableAgreement tbody');
       agrBody.innerHTML = '';
-      if (agrData.pairwise_correlations && agrData.pairwise_correlations['subjective_x_objective'] !== undefined) {
-        const rho = agrData.pairwise_correlations['subjective_x_objective'];
-        document.getElementById('agreementMetric').textContent = `Spearman Rank Correlation (ρ): ${rho !== null ? rho.toFixed(3) : 'N/A'}`;
+      let rhoVal = null;
+      if (agrData.agreement && agrData.agreement.rho !== undefined) {
+        rhoVal = agrData.agreement.rho;
+      } else if (agrData.pairwise_correlations && agrData.pairwise_correlations['subjective_x_objective'] !== undefined) {
+        rhoVal = agrData.pairwise_correlations['subjective_x_objective'];
       }
+      document.getElementById('agreementMetric').textContent = `Spearman Rank Correlation (ρ): ${rhoVal !== null ? rhoVal.toFixed(3) : 'N/A'}`;
+
       (agrData.rankings || []).forEach(row => {
         const tr = document.createElement('tr');
         tr.innerHTML = `<td><b>${row.entrant}</b></td><td>${row.subjective_rank ?? '—'}</td><td>${row.objective_rank ?? '—'}</td><td>${row.objective_pass_rate !== null ? (row.objective_pass_rate * 100).toFixed(0) + '%' : '—'}</td>`;
         agrBody.appendChild(tr);
       });
+
+      renderScatterPlot(agrData.rankings, rhoVal);
+    }
+
+    async function exportWinnersAction() {
+      if (!currentRun) return;
+      try {
+        const res = await fetch(`/api/runs/${currentRun}/export-winners`, { method: 'POST' });
+        const data = await res.json();
+        alert(`Exported ${data.exported_count} winning CAD models into instruments/ repository!`);
+      } catch (e) {
+        alert('Failed to export winners: ' + e.message);
+      }
+    }
+
+    function exportReportAction() {
+      if (!currentRun) return;
+      window.open(`/api/runs/${currentRun}/export-report?format=markdown`, '_blank');
     }
 
     async function loadQueue() {
