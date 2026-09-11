@@ -516,11 +516,11 @@ def _render_studio_html() -> str:
       <span>🛠️ MakerBench</span> Arena Studio
     </div>
     <div class="nav-tabs">
-      <button class="nav-btn active" onclick="switchTab('overview')">Overview</button>
-      <button class="nav-btn btn-launch-nav" onclick="switchTab('launcher')">🚀 New Competition</button>
-      <button class="nav-btn" onclick="switchTab('arena')">Blind Voting</button>
-      <button class="nav-btn" onclick="switchTab('leaderboard')">Leaderboard & Agreement</button>
-      <button class="nav-btn" onclick="switchTab('tasks')">Task Matrix</button>
+      <button class="nav-btn active" data-tab="overview" onclick="switchTab('overview', this)">Overview</button>
+      <button class="nav-btn btn-launch-nav" data-tab="launcher" onclick="switchTab('launcher', this)">🚀 New Competition</button>
+      <button class="nav-btn" data-tab="arena" onclick="switchTab('arena', this)">Blind Voting</button>
+      <button class="nav-btn" data-tab="leaderboard" onclick="switchTab('leaderboard', this)">Leaderboard & Agreement</button>
+      <button class="nav-btn" data-tab="tasks" onclick="switchTab('tasks', this)">Task Matrix</button>
     </div>
     <div class="run-select-wrapper">
       <span>Active Run:</span>
@@ -565,18 +565,30 @@ def _render_studio_html() -> str:
 
     <!-- NEW COMPETITION LAUNCHER TAB -->
     <section id="pane-launcher" class="tab-pane">
+      <div style="display: flex; align-items: center; justify-content: space-between; background: #111823; border: 1px solid var(--border); border-radius: 8px; padding: 12px 18px; margin-bottom: 16px; flex: 0 0 auto;">
+        <div>
+          <b style="font-size: 14px;">⚡ Quick Competition Presets:</b>
+          <span style="color: var(--text-muted); font-size: 13px; margin-left: 8px;">1-click setup for common head-to-head match-ups:</span>
+        </div>
+        <div style="display: flex; gap: 10px;">
+          <button class="btn btn-primary" style="padding: 6px 16px; font-size: 12px;" onclick="applyPreset('opus_fable')">Opus 5 vs Fable 5.1 (Vision CAD)</button>
+          <button class="btn btn-secondary" style="padding: 6px 16px; font-size: 12px;" onclick="applyPreset('solidworks_live')">hwe-solidworks Live Agent</button>
+          <button class="btn btn-secondary" style="padding: 6px 16px; font-size: 12px;" onclick="applyPreset('fusion_live')">hwe-fusion Live Agent</button>
+        </div>
+      </div>
+
       <div class="grid-3">
         <!-- Col 1: Tasks & Filters -->
         <div class="card">
           <h3 style="margin-bottom: 8px;">1. Task Selection</h3>
           <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">Filter the 49 registry instruments by family:</p>
           <div class="filter-pills" id="familyPills">
-            <button class="pill active" onclick="filterTasksByFamily('all')">All (49)</button>
-            <button class="pill" onclick="filterTasksByFamily('strings')">Strings</button>
-            <button class="pill" onclick="filterTasksByFamily('woodwind')">Woodwind</button>
-            <button class="pill" onclick="filterTasksByFamily('brass')">Brass</button>
-            <button class="pill" onclick="filterTasksByFamily('percussion')">Percussion</button>
-            <button class="pill" onclick="filterTasksByFamily('idiophones')">Idiophones</button>
+            <button class="pill active" onclick="filterTasksByFamily('all', this)">All (49)</button>
+            <button class="pill" onclick="filterTasksByFamily('strings', this)">Strings</button>
+            <button class="pill" onclick="filterTasksByFamily('woodwind', this)">Woodwind</button>
+            <button class="pill" onclick="filterTasksByFamily('brass', this)">Brass</button>
+            <button class="pill" onclick="filterTasksByFamily('percussion', this)">Percussion</button>
+            <button class="pill" onclick="filterTasksByFamily('idiophones', this)">Idiophones</button>
           </div>
           <input type="text" id="taskSearch" placeholder="Search tasks (e.g. trumpet, kora)..." oninput="renderLauncherTasks()" style="margin-bottom: 10px;" />
           <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 12px;">
@@ -796,11 +808,15 @@ def _render_studio_html() -> str:
     let allTasks = [];
     let activeFamilyFilter = 'all';
 
-    function switchTab(tabId) {
+    function switchTab(tabId, el) {
       document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-      event.target.classList.add('active');
-      document.getElementById('pane-' + tabId).classList.add('active');
+
+      const btn = el || document.querySelector(`[data-tab="${tabId}"]`);
+      if (btn) btn.classList.add('active');
+
+      const pane = document.getElementById('pane-' + tabId);
+      if (pane) pane.classList.add('active');
 
       if (tabId === 'launcher') initLauncher();
       if (tabId === 'arena') loadQueue();
@@ -826,9 +842,13 @@ def _render_studio_html() -> str:
       }
 
       // Fetch all tasks once
-      const taskRes = await fetch('/api/tasks');
-      const taskData = await taskRes.json();
-      allTasks = taskData.tasks || [];
+      try {
+        const taskRes = await fetch('/api/tasks');
+        const taskData = await taskRes.json();
+        allTasks = taskData.tasks || [];
+      } catch (e) {
+        console.error('Failed to preload tasks', e);
+      }
 
       loadOverview();
     }
@@ -852,18 +872,36 @@ def _render_studio_html() -> str:
     }
 
     /* Launcher Logic */
-    function initLauncher() {
+    async function initLauncher() {
+      if (!allTasks || allTasks.length === 0) {
+        try {
+          const taskRes = await fetch('/api/tasks');
+          const taskData = await taskRes.json();
+          allTasks = taskData.tasks || [];
+        } catch (e) {
+          console.error('Failed to fetch tasks', e);
+        }
+      }
       if (!document.getElementById('launchRunId').value) {
         const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
         document.getElementById('launchRunId').value = `rounds_${today}_opus5_fable`;
       }
       renderLauncherTasks();
+
+      // Pre-check 3 initial tasks if none selected
+      if (document.querySelectorAll('input[name="launchTask"]:checked').length === 0) {
+        const cbs = document.querySelectorAll('input[name="launchTask"]');
+        for (let i = 0; i < Math.min(3, cbs.length); i++) {
+          cbs[i].checked = true;
+        }
+        updateTaskCount();
+      }
     }
 
-    function filterTasksByFamily(family) {
+    function filterTasksByFamily(family, el) {
       activeFamilyFilter = family;
       document.querySelectorAll('#familyPills .pill').forEach(p => p.classList.remove('active'));
-      event.target.classList.add('active');
+      if (el) el.classList.add('active');
       renderLauncherTasks();
     }
 
@@ -881,9 +919,16 @@ def _render_studio_html() -> str:
       filtered.forEach(t => {
         const div = document.createElement('div');
         div.className = 'task-item';
+        div.onclick = (e) => {
+          if (e.target.tagName !== 'INPUT') {
+            const cb = div.querySelector('input[type="checkbox"]');
+            cb.checked = !cb.checked;
+            updateTaskCount();
+          }
+        };
         div.innerHTML = `
-          <label>
-            <input type="checkbox" name="launchTask" value="${t.id}" onchange="updateTaskCount()">
+          <label style="pointer-events: none;">
+            <input type="checkbox" name="launchTask" value="${t.id}" onchange="updateTaskCount()" style="pointer-events: auto;">
             <span><b>${t.display_name || t.id}</b> <small style="color: var(--text-muted);">(${t.id})</small></span>
           </label>
           <span class="badge badge-sub">🖼️ Ref Ready</span>
@@ -901,6 +946,37 @@ def _render_studio_html() -> str:
     function selectAllTasks(selectAll) {
       document.querySelectorAll('input[name="launchTask"]').forEach(cb => cb.checked = selectAll);
       updateTaskCount();
+    }
+
+    function applyPreset(preset) {
+      if (preset === 'opus_fable') {
+        document.querySelectorAll('input[name="launchModel"]').forEach(cb => {
+          cb.checked = (cb.value === 'claude-opus-5' || cb.value === 'cadam-fable-5.1');
+        });
+        document.getElementById('launchBackend').value = 'openscad';
+        document.getElementById('launchTier').value = 'image';
+        document.getElementById('launchRunId').value = `rounds_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}_opus5_vs_fable`;
+        selectAllTasks(false);
+        const preferred = ['trumpet-sheetmetal', 'hammered-dulcimer', 'ocarina'];
+        document.querySelectorAll('input[name="launchTask"]').forEach(cb => {
+          if (preferred.includes(cb.value)) cb.checked = true;
+        });
+        updateTaskCount();
+      } else if (preset === 'solidworks_live') {
+        document.getElementById('launchBackend').value = 'solidworks-live';
+        document.getElementById('launchTier').value = 'image';
+        document.querySelectorAll('input[name="launchModel"]').forEach(cb => {
+          cb.checked = (cb.value === 'claude-opus-5' || cb.value === 'codex');
+        });
+        document.getElementById('launchRunId').value = `rounds_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}_sw_live`;
+      } else if (preset === 'fusion_live') {
+        document.getElementById('launchBackend').value = 'fusion-live';
+        document.getElementById('launchTier').value = 'image';
+        document.querySelectorAll('input[name="launchModel"]').forEach(cb => {
+          cb.checked = (cb.value === 'claude-opus-5' || cb.value === 'agy-gemini');
+        });
+        document.getElementById('launchRunId').value = `rounds_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}_fusion_live`;
+      }
     }
 
     async function dispatchCompetition() {
