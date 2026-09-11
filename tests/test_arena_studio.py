@@ -204,3 +204,37 @@ def test_cli_arena_studio_help():
     result = runner.invoke(cli_app, ["arena", "studio", "--help"])
     assert result.exit_code == 0
     assert "Launch the MakerBench Arena Studio web interface" in result.stdout
+
+
+def test_competition_launch_and_status(client: TestClient):
+    payload = {
+        "run_id": "test_launch_round",
+        "instruments": ["ocarina"],
+        "models": ["claude-opus-5", "cadam-fable-5.1"],
+        "backend": "solidworks-live",
+        "context_tier": "image",
+        "levels": ["L1", "L2", "L3", "L4"],
+        "concurrency": 2,
+        "max_turns": 16,
+        "timeout_s": 300,
+        "seed": 0,
+    }
+    response = client.post("/api/competitions/launch", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["run_id"] == "test_launch_round"
+
+    # Verify status endpoint
+    status_res = client.get("/api/competitions/status")
+    assert status_res.status_code == 200
+    jobs = status_res.json().get("jobs") or []
+    assert any(j["run_id"] == "test_launch_round" for j in jobs)
+
+    # Verify logs endpoint
+    logs_res = client.get("/api/competitions/test_launch_round/logs")
+    assert logs_res.status_code == 200
+    lines = logs_res.json().get("lines") or []
+    assert len(lines) >= 1
+    assert any("LAUNCHING ARENA COMPETITION" in line for line in lines)
+
