@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
+import re
 from pathlib import Path
 from urllib.parse import quote
 
@@ -206,24 +205,40 @@ def test_html_ui(client: TestClient):
     assert "Arena Studio" in response.text
 
 
-def test_inline_studio_javascript_parses_in_node(client: TestClient, tmp_path: Path):
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("node is not installed")
-    html = client.get("/").text
-    script = html.split("<script>", 1)[1].split("</script>", 1)[0]
-    script_path = tmp_path / "arena-studio-inline.js"
-    script_path.write_text(script, encoding="utf-8")
+def test_html_ui_local_assets_all_resolve(client: TestClient):
+    """Every asset the Studio SPA references locally must actually be servable (C1/#701)."""
+    response = client.get("/")
+    assert response.status_code == 200
+    html = response.text
 
-    checked = subprocess.run(
-        [node, "--check", str(script_path)],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    local_refs = set(re.findall(r'(?:href|src)="(/static/[^"]+)"', html))
+    assert local_refs, "expected the SPA to reference at least one local /static/ asset"
+    assert "/static/studio.css" in local_refs
+    assert "/static/studio.js" in local_refs
 
-    assert checked.returncode == 0, checked.stderr
+    for ref in local_refs:
+        asset_response = client.get(ref)
+        assert asset_response.status_code == 200, f"{ref} did not resolve"
+
+
+def test_html_ui_no_external_urls(client: TestClient):
+    """The Studio SPA (HTML + linked CSS/JS) must work fully offline: no CDN/external URLs."""
+    response = client.get("/")
+    assert response.status_code == 200
+    html = response.text
+
+    css_response = client.get("/static/studio.css")
+    js_response = client.get("/static/studio.js")
+    assert css_response.status_code == 200
+    assert js_response.status_code == 200
+
+    for label, text in (
+        ("index.html", html),
+        ("studio.css", css_response.text),
+        ("studio.js", js_response.text),
+    ):
+        assert "http://" not in text, f"{label} references an external http:// URL"
+        assert "https://" not in text, f"{label} references an external https:// URL"
 
 
 def test_cli_arena_studio_help():
