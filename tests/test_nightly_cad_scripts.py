@@ -16,6 +16,7 @@ WINDOWS_SCRIPTS = REPO_ROOT / "scripts" / "windows"
 RUNNER = WINDOWS_SCRIPTS / "run-nightly-cad-arena.ps1"
 INSTALLER = WINDOWS_SCRIPTS / "install-nightly-cad-task.ps1"
 PREFLIGHT = WINDOWS_SCRIPTS / "check-nightly-cad-paths.sh"
+STUDIO_LAUNCHER = WINDOWS_SCRIPTS / "start-arena-studio.ps1"
 
 # The dead pre-ecosystem checkout: GitHub/makerbench-hwe NOT preceded by the
 # ecosystem directory. Matches both windows and WSL spellings.
@@ -118,3 +119,55 @@ def test_preflight_green_when_all_paths_exist(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stderr == ""
+
+
+# R2 P5/#… : Windows/RDP Arena Studio launch path. No pwsh/powershell binary exists
+# in this sandbox (confirmed: `which pwsh powershell` finds neither), so these are
+# static path-lint/contract checks on the script text — the same class of test the
+# nightly-cad scripts above already use for their self-locating/fail-fast guarantees
+# — not a real PowerShell execution. Genuinely unverified on a live Windows desktop;
+# see the WINDOWS-GATED story filed alongside this script.
+
+
+def test_studio_launcher_is_self_locating():
+    text = STUDIO_LAUNCHER.read_text(encoding="utf-8")
+    assert re.search(r'\[string\]\$RepoWsl\s*=\s*""', text)
+    assert "$PSScriptRoot" in text
+    assert "wslpath" in text
+
+
+def test_studio_launcher_is_loopback_only():
+    text = STUDIO_LAUNCHER.read_text(encoding="utf-8")
+    # Strip the leading <# ... #> comment block first: it deliberately documents
+    # (in prose) that --allow-remote is never passed, which would otherwise trip a
+    # naive substring check on the comment text itself.
+    body = re.sub(r"^<#.*?#>", "", text, count=1, flags=re.DOTALL)
+    # No parameter can ever point this script at a non-loopback interface: no -Host
+    # parameter exists, --allow-remote is never passed, and the arena studio
+    # invocation's --host value is the literal string 127.0.0.1, not a variable.
+    assert not re.search(r"\[string\]\$Host\b", body)
+    assert "--allow-remote" not in body
+    assert "--host 127.0.0.1" in body
+    # Every URL this script opens or polls is loopback, never a variable that could
+    # carry an operator- or environment-controlled remote host.
+    for url_match in re.finditer(r'https?://([^:/"\'\s]+)', text):
+        assert url_match.group(1) == "127.0.0.1", (
+            f"non-loopback host in URL: {url_match.group(0)}"
+        )
+
+
+def test_studio_launcher_waits_for_health_before_opening_browser():
+    text = STUDIO_LAUNCHER.read_text(encoding="utf-8")
+    assert "/api/health" in text
+    health_at = text.index("/api/health")
+    browser_at = text.index("Start-Process")
+    assert health_at < browser_at, "must poll health before opening the browser tab"
+    assert "$NoBrowser" in text  # opt-out escape hatch for a Playwright-style caller
+
+
+def test_studio_launcher_never_references_legacy_checkout_path():
+    # Redundant with test_no_windows_script_references_legacy_checkout_path's
+    # rglob, but pinned explicitly so this file's own regression survives a future
+    # refactor of that glob.
+    text = STUDIO_LAUNCHER.read_text(encoding="utf-8")
+    assert not LEGACY_PATTERN.search(text)
