@@ -272,6 +272,14 @@ def _stage_turntable_frames(
 
 
 def _voted_pair_keys(run_dir: Path, voter_id: str) -> set[tuple[str, str]]:
+    """(pair_id, voter_id) keys currently counted as voted.
+
+    votes.blind.jsonl is append-only (C4/#703 undo never mutates or removes a
+    line): a retraction is its own record with ``"retracts": true``. Replaying
+    the file in order — add on a normal vote, remove on a retraction — means a
+    pair the voter undid becomes available in the queue again, while the
+    retraction itself stays in the file as a permanent audit trail.
+    """
     keys: set[tuple[str, str]] = set()
     blind_path = run_dir / "votes.blind.jsonl"
     if not blind_path.exists():
@@ -280,7 +288,11 @@ def _voted_pair_keys(run_dir: Path, voter_id: str) -> set[tuple[str, str]]:
         if not line.strip():
             continue
         record = json.loads(line)
-        keys.add((str(record.get("pair_id")), str(record.get("voter_id"))))
+        key = (str(record.get("pair_id")), str(record.get("voter_id")))
+        if record.get("retracts"):
+            keys.discard(key)
+        else:
+            keys.add(key)
     return keys
 
 

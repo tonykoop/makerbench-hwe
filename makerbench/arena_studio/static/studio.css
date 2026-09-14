@@ -186,11 +186,50 @@
     }
     .flags-box label { display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--text-muted); }
     .flags-box label:hover { color: var(--text); }
+    .kbd-hint {
+      margin-left: auto;
+      font-size: 10px;
+      font-family: ui-monospace, monospace;
+      color: var(--text-muted);
+      background: #0b1119;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
     .vote-bar {
       margin-top: 16px;
       display: flex;
+      flex-wrap: wrap;
       justify-content: center;
       gap: 16px;
+    }
+    .undo-toast {
+      position: fixed;
+      left: 50%;
+      bottom: 20px;
+      transform: translateX(-50%);
+      background: #111823;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 16px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 13px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+      z-index: 50;
+      max-width: calc(100vw - 32px);
+    }
+    .undo-toast button {
+      background: var(--accent);
+      color: #05131f;
+      border: none;
+      border-radius: 5px;
+      padding: 5px 12px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
     }
     .btn {
       padding: 10px 24px;

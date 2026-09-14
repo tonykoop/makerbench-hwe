@@ -24,6 +24,11 @@ class VotePayload(BaseModel):
     flags: Optional[dict[str, list[str]]] = None
 
 
+class UndoVotePayload(BaseModel):
+    pair_id: str
+    voter: str = "tony"
+
+
 class CompetitionLaunchPayload(BaseModel):
     run_id: Optional[str] = None
     instruments: list[str] = Field(default_factory=lambda: ["ocarina"])
@@ -137,12 +142,22 @@ def create_studio_app(
         run_id: str,
         voter: str = Query("tony"),
         rounds: str = Query("0,1"),
+        skip: int = Query(0, ge=0),
     ):
         run_path = _resolve_run_dir(run_id)
         round_ints = tuple(int(r.strip()) for r in rounds.split(",") if r.strip())
         queue = service.get_or_create_queue(run_path, voter=voter, rounds=round_ints)
         done, total = queue.progress()
-        next_item = queue.next_unvoted()
+
+        # C4/#703 skip ergonomics: `skip` is a read-only client-side cursor into the
+        # still-unvoted items (never persisted, never mutates the queue or votes.*jsonl)
+        # so a voter can look at another pair without casting a vote. Built entirely from
+        # VoteQueue's existing public `items`/`voted_pair_ids` fields — no VoteQueue class
+        # change needed. skip=0 is exactly next_unvoted() (unchanged default behavior).
+        unvoted_items = [
+            item for item in queue.items if item.pair.pair_id not in queue.voted_pair_ids
+        ]
+        next_item = unvoted_items[skip % len(unvoted_items)] if unvoted_items else None
 
         next_pair_data = None
         if next_item:
@@ -175,6 +190,7 @@ def create_studio_app(
             "done": done,
             "total": total,
             "has_next": next_item is not None,
+            "skippable": len(unvoted_items),
             "current_pair": next_pair_data,
         }
 
@@ -191,6 +207,16 @@ def create_studio_app(
         if not success:
             raise HTTPException(status_code=400, detail="Invalid pair ID or vote already cast")
         return {"success": True, "pair_id": payload.pair_id, "winner": payload.winner}
+
+    @app.post("/api/runs/{run_id}/undo-vote")
+    def undo_vote(run_id: str, payload: UndoVotePayload):
+        run_path = _resolve_run_dir(run_id)
+        success = service.undo_vote(run_dir=run_path, pair_id=payload.pair_id, voter=payload.voter)
+        if not success:
+            raise HTTPException(
+                status_code=400, detail="Nothing to undo for that pair (never voted, or already undone)"
+            )
+        return {"success": True, "pair_id": payload.pair_id}
 
     @app.post("/api/competitions/launch")
     def launch_competition(payload: CompetitionLaunchPayload):
