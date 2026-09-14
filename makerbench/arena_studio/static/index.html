@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MakerBench Arena Studio</title>
   <link rel="stylesheet" href="/static/studio.css" />
+  <link rel="stylesheet" href="/static/agreement.css" />
 </head>
 <body>
   <header>
@@ -343,6 +344,26 @@
           </table>
         </div>
       </div>
+
+      <!-- Agreement Studio extras (#699 D2): bootstrap-CI bars, per-family filter, outliers -->
+      <div id="agreementStudioExtras" class="card">
+        <div class="agreement-extras-header">
+          <h3>Agreement Studio: Confidence &amp; Outliers</h3>
+          <div>
+            <label for="familyFilterSelect" style="font-size: 12px; color: var(--text-muted); margin-right: 6px;">Family:</label>
+            <select id="familyFilterSelect"><option value="">All families</option></select>
+          </div>
+        </div>
+        <div id="smallSampleCaveat" class="small-sample-caveat" style="display: none;"></div>
+
+        <h4 style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); margin: 10px 0 8px;">Elo — bootstrap 95% CI</h4>
+        <div id="ciBars"></div>
+
+        <h4 style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); margin: 14px 0 8px;">Rank Outliers (subjective vs objective)</h4>
+        <div id="outlierCallouts"></div>
+
+        <div id="familyLeaderboard" style="margin-top: 12px;"></div>
+      </div>
     </section>
 
     <!-- TASK MATRIX TAB -->
@@ -360,5 +381,6 @@
   </main>
 
   <script src="/static/studio.js"></script>
+  <script src="/static/agreement.js"></script>
 </body>
 </html>
