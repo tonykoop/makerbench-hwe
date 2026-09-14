@@ -979,7 +979,7 @@ def _morning_bundle_fixture(
     discovery does (see test_morning_direct_routes_refuse_non_votable_job).
     """
     run_dir = tmp_path / "morning_run"
-    run_dir.mkdir()
+    run_dir.mkdir(exist_ok=True)
     png_a = run_dir / "preview_a.png"
     png_b = run_dir / "preview_b.png"
     png_a.write_bytes(b"dummy-a")
@@ -1023,7 +1023,11 @@ def _morning_bundle_fixture(
             encoding="utf-8",
         )
 
-    queue_path = tmp_path / "nightly-cad-queue.json"
+    # Under repo_root/runs/ — the only root /api/nightly/queue and /api/morning/*
+    # accept a `queue=` override beneath (#732's containment fix).
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    queue_path = runs_dir / "nightly-cad-queue.json"
     job_id = "sambuca-night"
     queue_path.write_text(
         json.dumps(
@@ -1059,10 +1063,11 @@ def test_morning_direct_routes_refuse_non_votable_job(client: TestClient, tmp_pa
     /api/morning/{job_id}/pair|vote|assets, bypassing #734's "only after
     finalize_morning_bundle marked it votable" rule."""
     for status in ("queued", "running", "failed"):
-        base = tmp_path / status
-        base.mkdir()
+        # Reuse the same tmp_path (== client's repo_root) each iteration, not a
+        # subdirectory — the queue must live under repo_root/runs/ per #732's
+        # containment fix, and each call fully overwrites the fixture's files.
         queue_path, run_dir, job_id = _morning_bundle_fixture(
-            base, status=status, write_summary=False
+            tmp_path, status=status, write_summary=False
         )
         assert client.get(f"/api/morning/{job_id}/pair?queue={queue_path}").status_code == 400
         assert (
@@ -1080,10 +1085,8 @@ def test_morning_direct_routes_refuse_non_votable_job(client: TestClient, tmp_pa
     # Also refused when a run_dir HAS a morning-summary.json but the queue's own
     # status field hasn't caught up to "votable" yet (status is authoritative, not
     # file presence alone).
-    stale_base = tmp_path / "stale-status"
-    stale_base.mkdir()
     queue_path, run_dir, job_id = _morning_bundle_fixture(
-        stale_base, status="running", write_summary=True
+        tmp_path, status="running", write_summary=True
     )
     assert client.get(f"/api/morning/{job_id}/pair?queue={queue_path}").status_code == 400
 
