@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional, Sequence
@@ -62,6 +63,79 @@ class ArenaStudioService:
         self._queues: dict[tuple[str, str], VoteQueue] = {}
         self._active_jobs: dict[str, dict[str, Any]] = {}
         self._processes: dict[str, subprocess.Popen] = {}
+        self._rediscover_jobs()
+
+    def _rediscover_jobs(self) -> None:
+        """Recover Studio-owned jobs without trusting paths from persisted JSON."""
+        jobs_root = (self.repo_root / "runs" / "code_cad_arena").resolve()
+        if not jobs_root.exists():
+            return
+        for launch_path in jobs_root.glob("*/studio_launch.json"):
+            run_path = launch_path.parent.resolve()
+            try:
+                payload = json.loads(launch_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            run_id = payload.get("run_id")
+            if (
+                payload.get("schema") != "makerbench-arena-studio-launch-v1"
+                or not isinstance(run_id, str)
+                or run_id != run_path.name
+                or not run_path.is_relative_to(jobs_root)
+            ):
+                continue
+            job = {
+                key: payload[key]
+                for key in (
+                    "run_id",
+                    "status",
+                    "started_at",
+                    "pid",
+                    "instruments",
+                    "models",
+                    "backend",
+                    "requested_backend",
+                    "context_tier",
+                    "levels",
+                    "requested_concurrency",
+                    "requested_max_turns",
+                    "live",
+                    "progress",
+                    "exit_code",
+                )
+                if key in payload
+            }
+            job["run_path"] = str(run_path)
+            job["log_path"] = str(run_path / f"arena_{run_id}.log")
+            self._active_jobs[run_id] = job
+
+    @staticmethod
+    def _pid_is_alive(pid: object, run_path: Path) -> bool:
+        if not isinstance(pid, int) or pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+        except (OSError, ValueError):
+            return False
+        cmdline_path = Path("/proc") / str(pid) / "cmdline"
+        if cmdline_path.exists():
+            try:
+                cmdline = cmdline_path.read_bytes().replace(b"\0", b" ").decode(
+                    "utf-8", errors="replace"
+                )
+            except OSError:
+                return False
+            return "makerbench.cli" in cmdline and str(run_path) in cmdline
+        return True
+
+    def _persist_job(self, job: dict[str, Any]) -> None:
+        launch_path = Path(job["run_path"]) / "studio_launch.json"
+        try:
+            payload = json.loads(launch_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = {"schema": "makerbench-arena-studio-launch-v1"}
+        payload.update(job)
+        arena_runner.write_json(launch_path, payload)
 
     def get_default_run_dir(self) -> Optional[Path]:
         if self.default_run_dir and self.default_run_dir.exists():
@@ -528,13 +602,20 @@ class ArenaStudioService:
 
     def _refresh_job(self, job: dict[str, Any]) -> dict[str, Any]:
         """Derive current status from the child exit code and its real run log."""
+        old_state = (job.get("status"), job.get("progress"), job.get("exit_code"))
         process = self._processes.get(job["run_id"])
-        exit_code = process.poll() if process else job.get("exit_code")
-        if exit_code is None:
+        exit_code = process.poll() if process else None
+        if process and exit_code is None:
             status = "running"
-        else:
+        elif process:
             status = "completed" if exit_code == 0 else "failed"
             job["exit_code"] = exit_code
+        elif job.get("status") in {"completed", "failed", "interrupted"}:
+            status = str(job["status"])
+        elif self._pid_is_alive(job.get("pid"), Path(job["run_path"])):
+            status = "running"
+        else:
+            status = "interrupted"
         job["status"] = status
 
         run_log_path = Path(job["run_path"]) / "run_log.json"
@@ -546,28 +627,87 @@ class ArenaStudioService:
                 done = sum(count for name, count in counts.items() if name != "pending")
                 total = job["summary"].get("total_trials", done)
                 job["progress"] = f"{done}/{total}"
+                if process is None and total and counts.get("pending", 0) == 0:
+                    job["status"] = "completed"
             except (OSError, json.JSONDecodeError):
                 pass
+        new_state = (job.get("status"), job.get("progress"), job.get("exit_code"))
+        if new_state != old_state:
+            self._persist_job(job)
         return job
 
-    def get_run_logs(self, run_id: str, tail: int = 100) -> list[str]:
-        run_path = None
-        if run_id in self._active_jobs:
-            run_path = Path(self._active_jobs[run_id]["run_path"])
-        else:
-            run_path = self.resolve_run_dir(run_id)
-        if not run_path or not run_path.exists():
-            return []
+    def _get_job_log_path(self, run_id: str) -> Optional[Path]:
+        job = self._active_jobs.get(run_id)
+        if job:
+            log_path = Path(job["log_path"])
+            run_path = Path(job["run_path"])
+            if log_path.parent.resolve() == run_path.resolve():
+                return log_path
+        # Public run summaries carry redacted paths (#719); resolve the real one.
+        run_path = self.resolve_run_dir(run_id)
+        if run_path is None:
+            return None
+        files = sorted(run_path.glob("*.log"))
+        return files[0] if files else None
 
-        log_files = list(run_path.glob("*.log"))
-        if not log_files:
+    def get_run_logs(self, run_id: str, tail: int = 100) -> list[str]:
+        log_file = self._get_job_log_path(run_id)
+        if not log_file or not log_file.exists():
             return []
-        log_file = log_files[0]
         try:
             lines = log_file.read_text(encoding="utf-8").splitlines()
-            return lines[-tail:]
+            return lines[-tail:] if tail else []
         except Exception:
             return []
+
+    def stream_run_logs(
+        self,
+        run_id: str,
+        *,
+        tail: int = 100,
+        follow: bool = True,
+        poll_interval: float = 0.25,
+    ) -> Iterator[str]:
+        """Yield JSON-encoded log lines in Server-Sent Events format."""
+        log_path = self._get_job_log_path(run_id)
+        if not log_path or not log_path.exists():
+            return
+        initial = log_path.read_bytes()
+        if initial.endswith(b"\n"):
+            complete, remainder = initial, b""
+        else:
+            complete, separator, remainder = initial.rpartition(b"\n")
+            if separator:
+                complete += separator
+            else:
+                complete = b""
+        initial_lines = complete.decode("utf-8", errors="replace").splitlines()
+        for line in initial_lines[-tail:] if tail else []:
+            yield f"data: {json.dumps(line)}\n\n"
+        offset = len(initial)
+        while follow:
+            try:
+                with log_path.open("rb") as handle:
+                    handle.seek(offset)
+                    chunk = handle.read()
+            except OSError:
+                chunk = b""
+            if chunk:
+                offset += len(chunk)
+                parts = (remainder + chunk).split(b"\n")
+                remainder = parts.pop()
+                for raw_line in parts:
+                    line = raw_line.rstrip(b"\r").decode("utf-8", errors="replace")
+                    yield f"data: {json.dumps(line)}\n\n"
+            job = self._active_jobs.get(run_id)
+            if job and self._refresh_job(job).get("status") != "running" and not chunk:
+                if remainder:
+                    line = remainder.decode("utf-8", errors="replace")
+                    yield f"data: {json.dumps(line)}\n\n"
+                return
+            if not job and not chunk:
+                return
+            time.sleep(poll_interval)
 
     def export_winners(self, run_dir: Path) -> dict[str, Any]:
         """Export winning CAD models from a run into the instruments repository (Story #699)."""

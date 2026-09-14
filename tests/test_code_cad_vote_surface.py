@@ -1,10 +1,25 @@
 """Tests for Code-CAD Arena blind A/B vote surface (#424)."""
 
 import json
+import multiprocessing
+import time
 
 import pytest
 
 from makerbench import code_cad_vote_surface as vote
+
+
+def _pause_before_vote_replace(path, record, ready):
+    """Child target that exposes the crash window before the atomic commit."""
+    real_replace = vote.os.replace
+
+    def paused_replace(source, destination):
+        ready.set()
+        time.sleep(30)
+        real_replace(source, destination)
+
+    vote.os.replace = paused_replace
+    vote.append_vote_record(path, record)
 
 
 def _candidate(candidate_id, model_id):
@@ -67,6 +82,25 @@ def test_vote_record_persists_without_reveal(tmp_path):
     assert saved["voter_id"] == "tony"
     assert "model_id" not in json.dumps(saved)
     assert saved["left"]["candidate_id"] in {"a", "b"}
+
+
+def test_killed_vote_writer_cannot_leave_torn_jsonl(tmp_path):
+    path = tmp_path / "votes.blind.jsonl"
+    first = {"pair_id": "pair-existing", "winner": "left"}
+    second = {"pair_id": "pair-new", "winner": "right", "note": "x" * 200_000}
+    vote.append_vote_record(path, first)
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    process = context.Process(target=_pause_before_vote_replace, args=(path, second, ready))
+
+    process.start()
+    assert ready.wait(timeout=5), "child never reached the atomic replace boundary"
+    process.kill()
+    process.join(timeout=5)
+
+    assert process.exitcode is not None
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert records == [first]
 
 
 def test_partner_peek_reveal_adds_model_id_after_vote():
