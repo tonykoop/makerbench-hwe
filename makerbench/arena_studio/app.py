@@ -517,6 +517,15 @@ def create_studio_app(
         ref = service.get_task_reference(task_id)
         return {"task_id": task_id, "prompt_cmd": ref["prompt_cmd"]}
 
+    # New, unreviewed: lets a person see the exact image they are asked to approve.
+    @app.get("/api/tasks/{task_id}/reference/image")
+    def get_task_reference_image(task_id: str):
+        image = service.reference_image_path(task_id)
+        if image is None:
+            raise HTTPException(status_code=404, detail="No reference image for this task")
+        # Approval binds to the file's hash, so never show a cached older image.
+        return FileResponse(str(image), headers={"Cache-Control": "no-store"})
+
     # Story #699: Export Winners & Reports
     @app.post("/api/runs/{run_id}/export-winners")
     def export_run_winners(run_id: str):

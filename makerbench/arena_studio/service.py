@@ -613,6 +613,17 @@ class ArenaStudioService:
                 return cp
         return None
 
+    def reference_image_path(self, task_id: str) -> Optional[Path]:
+        """The reference image file for a registry task, for inspection in Studio.
+
+        New, unreviewed: only ids present in the registry resolve, so a crafted
+        id such as ``..`` never walks the candidate-path join out of ``tasks/``.
+        """
+        known = {task.get("id") for task in self.get_registry_tasks()}
+        if task_id not in known:
+            return None
+        return self._find_reference_image(task_id)
+
     def get_task_reference(self, task_id: str) -> dict[str, Any]:
         """Check reference visual assets and gatekeeper approval status (#697 D4).
 

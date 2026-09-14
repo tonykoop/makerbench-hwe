@@ -1874,6 +1874,26 @@ def test_reference_gatekeeper_and_approval_flow(client: TestClient, tmp_path: Pa
     assert job["status"] != "running"
 
 
+def test_reference_image_is_served_only_for_registry_tasks(client: TestClient, tmp_path: Path):
+    # New, unreviewed: Studio shows the image a person is asked to approve.
+    image = tmp_path / "tasks" / "kora" / "reference.png"
+    image.parent.mkdir(parents=True, exist_ok=True)
+    image.write_bytes(b"\x89PNG-kora")
+    # Where tasks/<id>/../reference.png lands for a crafted ".." id.
+    (tmp_path / "reference.png").write_bytes(b"\x89PNG-outside-any-task")
+
+    response = client.get("/api/tasks/kora/reference/image")
+    assert response.status_code == 200
+    assert response.content == b"\x89PNG-kora"
+    assert response.headers["cache-control"] == "no-store"
+
+    assert client.get("/api/tasks/ocarina/reference/image").status_code == 404  # no image yet
+    assert client.get("/api/tasks/not-in-registry/reference/image").status_code == 404
+    crafted = client.get("/api/tasks/%2E%2E/reference/image")
+    assert crafted.status_code == 404
+    assert b"outside-any-task" not in crafted.content
+
+
 def test_export_winners_and_report(client: TestClient, fake_run: Path, tmp_path: Path):
     """Test Story #699: Winner export and markdown report generation."""
     # Export winners
