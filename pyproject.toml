@@ -24,7 +24,8 @@ dependencies = [
 
 [project.optional-dependencies]
 cadquery = [
-    "cadquery>=2.6,<3",
+    "cadquery>=2.8,<3",
+    "build123d>=0.11.1,<1",
 ]
 dev = [
     "pytest>=8.0",
