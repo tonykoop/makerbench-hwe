@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 
 import pytest
@@ -30,29 +29,19 @@ def test_secret_name_scrub_is_case_insensitive_and_preserves_benign_values():
     assert scrubbed == {"PATH": "/bin", "BENIGN": "kept"}
 
 
-def test_network_namespace_probe_reports_unavailable_when_unshare_missing(monkeypatch):
-    monkeypatch.setattr(cadquery_backend.shutil, "which", lambda _name: None)
-    assert cadquery_backend._unprivileged_network_namespace_available({}) is False
+def test_missing_bubblewrap_fails_closed_before_entrant_execution(tmp_path, monkeypatch):
+    script = tmp_path / "entrant.py"
+    script.write_text("raise RuntimeError('must not execute')\n", encoding="utf-8")
+    monkeypatch.setattr(cadquery_backend, "_bubblewrap_available", lambda _env: False)
 
-
-def test_network_namespace_probe_reports_unavailable_when_probe_fails(monkeypatch):
-    monkeypatch.setattr(cadquery_backend.shutil, "which", lambda _name: "/usr/bin/unshare")
-    monkeypatch.setattr(
-        cadquery_backend.subprocess,
-        "run",
-        lambda *args, **kwargs: _completed(returncode=1, stderr="operation not permitted"),
-    )
-    assert cadquery_backend._unprivileged_network_namespace_available({}) is False
+    with pytest.raises(RuntimeError, match="filesystem sandbox unavailable"):
+        cadquery_backend.compile_cadquery_to_artifacts(script, tmp_path / "out")
 
 
 def test_missing_cadquery_is_an_environment_error(tmp_path, monkeypatch):
     script = tmp_path / "entrant.py"
     script.write_text("result = None\n", encoding="utf-8")
-    monkeypatch.setattr(
-        cadquery_backend,
-        "_unprivileged_network_namespace_available",
-        lambda _env: False,
-    )
+    monkeypatch.setattr(cadquery_backend, "_bubblewrap_available", lambda _env: True)
 
     def fake_run(cmd, **kwargs):
         del cmd, kwargs
@@ -119,7 +108,7 @@ class TestRealCadQueryCompiler:
         with pytest.raises(render.CompileError, match="timed out after 1s"):
             cadquery_backend.compile_cadquery_to_artifacts(script, tmp_path / "out")
 
-    def test_secret_environment_is_scrubbed_before_host_file_probe(self, tmp_path, monkeypatch):
+    def test_secret_environment_is_scrubbed_and_host_file_is_hidden(self, tmp_path, monkeypatch):
         script = tmp_path / "probe.py"
         script.write_text(
             """import os
@@ -131,9 +120,13 @@ except KeyError:
 try:
     open("/etc/hostname", encoding="utf-8").read()
 except OSError:
-    pass
+    host_file_hidden = True
+else:
+    host_file_hidden = False
 if leaked is not None:
     raise RuntimeError("secret leaked into entrant process")
+if not host_file_hidden:
+    raise RuntimeError("host file visible inside entrant sandbox")
 result = cq.Workplane("XY").box(10, 10, 10)
 """,
             encoding="utf-8",
@@ -145,14 +138,13 @@ result = cq.Workplane("XY").box(10, 10, 10)
         assert artifacts.stl_path.stat().st_size > 0
         assert "atlas-mutation-secret" not in "\n".join(artifacts.warnings)
 
-    def test_direct_secret_and_host_file_probe_fails_closed(self, tmp_path, monkeypatch):
-        script = tmp_path / "direct_probe.py"
+    def test_direct_secret_probe_fails_closed(self, tmp_path, monkeypatch):
+        script = tmp_path / "secret_probe.py"
         script.write_text(
             """import os
 import cadquery as cq
 token = os.environ["GH_TOKEN"]
-hostname = open("/etc/hostname", encoding="utf-8").read()
-result = cq.Workplane("XY").box(len(token), len(hostname), 10)
+result = cq.Workplane("XY").box(len(token), 10, 10)
 """,
             encoding="utf-8",
         )
@@ -161,14 +153,39 @@ result = cq.Workplane("XY").box(len(token), len(hostname), 10)
         with pytest.raises(render.CompileError, match=r"KeyError\('GH_TOKEN'\)"):
             cadquery_backend.compile_cadquery_to_artifacts(script, tmp_path / "out")
 
-    def test_worker_uses_network_namespace_or_records_unavailable(self, tmp_path):
-        namespace_available = cadquery_backend._unprivileged_network_namespace_available(
-            cadquery_backend._scrub_environment(os.environ)
+    def test_direct_host_file_probe_fails_closed_independently(self, tmp_path):
+        script = tmp_path / "host_file_probe.py"
+        script.write_text(
+            """import cadquery as cq
+hostname = open("/etc/hostname", encoding="utf-8").read()
+result = cq.Workplane("XY").box(len(hostname), 10, 10)
+""",
+            encoding="utf-8",
         )
+
+        with pytest.raises(render.CompileError, match="FileNotFoundError"):
+            cadquery_backend.compile_cadquery_to_artifacts(script, tmp_path / "out")
+
+    def test_existing_output_directory_contents_are_not_mounted(self, tmp_path):
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        (out_dir / "host-secret.txt").write_text("controlled sentinel", encoding="utf-8")
+        script = tmp_path / "output_probe.py"
+        script.write_text(
+            """import cadquery as cq
+sentinel = open("/out/host-secret.txt", encoding="utf-8").read()
+result = cq.Workplane("XY").box(len(sentinel), 10, 10)
+""",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(render.CompileError, match="FileNotFoundError"):
+            cadquery_backend.compile_cadquery_to_artifacts(script, out_dir)
+
+    def test_worker_blocks_network_inside_the_filesystem_sandbox(self, tmp_path):
         script = tmp_path / "network.py"
         script.write_text(
-            (
-                """import socket
+            """import socket
 import cadquery as cq
 network_open = False
 try:
@@ -179,32 +196,10 @@ except OSError:
 if network_open:
     raise RuntimeError("network unexpectedly reachable")
 result = cq.Workplane("XY").box(10, 10, 10)
-"""
-                if namespace_available
-                else "import cadquery as cq\nresult = cq.Workplane('XY').box(10, 10, 10)\n"
-            ),
+""",
             encoding="utf-8",
         )
 
         artifacts = cadquery_backend.compile_cadquery_to_artifacts(script, tmp_path / "out")
 
-        assert (
-            namespace_available
-            or "network_isolation: unavailable" in artifacts.warnings
-        )
-
-    def test_unavailable_network_namespace_is_disclosed(self, tmp_path, monkeypatch):
-        script = tmp_path / "fallback.py"
-        script.write_text(
-            "import cadquery as cq\nresult = cq.Workplane('XY').box(10, 10, 10)\n",
-            encoding="utf-8",
-        )
-        monkeypatch.setattr(
-            cadquery_backend,
-            "_unprivileged_network_namespace_available",
-            lambda _env: False,
-        )
-
-        artifacts = cadquery_backend.compile_cadquery_to_artifacts(script, tmp_path / "out")
-
-        assert "network_isolation: unavailable" in artifacts.warnings
+        assert "network_isolation: unavailable" not in artifacts.warnings
