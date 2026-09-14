@@ -7,7 +7,7 @@ from typing import Optional
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -201,6 +201,18 @@ def create_studio_app(
     def get_competition_logs(run_id: str, tail: int = Query(100)):
         lines = service.get_run_logs(run_id, tail=tail)
         return {"run_id": run_id, "lines": lines}
+
+    @app.get("/api/competitions/{run_id}/logs/stream")
+    def stream_competition_logs(
+        run_id: str,
+        tail: int = Query(100, ge=0, le=10_000),
+        follow: bool = Query(True),
+    ):
+        return StreamingResponse(
+            service.stream_run_logs(run_id, tail=tail, follow=follow),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     # Serve assets for any run under /runs/{run_id}/vote_pages/...
     @app.get("/runs/{run_id}/vote_pages/{file_path:path}")

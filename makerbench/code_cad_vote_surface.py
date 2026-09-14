@@ -5,9 +5,13 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Mapping, Optional
+
+from .run_log_io import file_lock
 
 
 SCHEMA = "makerbench-code-cad-vote-surface-v1"
@@ -311,11 +315,29 @@ def reveal_vote(pair: BlindPair, vote: Mapping[str, object]) -> dict:
 
 
 def append_vote_record(path: Path, vote: Mapping[str, object]) -> None:
-    """Persist one vote as JSONL."""
+    """Persist one vote as a locked, atomic JSONL commit."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(dict(vote), sort_keys=True) + "\n")
+    encoded = json.dumps(dict(vote), sort_keys=True) + "\n"
+    with file_lock(path):
+        existing = path.read_bytes() if path.exists() else b""
+        if existing and not existing.endswith(b"\n"):
+            raise ValueError(f"refusing to append to torn JSONL file: {path}")
+
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.tmp-", dir=str(path.parent))
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(existing)
+                handle.write(encoded.encode("utf-8"))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_name, path)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
 
 
 def _blind_candidate(candidate: VoteCandidate) -> dict:
