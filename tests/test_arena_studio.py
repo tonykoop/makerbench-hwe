@@ -476,6 +476,28 @@ def test_sse_endpoint_tails_existing_log(client: TestClient, fake_run: Path):
     assert response.text == 'data: "second"\n\n'
 
 
+def test_sse_stream_never_publishes_host_paths(
+    client: TestClient, fake_run: Path, tmp_path: Path
+):
+    # New, unreviewed: extends the API-boundary host-path redaction to SSE events.
+    (fake_run / "arena_test.log").write_text(
+        f"wrote {fake_run / 'model.stl'}\nread /home/someone/private/ref.png\n",
+        encoding="utf-8",
+    )
+
+    response = client.get(
+        f"/api/competitions/{fake_run.name}/logs/stream?tail=5&follow=false"
+    )
+
+    assert response.status_code == 200
+    _assert_no_host_path(response.text, tmp_path)
+    events = [
+        json.loads(chunk.removeprefix("data: "))
+        for chunk in response.text.strip().split("\n\n")
+    ]
+    assert events == ["wrote test_run/model.stl", "read <redacted-host-path>"]
+
+
 def test_server_restart_rediscovers_live_detached_job(tmp_path: Path, fake_registry: Path):
     run_path = tmp_path / "runs" / "code_cad_arena" / "recovered-run"
     run_path.mkdir(parents=True)

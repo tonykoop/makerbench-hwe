@@ -280,8 +280,12 @@ def create_studio_app(
         tail: int = Query(100, ge=0, le=10_000),
         follow: bool = Query(True),
     ):
+        # SSE bypasses PublishedJSONResponse, and arena logs print run paths.
         return StreamingResponse(
-            service.stream_run_logs(run_id, tail=tail, follow=follow),
+            (
+                _publish_value(event, service.repo_root)
+                for event in service.stream_run_logs(run_id, tail=tail, follow=follow)
+            ),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
