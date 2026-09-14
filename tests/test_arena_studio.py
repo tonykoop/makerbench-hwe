@@ -262,12 +262,26 @@ def test_turntable_html_progressive_enhancement(client: TestClient):
 def test_turntable_js_has_context_loss_safety_net(client: TestClient):
     """C2/#698: WebGL context loss (real CONTEXT_LOST_WEBGL on RDP) must fall back to
     frames automatically, and the fallback path must never be reachable without also
-    resetting to the turntable so a voter is never left with a blank viewer."""
+    resetting to the turntable so a voter is never left with a blank viewer.
+
+    A `webglcontextlost` event fired on <model-viewer>'s internal (shadow-DOM) canvas
+    is not `composed`, so it never crosses the shadow boundary to reach a window-level
+    (or even model-viewer-element-level) listener for that raw event type — a real,
+    verified-in-browser defect in an earlier version of this safety net (see
+    test_context_loss_error_event_triggers_turntable_fallback for the real-browser
+    proof). model-viewer instead re-surfaces internal renderer failures as a plain DOM
+    'error' event dispatched on the element itself (light DOM), which a direct
+    listener on that element genuinely receives — assert THAT mechanism instead.
+    """
     js = client.get("/static/studio.js").text
 
-    assert "webglcontextlost" in js
     assert "isContextLost" in js
     assert "forceTurntableFallback" in js
+    # The context-loss safety net listens directly on each <model-viewer> element's
+    # own light-DOM 'error' event, not a window-level listener for the raw (and
+    # shadow-DOM-scoped, hence unreachable) webglcontextlost event.
+    assert "document.getElementById(mvId).addEventListener('error'" in js
+    assert "window.addEventListener('webglcontextlost'" not in js
     # The fallback handler must itself flip the UI back to turntable mode.
     fallback_fn = js.split("function forceTurntableFallback", 1)[1].split("\n    }", 1)[0]
     assert "setViewerMode('turntable')" in fallback_fn

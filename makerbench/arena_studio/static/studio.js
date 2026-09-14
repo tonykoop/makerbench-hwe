@@ -321,13 +321,19 @@
         btn.disabled = true;
         btn.title = 'WebGL2 hardware acceleration is unavailable in this browser/session';
       }
-      // webglcontextlost events from a <model-viewer>'s internal (shadow-DOM) canvas
-      // still bubble/compose up to window in a capture-phase listener, so one global
-      // watchdog covers both viewers without reaching into model-viewer internals.
-      window.addEventListener('webglcontextlost', (e) => {
-        e.preventDefault();
-        forceTurntableFallback('WebGL context was lost — reverted to the zero-WebGL frame turntable.');
-      }, true);
+      // A webglcontextlost event fired on <model-viewer>'s internal (shadow-DOM)
+      // canvas is NOT composed, so per the DOM spec it never crosses the shadow
+      // boundary — a window-level (or even model-viewer-element-level) listener
+      // for that raw event type cannot see it. model-viewer instead re-surfaces
+      // internal renderer failures, including context loss, as a plain DOM
+      // 'error' event dispatched on the <model-viewer> element itself (light
+      // DOM) — precisely so host page code can react without reaching into its
+      // shadow internals. Listen there instead, once per viewer.
+      ['mvLeft', 'mvRight'].forEach((mvId) => {
+        document.getElementById(mvId).addEventListener('error', () => {
+          forceTurntableFallback('WebGL context was lost — reverted to the zero-WebGL frame turntable.');
+        });
+      });
     }
 
     function forceTurntableFallback(message) {
@@ -335,10 +341,14 @@
       const btn = document.getElementById('btnWebglMode');
       btn.disabled = true;
       btn.title = message;
+      // setViewerMode('turntable') unconditionally hides #webglNotice (it's also the
+      // path a voter takes manually, with nothing to explain) — set the notice AFTER
+      // switching modes, not before, or this handler's own explanation is hidden in
+      // the same tick it's shown.
+      setViewerMode('turntable');
       const notice = document.getElementById('webglNotice');
       notice.style.display = 'block';
       notice.textContent = '⚠️ ' + message;
-      setViewerMode('turntable');
     }
 
     function setViewerMode(mode) {
