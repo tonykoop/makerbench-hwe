@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from makerbench import __version__
 from makerbench.cli_arena import DEFAULT_REGISTRY
@@ -41,6 +42,10 @@ class CompetitionLaunchPayload(BaseModel):
     skip_image_gate: bool = False
     live: bool = False
 
+
+#: Host headers accepted by default. IPv6 loopback is not listed: Starlette's
+#: TrustedHostMiddleware cannot parse bracketed hosts, and the CLI binds IPv4.
+LOOPBACK_HOSTS: tuple[str, ...] = ("127.0.0.1", "localhost")
 
 # Browser-facing URLs this app mints itself ("/runs/<id>/vote_pages/...") are not
 # filesystem paths, even when a segment happens to look like one.
@@ -80,6 +85,7 @@ def create_studio_app(
     repo_root: Optional[Path] = None,
     allow_live: bool = False,
     extra_run_roots: Optional[Sequence[Path]] = None,
+    allowed_hosts: Sequence[str] = LOOPBACK_HOSTS,
 ) -> FastAPI:
     """Create and configure the Arena Studio FastAPI instance."""
 
@@ -103,6 +109,11 @@ def create_studio_app(
         description="Unified web cockpit for Code-CAD A/B Arena (Epic #421 / #694).",
         default_response_class=PublishedJSONResponse,
     )
+
+    # DNS-rebinding guard: a hostile page can point its own hostname at
+    # 127.0.0.1, which a loopback bind does not stop and the same-origin POST
+    # check cannot see (Origin and Host would both be the attacker's name).
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(allowed_hosts))
 
     @app.exception_handler(StarletteHTTPException)
     async def published_http_exception(request: Request, exc: StarletteHTTPException):

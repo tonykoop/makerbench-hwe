@@ -126,7 +126,10 @@ def client(fake_run: Path, fake_registry: Path, tmp_path: Path) -> TestClient:
         registry_path=fake_registry,
         repo_root=tmp_path,
     )
-    return TestClient(studio_app, headers={"origin": "http://testserver"})
+    # Loopback base URL: the TrustedHost guard rejects TestClient's default "testserver".
+    return TestClient(
+        studio_app, base_url="http://127.0.0.1", headers={"origin": "http://127.0.0.1"}
+    )
 
 
 def test_health_endpoint(client: TestClient, fake_run: Path):
@@ -178,14 +181,17 @@ def test_extra_run_root_is_opt_in_and_never_publishes_host_path(
     without_opt_in = create_studio_app(
         registry_path=fake_registry, repo_root=repo_root
     )
-    assert TestClient(without_opt_in).get("/api/runs").json()["runs"] == []
+    assert (
+        TestClient(without_opt_in, base_url="http://127.0.0.1").get("/api/runs").json()["runs"]
+        == []
+    )
 
     with_opt_in = create_studio_app(
         registry_path=fake_registry,
         repo_root=repo_root,
         extra_run_roots=[external_root],
     )
-    api = TestClient(with_opt_in)
+    api = TestClient(with_opt_in, base_url="http://127.0.0.1")
     runs = api.get("/api/runs").json()["runs"]
     assert [run["run_id"] for run in runs] == ["external-run"]
     assert runs[0]["path"] == "<redacted-host-path>"
@@ -285,6 +291,35 @@ def test_cli_arena_studio_refuses_remote_host_without_opt_in():
     result = runner.invoke(cli_app, ["arena", "studio", "--host", "0.0.0.0"])
     assert result.exit_code == 2
     assert "Refusing a non-loopback" in result.stdout
+
+
+@pytest.mark.parametrize("hostile_host", ["attacker.example", "attacker.example:8080", "testserver"])
+def test_dns_rebinding_host_header_is_refused(client: TestClient, hostile_host: str):
+    # New, unreviewed hardening: a page that rebinds its own hostname to 127.0.0.1
+    # passes the loopback bind, and the same-origin POST guard compares Origin to
+    # that same attacker Host. Only an allowlisted Host header may reach the API.
+    assert client.get("/api/runs", headers={"host": hostile_host}).status_code == 400
+    rebound_post = client.post(
+        "/api/tasks/ocarina/approve?approved=true",
+        headers={"host": hostile_host, "origin": f"http://{hostile_host}"},
+    )
+    assert rebound_post.status_code == 400
+    assert client.get("/api/runs", headers={"host": "localhost:8080"}).status_code == 200
+
+
+def test_cli_loopback_bind_keeps_the_rebinding_guard(monkeypatch: pytest.MonkeyPatch):
+    import uvicorn
+
+    served: dict = {}
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: served.update(app=app, **kwargs))
+
+    for flags in ([], ["--allow-remote"]):
+        served.clear()
+        result = runner.invoke(cli_app, ["arena", "studio", *flags])
+        assert result.exit_code == 0, result.stdout
+        api = TestClient(served["app"], base_url="http://attacker.example")
+        assert api.get("/api/health").status_code == 400
+        assert TestClient(served["app"], base_url="http://127.0.0.1").get("/api/health").status_code == 200
 
 
 def test_post_rejects_missing_and_cross_origin(client: TestClient):

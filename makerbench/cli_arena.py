@@ -1030,7 +1030,8 @@ def arena_studio(
         registry: str = typer.Option(DEFAULT_REGISTRY, "--registry", help="Arena registry JSON path.")):
     """Launch the MakerBench Arena Studio web interface (Issue #696)."""
 
-    if host != "localhost":
+    is_loopback = host == "localhost"
+    if not is_loopback:
         try:
             is_loopback = ipaddress.ip_address(host).is_loopback
         except ValueError:
@@ -1048,12 +1049,16 @@ def arena_studio(
         raise typer.Exit(code=1)
 
     from .arena_studio import create_studio_app
+    from .arena_studio.app import LOOPBACK_HOSTS
 
     run_path = Path(run_dir) if run_dir else None
     app = create_studio_app(
         default_run_dir=run_path,
         registry_path=Path(registry),
         allow_live=allow_live,
+        # A loopback bind keeps the DNS-rebinding guard even with --allow-remote;
+        # a deliberate remote bind accepts any Host header.
+        allowed_hosts=LOOPBACK_HOSTS if is_loopback else ("*",),
     )
     console.print(f"[bold green]MakerBench Arena Studio running at http://{host}:{port}/[/bold green]")
     uvicorn.run(app, host=host, port=port)
