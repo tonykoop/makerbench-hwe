@@ -755,14 +755,6 @@
     bindTurntableKeyboard('morningViewerLeft', 'morningImgLeft');
     bindTurntableKeyboard('morningViewerRight', 'morningImgRight');
 
-    // Escapes untrusted text for safe interpolation into an innerHTML template
-    // literal (textContent round-trip through a detached <div>).
-    function escapeHtml(value) {
-      const div = document.createElement('div');
-      div.textContent = value == null ? '' : String(value);
-      return div.innerHTML;
-    }
-
     /* R2 P4: redacted, read-only preflight doctor panel. Only ever POSTs the file
        PATHS the operator typed — never a secret value (there is nothing on this page
        that could even hold one; the server itself only returns classifications). */
