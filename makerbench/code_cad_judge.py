@@ -22,6 +22,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Mapping, Optional
 
 from .code_cad_vote_surface import BlindPair, VoteChoice, record_vote, reveal_vote
@@ -103,19 +104,34 @@ def claude_cli_judge(
     timeout_s: int = 120,
     runner: Callable[..., "subprocess.CompletedProcess[str]"] = subprocess.run,
 ) -> JudgeCallable:
-    """A VLM judge backed by the local ``claude -p`` CLI with image attachments.
+    """A VLM judge backed by local Claude CLI image reads.
 
-    ``model_id`` is provenance only (recorded on the resulting vote as
-    ``voter_id``); the CLI itself picks its configured model.
+    The render paths live in the prompt and their parent directories are
+    explicitly allowed for the Read tool. They are never passed as stray
+    positional arguments, which Claude CLI does not treat as attachments.
     """
 
     def judge(prompt: JudgePrompt) -> VoteChoice:
+        left_path = Path(prompt.left_render_path).resolve()
+        right_path = Path(prompt.right_render_path).resolve()
         text = _JUDGE_PROMPT_TEMPLATE.format(
             instrument_id=prompt.instrument_id, brief=prompt.brief
         )
+        text += (
+            "\n\nUse the Read tool to view both render images before deciding."
+            f"\nLEFT render: {left_path}"
+            f"\nRIGHT render: {right_path}"
+            "\nYour final line must be exactly one word: LEFT, RIGHT, or DRAW."
+        )
+        command = [binary, "-p", text, "--allowedTools", "Read"]
+        for directory in dict.fromkeys((str(left_path.parent), str(right_path.parent))):
+            command.extend(("--add-dir", directory))
+        model = _claude_model_arg(model_id)
+        if model:
+            command.extend(("--model", model))
         try:
             result = runner(
-                [binary, "-p", text, prompt.left_render_path, prompt.right_render_path],
+                command,
                 capture_output=True,
                 text=True,
                 timeout=timeout_s,
@@ -139,14 +155,21 @@ def claude_cli_judge(
 
 
 def _parse_choice(text: str) -> VoteChoice:
-    upper = (text or "").upper()
-    has_left = "LEFT" in upper
-    has_right = "RIGHT" in upper
-    if has_left and not has_right:
-        return "left"
-    if has_right and not has_left:
-        return "right"
-    return "draw"
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    final = lines[-1].upper() if lines else ""
+    if final not in {"LEFT", "RIGHT", "DRAW"}:
+        raise JudgeError("judge response must end with exactly LEFT, RIGHT, or DRAW")
+    return {"LEFT": "left", "RIGHT": "right", "DRAW": "draw"}[final]
+
+
+def _claude_model_arg(model_id: str) -> str | None:
+    """Map recorded Claude-family IDs to stable CLI model aliases."""
+
+    normalized = model_id.strip().lower().replace("_", "-")
+    for alias in ("opus", "sonnet", "haiku"):
+        if normalized == alias or normalized.endswith(f"-{alias}"):
+            return alias
+    return None
 
 
 def judge_pair(

@@ -785,11 +785,13 @@ def arena_judge(
 
     already = _judged_pair_ids(run_path)
     scored = 0
+    skipped = 0
     for round_index in (int(r) for r in _split_csv(rounds)):
         plan = _pairing_plan(run_path, run_log, round_index)
         records = arena_runner.judge_pairing_plan(
             plan, briefs=briefs, judge=judge_fn, judge_model_id=judge_model
         )
+        skipped += len(plan) - len(records)
         for record in records:
             if record["pair_id"] in already:
                 continue
@@ -807,7 +809,10 @@ def arena_judge(
             "rows": scoreline_rows,
         },
     )
-    console.print(f"judged {scored} new pair(s) with {judge_model} (voter_id=vlm:{judge_model})")
+    console.print(
+        f"judged {scored} new pair(s); skipped {skipped} failed pair(s) "
+        f"with {judge_model} (voter_id=vlm:{judge_model})"
+    )
     table = Table(title="VLM judge scoreline")
     table.add_column("entrant")
     table.add_column("judge Elo", justify="right")
