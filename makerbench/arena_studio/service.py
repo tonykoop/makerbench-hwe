@@ -42,6 +42,28 @@ from . import gatekeeper
 _SAFE_RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 
 
+def _escape_markdown_cell(value: object) -> str:
+    """Make an agent-submitted or user-supplied identifier safe inside a
+    Markdown table cell / backtick span (#716): a stray `|` would otherwise
+    split the row into extra columns, an embedded newline would break the
+    row entirely, and a backtick would close a wrapping code span early.
+
+    A backtick is *substituted*, not backslash-escaped (#718 R2 fix):
+    CommonMark code spans do not process backslash escapes at all, so
+    ``\\``` `` surviving into content a caller wraps as `` `{cell}` `` would
+    still close that span early -- the backslash before it is inert, giving
+    a false sense of safety rather than actual safety.
+    """
+    text = str(value)
+    return (
+        text.replace("\\", "\\\\")
+        .replace("`", "'")
+        .replace("|", "\\|")
+        .replace("\n", " ")
+        .replace("\r", " ")
+    )
+
+
 class ArenaStudioService:
     """Business logic and data provider for MakerBench Arena Studio."""
 
@@ -617,6 +639,11 @@ class ArenaStudioService:
                     not (tr.get("grade") or {}).get("compiled", False),
                     not (tr.get("grade") or {}).get("manifold", False),
                     rank_order.get(tr.get("model_id"), 999),
+                    # Two ghost entrants (both unrated) both default to 999 above;
+                    # break the tie deterministically instead of relying on
+                    # incidental trial-list order (#716).
+                    str(tr.get("model_id") or ""),
+                    str(tr.get("trial_id") or ""),
                 )
             )
             best = inst_trials[0] if inst_trials else None
@@ -655,7 +682,12 @@ class ArenaStudioService:
         }
 
     def export_report(self, run_dir: Path) -> str:
-        """Export a self-contained Markdown report for the run (Story #699)."""
+        """Export a self-contained Markdown report for the run (Story #699).
+
+        Entrant/instrument identifiers are agent-submitted or user-supplied
+        text, not a controlled vocabulary — ``_escape_markdown_cell`` keeps a
+        stray `|` or backtick from corrupting the table it lands in (#716).
+        """
         summary = self.get_run_summary(run_dir)
         agreement = self.get_run_agreement(run_dir)
         leaderboard_data = self.get_run_leaderboard(run_dir)
@@ -663,7 +695,7 @@ class ArenaStudioService:
         unrated = leaderboard_data.get("unrated_entrants") or []
 
         lines = [
-            f"# MakerBench Arena Studio — Report: {run_dir.name}",
+            f"# MakerBench Arena Studio — Report: {_escape_markdown_cell(run_dir.name)}",
             f"Generated at: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%SZ')}",
             "",
             "## Summary",
@@ -677,15 +709,20 @@ class ArenaStudioService:
             "|------|---------|-----|------|--------|------|",
         ]
         for idx, row in enumerate(rated, 1):
+            entrant = _escape_markdown_cell(row.get("entrant"))
+            # Leaderboard rows key these `rating`/`draws` (see code_cad_arena.EntrantStats),
+            # not `elo`/`ties` -- the previous keys never matched, so every exported
+            # report silently showed a fixed 1500 Elo and 0 ties (#716).
             lines.append(
-                f"| {idx} | `{row.get('entrant')}` | {row.get('elo', 1500):.1f} | {row.get('wins', 0)} | {row.get('losses', 0)} | {row.get('ties', 0)} |"
+                f"| {idx} | `{entrant}` | {row.get('rating', 1500):.1f} | "
+                f"{row.get('wins', 0)} | {row.get('losses', 0)} | {row.get('draws', 0)} |"
             )
 
         if unrated:
             lines.extend([
                 "",
                 "### Unrated Entrants (0 Votes Cast)",
-                ", ".join(f"`{e}`" for e in unrated),
+                ", ".join(f"`{_escape_markdown_cell(e)}`" for e in unrated),
             ])
 
         lines.extend([
