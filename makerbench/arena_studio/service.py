@@ -271,18 +271,22 @@ class ArenaStudioService:
         record to each instead, then drops the cached queue for (run_dir, voter) so the
         next fetch rebuilds it: `_voted_pair_keys` (cli_arena.py) replays retractions and
         stops counting the pair as voted, so it becomes available to vote on again.
+
+        Both streams get a retraction record (fixed after review — an earlier version
+        of this retracted only votes.blind.jsonl, on the theory that
+        votes_to_elo_votes() requires every revealed line to carry
+        reveal.left/right.model_id so a retraction marker there would break Elo
+        computation; the real fix, applied here, is votes_to_elo_votes() itself now
+        replaying retractions by (pair_id, voter_id) before requiring identities, so a
+        retraction record with no `reveal` block is skipped safely rather than
+        breaking). Without the revealed-stream retraction, the human leaderboard would
+        keep counting the "undone" vote forever, and a later revote could double-count.
         """
         run_path = run_dir.resolve()
         voted = _voted_pair_keys(run_path, voter)
         if (pair_id, voter) not in voted:
             return False  # nothing to retract: never voted, or already retracted
 
-        # votes.blind.jsonl only: votes.revealed.jsonl lines are consumed by
-        # votes_to_elo_votes() (code_cad_arena_runner.py), which requires every line to
-        # carry reveal.left/right.model_id — a retraction marker there would break Elo
-        # computation for the whole run, not just Arena Studio. votes.blind.jsonl is the
-        # single source of truth _voted_pair_keys() reads to decide queue availability,
-        # so retracting there is sufficient to make the pair votable again.
         retraction = {
             "schema": SCHEMA,
             "pair_id": pair_id,
@@ -291,6 +295,7 @@ class ArenaStudioService:
             "retracted_at": datetime.now(timezone.utc).isoformat(),
         }
         append_vote_record(run_path / "votes.blind.jsonl", retraction)
+        append_vote_record(run_path / "votes.revealed.jsonl", retraction)
 
         self._queues.pop((str(run_path), voter), None)
         return True

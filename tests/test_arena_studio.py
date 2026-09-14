@@ -268,6 +268,56 @@ def test_undo_vote_retracts_without_mutating_jsonl(client: TestClient, fake_run:
     assert repeat_undo.status_code == 400
 
 
+def test_undo_vote_is_not_counted_by_the_production_elo_consumer(client: TestClient, fake_run: Path):
+    """C4/#703 fix (post-review): undo must be honored by the SAME consumer the human
+    leaderboard reads (code_cad_arena_runner.votes_to_elo_votes), not just the queue.
+
+    An earlier version of undo_vote() retracted only votes.blind.jsonl; the revealed
+    stream votes_to_elo_votes() reads kept the original vote live forever, so Elo/
+    agreement could still count a vote the UI showed as "undone", and a later revote
+    could double-count. Fixed: undo_vote() also appends a retraction to
+    votes.revealed.jsonl, and votes_to_elo_votes() replays retractions by
+    (pair_id, voter_id) before requiring the reveal identities a plain retraction
+    record doesn't carry.
+    """
+    from makerbench.code_cad_arena_runner import votes_to_elo_votes
+
+    voter = "elo-undo-tester"
+    queue = client.get(f"/api/runs/{fake_run.name}/queue?voter={voter}").json()
+    pair_id = queue["current_pair"]["pair_id"]
+
+    vote_resp = client.post(
+        f"/api/runs/{fake_run.name}/vote",
+        json={"pair_id": pair_id, "winner": "left", "voter": voter},
+    )
+    assert vote_resp.status_code == 200
+
+    revealed_path = fake_run / "votes.revealed.jsonl"
+    votes = votes_to_elo_votes(revealed_path)
+    assert any(v.voter_id == voter for v in votes), "vote must be counted before undo"
+
+    undo_resp = client.post(
+        f"/api/runs/{fake_run.name}/undo-vote", json={"pair_id": pair_id, "voter": voter}
+    )
+    assert undo_resp.status_code == 200
+
+    # The production Elo consumer must no longer count the undone vote.
+    votes_after_undo = votes_to_elo_votes(revealed_path)
+    assert not any(v.voter_id == voter for v in votes_after_undo), (
+        "the production Elo consumer still counts a vote the UI reports as undone"
+    )
+
+    # A replacement vote for the same pair must count exactly once, not twice.
+    revote_resp = client.post(
+        f"/api/runs/{fake_run.name}/vote",
+        json={"pair_id": pair_id, "winner": "right", "voter": voter},
+    )
+    assert revote_resp.status_code == 200
+    votes_after_revote = [v for v in votes_to_elo_votes(revealed_path) if v.voter_id == voter]
+    assert len(votes_after_revote) == 1, "a revote after undo must count exactly once, not accumulate"
+    assert votes_after_revote[0].winner == "right"
+
+
 def test_queue_endpoint_never_leaks_identity_pre_vote(client: TestClient, fake_run: Path):
     """C3/#702: the pre-vote queue payload must be blind.
 
