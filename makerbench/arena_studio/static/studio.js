@@ -5,6 +5,7 @@
     let undoToastTimer = null;
     let allTasks = [];
     let activeFamilyFilter = 'all';
+    let allRuns = []; // S1 stretch: cached for the Compare Runs tab, no extra fetch
 
     function switchTab(tabId, el) {
       document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
@@ -19,6 +20,7 @@
       if (tabId === 'launcher') initLauncher();
       if (tabId === 'arena') loadQueue();
       if (tabId === 'leaderboard') loadLeaderboard();
+      if (tabId === 'compare') populateCompareSelects();
       if (tabId === 'tasks') loadTasks();
     }
 
@@ -26,6 +28,7 @@
       initWebGLDetection();
       const res = await fetch('/api/runs');
       const data = await res.json();
+      allRuns = data.runs || [];
       const sel = document.getElementById('runSelect');
       sel.innerHTML = '';
       if (data.runs.length === 0) {
@@ -502,6 +505,71 @@
       });
 
       renderScatterPlot(agrData.rankings, rhoVal);
+    }
+
+    /* Compare Runs (S1 stretch): read-only, two runs side by side. Reuses the exact
+       endpoints every other tab already calls (/api/runs, /api/runs/{id}/summary,
+       /api/runs/{id}/leaderboard) — no new backend route, never mutates either run. */
+    function populateCompareSelects() {
+      ['compareRunA', 'compareRunB'].forEach(id => {
+        const sel = document.getElementById(id);
+        const previous = sel.value;
+        sel.innerHTML = '<option value="">Select a run&hellip;</option>';
+        allRuns.forEach(r => {
+          const opt = document.createElement('option');
+          opt.value = r.run_id;
+          opt.textContent = `${r.run_id} (${r.votes_count} votes, ${r.models.length} models)`;
+          sel.appendChild(opt);
+        });
+        if (previous && allRuns.some(r => r.run_id === previous)) sel.value = previous;
+      });
+      loadCompareView();
+    }
+
+    function loadCompareView() {
+      loadCompareSide('A');
+      loadCompareSide('B');
+    }
+
+    async function loadCompareSide(side) {
+      const runId = document.getElementById(`compareRun${side}`).value;
+      const title = document.getElementById(`compareTitle${side}`);
+      const statsEl = document.getElementById(`compareStats${side}`);
+      const tbody = document.querySelector(`#compareTable${side} tbody`);
+
+      if (!runId) {
+        title.textContent = `Run ${side}`;
+        statsEl.innerHTML = '';
+        tbody.innerHTML = '<tr><td colspan="4" style="color: var(--text-muted);">Select a run above.</td></tr>';
+        return;
+      }
+
+      title.textContent = runId;
+      tbody.innerHTML = '<tr><td colspan="4">Loading&hellip;</td></tr>';
+
+      try {
+        const [summaryRes, leaderboardRes] = await Promise.all([
+          fetch(`/api/runs/${runId}/summary`),
+          fetch(`/api/runs/${runId}/leaderboard`),
+        ]);
+        const summary = await summaryRes.json();
+        const leaderboard = await leaderboardRes.json();
+
+        statsEl.innerHTML = `
+          <div><div class="stat-label">Votes</div><div class="stat-val" style="font-size:16px;">${summary.votes_count}</div></div>
+          <div><div class="stat-label">Models</div><div class="stat-val" style="font-size:16px;">${(summary.models || []).length}</div></div>
+          <div><div class="stat-label">Instruments</div><div class="stat-val" style="font-size:16px;">${(summary.instruments || []).length}</div></div>
+          <div><div class="stat-label">Trials</div><div class="stat-val" style="font-size:16px;">${summary.trials_count}</div></div>
+        `;
+
+        const rows = leaderboard.leaderboard || [];
+        tbody.innerHTML = rows.length
+          ? rows.map(row => `<tr><td>#${row.rank}</td><td><b>${row.entrant}</b></td><td>${row.rating.toFixed(1)}</td><td>${row.wins}-${row.losses}-${row.draws}</td></tr>`).join('')
+          : '<tr><td colspan="4" style="color: var(--text-muted);">No leaderboard data yet.</td></tr>';
+      } catch (e) {
+        console.error(`Failed to load Compare Runs side ${side}`, e);
+        tbody.innerHTML = '<tr><td colspan="4" style="color: var(--danger);">Failed to load this run.</td></tr>';
+      }
     }
 
     async function exportWinnersAction() {

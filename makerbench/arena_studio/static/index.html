@@ -17,6 +17,7 @@
       <button class="nav-btn btn-launch-nav" data-tab="launcher" onclick="switchTab('launcher', this)">🚀 New Competition</button>
       <button class="nav-btn" data-tab="arena" onclick="switchTab('arena', this)">Blind Voting</button>
       <button class="nav-btn" data-tab="leaderboard" onclick="switchTab('leaderboard', this)">Leaderboard & Agreement</button>
+      <button class="nav-btn" data-tab="compare" onclick="switchTab('compare', this)">⚖️ Compare Runs</button>
       <button class="nav-btn" data-tab="tasks" onclick="switchTab('tasks', this)">Task Matrix</button>
     </div>
     <div class="run-select-wrapper">
@@ -343,7 +344,7 @@
           <h3 style="margin-bottom: 12px;">Dual-Scoreline Agreement & Scatter</h3>
           <div id="agreementMetric" style="margin-bottom: 12px; font-weight: 600; color: var(--accent);">-</div>
 
-          <div id="scatterWrapper" style="background: #090d14; border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-bottom: 12px; text-align: center;">
+          <div id="scatterWrapper" style="background: var(--bg-deep); border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-bottom: 12px; text-align: center;">
             <svg id="scatterSvg" width="100%" height="220" viewBox="0 0 460 220" style="overflow: visible;">
               <!-- Dynamic SVG Scatter Plot -->
             </svg>
@@ -354,6 +355,48 @@
               <tr><th>Entrant</th><th>Subj Rank</th><th>Obj Rank</th><th>Pass Rate</th></tr>
             </thead>
             <tbody><tr><td colspan="4">Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- COMPARE RUNS TAB (S1 stretch, read-only, existing endpoints only) -->
+    <section id="pane-compare" class="tab-pane">
+      <div style="margin-bottom: 16px;">
+        <h2 style="font-size: 18px; font-weight: 700;">Compare Runs</h2>
+        <span style="font-size: 12px; color: var(--text-muted);">Side-by-side, read-only. Never mutates either run — the same summary/leaderboard/agreement endpoints every other tab already uses.</span>
+      </div>
+
+      <div class="grid-2" style="margin-bottom: 16px;">
+        <div>
+          <label for="compareRunA" style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Run A</label>
+          <select id="compareRunA" onchange="loadCompareView()" style="width: 100%;">
+            <option value="">Select a run&hellip;</option>
+          </select>
+        </div>
+        <div>
+          <label for="compareRunB" style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Run B</label>
+          <select id="compareRunB" onchange="loadCompareView()" style="width: 100%;">
+            <option value="">Select a run&hellip;</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card" id="compareCardA">
+          <h3 id="compareTitleA" style="margin-bottom: 12px; color: var(--text-muted);">Run A</h3>
+          <div id="compareStatsA" class="grid-4" style="margin-bottom: 16px;"></div>
+          <table id="compareTableA">
+            <thead><tr><th>Rank</th><th>Entrant</th><th>Rating</th><th>W-L-D</th></tr></thead>
+            <tbody><tr><td colspan="4" style="color: var(--text-muted);">Select a run above.</td></tr></tbody>
+          </table>
+        </div>
+        <div class="card" id="compareCardB">
+          <h3 id="compareTitleB" style="margin-bottom: 12px; color: var(--text-muted);">Run B</h3>
+          <div id="compareStatsB" class="grid-4" style="margin-bottom: 16px;"></div>
+          <table id="compareTableB">
+            <thead><tr><th>Rank</th><th>Entrant</th><th>Rating</th><th>W-L-D</th></tr></thead>
+            <tbody><tr><td colspan="4" style="color: var(--text-muted);">Select a run above.</td></tr></tbody>
           </table>
         </div>
       </div>

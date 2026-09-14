@@ -448,6 +448,38 @@ def test_light_mode_on_accent_contrast_is_not_regressed(client: TestClient):
     )
 
 
+def test_compare_runs_tab_markup(client: TestClient):
+    """S1 stretch/#694: the Compare Runs tab markup must exist and be wired to a tab."""
+    html = client.get("/").text
+
+    assert 'data-tab="compare"' in html
+    assert 'id="pane-compare"' in html
+    for element_id in (
+        "compareRunA",
+        "compareRunB",
+        "compareTitleA",
+        "compareTitleB",
+        "compareStatsA",
+        "compareStatsB",
+        "compareTableA",
+        "compareTableB",
+    ):
+        assert f'id="{element_id}"' in html, f"missing #{element_id} in Compare Runs markup"
+
+
+def test_compare_runs_is_read_only_over_existing_endpoints(client: TestClient):
+    """S1 stretch/#694: Compare Runs must be read-only and use only endpoints every
+    other tab already calls — no new backend route, no POST."""
+    js = client.get("/static/studio.js").text
+
+    assert "function loadCompareSide" in js
+    compare_fn = js.split("async function loadCompareSide", 1)[1].split("\n    }", 1)[0]
+    assert "/summary`" in compare_fn
+    assert "/leaderboard`" in compare_fn
+    assert "method: 'POST'" not in compare_fn
+    assert "method: \"POST\"" not in compare_fn
+
+
 def test_turntable_html_progressive_enhancement(client: TestClient):
     """C2/#698: WebGL orbit must start disabled — the frame turntable is the default."""
     response = client.get("/")
