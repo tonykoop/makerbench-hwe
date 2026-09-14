@@ -205,7 +205,11 @@ def test_html_ui(client: TestClient):
 
 
 def test_cli_arena_studio_help():
-    result = runner.invoke(cli_app, ["arena", "studio", "--help"])
+    result = runner.invoke(
+        cli_app,
+        ["arena", "studio", "--help"],
+        env={"NO_COLOR": "1", "TERM": "dumb", "COLUMNS": "200"},
+    )
     assert result.exit_code == 0
     assert "Launch the MakerBench Arena Studio web interface" in result.stdout
     assert "--allow-remote" in result.stdout
