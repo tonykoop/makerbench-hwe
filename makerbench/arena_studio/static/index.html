@@ -241,7 +241,10 @@
             <button id="btnWebglMode" class="pill" onclick="setViewerMode('webgl')" disabled title="Checking WebGL2 availability&hellip;">🧊 Interactive 3D (WebGL)</button>
           </div>
         </div>
-        <div style="font-size: 13px; color: var(--text-muted);">Shortcuts: <b>L</b> = Left, <b>D</b> = Draw, <b>R</b> = Right</div>
+        <div style="font-size: 13px; color: var(--text-muted);">
+          Shortcuts: <b>A</b>/<b>L</b> = Candidate A, <b>T</b>/<b>D</b> = Tie, <b>B</b>/<b>R</b> = Candidate B,
+          <b>S</b> = Skip, <b>U</b> = Undo last vote, <b>1</b>-<b>3</b> = flag defect (A), <b>Shift+1</b>-<b>3</b> = flag defect (B)
+        </div>
       </div>
 
       <div id="webglNotice" style="display:none; background: #854d0e; color: #fde047; padding: 8px 14px; border-radius: 6px; font-size: 12px; margin-bottom: 12px;">
@@ -260,11 +263,11 @@
             <model-viewer id="mvLeft" style="display:none; width:100%; height:100%;" camera-controls disable-pan></model-viewer>
             <div class="frame-progress" id="progressLeft" style="display:none;">Loading frames&hellip; <span id="progressLeftCount">0/0</span></div>
           </div>
-          <div class="flags-box" id="flagsLeft">
+          <div class="flags-box" id="flagsLeft" role="group" aria-label="Candidate A defect and disposition checklist">
             <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">Defect Checklist</div>
-            <label><input type="checkbox" value="missing_critical_components"> Missing parts</label>
-            <label><input type="checkbox" value="misaligned_assembly"> Misaligned / collisions</label>
-            <label><input type="checkbox" value="wrong_proportions"> Distorted proportions</label>
+            <label><input type="checkbox" data-defect-index="1" value="missing_critical_components"> Missing parts <span class="kbd-hint">1</span></label>
+            <label><input type="checkbox" data-defect-index="2" value="misaligned_assembly"> Misaligned / collisions <span class="kbd-hint">2</span></label>
+            <label><input type="checkbox" data-defect-index="3" value="wrong_proportions"> Distorted proportions <span class="kbd-hint">3</span></label>
             <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); margin: 6px 0 4px; text-transform: uppercase;">Disposition</div>
             <label><input type="checkbox" value="save_for_later"> Save for later</label>
             <label><input type="checkbox" value="delete_immediately"> Reject candidate</label>
@@ -282,11 +285,11 @@
             <model-viewer id="mvRight" style="display:none; width:100%; height:100%;" camera-controls disable-pan></model-viewer>
             <div class="frame-progress" id="progressRight" style="display:none;">Loading frames&hellip; <span id="progressRightCount">0/0</span></div>
           </div>
-          <div class="flags-box" id="flagsRight">
+          <div class="flags-box" id="flagsRight" role="group" aria-label="Candidate B defect and disposition checklist">
             <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">Defect Checklist</div>
-            <label><input type="checkbox" value="missing_critical_components"> Missing parts</label>
-            <label><input type="checkbox" value="misaligned_assembly"> Misaligned / collisions</label>
-            <label><input type="checkbox" value="wrong_proportions"> Distorted proportions</label>
+            <label><input type="checkbox" data-defect-index="1" value="missing_critical_components"> Missing parts <span class="kbd-hint">⇧1</span></label>
+            <label><input type="checkbox" data-defect-index="2" value="misaligned_assembly"> Misaligned / collisions <span class="kbd-hint">⇧2</span></label>
+            <label><input type="checkbox" data-defect-index="3" value="wrong_proportions"> Distorted proportions <span class="kbd-hint">⇧3</span></label>
             <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); margin: 6px 0 4px; text-transform: uppercase;">Disposition</div>
             <label><input type="checkbox" value="save_for_later"> Save for later</label>
             <label><input type="checkbox" value="delete_immediately"> Reject candidate</label>
@@ -294,10 +297,16 @@
         </div>
       </div>
 
-      <div class="vote-bar">
-        <button class="btn btn-primary" onclick="castVote('left')">Candidate A is Better (L)</button>
-        <button class="btn btn-secondary" onclick="castVote('draw')">Draw / Equal (D)</button>
-        <button class="btn btn-primary" onclick="castVote('right')">Candidate B is Better (R)</button>
+      <div class="vote-bar" role="group" aria-label="Cast your vote">
+        <button class="btn btn-primary" onclick="castVote('left')" aria-keyshortcuts="a l">Candidate A is Better (A)</button>
+        <button class="btn btn-secondary" onclick="castVote('draw')" aria-keyshortcuts="t d">Draw / Equal (T)</button>
+        <button class="btn btn-primary" onclick="castVote('right')" aria-keyshortcuts="b r">Candidate B is Better (B)</button>
+        <button class="btn btn-secondary" onclick="skipPair()" aria-keyshortcuts="s" title="Show another pair without voting">Skip (S)</button>
+      </div>
+
+      <div id="undoToast" class="undo-toast" role="status" aria-live="polite" hidden>
+        <span id="undoToastText">Vote cast.</span>
+        <button type="button" onclick="undoLastVote()">Undo (U)</button>
       </div>
     </section>
 

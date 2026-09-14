@@ -1,5 +1,8 @@
     let currentRun = '';
     let currentPair = null;
+    let skipCursor = 0; // C4/#703: read-only client cursor, see the /queue?skip= handler
+    let lastVotedPairId = null;
+    let undoToastTimer = null;
     let allTasks = [];
     let activeFamilyFilter = 'all';
 
@@ -499,7 +502,7 @@
 
     async function loadQueue() {
       if (!currentRun) return;
-      const res = await fetch(`/api/runs/${currentRun}/queue`);
+      const res = await fetch(`/api/runs/${currentRun}/queue?skip=${skipCursor}`);
       const data = await res.json();
       document.getElementById('voteProgress').textContent = `Voted ${data.done} of ${data.total} pairs`;
       if (!data.has_next) {
@@ -618,14 +621,15 @@
 
     async function castVote(winner) {
       if (!currentPair) return;
+      const votedPairId = currentPair.pair_id;
       const leftFlags = Array.from(document.querySelectorAll('#flagsLeft input:checked')).map(cb => cb.value);
       const rightFlags = Array.from(document.querySelectorAll('#flagsRight input:checked')).map(cb => cb.value);
 
-      await fetch(`/api/runs/${currentRun}/vote`, {
+      const res = await fetch(`/api/runs/${currentRun}/vote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          pair_id: currentPair.pair_id,
+          pair_id: votedPairId,
           winner: winner,
           voter: 'tony',
           flags: { left: leftFlags, right: rightFlags }
@@ -633,7 +637,58 @@
       });
 
       document.querySelectorAll('.flags-box input').forEach(cb => cb.checked = false);
+      if (res.ok) {
+        skipCursor = 0; // queue composition just changed under us
+        showUndoToast(votedPairId, winner);
+      }
       loadQueue();
+    }
+
+    // C4/#703 skip ergonomics: advance the read-only cursor and re-fetch — never votes,
+    // never touches votes.*.jsonl.
+    function skipPair() {
+      if (!currentPair) return;
+      hideUndoToast();
+      skipCursor += 1;
+      loadQueue();
+    }
+
+    // C4/#703 undo-last-vote window: a client-enforced ~8s window (the backend itself
+    // will retract any still-voted pair regardless of elapsed time — the window is a UX
+    // affordance, not a server-side deadline) to reverse an accidental vote. Appends a
+    // retraction record server-side; never mutates votes.blind.jsonl.
+    function showUndoToast(pairId, winner) {
+      lastVotedPairId = pairId;
+      const toast = document.getElementById('undoToast');
+      const label = winner === 'left' ? 'Candidate A' : winner === 'right' ? 'Candidate B' : 'Draw';
+      document.getElementById('undoToastText').textContent = `Vote cast: ${label}.`;
+      toast.hidden = false;
+      clearTimeout(undoToastTimer);
+      undoToastTimer = setTimeout(hideUndoToast, 8000);
+    }
+
+    function hideUndoToast() {
+      document.getElementById('undoToast').hidden = true;
+      lastVotedPairId = null;
+      clearTimeout(undoToastTimer);
+    }
+
+    async function undoLastVote() {
+      if (!lastVotedPairId) return;
+      const pairId = lastVotedPairId;
+      hideUndoToast();
+      await fetch(`/api/runs/${currentRun}/undo-vote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pair_id: pairId, voter: 'tony' })
+      });
+      loadQueue();
+    }
+
+    function toggleDefectCheckbox(side, index) {
+      const boxId = side === 'right' ? 'flagsRight' : 'flagsLeft';
+      const cb = document.querySelector(`#${boxId} input[data-defect-index="${index}"]`);
+      if (cb) cb.checked = !cb.checked;
     }
 
     async function loadTasks() {
@@ -649,10 +704,23 @@
     }
 
     document.addEventListener('keydown', (e) => {
-      if (!currentPair || e.target.tagName === 'INPUT') return;
-      if (e.key === 'l' || e.key === 'ArrowLeft') castVote('left');
-      if (e.key === 'd' || e.key === 'ArrowDown') castVote('draw');
-      if (e.key === 'r' || e.key === 'ArrowRight') castVote('right');
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      const key = e.key.toLowerCase();
+
+      // Undo works even once the queue has emptied (currentPair may be stale/absent).
+      if (key === 'u') {
+        undoLastVote();
+        return;
+      }
+      if (!currentPair) return;
+
+      if (key === 'a' || key === 'l' || e.key === 'ArrowLeft') castVote('left');
+      else if (key === 't' || key === 'd' || e.key === 'ArrowDown') castVote('draw');
+      else if (key === 'b' || key === 'r' || e.key === 'ArrowRight') castVote('right');
+      else if (key === 's') skipPair();
+      else if (e.key === '1' || e.key === '2' || e.key === '3') {
+        toggleDefectCheckbox(e.shiftKey ? 'right' : 'left', e.key);
+      }
     });
 
     window.onload = init;

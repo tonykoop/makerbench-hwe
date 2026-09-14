@@ -198,6 +198,76 @@ def test_queue_and_vote(client: TestClient, fake_run: Path):
     assert "total" in data
 
 
+def test_skip_cursor_never_mutates_and_wraps(client: TestClient, fake_run: Path):
+    """C4/#703 skip ergonomics: `skip` is a pure read-only cursor into the unvoted
+    items — must never change `done`/`total`, and must wrap around modulo the unvoted
+    count rather than 500ing on an out-of-range value."""
+    voter = "cursor-tester"
+    base = client.get(f"/api/runs/{fake_run.name}/queue?voter={voter}").json()
+    assert base["has_next"] is True
+    skippable = base["skippable"]
+
+    same_again = client.get(f"/api/runs/{fake_run.name}/queue?voter={voter}&skip=0").json()
+    assert same_again["current_pair"]["pair_id"] == base["current_pair"]["pair_id"]
+    assert same_again["done"] == base["done"]
+    assert same_again["total"] == base["total"]
+
+    wrapped = client.get(f"/api/runs/{fake_run.name}/queue?voter={voter}&skip={skippable}").json()
+    assert wrapped["current_pair"]["pair_id"] == base["current_pair"]["pair_id"]
+
+
+def test_undo_vote_retracts_without_mutating_jsonl(client: TestClient, fake_run: Path):
+    """C4/#703 undo-last-vote: must append a retraction record (never rewrite/delete a
+    line) and make the pair votable again."""
+    voter = "undo-tester"
+    before = client.get(f"/api/runs/{fake_run.name}/queue?voter={voter}").json()
+    pair_id = before["current_pair"]["pair_id"]
+
+    blind_jsonl = fake_run / "votes.blind.jsonl"
+    lines_before = blind_jsonl.read_text(encoding="utf-8").splitlines()
+
+    vote_resp = client.post(
+        f"/api/runs/{fake_run.name}/vote",
+        json={"pair_id": pair_id, "winner": "left", "voter": voter},
+    )
+    assert vote_resp.status_code == 200
+
+    after_vote = client.get(f"/api/runs/{fake_run.name}/queue?voter={voter}").json()
+    assert after_vote["done"] == before["done"] + 1
+
+    undo_resp = client.post(
+        f"/api/runs/{fake_run.name}/undo-vote", json={"pair_id": pair_id, "voter": voter}
+    )
+    assert undo_resp.status_code == 200
+    assert undo_resp.json()["success"] is True
+
+    # The original vote lines are untouched; only new lines were appended.
+    lines_after = blind_jsonl.read_text(encoding="utf-8").splitlines()
+    assert lines_after[: len(lines_before)] == lines_before
+    assert len(lines_after) > len(lines_before)
+
+    retraction_lines = [
+        json.loads(line) for line in lines_after[len(lines_before) :]
+    ]
+    assert any(
+        r.get("pair_id") == pair_id and r.get("voter_id") == voter and r.get("retracts") is True
+        for r in retraction_lines
+    )
+
+    # The pair is votable again.
+    after_undo = client.get(f"/api/runs/{fake_run.name}/queue?voter={voter}").json()
+    assert after_undo["has_next"] is True
+    assert after_undo["current_pair"]["pair_id"] == pair_id
+    assert after_undo["done"] == before["done"]
+
+    # Undoing a pair that was never voted (or already undone) is rejected, not silently
+    # accepted.
+    repeat_undo = client.post(
+        f"/api/runs/{fake_run.name}/undo-vote", json={"pair_id": pair_id, "voter": voter}
+    )
+    assert repeat_undo.status_code == 400
+
+
 def test_queue_endpoint_never_leaks_identity_pre_vote(client: TestClient, fake_run: Path):
     """C3/#702: the pre-vote queue payload must be blind.
 
@@ -318,6 +388,47 @@ def test_turntable_js_has_context_loss_safety_net(client: TestClient):
     # the lane contract for the primary turntable view.
     assert "startAutoRotate" in js
     assert "progressEl.style.display" in js
+
+
+def test_voting_ergonomics_markup(client: TestClient):
+    """C4/#703: skip button, undo toast, and per-side defect-checkbox shortcuts must
+    all be present in the served HTML."""
+    html = client.get("/").text
+
+    assert 'onclick="skipPair()"' in html
+    assert 'id="undoToast"' in html
+    assert 'onclick="undoLastVote()"' in html
+
+    left_defects = re.findall(
+        r'<div class="flags-box" id="flagsLeft".*?</div>\s*</div>', html, re.S
+    )
+    assert left_defects, "expected the left defect checklist markup"
+    for i in ("1", "2", "3"):
+        assert f'data-defect-index="{i}"' in left_defects[0]
+
+    # role/aria-label present for a11y (C4 acceptance: focus/ARIA labels).
+    assert 'role="group" aria-label="Candidate A defect and disposition checklist"' in html
+    assert 'role="group" aria-label="Candidate B defect and disposition checklist"' in html
+
+
+def test_voting_ergonomics_js_shortcuts(client: TestClient):
+    """C4/#703: keyboard voting (A/B/tie/skip), the defect-checkbox shortcut, and the
+    undo window must all be wired up in studio.js, and undo must work even without a
+    currentPair (e.g. right after the last pair in the queue is voted)."""
+    js = client.get("/static/studio.js").text
+
+    for fn in ("skipPair", "undoLastVote", "showUndoToast", "toggleDefectCheckbox"):
+        assert f"function {fn}" in js
+
+    keydown_handler = js.split("document.addEventListener('keydown'", 1)[1]
+    assert "key === 'u'" in keydown_handler
+    # The undo branch must return before the currentPair guard, so 'u' still works once
+    # the queue has emptied and currentPair is stale.
+    undo_branch, _, rest = keydown_handler.partition("if (!currentPair) return;")
+    assert "undoLastVote()" in undo_branch
+
+    assert "skipCursor" in js  # read-only cursor, must reset to 0 after a real vote
+    assert "skipCursor = 0" in js
 
 
 def test_cli_arena_studio_help():
