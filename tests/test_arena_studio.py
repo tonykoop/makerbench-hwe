@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
+import time
 from pathlib import Path
 from urllib.parse import quote
 
@@ -16,6 +18,7 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from makerbench.arena_studio import create_studio_app
+from makerbench.arena_studio.service import ArenaStudioService
 from makerbench.cli import app as cli_app
 
 runner = CliRunner()
@@ -235,6 +238,7 @@ def test_cli_arena_studio_help():
     assert result.exit_code == 0
     assert "Launch the MakerBench Arena Studio web interface" in result.stdout
     assert "--allow-remote" in result.stdout
+    assert "--allow-live" in result.stdout
 
 
 def test_cli_arena_studio_refuses_remote_host_without_opt_in():
@@ -281,9 +285,9 @@ def test_competition_launch_and_status(client: TestClient):
     payload = {
         "run_id": "test_launch_round",
         "instruments": ["ocarina"],
-        "models": ["claude-opus-5", "cadam-fable-5.1"],
+        "models": ["stub-a", "stub-b"],
         "backend": "solidworks-live",
-        "context_tier": "image",
+        "context_tier": "blind",
         "levels": ["L1", "L2", "L3", "L4"],
         "concurrency": 2,
         "max_turns": 16,
@@ -296,19 +300,117 @@ def test_competition_launch_and_status(client: TestClient):
     data = response.json()
     assert data["success"] is True
     assert data["run_id"] == "test_launch_round"
+    assert data["status"] == "running"
+    assert data["live"] is False
+    assert data["backend"] == "openscad"
 
-    # Verify status endpoint
-    status_res = client.get("/api/competitions/status")
-    assert status_res.status_code == 200
-    jobs = status_res.json().get("jobs") or []
-    assert any(j["run_id"] == "test_launch_round" for j in jobs)
+    # Verify the real detached dry-run process completes and writes its run log.
+    deadline = time.monotonic() + 20
+    job = {}
+    while time.monotonic() < deadline:
+        status_res = client.get("/api/competitions/status?run_id=test_launch_round")
+        assert status_res.status_code == 200
+        job = status_res.json()
+        if job.get("status") != "running":
+            break
+        time.sleep(0.1)
+    assert job["status"] == "completed", client.get(
+        "/api/competitions/test_launch_round/logs"
+    ).json()
+    run_path = Path(job["run_path"])
+    run_log = json.loads((run_path / "run_log.json").read_text(encoding="utf-8"))
+    assert run_log["summary"]["total_trials"] == 2
+    launch = json.loads((run_path / "studio_launch.json").read_text(encoding="utf-8"))
+    assert "--stub" in launch["command"]
+    assert "solidworks-live" not in launch["command"]
 
     # Verify logs endpoint
     logs_res = client.get("/api/competitions/test_launch_round/logs")
     assert logs_res.status_code == 200
     lines = logs_res.json().get("lines") or []
     assert len(lines) >= 1
-    assert any("LAUNCHING ARENA COMPETITION" in line for line in lines)
+    assert any("ARENA PROCESS START" in line for line in lines)
+    assert not any("Preflight checks passed" in line for line in lines)
+
+
+def test_sse_endpoint_tails_existing_log(client: TestClient, fake_run: Path):
+    (fake_run / "arena_test.log").write_text("first\nsecond\n", encoding="utf-8")
+
+    response = client.get(
+        f"/api/competitions/{fake_run.name}/logs/stream?tail=1&follow=false"
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.text == 'data: "second"\n\n'
+
+
+def test_server_restart_rediscovers_live_detached_job(tmp_path: Path, fake_registry: Path):
+    run_path = tmp_path / "runs" / "code_cad_arena" / "recovered-run"
+    run_path.mkdir(parents=True)
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)", "makerbench.cli", str(run_path)]
+    )
+    try:
+        launch = {
+            "schema": "makerbench-arena-studio-launch-v1",
+            "run_id": run_path.name,
+            "run_path": str(run_path),
+            "log_path": str(run_path / "arena_recovered-run.log"),
+            "status": "running",
+            "pid": process.pid,
+            "progress": "0/2",
+        }
+        (run_path / "studio_launch.json").write_text(json.dumps(launch), encoding="utf-8")
+
+        service = ArenaStudioService(registry_path=fake_registry, repo_root=tmp_path)
+        status = service.get_competition_status(run_path.name)
+
+        assert status["status"] == "running"
+        assert status["pid"] == process.pid
+        assert status["run_path"] == str(run_path)
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
+def test_server_restart_marks_dead_unfinished_job_interrupted(
+    tmp_path: Path, fake_registry: Path
+):
+    run_path = tmp_path / "runs" / "code_cad_arena" / "dead-run"
+    run_path.mkdir(parents=True)
+    launch = {
+        "schema": "makerbench-arena-studio-launch-v1",
+        "run_id": run_path.name,
+        "status": "running",
+        "pid": 2_147_483_647,
+        "progress": "0/2",
+    }
+    launch_path = run_path / "studio_launch.json"
+    launch_path.write_text(json.dumps(launch), encoding="utf-8")
+
+    service = ArenaStudioService(registry_path=fake_registry, repo_root=tmp_path)
+    status = service.get_competition_status(run_path.name)
+
+    assert status["status"] == "interrupted"
+    assert json.loads(launch_path.read_text(encoding="utf-8"))["status"] == "interrupted"
+
+
+def test_live_launch_is_refused_without_server_opt_in(client: TestClient):
+    response = client.post(
+        "/api/competitions/launch",
+        json={
+            "run_id": "refused_live_round",
+            "instruments": ["ocarina"],
+            "models": ["claude-opus-5"],
+            "backend": "openscad",
+            "context_tier": "blind",
+            "skip_image_gate": True,
+            "live": True,
+        },
+    )
+    assert response.status_code == 403
+    assert "--allow-live" in response.json()["detail"]
 
 
 def test_reference_gatekeeper_and_approval_flow(client: TestClient):
@@ -342,8 +444,8 @@ def test_reference_gatekeeper_and_approval_flow(client: TestClient):
     # 3. Approve and retry
     client.post("/api/tasks/kora/approve?approved=true")
     allowed_res = client.post("/api/competitions/launch", json=launch_payload)
-    assert allowed_res.status_code == 200
-    assert allowed_res.json()["success"] is True
+    assert allowed_res.status_code == 500
+    assert "local reference images" in allowed_res.json()["detail"]
 
 
 def test_export_winners_and_report(client: TestClient, fake_run: Path):
