@@ -31,6 +31,7 @@ from .parametric_backend import (
     make_parametric_execute_trial,
     unavailable_instruments,
 )
+from .run_log_io import atomic_write_json, file_lock
 from .code_cad_agreement import build_agreement_summary, render_markdown_summary
 from .code_cad_arena import build_elo_leaderboard, sample_swiss_pairs
 from .code_cad_orchestrator import OrchestrationConfig, run_orchestration
@@ -180,7 +181,11 @@ def _serve_run_dir(run_dir: Path, port: int) -> tuple[object, int]:
 
 
 def _stage_blind_assets(
-    candidate: VoteCandidate, pair_hint: str, side: str, vote_pages: Path
+    candidate: VoteCandidate,
+    pair_hint: str,
+    side: str,
+    vote_pages: Path,
+    renderer: str = "auto",
 ) -> VoteCandidate:
     """Copy a candidate's viewer assets under anonymized names (blindness).
 
@@ -211,7 +216,7 @@ def _stage_blind_assets(
         # vote-web is instant; only the blind aliasing runs per pair.
         try:
             frames_rel = _stage_turntable_frames(
-                Path(str(stl_path)), pair_hint, side, vote_pages
+                Path(str(stl_path)), pair_hint, side, vote_pages, renderer=renderer
             )
         except Exception as exc:  # never let frames block voting
             console.print(f"[dim]turntable frames skipped ({side}): {exc}[/dim]")
@@ -230,6 +235,7 @@ def _stage_blind_assets(
 def _stage_turntable_frames(
     stl_path: Path, pair_hint: str, side: str, vote_pages: Path,
     frames: int = 24, size: tuple[int, int] = (720, 720),
+    renderer: str = "auto",
 ) -> Optional[tuple[str, ...]]:
     """Render (cached) turntable frames for a mesh, then blind-alias them.
 
@@ -244,21 +250,35 @@ def _stage_turntable_frames(
 
     from . import render as render_mod
 
+    if renderer not in {"auto", "gpu", "openscad"}:
+        raise ValueError("renderer must be auto, gpu, or openscad")
     stl_path = stl_path.resolve()
     if not stl_path.is_file():
         return None
-    key_src = f"{stl_path.as_posix()}:{frames}:{size[0]}x{size[1]}"
+    can_gpu, _ = render_mod.gpu_render_available()
+    selected = "gpu" if renderer != "openscad" and can_gpu else "openscad"
+    key_src = f"{stl_path.as_posix()}:{frames}:{size[0]}x{size[1]}:{selected}"
     key = hashlib.sha256(key_src.encode("utf-8")).hexdigest()[:16]
     cache_dir = vote_pages / "frames_cache" / key
     have = sorted(cache_dir.glob("frame_*.png")) if cache_dir.exists() else []
-    if len(have) < frames:
+    cache_manifest_path = cache_dir / "turntable_manifest.json"
+    if len(have) < frames or not cache_manifest_path.exists():
         cache_dir.mkdir(parents=True, exist_ok=True)
         render_mod.render_turntable(
-            stl_path.as_posix(), cache_dir.as_posix(), frames=frames, size=size
+            stl_path.as_posix(),
+            cache_dir.as_posix(),
+            frames=frames,
+            size=size,
+            renderer=renderer,
         )
         have = sorted(cache_dir.glob("frame_*.png"))
-    if not have:
-        return None
+    if len(have) < frames:
+        raise RuntimeError(f"turntable renderer produced {len(have)}/{frames} frames")
+    have = have[:frames]
+    cache_manifest = json.loads(cache_manifest_path.read_text(encoding="utf-8"))
+    actual_renderer = cache_manifest.get("renderer")
+    if actual_renderer not in {"blender-eevee", "openscad"}:
+        raise ValueError("turntable cache has invalid renderer provenance")
 
     blind = vote_pages / "blind"
     blind.mkdir(parents=True, exist_ok=True)
@@ -267,6 +287,21 @@ def _stage_turntable_frames(
         alias = blind / f"{pair_hint}-{side}-f{i:02d}.png"
         shutil.copyfile(src, alias)
         rel.append(f"blind/{alias.name}")
+    manifest_path = vote_pages / "vote_page_manifest.json"
+    with file_lock(manifest_path):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            manifest = {
+                "schema": "makerbench-vote-page-manifest-v1",
+                "frame_sets": {},
+            }
+        manifest.setdefault("frame_sets", {})[f"{pair_hint}:{side}"] = {
+            "requested_renderer": renderer,
+            "renderer": actual_renderer,
+            "frames": rel,
+        }
+        atomic_write_json(manifest_path, manifest)
     return tuple(rel)
 
 
@@ -524,17 +559,54 @@ def arena_pairs(
     console.print_json(json.dumps(payload))
 
 
+@arena_app.command("turntable")
+def arena_turntable(
+        mesh: str = typer.Option(..., "--mesh", help="Existing STL or OBJ mesh."),
+        out_dir: str = typer.Option(..., "--out-dir", help="Destination for frames and manifest."),
+        renderer: str = typer.Option("auto", "--renderer", help="Renderer: auto, gpu, or openscad."),
+        frames: int = typer.Option(24, "--frames", min=1, max=360),
+        size: int = typer.Option(720, "--size", min=64, max=4096)):
+    """Generate a zero-WebGL turntable frame set plus renderer provenance."""
+
+    if renderer not in {"auto", "gpu", "openscad"}:
+        raise typer.BadParameter("must be auto, gpu, or openscad", param_hint="--renderer")
+    mesh_path = Path(mesh).resolve()
+    if not mesh_path.is_file():
+        raise typer.BadParameter(f"mesh does not exist: {mesh}", param_hint="--mesh")
+    paths = render.render_turntable(
+        mesh_path.as_posix(),
+        Path(out_dir).resolve().as_posix(),
+        frames=frames,
+        size=(size, size),
+        renderer=renderer,
+    )
+    manifest_path = Path(out_dir).resolve() / "turntable_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    console.print_json(
+        json.dumps(
+            {
+                "renderer": manifest["renderer"],
+                "frames": paths,
+                "manifest": manifest_path.as_posix(),
+            }
+        )
+    )
+
+
 @arena_app.command("vote")
 def arena_vote(
         run_dir: str = typer.Option(..., "--run-dir"),
         voter: str = typer.Option(..., "--voter", help="Voter id recorded on every vote."),
         round_index: int = typer.Option(0, "--round", help="Swiss voting round index."),
         max_pairs: Optional[int] = typer.Option(None, "--max-pairs", help="Stop after N pairs this session."),
+        renderer: str = typer.Option("auto", "--renderer", help="Turntable renderer: auto, gpu, or openscad."),
         serve: bool = typer.Option(True, "--serve/--no-serve", help="Serve pages on 127.0.0.1 so the 3D viewer works (file:// blocks it)."),
         port: int = typer.Option(0, "--port", help="Local server port (0 = pick a free one).")):
     """Interactive blind voting: open each pair page, record l/r/d votes."""
 
     run_path = Path(run_dir)
+    if renderer not in {"auto", "gpu", "openscad"}:
+        raise typer.BadParameter("must be auto, gpu, or openscad", param_hint="--renderer")
     run_log = _load_run_log(run_path)
     plan = _pairing_plan(run_path, run_log, round_index)
     if not plan:
@@ -564,8 +636,12 @@ def arena_vote(
         # paths embed entrant ids and would unblind a voter reading the DOM.
         pair = BlindPair(
             pair_id=shuffled.pair_id,
-            left=_stage_blind_assets(shuffled.left, shuffled.pair_id, "left", vote_pages),
-            right=_stage_blind_assets(shuffled.right, shuffled.pair_id, "right", vote_pages),
+            left=_stage_blind_assets(
+                shuffled.left, shuffled.pair_id, "left", vote_pages, renderer=renderer
+            ),
+            right=_stage_blind_assets(
+                shuffled.right, shuffled.pair_id, "right", vote_pages, renderer=renderer
+            ),
         )
         page_path = vote_pages / f"{item['instrument_id']}_seed{item['seed']}_rep{item['rep']}_round{item['round']}_{pair.pair_id}.html"
         page_path.write_text(render_vote_surface(pair), encoding="utf-8")
@@ -608,12 +684,15 @@ def arena_vote_web(
         run_dir: str = typer.Option(..., "--run-dir"),
         voter: str = typer.Option(..., "--voter", help="Voter id recorded on every vote."),
         rounds: str = typer.Option("0,1", "--rounds", help="Comma-separated Swiss round indexes to queue."),
+        renderer: str = typer.Option("auto", "--renderer", help="Turntable renderer: auto, gpu, or openscad."),
         port: int = typer.Option(0, "--port", help="Local server port (0 = pick a free one).")):
     """Browser-native blind voting: one URL, vote with the on-page buttons."""
 
     from .code_cad_vote_web import QueueItem, VoteQueue, serve_vote_queue
 
     run_path = Path(run_dir)
+    if renderer not in {"auto", "gpu", "openscad"}:
+        raise typer.BadParameter("must be auto, gpu, or openscad", param_hint="--renderer")
     run_log = _load_run_log(run_path)
     vote_pages = run_path / "vote_pages"
     vote_pages.mkdir(parents=True, exist_ok=True)
@@ -645,8 +724,24 @@ def arena_vote_web(
 
             pair = BlindPair(
                 pair_id=shuffled.pair_id,
-                left=_root_relative(_stage_blind_assets(shuffled.left, shuffled.pair_id, "left", vote_pages)),
-                right=_root_relative(_stage_blind_assets(shuffled.right, shuffled.pair_id, "right", vote_pages)),
+                left=_root_relative(
+                    _stage_blind_assets(
+                        shuffled.left,
+                        shuffled.pair_id,
+                        "left",
+                        vote_pages,
+                        renderer=renderer,
+                    )
+                ),
+                right=_root_relative(
+                    _stage_blind_assets(
+                        shuffled.right,
+                        shuffled.pair_id,
+                        "right",
+                        vote_pages,
+                        renderer=renderer,
+                    )
+                ),
             )
             queue.items.append(QueueItem(pair=pair, meta={
                 "instrument_id": item["instrument_id"], "seed": item["seed"],
