@@ -32,6 +32,7 @@ from makerbench.code_cad_vote_surface import (
 from makerbench.code_cad_vote_web import QueueItem, VoteQueue
 
 from . import analytics
+from . import doe
 
 
 class ArenaStudioService:
@@ -194,6 +195,74 @@ class ArenaStudioService:
         run_log = _load_run_log(run_dir)
         tasks = self.get_registry_tasks()
         return analytics.per_family_breakdown(run_dir, run_log, tasks)
+
+    def preview_doe_matrix(
+        self,
+        instruments: list[str],
+        models: list[str],
+        *,
+        levels: Optional[list[str]] = None,
+        context_tiers: Optional[list[str]] = None,
+        seeds: Optional[list[int]] = None,
+    ) -> dict[str, Any]:
+        """Preview the DoE matrix with per-cell time/cost estimates (#697 D3).
+
+        Read-only: builds and annotates the cell list, never writes or
+        executes anything.
+        """
+        cells = doe.expand_matrix(
+            instruments,
+            models,
+            levels=levels or doe.DEFAULT_LEVELS,
+            context_tiers=context_tiers or doe.DEFAULT_CONTEXT_TIERS,
+            seeds=seeds or (0,),
+        )
+        annotated = doe.annotate_matrix_with_estimates(cells)
+        return {"cells": annotated, "summary": doe.matrix_summary(annotated)}
+
+    def write_doe_queue(
+        self,
+        run_id: str,
+        instruments: list[str],
+        models: list[str],
+        *,
+        levels: Optional[list[str]] = None,
+        context_tiers: Optional[list[str]] = None,
+        seeds: Optional[list[int]] = None,
+        budget_usd: float = 5.0,
+    ) -> dict[str, Any]:
+        """Build and persist a #647-compatible nightly queue file (#697 D3).
+
+        Never executes anything — a human or the separate nightly runner
+        reads the file this writes. Only instruments with an approved
+        reference image (D4 gatekeeper) get a job; the rest are reported in
+        ``skipped``, not silently dropped.
+        """
+        cells = doe.expand_matrix(
+            instruments,
+            models,
+            levels=levels or doe.DEFAULT_LEVELS,
+            context_tiers=context_tiers or doe.DEFAULT_CONTEXT_TIERS,
+            seeds=seeds or (0,),
+        )
+        reference_images = {
+            inst: self.get_task_reference(inst)["image_path"] for inst in instruments
+        }
+        payload, jobs = doe.build_nightly_queue(
+            cells,
+            reference_images=reference_images,
+            is_approved=lambda inst: self.get_task_reference(inst)["approved"],
+            budget_usd=budget_usd,
+        )
+        run_dir = self.repo_root / "runs" / "code_cad_arena" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        queue_path = run_dir / "doe_queue.json"
+        doe.write_queue_file(queue_path, payload, jobs)
+        return {
+            "queue_path": str(queue_path),
+            "n_jobs": len(jobs),
+            "skipped": payload["skipped"],
+        }
 
     def get_registry_tasks(self, family: Optional[str] = None) -> list[dict[str, Any]]:
         """Retrieve instrument definitions from registry."""
