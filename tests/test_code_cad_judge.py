@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
+from typer.testing import CliRunner
 
 from makerbench import code_cad_judge as judge
+from makerbench.cli import app
 from makerbench.code_cad_vote_surface import VoteCandidate, build_blind_pair
 
 
@@ -83,36 +87,58 @@ class _FakeCompletedProcess:
         self.stderr = stderr
 
 
-def test_claude_cli_judge_parses_left_right_draw():
+def test_claude_cli_judge_attaches_absolute_renders_and_pins_model(tmp_path):
     calls = []
 
     def fake_runner(cmd, **kwargs):
         calls.append(cmd)
-        return _FakeCompletedProcess("The better render is LEFT.")
+        return _FakeCompletedProcess("I inspected both renders.\nLEFT")
 
     fn = judge.claude_cli_judge("claude-code-sonnet", runner=fake_runner)
-    pair = _pair()
+    render_dir = tmp_path / "run" / "render"
+    left = render_dir / "a.png"
+    right = render_dir / "b.png"
+    pair = build_blind_pair(
+        VoteCandidate("a", "gpt-5.5", "trial-a", str(left)),
+        VoteCandidate("b", "sonnet", "trial-b", str(right)),
+        pair_seed="boxolin:seed0",
+    )
     prompt = judge.build_judge_prompt(pair, instrument_id="boxolin", brief="build a box")
     assert fn(prompt) == "left"
-    assert calls[0][0] == "claude"
-    assert prompt.left_render_path in calls[0]
-    assert prompt.right_render_path in calls[0]
+    argv = calls[0]
+    assert argv[0] == "claude"
+    assert argv[1] == "-p"
+    assert str(left.resolve()) in argv[2]
+    assert str(right.resolve()) in argv[2]
+    assert str(left.resolve()) not in argv[3:]
+    assert str(right.resolve()) not in argv[3:]
+    assert argv[argv.index("--allowedTools") + 1] == "Read"
+    assert argv[argv.index("--add-dir") + 1] == str(render_dir.resolve())
+    assert argv[argv.index("--model") + 1] == "sonnet"
 
 
-@pytest.mark.parametrize(
-    "stdout,expected",
-    [
-        ("RIGHT wins on fit.", "right"),
-        ("Genuinely a DRAW.", "draw"),
-        # A SUCCESSFUL call whose answer is genuinely ambiguous is a real DRAW.
-        ("both LEFT and RIGHT are unreadable", "draw"),
-    ],
-)
-def test_claude_cli_judge_choice_parsing_variants(stdout, expected):
+@pytest.mark.parametrize("stdout", ["LEFT", "right", "  DRAW  "])
+def test_claude_cli_judge_accepts_strict_final_line(stdout):
     fn = judge.claude_cli_judge(runner=lambda cmd, **kw: _FakeCompletedProcess(stdout))
     pair = _pair()
     prompt = judge.build_judge_prompt(pair, instrument_id="boxolin", brief="build a box")
-    assert fn(prompt) == expected
+    assert fn(prompt) == stdout.strip().lower()
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "I don't see any images attached; no LEFT/RIGHT renders were provided.",
+        "both LEFT and RIGHT are unreadable",
+        "I cannot choose a candidate",
+    ],
+)
+def test_claude_cli_judge_rejects_non_decision_prose(stdout):
+    fn = judge.claude_cli_judge(runner=lambda cmd, **kw: _FakeCompletedProcess(stdout))
+    pair = _pair()
+    prompt = judge.build_judge_prompt(pair, instrument_id="boxolin", brief="build a box")
+    with pytest.raises(judge.JudgeError, match="final line"):
+        fn(prompt)
 
 
 def test_claude_cli_judge_raises_on_nonzero_returncode():
@@ -148,6 +174,62 @@ def test_claude_cli_judge_raises_when_subprocess_errors():
     prompt = judge.build_judge_prompt(pair, instrument_id="boxolin", brief="build a box")
     with pytest.raises(judge.JudgeError):
         fn(prompt)
+
+
+def test_arena_judge_reports_skipped_pairs(tmp_path, monkeypatch):
+    """A failed judge must be conspicuous, not an all-1500-looking success."""
+
+    render_dir = tmp_path / "render"
+    render_dir.mkdir()
+    trials = []
+    for trial_id, model_id in (("t1", "stub-a"), ("t2", "stub-b")):
+        png = render_dir / f"{trial_id}.png"
+        png.write_bytes(b"\x89PNG\r\n")
+        trials.append(
+            {
+                "trial_id": trial_id,
+                "instrument_id": "boxolin",
+                "model_id": model_id,
+                "seed": 0,
+                "rep": 0,
+                "status": "scored",
+                "result": {
+                    "render_ok": True,
+                    "artifacts": {"png_path": str(png)},
+                },
+            }
+        )
+    (tmp_path / "run_log.json").write_text(
+        json.dumps({"config": {"model_ids": ["stub-a", "stub-b"]}, "trials": trials}),
+        encoding="utf-8",
+    )
+    registry = tmp_path / "registry.json"
+    registry.write_text(
+        json.dumps({"instruments": [{"id": "boxolin", "task_brief": "build a box"}]}),
+        encoding="utf-8",
+    )
+
+    def failed_judge(prompt):
+        raise judge.JudgeError("response final line was invalid")
+
+    monkeypatch.setattr(judge, "judge_available", lambda: True)
+    monkeypatch.setattr(judge, "claude_cli_judge", lambda model_id: failed_judge)
+    result = CliRunner().invoke(
+        app,
+        [
+            "arena",
+            "judge",
+            "--run-dir",
+            str(tmp_path),
+            "--registry",
+            str(registry),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "skipped 1 pair(s)" in result.output
+    assert "skipped pairs were not recorded" in result.output
+    assert not (tmp_path / "votes.judge.jsonl").exists()
 
 
 def test_judge_available_reflects_path(monkeypatch):
