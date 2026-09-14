@@ -380,6 +380,9 @@ code {
 }
 
 .table-scroll {
+  /* Also the containing block for visually-hidden headers, which are absolutely
+     positioned and would otherwise escape the scroll box and widen the page. */
+  position: relative;
   overflow-x: auto;
 }
 
@@ -438,6 +441,342 @@ code {
   border: 1px solid var(--line);
   border-radius: 2px;
   font-size: var(--step--1);
+}
+
+/* Launch & preflight */
+
+.panel {
+  margin-top: var(--space-6);
+  padding: var(--space-4) var(--space-6);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--surface);
+}
+
+.panel h2 {
+  margin: 0 0 var(--space-3);
+}
+
+.panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.launch-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 0 var(--space-6);
+  align-items: start;
+}
+
+/* Grid items default to min-width: auto and would grow to a wide table's
+   min-content; keep them in their track so tables scroll inside instead. */
+.launch-layout > * {
+  min-width: 0;
+}
+
+.catalog-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.catalog-tools .hint {
+  margin: 0;
+}
+
+.catalog-scroll {
+  max-height: 34rem;
+  overflow-y: auto;
+}
+
+.catalog-tools .field,
+.catalog-tools select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Registry names and families can be long (and hostile): wrap them instead of
+   widening the table past its panel. */
+.data-table.catalog {
+  min-width: 0;
+}
+
+.data-table.catalog th[scope="row"],
+.data-table.catalog td {
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+/* Preflight tables sit in narrow grid columns: wrap instead of overlapping. */
+.preflight-result .data-table {
+  min-width: 0;
+}
+
+.preflight-result .data-table th,
+.preflight-result .data-table td {
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+.preflight-result .data-table code {
+  overflow-wrap: anywhere;
+}
+
+.data-table.catalog td:first-child,
+.data-table.catalog td:nth-child(4),
+.data-table.catalog td:last-child {
+  white-space: nowrap;
+}
+
+.reference-panel .facts {
+  margin-top: var(--space-3);
+}
+
+.facts code {
+  overflow-wrap: anywhere;
+}
+
+.task-name {
+  display: block;
+}
+
+.task-id {
+  font-size: var(--step--1);
+  color: var(--muted);
+}
+
+.gate {
+  font-size: var(--step--1);
+  white-space: nowrap;
+}
+
+.gate[data-kind="approved"] {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.gate[data-kind="review"] {
+  font-weight: 600;
+}
+
+.gate[data-kind="missing"],
+.gate[data-kind="error"] {
+  color: var(--danger);
+}
+
+.gate[data-kind="unchecked"] {
+  color: var(--muted);
+}
+
+.reference-image {
+  display: block;
+  width: 100%;
+  max-height: 22rem;
+  object-fit: contain;
+  background: var(--stage);
+  border: 1px solid var(--stage-line);
+}
+
+.command {
+  margin: var(--space-2) 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  background: var(--ground);
+  font-size: var(--step--1);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.panel-status {
+  margin: 0;
+}
+
+.panel-status.is-error {
+  color: var(--danger);
+}
+
+.button[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-4);
+  margin-top: var(--space-3);
+}
+
+.field-note,
+.optional {
+  font-size: var(--step--1);
+  font-weight: 400;
+  color: var(--muted);
+}
+
+textarea {
+  width: 100%;
+  min-height: 4.5rem;
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
+
+.wide-input {
+  width: 100%;
+}
+
+.model-costs {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.model-costs li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.cost {
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  font-size: var(--step--1);
+}
+
+.cost[data-kind="subscription"] {
+  border-color: currentColor;
+  color: var(--ok);
+}
+
+.cost[data-kind="metered"] {
+  border-color: currentColor;
+  color: var(--brass);
+}
+
+.cost[data-kind="unknown"] {
+  color: var(--muted);
+}
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.check input {
+  margin-top: 0.2rem;
+}
+
+.blockers {
+  margin: var(--space-3) 0 0;
+  padding-left: 1.25rem;
+}
+
+.blockers li + li {
+  margin-top: var(--space-1);
+}
+
+.log-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.log-head h3 {
+  margin: 0;
+}
+
+.connection {
+  font-size: var(--step--1);
+  color: var(--muted);
+}
+
+.connection[data-state="reconnecting"] {
+  color: var(--danger);
+}
+
+.log {
+  height: 18rem;
+  margin: var(--space-2) 0 0;
+  padding: var(--space-3);
+  overflow: auto;
+  border: 1px solid var(--stage-line);
+  background: var(--stage);
+  color: var(--stage-ink);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: var(--step--1);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.verdict {
+  margin: var(--space-4) 0 var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 4px solid var(--line);
+  font-size: var(--step-1);
+  font-weight: 600;
+}
+
+.verdict[data-verdict="GO"] {
+  border-left-color: var(--ok);
+  color: var(--ok);
+}
+
+.verdict[data-verdict="NO-GO"] {
+  border-left-color: var(--danger);
+  color: var(--danger);
+}
+
+.preflight-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: var(--space-4) var(--space-6);
+}
+
+.preflight-grid h3 {
+  margin-bottom: var(--space-2);
+}
+
+.status-bad {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  .launch-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .panel {
+    padding: var(--space-3) var(--space-4);
+  }
 }
 
 @media (max-width: 760px) {
