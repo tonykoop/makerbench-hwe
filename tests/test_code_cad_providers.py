@@ -832,6 +832,26 @@ class TestClaudeManyTurnReadOnlyContract:
 
 
 class TestStudioTierProviders:
+    def test_reference_image_paths_are_absolute_for_relative_run_dirs(self, tmp_path, monkeypatch):
+        # Arena runs pass a repo-relative --run-dir, so workspace_dir arrives
+        # relative; entrant CLIs run with cwd=workspace, so every image path
+        # handed to them must be absolute and exist.
+        _, workspace = _studio_request(tmp_path, n_images=2)
+        monkeypatch.chdir(tmp_path)
+        rel_request = _request(
+            "codex-gpt-5.6-sol", context_tier="studio",
+            workspace_dir=workspace.relative_to(tmp_path),
+        )
+        args = providers._codex_image_args(rel_request)
+        paths = args[1::2]
+        assert args[0::2] == ["--image", "--image"]
+        assert paths and all(Path(p).is_absolute() and Path(p).is_file() for p in paths)
+        prompt = providers.arena_prompt(rel_request, "cadquery")
+        listed = [line[2:] for line in prompt.splitlines() if line.startswith("- /")]
+        assert listed == paths
+        monkeypatch.chdir(workspace)  # the entrant's cwd: paths still resolve
+        assert all(Path(p).is_file() for p in paths)
+
     def test_prompt_lists_reference_images_and_many_turns(self, tmp_path):
         request, workspace = _studio_request(tmp_path, n_images=10)
         prompt = providers.arena_prompt(request, "cadquery")

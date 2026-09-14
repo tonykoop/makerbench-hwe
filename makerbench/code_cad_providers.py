@@ -267,7 +267,7 @@ def _staged_image_path(request: GenerationRequest) -> Optional[str]:
 
     if request.context_tier != "image" or not request.workspace_dir:
         return None
-    workspace = Path(request.workspace_dir)
+    workspace = Path(request.workspace_dir).resolve()
     manifest_path = workspace / ".staging_manifest.json"
     if not manifest_path.is_file():
         return None
@@ -289,7 +289,9 @@ def _studio_reference_images(request: GenerationRequest) -> list[str]:
 
     if request.context_tier != "studio" or not request.workspace_dir:
         return []
-    workspace = Path(request.workspace_dir)
+    # Resolve: arena runs pass a repo-relative run dir, but entrant CLIs run
+    # with cwd=workspace, so a relative path would point nowhere for them.
+    workspace = Path(request.workspace_dir).resolve()
     manifest_path = workspace / ".staging_manifest.json"
     if not manifest_path.is_file():
         return []
