@@ -92,7 +92,21 @@ class FailureLevel(IntEnum):
 
 def _redact_published_text_list(values: list[str]) -> list[str]:
     """Free-text list fields carry the same exposure as a bare string."""
-    return [_redact_published_text(v) if isinstance(v, str) else v for v in values]
+    return [_redact_published_value(v) for v in values]
+
+
+def _redact_published_value(value):
+    """Recursively redact strings nested in published JSON-like values."""
+    if isinstance(value, str):
+        return _redact_published_text(value)
+    if isinstance(value, dict):
+        return {
+            _redact_published_value(key): _redact_published_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [_redact_published_value(item) for item in value]
+    return value
 
 
 def _redact_published_map(values: dict) -> dict:
@@ -105,11 +119,7 @@ def _redact_published_map(values: dict) -> dict:
     The earlier "every published dict keys on a controlled vocabulary" reasoning
     was true only for harness-constructed maps (#684).
     """
-    return {
-        _redact_published_text(k) if isinstance(k, str) else k:
-        _redact_published_text(v) if isinstance(v, str) else v
-        for k, v in values.items()
-    }
+    return _redact_published_value(values)
 
 
 def _redact_published_path(value: str) -> str:
@@ -130,8 +140,8 @@ def _redact_published_text(value: str) -> str:
     Shared so the protected set is a list of decorators rather than seven copies
     of the same three lines. Paired with `UNREDACTED_PUBLISHED_STR_FIELDS` and
     the schema meta-test, which together make the partition explicit: every
-    `str` field reachable from `RunResults` is either redacted on serialization
-    or listed there with a reason.
+    `str` field reachable from any published root is either redacted on
+    serialization or listed there with a reason.
     """
     from .redaction import redact_host_paths
 
@@ -154,6 +164,15 @@ UNREDACTED_PUBLISHED_STR_FIELDS: dict[str, str] = {
     "RuntimeReport.schema_version": "version literal",
     "DesignDossier.schema_version": "version literal",
     "DeliverablePacket.schema_version": "version literal",
+    "EvaluatorManifest.schema_version": "version literal",
+    "HumanInterventionIndex.schema_version": "version literal",
+    "PhysicalVerificationTrack.schema_version": "version literal",
+    "TaskAssetManifest.schema_version": "version literal",
+    "ToolManifest.schema_version": "version literal",
+    "VideoEvidence.schema_version": "version literal",
+    "VisualReverseEngineeringTask.schema_version": "version literal",
+    "WorkflowManifest.schema_version": "version literal",
+    "WorkflowMetrics.schema_version": "version literal",
     # Identifiers and controlled vocabularies. A host path in one of these is a
     # data error rather than a disclosure vector, and redacting would mask it.
     "RunResults.benchmark_version": "version identifier",
@@ -184,6 +203,37 @@ UNREDACTED_PUBLISHED_STR_FIELDS: dict[str, str] = {
     "GcodeMachineProfile.post_processor": "controlled vocabulary",
     "GcodeMachineProfile.units": "controlled vocabulary",
     "DossierCategoryResult.category": "controlled vocabulary",
+    "EvaluatorSpec.artifact_formats": "format identifier list",
+    "EvaluatorSpec.dependencies": "package identifier list",
+    "EvaluatorSpec.entry_point": "validated dotted public callable reference",
+    "EvaluatorSpec.metrics": "metric identifier list",
+    "EvaluatorSpec.name": "identifier",
+    "EvaluatorSpec.supported_task_families": "task-family identifier list",
+    "EvaluatorSpec.version": "version literal",
+    "ExpectedOutputContract.artifact_format": "controlled vocabulary",
+    "ExpectedOutputContract.artifact_role": "controlled vocabulary",
+    "ExpectedOutputContract.reconstruction_manifest_marker": "protocol marker",
+    "ExpectedOutputContract.required_manifest_fields": "schema field names",
+    "ExpectedOutputContract.units": "controlled vocabulary",
+    "FabricationEvidence.format": "controlled vocabulary",
+    "FabricationEvidence.role": "controlled vocabulary",
+    "HiddenOracleRef.constraint_keys": "schema field names",
+    "HiddenOracleRef.oracle_id": "identifier",
+    "ProductionMaster.eco_id": "identifier",
+    "StructuralClaim.source": "controlled vocabulary",
+    "TaskAsset.format": "controlled vocabulary",
+    "TaskAsset.id": "identifier",
+    "TaskAsset.role": "controlled vocabulary",
+    "TaskAsset.units": "controlled vocabulary",
+    "TaskAssetManifest.task_id": "identifier",
+    "ToolSpec.allowed_task_families": "task-family identifier list",
+    "ToolSpec.data_version": "version identifier",
+    "ToolSpec.name": "identifier",
+    "ToolSpec.version": "version literal",
+    "VisualReverseEngineeringTask.public_result_fields": "schema field names",
+    "VisualReverseEngineeringTask.task_id": "identifier",
+    "WorkflowManifest.task_id": "identifier",
+    "PhysicalVerificationTrack.task_id": "identifier",
     # Digests, signatures, timestamps, identifiers and controlled vocabularies.
     # None can hold a host path in normal operation, and redacting one would
     # corrupt a value another component compares or parses.
@@ -198,6 +248,10 @@ UNREDACTED_PUBLISHED_STR_FIELDS: dict[str, str] = {
     "PacketFile.sha256": "hex digest",
     "PerceptionArtifact.plane_axis": "enum (x/y/z)",
     "PerceptionArtifact.sha256": "hex digest",
+    "FabricationEvidence.evidence_sha256": "hex digest",
+    "ProvenanceTrace.session_recording_hash": "hex digest",
+    "TaskAsset.sha256": "hex digest",
+    "VideoEvidence.sha256": "hex digest",
     "ProcessPlan.material": "identifier",
     "RunResults.agent_identifier": "identifier",
     "RunResults.contributor": "identifier",
@@ -399,6 +453,14 @@ class ToolSpec(BaseModel):
         description="Version of the backing public dataset, e.g. the parts catalog_version.",
     )
 
+    @field_serializer("summary")
+    def _redact_summary_on_serialization(self, value: str) -> str:
+        return _redact_published_text(value)
+
+    @field_serializer("input_schema", "output_schema")
+    def _redact_schema_maps_on_serialization(self, value: dict) -> dict:
+        return _redact_published_map(value)
+
 
 class ToolManifest(BaseModel):
     """The public manifest of maker tools available to agents.
@@ -446,6 +508,14 @@ class TaskAsset(BaseModel):
                     "text, a vision image block, or fetched via a tool.",
     )
     description: str = ""
+
+    @field_serializer("path")
+    def _redact_path_on_serialization(self, value: str) -> str:
+        return _redact_published_path(value)
+
+    @field_serializer("description")
+    def _redact_description_on_serialization(self, value: str) -> str:
+        return _redact_published_text(value)
 
 
 class TaskAssetManifest(BaseModel):
@@ -510,6 +580,10 @@ class ExpectedOutputContract(BaseModel):
     )
     description: str = ""
 
+    @field_serializer("description")
+    def _redact_description_on_serialization(self, value: str) -> str:
+        return _redact_published_text(value)
+
 
 class HiddenOracleRef(BaseModel):
     """A pointer to the hidden ground truth — its location and key NAMES, never values.
@@ -533,6 +607,14 @@ class HiddenOracleRef(BaseModel):
                     "symmetry). Names only — never the values, which stay private.",
     )
     description: str = ""
+
+    @field_serializer("location")
+    def _redact_location_on_serialization(self, value: str) -> str:
+        return _redact_published_path(value)
+
+    @field_serializer("description")
+    def _redact_description_on_serialization(self, value: str) -> str:
+        return _redact_published_text(value)
 
 
 class VisualReverseEngineeringTask(BaseModel):
@@ -568,6 +650,10 @@ class VisualReverseEngineeringTask(BaseModel):
                     "oracle's constraint_keys — that disjointness is what keeps the answer private.",
     )
     notes: str = ""
+
+    @field_serializer("title", "brief", "notes")
+    def _redact_free_text_on_serialization(self, value: str) -> str:
+        return _redact_published_text(value)
 
 
 EvaluatorVisibility = Literal["public", "private"]
@@ -634,6 +720,10 @@ class EvaluatorSpec(BaseModel):
         description="True if it compares the artifact against a private oracle fixture; "
                     "the oracle and any threshold stay private and are never listed here.",
     )
+
+    @field_serializer("summary")
+    def _redact_summary_on_serialization(self, value: str) -> str:
+        return _redact_published_text(value)
 
 
 class EvaluatorManifest(BaseModel):
@@ -1020,6 +1110,10 @@ class ComponentVersion(BaseModel):
         default=None, description="Version/build string when known; None if undisclosed."
     )
 
+    @field_serializer("name", "version")
+    def _redact_component_text_on_serialization(self, value: Optional[str]) -> Optional[str]:
+        return _redact_published_text(value) if value is not None else None
+
 
 StackComponent = ComponentVersion | str
 
@@ -1051,6 +1145,14 @@ class StackDescriptor(BaseModel):
         """Accept logger-era plain strings while preserving versioned objects."""
         if isinstance(value, str):
             return ComponentVersion(name=value)
+        return value
+
+    @field_serializer("orchestrator", "framework", "host_application", "execution_bridge")
+    def _redact_component_on_serialization(self, value: Optional[StackComponent]):
+        # Normal validation converts strings to ComponentVersion. Keep the
+        # serializer fail-safe for model_construct/assignment paths as well.
+        if isinstance(value, str):
+            return _redact_published_text(value)
         return value
 
 
@@ -1198,6 +1300,10 @@ class ProvenanceTrace(BaseModel):
         description="Hash (e.g. sha256 hex) of the session video/recording evidence.",
     )
 
+    @field_serializer("tool_call_log_url")
+    def _redact_log_url_on_serialization(self, value: Optional[str]) -> Optional[str]:
+        return _redact_published_text(value) if value is not None else None
+
 
 # ----------------------------------------------------------------------------
 # Workflow track: video / screen-recording submission contract (mb#105)
@@ -1250,6 +1356,10 @@ class VideoSegment(BaseModel):
     end_seconds: float = Field(ge=0.0, description="Segment end offset in seconds.")
     marker: str = Field(default="", description="Optional human chapter label for the segment.")
 
+    @field_serializer("marker")
+    def _redact_marker_on_serialization(self, value: str) -> str:
+        return _redact_published_text(value)
+
     @field_validator("end_seconds", mode="after")
     @classmethod
     def end_after_start(cls, end: float, info) -> float:
@@ -1288,6 +1398,10 @@ class VideoEvidence(BaseModel):
         description="Declared 3-part protocol markers (prompt_init, timelapse_core, "
                     "deterministic_verdict), in order.",
     )
+
+    @field_serializer("hosted_url")
+    def _redact_hosted_url_on_serialization(self, value: str) -> str:
+        return _redact_published_text(value)
 
 
 class WorkflowManifest(BaseModel):
@@ -1376,6 +1490,10 @@ class FabricationEvidence(BaseModel):
     )
     description: str = ""
 
+    @field_serializer("evidence_url", "description")
+    def _redact_evidence_text_on_serialization(self, value: Optional[str]) -> Optional[str]:
+        return _redact_published_text(value) if value is not None else None
+
     @property
     def is_disclosed(self) -> bool:
         """True when the item carries a verifiable pointer."""
@@ -1398,6 +1516,14 @@ class AlphaBuild(BaseModel):
     )
     evidence: list[FabricationEvidence] = Field(default_factory=list)
 
+    @field_serializer("process")
+    def _redact_process_on_serialization(self, value: str) -> str:
+        return _redact_published_text(value)
+
+    @field_serializer("tool_matrix")
+    def _redact_tool_matrix_on_serialization(self, value: list[str]) -> list[str]:
+        return _redact_published_text_list(value)
+
 
 class BetaInspection(BaseModel):
     """Beta stage: an on-demand shop build with inspection evidence."""
@@ -1413,6 +1539,14 @@ class BetaInspection(BaseModel):
         description="Optional measured-vs-nominal deviations (mm), keyed by feature.",
     )
     evidence: list[FabricationEvidence] = Field(default_factory=list)
+
+    @field_serializer("vendor", "process")
+    def _redact_free_text_on_serialization(self, value: str) -> str:
+        return _redact_published_text(value)
+
+    @field_serializer("dimensional_conformance")
+    def _redact_measurement_map_on_serialization(self, value: dict[str, float]) -> dict:
+        return _redact_published_map(value)
 
 
 class ProductionMaster(BaseModel):
@@ -1515,6 +1649,10 @@ class StructuralClaim(BaseModel):
         default="trace",
         description="Provenance of the claim: trace | dossier_self_check | bom.",
     )
+
+    @field_serializer("feature")
+    def _redact_feature_on_serialization(self, value: str) -> str:
+        return _redact_published_text(value)
 
 
 class GeometryMeasurement(BaseModel):
