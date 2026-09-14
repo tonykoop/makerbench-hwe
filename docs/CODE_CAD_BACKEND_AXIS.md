@@ -105,6 +105,9 @@ makerbench arena run --stub --backend cadquery \
   --instruments ocarina --models stub-a,stub-b --rate-limit-s 0
 ```
 
+The manager-only comparison matrix and interpretation rules for a real
+subscription-CLI proof are in [`CODE_CAD_BREP_PROOF.md`](CODE_CAD_BREP_PROOF.md).
+
 ## SolidWorks / Fusion 360 (Windows job-dir runner, #627)
 
 SolidWorks and Fusion 360 scripting only runs inside those apps, on Windows.
