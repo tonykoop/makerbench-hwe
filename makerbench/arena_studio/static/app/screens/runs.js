@@ -94,6 +94,10 @@ function RunSummary({ runId }) {
       <${TagList} items=${run.models} empty="No entrants recorded." />
       <h3>Instruments</h3>
       <${TagList} items=${run.instruments} empty="No instruments recorded." />
+      <ul class="run-links">
+        <li><a href=${buildHash("analytics", [run.run_id])}>Agreement analytics</a></li>
+        <li><a href=${buildHash("compare", [], { a: run.run_id })}>Compare with another run</a></li>
+      </ul>
     </article>
   `;
 }

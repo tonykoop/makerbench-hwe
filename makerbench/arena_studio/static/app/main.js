@@ -7,6 +7,8 @@ import { useResource } from "./hooks/useResource.js";
 import { loadVoter, normalizeVoter, saveVoter } from "./lib/prefs.js";
 import { buildHash, parseHash } from "./lib/route.js";
 import { LaunchScreen } from "./screens/launch.js";
+import { AnalyticsScreen } from "./screens/analytics.js";
+import { CompareScreen } from "./screens/compare.js";
 import { RunsScreen } from "./screens/runs.js";
 import { VoteScreen } from "./screens/vote.js";
 
@@ -17,6 +19,8 @@ export const SCREENS = [
   // `blind` screens never request anything that names entrants before a vote.
   { id: "vote", label: "Blind voting", component: VoteScreen, takesRun: true, blind: true },
   { id: "launch", label: "Launch", component: LaunchScreen },
+  { id: "analytics", label: "Agreement analytics", component: AnalyticsScreen, takesRun: true },
+  { id: "compare", label: "Compare runs", component: CompareScreen },
 ];
 
 function useRoute() {
