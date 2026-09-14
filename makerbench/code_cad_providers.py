@@ -576,6 +576,11 @@ def make_agy_generator(
                 return generate(request, _retries - 1)
             detail = (result.stderr or result.stdout or "<no output>")[:500]
             raise RuntimeError(f"agy failed (rc={result.returncode}): {detail}")
+        if not (result.stdout or "").strip() and (result.stderr or "").strip():
+            # agy exits 0 with empty stdout when headless mode auto-denies a
+            # tool (e.g. an un-allowlisted shell command); the reason is only on
+            # stderr. Surface it instead of a bare "empty output" error.
+            raise RuntimeError(f"agy produced no output (rc=0): {result.stderr.strip()[:500]}")
         return extract_candidate(result.stdout, backend)
 
     return generate

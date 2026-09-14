@@ -411,6 +411,17 @@ class TestContextTierWorkspaceRouting:
         gen(_request("antigravity-gemini-default", context_tier="repo", workspace_dir=workspace))
         assert seen["cwd"] == str(workspace)
 
+    def test_agy_empty_stdout_surfaces_stderr_reason(self, monkeypatch):
+        # Headless agy exits 0 with empty stdout when it auto-denies a tool; the
+        # reason is only on stderr and must reach the run log.
+        reason = 'jetski: no output produced — a tool required the "command" permission'
+        monkeypatch.setattr(
+            subprocess, "run", lambda *a, **k: _completed(stdout="", stderr=reason, returncode=0)
+        )
+        gen = providers.make_agy_generator(retry_sleep_s=0)
+        with pytest.raises(RuntimeError, match="agy produced no output.*command"):
+            gen(_request("antigravity-gemini-default"))
+
     def test_arena_prompt_notes_context_tier_when_non_blind(self, tmp_path):
         workspace = tmp_path / "ws"
         workspace.mkdir()
