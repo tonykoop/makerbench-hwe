@@ -40,7 +40,40 @@ python3 -m makerbench.cli arena studio --run-dir <path-to-a-run> --port 8080
 | **🚀 New Competition** | The task matrix launcher: pick instruments and models, then launch a competition run. |
 | **Blind Voting** | The A/B voting stage — see [Voting flow](#voting-flow) below. |
 | **Leaderboard & Agreement** | Elo standings per model plus the subjective-vs-objective agreement scatter plot (Spearman ρ). |
+| **⚖️ Compare Runs** | Two runs side by side, read-only, reusing the same summary/leaderboard endpoints every other tab already calls. |
+| **🌙 Nightly Queue** | Read-only cockpit over a `nightly-cad-queue.json`: lease status, per-job status/orphan detection, reconstructed budget spend. |
+| **🌅 Morning Review** | Votes on a nightly morning bundle through the same anonymous vote stage as Blind Voting, instead of the standalone `morning-vote/pair-NNN.html` pages. |
+| **🩺 Preflight** | Redacted, read-only `nightly_preflight` doctor check — secret values never leave the server, only PRESENT/MISSING/PLACEHOLDER classifications. |
 | **Task Matrix** | Every registered instrument task, with reference-image gatekeeper status and family filters. |
+
+A small **Judge & Objective Panel** appears under Blind Voting and Morning Review
+after you cast a vote: the objective mesh-gate result for each side, and — if a VLM
+judge has already scored that pair out-of-band via `arena judge` — its verdict.
+Never shown before a vote; never triggers a judge CLI call itself.
+
+## Windows/RDP launch
+
+From a Windows desktop (including over RDP), `scripts\windows\start-arena-studio.ps1`
+starts Arena Studio inside WSL and opens it in the default browser, without needing a
+terminal open on both sides of the WSL boundary:
+
+```
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File scripts\windows\start-arena-studio.ps1
+```
+
+It is self-locating the same way `run-nightly-cad-arena.ps1` is (derives the repo root
+from its own location via `$PSScriptRoot` + `wslpath` unless `-RepoWsl` is passed
+explicitly), waits for `/api/health` to answer before opening the browser tab, and is
+**loopback-only by construction** — there is no `-Host` parameter and it never passes
+`--allow-remote`, so Arena Studio started this way is unreachable from any other
+machine on the network no matter how it's invoked. Pass `-Port <n>` to use a port other
+than 8080, or `-NoBrowser` to start the server without opening a tab.
+
+> **Unverified on a live Windows desktop.** This script was written and covered by
+> path-lint/contract tests in a Linux sandbox with no `wsl.exe`-driven Windows browser
+> to actually launch against. See the tracking story for someone with real Windows/RDP
+> access to confirm it end-to-end.
 
 ## Voting flow
 
