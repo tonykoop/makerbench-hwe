@@ -21,6 +21,12 @@ async function loadDoeWhatIf() {
       fetch('/api/tasks'),
       currentRun ? fetch(`/api/runs/${currentRun}/summary`) : Promise.resolve(null),
     ]);
+    if (!tasksRes.ok) {
+      throw new Error(`${tasksRes.url} returned ${tasksRes.status}`);
+    }
+    if (summaryRes && !summaryRes.ok) {
+      throw new Error(`${summaryRes.url} returned ${summaryRes.status}`);
+    }
     const tasks = (await tasksRes.json()).tasks || [];
     const models = summaryRes ? (await summaryRes.json()).models || [] : [];
 
@@ -36,13 +42,21 @@ async function loadDoeWhatIf() {
     // not a full multi-level DoE build -- see #697 D3 for the real matrix builder.
     const params = new URLSearchParams({ instruments, models: modelIds, levels: 'L1', seeds: '0' });
     const res = await fetch(`/api/doe/preview?${params}`);
+    if (!res.ok) {
+      throw new Error(`${res.url} returned ${res.status}`);
+    }
     const data = await res.json();
     _doeWhatIfCells = data.cells || [];
 
     renderDoeWhatIf();
   } catch (e) {
-    document.getElementById('doeWhatIfSummary').innerHTML =
-      `<span class="doe-whatif-note">DoE what-if preview unavailable: ${e.message}</span>`;
+    // Built via DOM properties, not string-templated innerHTML: e.message
+    // can carry content this page doesn't control (a server error string),
+    // so it must land as text, never as parsed HTML (#731 R2 finding).
+    const note = document.createElement('span');
+    note.className = 'doe-whatif-note';
+    note.textContent = `DoE what-if preview unavailable: ${e.message}`;
+    document.getElementById('doeWhatIfSummary').replaceChildren(note);
   }
 }
 

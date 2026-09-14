@@ -49,12 +49,22 @@ def test_studio_js_dispatches_to_doe_whatif_on_tasks_tab(client: TestClient):
     assert "loadDoeWhatIf()" in js
 
 
-@pytest.mark.skipif(
-    not Path("makerbench/arena_studio/doe.py").exists(),
-    reason="needs #709 (the /api/doe/preview route, backed by doe.py) merged into "
-    "this branch's base first; this PR is UI-only and documents that "
-    "cross-dependency in its own body",
-)
+def test_doe_js_checks_response_ok_before_treating_body_as_data(client: TestClient):
+    # A 404 with a JSON error body parses successfully, so a fetch() without
+    # an `ok` check would silently treat an error response as real data
+    # (#731 R2 finding).
+    js = client.get("/static/doe.js").text
+    assert js.count(".ok") >= 3
+
+
+def test_doe_js_uses_textcontent_not_innerhtml_for_error_message(client: TestClient):
+    # e.message can carry content this page doesn't control; it must land as
+    # text, never as parsed HTML (#731 R2 finding).
+    js = client.get("/static/doe.js").text
+    assert "note.textContent" in js
+    assert "innerHTML = `<span" not in js
+
+
 def test_doe_preview_endpoint_never_assumes_zero_cost_for_unknown_models(client: TestClient):
     """The exact property the slider's 'Unknown cost' bucket depends on."""
     response = client.get(
