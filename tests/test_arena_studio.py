@@ -1773,6 +1773,33 @@ def test_studio_full_morning_flow_end_to_end(tmp_path: Path):
     )
     assert vote_res.status_code == 200
 
+    # 5b. Multi-voter boundary (#737 regression, extended per the #747 review):
+    # queues are per-voter, so a second voter ("bob") must still receive this
+    # SAME unvoted pair, and tony's vote must not unlock the judge/objective
+    # panel for bob — only bob's own vote may unlock it for bob.
+    bob_pair_res = client.get(f"/api/morning/{job_id}/pair?queue={queue_path}&voter=bob")
+    assert bob_pair_res.status_code == 200
+    assert bob_pair_res.json()["current_pair"]["pair_id"] == pair_id
+
+    assert (
+        client.get(
+            f"/api/morning/{job_id}/judge-panel?pair_id={pair_id}&queue={queue_path}&voter=bob"
+        ).status_code
+        == 404
+    ), "tony's vote must not unlock the judge panel for a different voter (bob)"
+
+    bob_vote_res = client.post(
+        f"/api/morning/{job_id}/vote?queue={queue_path}",
+        json={"pair_id": pair_id, "winner": "right", "voter": "bob"},
+    )
+    assert bob_vote_res.status_code == 200
+
+    bob_judge_res = client.get(
+        f"/api/morning/{job_id}/judge-panel?pair_id={pair_id}&queue={queue_path}&voter=bob"
+    )
+    assert bob_judge_res.status_code == 200
+    assert bob_judge_res.json()["human_winner"] == "right"
+
     # 6. Reveal: the pair is no longer in the unvoted queue.
     after_vote = client.get(f"/api/morning/{job_id}/pair?queue={queue_path}")
     assert after_vote.json()["has_next"] is False
