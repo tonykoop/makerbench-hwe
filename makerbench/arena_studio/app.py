@@ -1,0 +1,247 @@
+"""FastAPI Application for MakerBench Arena Studio (Issue #696 / #697)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Optional
+from urllib.parse import urlsplit
+
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from makerbench import __version__
+from makerbench.cli_arena import DEFAULT_REGISTRY
+
+from .service import ArenaStudioService
+
+
+class VotePayload(BaseModel):
+    pair_id: str
+    winner: str  # "left", "right", "draw"
+    voter: str = "tony"
+    flags: Optional[dict[str, list[str]]] = None
+
+
+class CompetitionLaunchPayload(BaseModel):
+    run_id: Optional[str] = None
+    instruments: list[str] = Field(default_factory=lambda: ["ocarina"])
+    models: list[str] = Field(default_factory=lambda: ["claude-opus-5", "cadam-fable-5.1"])
+    backend: str = "openscad"  # openscad, solidworks-live, fusion-live, luthier-bridge, blender
+    context_tier: str = "image"  # image, repo, blind
+    levels: list[str] = Field(default_factory=lambda: ["L1", "L2", "L3", "L4"])
+    concurrency: int = 2
+    max_turns: int = 16
+    timeout_s: int = 300
+    seed: int = 0
+    skip_image_gate: bool = False
+
+
+def create_studio_app(
+    default_run_dir: Optional[Path] = None,
+    registry_path: Path = Path(DEFAULT_REGISTRY),
+    repo_root: Optional[Path] = None,
+) -> FastAPI:
+    """Create and configure the Arena Studio FastAPI instance."""
+
+    app = FastAPI(
+        title="MakerBench Arena Studio",
+        version=__version__,
+        description="Unified web cockpit for Code-CAD A/B Arena (Epic #421 / #694).",
+    )
+
+    service = ArenaStudioService(
+        default_run_dir=default_run_dir,
+        registry_path=registry_path,
+        repo_root=repo_root,
+    )
+
+    # Mount static assets (model-viewer, etc.)
+    assets_dir = Path(__file__).resolve().parent.parent / "assets"
+    if assets_dir.exists():
+        app.mount("/static/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+    @app.middleware("http")
+    async def require_same_origin_for_posts(request: Request, call_next):
+        """Reject browser-driven state changes from any other origin."""
+        if request.method == "POST":
+            origin = request.headers.get("origin")
+            parsed = urlsplit(origin) if origin else None
+            if (
+                parsed is None
+                or parsed.scheme not in {"http", "https"}
+                or parsed.netloc != request.url.netloc
+            ):
+                return PlainTextResponse("Cross-origin POST refused", status_code=403)
+        return await call_next(request)
+
+    # Run identifiers are opaque discovery keys, never filesystem paths.
+    def _resolve_run_dir(run_id: str) -> Path:
+        runs = service.discover_runs()
+        for r in runs:
+            if r["run_id"] == run_id:
+                return Path(r["path"])
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+
+    # API Routes
+    @app.get("/api/health")
+    def health():
+        return {
+            "status": "ok",
+            "version": __version__,
+            "default_run_dir": str(service.default_run_dir) if service.default_run_dir else None,
+        }
+
+    @app.get("/api/runs")
+    def list_runs():
+        return {"runs": service.discover_runs()}
+
+    @app.get("/api/tasks")
+    def list_tasks(family: Optional[str] = Query(None)):
+        tasks = service.get_registry_tasks(family=family)
+        return {"tasks": tasks, "count": len(tasks)}
+
+    @app.get("/api/runs/{run_id}/summary")
+    def get_run_summary(run_id: str):
+        run_path = _resolve_run_dir(run_id)
+        try:
+            return service.get_run_summary(run_path)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/api/runs/{run_id}/leaderboard")
+    def get_run_leaderboard(run_id: str):
+        run_path = _resolve_run_dir(run_id)
+        try:
+            return service.get_run_leaderboard(run_path)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/api/runs/{run_id}/agreement")
+    def get_run_agreement(run_id: str):
+        run_path = _resolve_run_dir(run_id)
+        try:
+            return service.get_run_agreement(run_path)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/api/runs/{run_id}/queue")
+    def get_run_queue(
+        run_id: str,
+        voter: str = Query("tony"),
+        rounds: str = Query("0,1"),
+    ):
+        run_path = _resolve_run_dir(run_id)
+        round_ints = tuple(int(r.strip()) for r in rounds.split(",") if r.strip())
+        queue = service.get_or_create_queue(run_path, voter=voter, rounds=round_ints)
+        done, total = queue.progress()
+        next_item = queue.next_unvoted()
+
+        next_pair_data = None
+        if next_item:
+            pair = next_item.pair
+            next_pair_data = {
+                "pair_id": pair.pair_id,
+                "meta": next_item.meta,
+                "left": {
+                    "candidate_id": pair.left.candidate_id,
+                    "render_path": pair.left.render_path,
+                    "model3d_path": pair.left.model3d_path,
+                    "frames": pair.left.frames,
+                },
+                "right": {
+                    "candidate_id": pair.right.candidate_id,
+                    "render_path": pair.right.render_path,
+                    "model3d_path": pair.right.model3d_path,
+                    "frames": pair.right.frames,
+                },
+            }
+
+        return {
+            "run_id": run_path.name,
+            "voter": voter,
+            "done": done,
+            "total": total,
+            "has_next": next_item is not None,
+            "current_pair": next_pair_data,
+        }
+
+    @app.post("/api/runs/{run_id}/vote")
+    def cast_vote(run_id: str, payload: VotePayload):
+        run_path = _resolve_run_dir(run_id)
+        success = service.cast_vote(
+            run_dir=run_path,
+            pair_id=payload.pair_id,
+            winner=payload.winner,
+            voter=payload.voter,
+            flags=payload.flags,
+        )
+        if not success:
+            raise HTTPException(status_code=400, detail="Invalid pair ID or vote already cast")
+        return {"success": True, "pair_id": payload.pair_id, "winner": payload.winner}
+
+    @app.post("/api/competitions/launch")
+    def launch_competition(payload: CompetitionLaunchPayload):
+        try:
+            return service.launch_competition(payload.model_dump())
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/api/competitions/status")
+    def get_competitions_status(run_id: Optional[str] = Query(None)):
+        return service.get_competition_status(run_id)
+
+    @app.get("/api/competitions/{run_id}/logs")
+    def get_competition_logs(run_id: str, tail: int = Query(100)):
+        lines = service.get_run_logs(run_id, tail=tail)
+        return {"run_id": run_id, "lines": lines}
+
+    # Serve assets for any run under /runs/{run_id}/vote_pages/...
+    @app.get("/runs/{run_id}/vote_pages/{file_path:path}")
+    def serve_run_asset(run_id: str, file_path: str):
+        run_path = _resolve_run_dir(run_id)
+        vote_pages = (run_path / "vote_pages").resolve()
+        asset = (vote_pages / file_path).resolve()
+        if not asset.is_relative_to(vote_pages):
+            raise HTTPException(status_code=404, detail="Asset not found")
+        if not asset.exists() or not asset.is_file():
+            raise HTTPException(status_code=404, detail="Asset not found")
+        return FileResponse(str(asset))
+
+    # Story #697: Reference Image Gatekeeper Endpoints
+    @app.get("/api/tasks/{task_id}/reference")
+    def get_task_reference(task_id: str):
+        return service.get_task_reference(task_id)
+
+    @app.post("/api/tasks/{task_id}/approve")
+    def approve_task_reference(task_id: str, approved: bool = Query(True)):
+        return service.set_task_approval(task_id, approved)
+
+    @app.get("/api/tasks/{task_id}/prompt-reference")
+    def get_task_prompt_reference(task_id: str):
+        ref = service.get_task_reference(task_id)
+        return {"task_id": task_id, "prompt_cmd": ref["prompt_cmd"]}
+
+    # Story #699: Export Winners & Reports
+    @app.post("/api/runs/{run_id}/export-winners")
+    def export_run_winners(run_id: str):
+        run_path = _resolve_run_dir(run_id)
+        return service.export_winners(run_path)
+
+    @app.get("/api/runs/{run_id}/export-report")
+    def export_run_report(run_id: str, fmt: str = Query("markdown")):
+        run_path = _resolve_run_dir(run_id)
+        report_text = service.export_report(run_path)
+        if fmt == "markdown":
+            return PlainTextResponse(report_text, media_type="text/markdown")
+        return {"run_id": run_id, "report": report_text}
+
+    @app.get("/", response_class=PlainTextResponse)
+    def studio_home():
+        # The Studio UI ships separately; the API is fully usable without it.
+        return PlainTextResponse(
+            "MakerBench Arena Studio API is running. The Studio UI is not installed in this build."
+        )
+
+    return app

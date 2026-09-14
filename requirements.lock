@@ -8,9 +8,22 @@
 #   python -m pip install -r requirements.lock
 #   python -m pip install --no-deps -e ".[dev]"
 
+#
+# The optional `studio` extra (Arena Studio: fastapi/starlette/uvicorn/httpx and
+# their transitive deps) is pinned here too, so CI keeps `--no-deps`.
+
 annotated-doc==0.0.4
 annotated-types==0.7.0
+anyio==4.12.1
+certifi==2026.7.22
+click==8.5.0
 colorama==0.4.6; sys_platform == "win32"
+exceptiongroup==1.3.1; python_version < "3.11"
+fastapi==0.135.1
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.19
 iniconfig==2.3.0
 manifold3d==3.5.1
 markdown-it-py==4.2.0
@@ -31,7 +44,9 @@ ruff==0.15.16
 scipy==1.15.3
 shapely==2.1.2
 shellingham==1.5.4
+starlette==0.52.1
 trimesh==4.12.2
 typer==0.26.7
 typing-extensions==4.15.0
 typing-inspection==0.4.2
+uvicorn==0.42.0
