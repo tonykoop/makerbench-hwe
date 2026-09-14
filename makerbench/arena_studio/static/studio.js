@@ -6,6 +6,9 @@
     let allTasks = [];
     let activeFamilyFilter = 'all';
     let allRuns = []; // S1 stretch: cached for the Compare Runs tab, no extra fetch
+    let morningJobId = null; // R2 P2: selected nightly job id
+    let currentMorningPair = null;
+    let morningSkipCursor = 0;
 
     function switchTab(tabId, el) {
       document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
@@ -22,6 +25,7 @@
       if (tabId === 'leaderboard') loadLeaderboard();
       if (tabId === 'compare') populateCompareSelects();
       if (tabId === 'nightly') loadNightlyQueue();
+      if (tabId === 'morning') loadMorningBundles();
       if (tabId === 'tasks') loadTasks();
     }
 
@@ -640,6 +644,104 @@
         tbody.innerHTML = '<tr><td colspan="6" style="color: var(--danger);">Failed to load.</td></tr>';
       }
     }
+
+    /* R2 P2: Morning Review — the exact same blind vote stage as Blind Voting
+       (renderViewer/setupTurntable/bindTurntableKeyboard, unmodified), driven by
+       /api/morning/* instead of /api/runs/{id}/*. Model identity never reaches this
+       code: the server only ever sends pair_id + anonymized asset paths, same as C3. */
+    async function loadMorningBundles() {
+      const sel = document.getElementById('morningBundleSelect');
+      try {
+        const res = await fetch('/api/morning/queue');
+        if (!res.ok) {
+          sel.innerHTML = '<option value="">No nightly queue found</option>';
+          return;
+        }
+        const data = await res.json();
+        const bundles = data.bundles || [];
+        if (bundles.length === 0) {
+          sel.innerHTML = '<option value="">No votable morning bundles</option>';
+          morningJobId = null;
+          document.getElementById('morningVoteWrap').style.display = 'none';
+          document.getElementById('morningEmptyState').style.display = 'block';
+          return;
+        }
+        const previous = morningJobId;
+        sel.innerHTML = bundles.map(b =>
+          `<option value="${b.job_id}">${b.instrument_id} — ${b.job_id} (${b.valid_candidate_count} candidates)</option>`
+        ).join('');
+        if (previous && bundles.some(b => b.job_id === previous)) {
+          sel.value = previous;
+        } else {
+          morningJobId = sel.value;
+        }
+        selectMorningBundle();
+      } catch (e) {
+        console.error('Failed to load morning bundles', e);
+        sel.innerHTML = '<option value="">Failed to load bundles</option>';
+      }
+    }
+
+    function selectMorningBundle() {
+      morningJobId = document.getElementById('morningBundleSelect').value || null;
+      morningSkipCursor = 0;
+      loadMorningPair();
+    }
+
+    async function loadMorningPair() {
+      const emptyEl = document.getElementById('morningEmptyState');
+      const wrapEl = document.getElementById('morningVoteWrap');
+      if (!morningJobId) {
+        emptyEl.style.display = 'block';
+        wrapEl.style.display = 'none';
+        return;
+      }
+      try {
+        const res = await fetch(`/api/morning/${morningJobId}/pair?skip=${morningSkipCursor}`);
+        if (!res.ok) {
+          emptyEl.textContent = 'Failed to load this bundle’s queue.';
+          emptyEl.style.display = 'block';
+          wrapEl.style.display = 'none';
+          return;
+        }
+        const data = await res.json();
+        document.getElementById('morningProgress').textContent = `Voted ${data.done} of ${data.total} pairs`;
+        if (!data.has_next) {
+          emptyEl.textContent = 'All pairs in this bundle are voted 🎉';
+          emptyEl.style.display = 'block';
+          wrapEl.style.display = 'none';
+          return;
+        }
+        emptyEl.style.display = 'none';
+        wrapEl.style.display = 'block';
+        currentMorningPair = data.current_pair;
+        renderViewer('morningImgLeft', 'morningMvLeft', 'morningViewerLeft', 'morningProgressLeft', currentMorningPair.left);
+        renderViewer('morningImgRight', 'morningMvRight', 'morningViewerRight', 'morningProgressRight', currentMorningPair.right);
+      } catch (e) {
+        console.error('Failed to load morning pair', e);
+      }
+    }
+
+    async function castMorningVote(winner) {
+      if (!currentMorningPair || !morningJobId) return;
+      const pairId = currentMorningPair.pair_id;
+      await fetch(`/api/morning/${morningJobId}/vote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pair_id: pairId, winner: winner, voter: 'tony' }),
+      });
+      morningSkipCursor = 0;
+      loadMorningPair();
+    }
+
+    function skipMorningPair() {
+      if (!currentMorningPair) return;
+      morningSkipCursor += 1;
+      loadMorningPair();
+    }
+
+    bindTurntableKeyboard('morningViewerLeft', 'morningImgLeft');
+    bindTurntableKeyboard('morningViewerRight', 'morningImgRight');
 
     async function exportWinnersAction() {
       if (!currentRun) return;

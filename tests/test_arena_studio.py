@@ -828,7 +828,7 @@ def test_nightly_queue_tab_js_is_read_only(client: TestClient):
     assert "fetch(`/api/nightly/queue" in js
     # No launch/lease-acquire call anywhere near the nightly loader.
     start = js.index("async function loadNightlyQueue()")
-    end = js.index("async function exportWinnersAction()")
+    end = js.index("async function loadMorningBundles()")
     body = js[start:end]
     assert "method: 'POST'" not in body
     assert "method: \"POST\"" not in body
@@ -965,3 +965,187 @@ def test_nightly_queue_endpoint_never_exposes_secrets(client: TestClient, tmp_pa
     res = client.get(f"/api/nightly/queue?queue={queue_path}")
     assert res.status_code == 200
     assert "sk-should-never-appear" not in res.text
+
+
+def _morning_bundle_fixture(tmp_path: Path) -> tuple[Path, Path, str]:
+    """R2 P2: a nightly job whose morning bundle is ready for review.
+
+    Returns (queue_path, morning_run_dir, job_id). Two candidates in the same
+    arena cell so exactly one blind pair is produced (mirrors fake_run's shape).
+    """
+    run_dir = tmp_path / "morning_run"
+    run_dir.mkdir()
+    png_a = run_dir / "preview_a.png"
+    png_b = run_dir / "preview_b.png"
+    png_a.write_bytes(b"dummy-a")
+    png_b.write_bytes(b"dummy-b")
+    run_log = {
+        "started_at": "2026-09-13T02:00:00Z",
+        "config": {"model_ids": ["cadam-fable-image", "codex-openscad"], "instruments": ["sambuca"]},
+        "trials": [
+            {
+                "trial_id": "trial-morning-a",
+                "model_id": "cadam-fable-image",
+                "instrument_id": "sambuca",
+                "seed": 0,
+                "rep": 0,
+                "result": {"render_ok": True, "artifacts": {"png_path": str(png_a)}},
+            },
+            {
+                "trial_id": "trial-morning-b",
+                "model_id": "codex-openscad",
+                "instrument_id": "sambuca",
+                "seed": 0,
+                "rep": 0,
+                "result": {"render_ok": True, "artifacts": {"png_path": str(png_b)}},
+            },
+        ],
+    }
+    (run_dir / "run_log.json").write_text(json.dumps(run_log), encoding="utf-8")
+    (run_dir / "morning-summary.json").write_text(
+        json.dumps(
+            {
+                "schema": "makerbench-nightly-cad-morning-v1",
+                "run_id": run_dir.name,
+                "votable": True,
+                "valid_candidate_count": 2,
+                "failed_candidate_count": 0,
+                "pair_files": ["pair-000.html"],
+                "cost_usd": 0.42,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    queue_path = tmp_path / "nightly-cad-queue.json"
+    job_id = "sambuca-night"
+    queue_path.write_text(
+        json.dumps(
+            {
+                "schema": "makerbench-nightly-cad-queue-v1",
+                "jobs": [
+                    {
+                        "job_id": job_id,
+                        "instrument_id": "sambuca",
+                        "reference_image": "tasks/sambuca/reference.png",
+                        "budget_usd": 5.0,
+                        "status": "votable",
+                        "run_id": run_dir.name,
+                        "run_dir": str(run_dir),
+                        "entrants": [
+                            {"entrant_id": "cadam-fable-image", "kind": "cadam", "model_id": "anthropic/claude-fable-5"},
+                            {"entrant_id": "codex-openscad", "kind": "arena", "model_id": "codex-gpt-5.6-sol"},
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return queue_path, run_dir, job_id
+
+
+def test_morning_review_tab_markup(client: TestClient):
+    """R2 P2: the Morning Review tab markup must exist and be wired to a tab."""
+    html = client.get("/").text
+    assert 'data-tab="morning"' in html
+    assert 'id="pane-morning"' in html
+    for element_id in (
+        "morningBundleSelect",
+        "morningImgLeft",
+        "morningImgRight",
+        "morningMvLeft",
+        "morningMvRight",
+        "morningViewerLeft",
+        "morningViewerRight",
+    ):
+        assert f'id="{element_id}"' in html, f"missing #{element_id} in Morning Review markup"
+
+
+def test_morning_review_js_reuses_shared_viewer_and_never_exposes_identity_fields(client: TestClient):
+    js = client.get("/static/studio.js").text
+    assert "async function loadMorningPair()" in js
+    assert "renderViewer('morningImgLeft'" in js
+    assert "renderViewer('morningImgRight'" in js
+    # The morning-review code must never read a model_id/trial_id/candidate_id field
+    # off the pair payload — it only ever touches pair_id/left/right/render assets.
+    start = js.index("async function loadMorningPair()")
+    end = js.index("async function castMorningVote(")
+    body = js[start:end]
+    for forbidden in ("model_id", "trial_id", "candidate_id"):
+        assert forbidden not in body
+
+
+def test_morning_bundle_discovery_only_lists_votable_jobs(client: TestClient, tmp_path: Path):
+    queue_path, _run_dir, job_id = _morning_bundle_fixture(tmp_path)
+    res = client.get(f"/api/morning/queue?queue={queue_path}")
+    assert res.status_code == 200
+    bundles = res.json()["bundles"]
+    assert len(bundles) == 1
+    assert bundles[0]["job_id"] == job_id
+    assert bundles[0]["votable"] is True
+    assert bundles[0]["valid_candidate_count"] == 2
+
+
+def test_morning_bundle_pair_never_leaks_identity_pre_vote(client: TestClient, tmp_path: Path):
+    queue_path, _run_dir, job_id = _morning_bundle_fixture(tmp_path)
+    res = client.get(f"/api/morning/{job_id}/pair?queue={queue_path}")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["has_next"] is True
+    pair = data["current_pair"]
+    body = json.dumps(pair)
+    # candidate_id/trial_id/model_id must never reach the wire pre-vote (C3 invariant).
+    assert "trial-morning-a" not in body
+    assert "trial-morning-b" not in body
+    assert "cadam-fable-image" not in body
+    assert "codex-openscad" not in body
+    assert pair["left"]["render_path"].startswith(f"/api/morning/{job_id}/assets/blind/")
+    assert pair["right"]["render_path"].startswith(f"/api/morning/{job_id}/assets/blind/")
+
+
+def test_morning_bundle_vote_lands_in_votes_blind_jsonl(client: TestClient, tmp_path: Path):
+    """Votes land in the same run_dir/votes.blind.jsonl path code_cad_vote_web.py writes."""
+    queue_path, run_dir, job_id = _morning_bundle_fixture(tmp_path)
+    pair_res = client.get(f"/api/morning/{job_id}/pair?queue={queue_path}")
+    pair_id = pair_res.json()["current_pair"]["pair_id"]
+
+    vote_res = client.post(
+        f"/api/morning/{job_id}/vote?queue={queue_path}",
+        json={"pair_id": pair_id, "winner": "left", "voter": "tony"},
+    )
+    assert vote_res.status_code == 200
+    assert vote_res.json()["success"] is True
+
+    votes_path = run_dir / "votes.blind.jsonl"
+    assert votes_path.is_file()
+    lines = [json.loads(line) for line in votes_path.read_text(encoding="utf-8").splitlines()]
+    assert any(v["pair_id"] == pair_id and v["winner"] == "left" for v in lines)
+
+    # Voting again for the same voter must be refused (queue rebuilds without this pair).
+    again = client.get(f"/api/morning/{job_id}/pair?queue={queue_path}")
+    assert again.json()["has_next"] is False
+
+
+def test_morning_bundle_asset_refuses_traversal(client: TestClient, tmp_path: Path):
+    queue_path, _run_dir, job_id = _morning_bundle_fixture(tmp_path)
+    # Populate vote_pages/ by requesting a pair first.
+    client.get(f"/api/morning/{job_id}/pair?queue={queue_path}")
+    res = client.get(f"/api/morning/{job_id}/assets/../../../../../../etc/hostname?queue={queue_path}")
+    assert res.status_code == 404
+
+
+def test_morning_bundle_never_writes_into_morning_vote_dir(client: TestClient, tmp_path: Path):
+    """The Studio queue stages into its own vote_pages/, never finalize_morning_bundle's
+    morning-vote/ directory — morning.html and morning-vote/*.html stay untouched."""
+    queue_path, run_dir, job_id = _morning_bundle_fixture(tmp_path)
+    morning_vote_dir = run_dir / "morning-vote"
+    morning_vote_dir.mkdir()
+    sentinel = morning_vote_dir / "pair-000.html"
+    sentinel.write_text("<html>original static page</html>", encoding="utf-8")
+    before = sentinel.read_bytes()
+
+    client.get(f"/api/morning/{job_id}/pair?queue={queue_path}")
+
+    assert sentinel.read_bytes() == before
+    assert (run_dir / "vote_pages").is_dir()

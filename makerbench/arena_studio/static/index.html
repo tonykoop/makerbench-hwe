@@ -19,6 +19,7 @@
       <button class="nav-btn" data-tab="leaderboard" onclick="switchTab('leaderboard', this)">Leaderboard & Agreement</button>
       <button class="nav-btn" data-tab="compare" onclick="switchTab('compare', this)">⚖️ Compare Runs</button>
       <button class="nav-btn" data-tab="nightly" onclick="switchTab('nightly', this)">🌙 Nightly Queue</button>
+      <button class="nav-btn" data-tab="morning" onclick="switchTab('morning', this)">🌅 Morning Review</button>
       <button class="nav-btn" data-tab="tasks" onclick="switchTab('tasks', this)">Task Matrix</button>
     </div>
     <div class="run-select-wrapper">
@@ -429,6 +430,54 @@
           </thead>
           <tbody><tr><td colspan="6">Loading&hellip;</td></tr></tbody>
         </table>
+      </div>
+    </section>
+
+    <!-- MORNING REVIEW TAB (R2 P2, anonymous vote stage over a nightly morning bundle) -->
+    <section id="pane-morning" class="tab-pane">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+        <div>
+          <h2 style="font-size: 18px; font-weight: 700;">Morning Review</h2>
+          <span style="font-size: 12px; color: var(--text-muted);">Same blind A/B stage as Blind Voting. Model identity is never sent to the browser until after you vote.</span>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <select id="morningBundleSelect" onchange="selectMorningBundle()" style="min-width: 260px;">
+            <option value="">Loading bundles&hellip;</option>
+          </select>
+          <button class="btn btn-secondary" onclick="loadMorningBundles()">🔄 Refresh</button>
+        </div>
+      </div>
+
+      <div id="morningEmptyState" class="card" style="text-align: center; color: var(--text-muted); padding: 40px;">
+        No votable morning bundle selected yet.
+      </div>
+
+      <div id="morningVoteWrap" style="display: none;">
+        <div style="font-weight: 600; color: var(--text-muted); margin-bottom: 12px;" id="morningProgress">Pair 0 of 0</div>
+        <div class="vote-stage" id="morningVoteStage">
+          <div class="candidate-box">
+            <div class="candidate-header"><span>Candidate A</span></div>
+            <div class="viewer-container" id="morningViewerLeft" tabindex="0" role="img" aria-label="Candidate A turntable">
+              <img id="morningImgLeft" src="" alt="Candidate Left" />
+              <div id="morningMvLeft" style="display:none; width:100%; height:100%;"></div>
+              <div class="frame-progress" id="morningProgressLeft" style="display:none;">Loading frames&hellip; <span>0/0</span></div>
+            </div>
+          </div>
+          <div class="candidate-box">
+            <div class="candidate-header"><span>Candidate B</span></div>
+            <div class="viewer-container" id="morningViewerRight" tabindex="0" role="img" aria-label="Candidate B turntable">
+              <img id="morningImgRight" src="" alt="Candidate Right" />
+              <div id="morningMvRight" style="display:none; width:100%; height:100%;"></div>
+              <div class="frame-progress" id="morningProgressRight" style="display:none;">Loading frames&hellip; <span>0/0</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="vote-bar" role="group" aria-label="Cast your vote">
+          <button class="btn btn-primary" onclick="castMorningVote('left')">Candidate A is Better</button>
+          <button class="btn btn-secondary" onclick="castMorningVote('draw')">Draw / Equal</button>
+          <button class="btn btn-primary" onclick="castMorningVote('right')">Candidate B is Better</button>
+          <button class="btn btn-secondary" onclick="skipMorningPair()" title="Show another pair without voting">Skip</button>
+        </div>
       </div>
     </section>
 
