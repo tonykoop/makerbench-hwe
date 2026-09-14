@@ -248,7 +248,7 @@ def create_studio_app(
 
 def _render_studio_html() -> str:
     """Render the MakerBench Arena Studio UI."""
-    return """<!DOCTYPE html>
+    return r"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />

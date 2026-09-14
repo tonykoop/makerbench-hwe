@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
-from urllib.parse import quote
+import shutil
+import subprocess
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 
@@ -202,6 +204,26 @@ def test_html_ui(client: TestClient):
     assert response.status_code == 200
     assert "MakerBench" in response.text
     assert "Arena Studio" in response.text
+
+
+def test_inline_studio_javascript_parses_in_node(client: TestClient, tmp_path: Path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    html = client.get("/").text
+    script = html.split("<script>", 1)[1].split("</script>", 1)[0]
+    script_path = tmp_path / "arena-studio-inline.js"
+    script_path.write_text(script, encoding="utf-8")
+
+    checked = subprocess.run(
+        [node, "--check", str(script_path)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    assert checked.returncode == 0, checked.stderr
 
 
 def test_cli_arena_studio_help():
