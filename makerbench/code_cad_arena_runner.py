@@ -388,6 +388,9 @@ def make_execute_trial(
             "provenance_path": gen.provenance_path.as_posix(),
         }
         payload["context_tier"] = context_tier
+        from .code_cad_providers import entrant_confinement
+
+        payload["confinement"] = entrant_confinement(trial.model_id, context_tier)
         if staging_manifest is not None:
             payload["staging_manifest"] = staging_manifest
         return payload
@@ -517,6 +520,7 @@ def collect_objective_scoreline(run_log: Mapping[str, object]) -> list[dict]:
     """
 
     totals: dict[str, list[float]] = {}
+    confinements: dict[str, set[str]] = {}
     for entry in run_log.get("trials") or []:
         model_id = str(entry.get("model_id") or "")
         if not model_id:
@@ -530,17 +534,27 @@ def collect_objective_scoreline(run_log: Mapping[str, object]) -> list[dict]:
         if isinstance(rate, bool) or not isinstance(rate, (int, float)):
             rate = 0.0
         totals.setdefault(model_id, []).append(float(rate))
+        if result.get("confinement"):
+            confinements.setdefault(model_id, set()).add(str(result["confinement"]))
 
     rows = []
     for entrant in sorted(totals):
         rates = totals[entrant]
-        rows.append(
-            {
-                "entrant": entrant,
-                "objective_pass_rate": round(sum(rates) / len(rates), 6),
-                "n_objective_trials": len(rates),
-            }
-        )
+        row = {
+            "entrant": entrant,
+            "objective_pass_rate": round(sum(rates) / len(rates), 6),
+            "n_objective_trials": len(rates),
+        }
+        seen = confinements.get(entrant)
+        if seen:
+            # #785: one unconfined trial taints the whole row (worst case wins),
+            # and the site publisher drops unconfined rows.
+            row["confinement"] = (
+                "unconfined" if "unconfined" in seen
+                else "verified" if "verified" in seen
+                else "not_applicable"
+            )
+        rows.append(row)
     rows.sort(key=lambda row: (-row["objective_pass_rate"], row["entrant"]))
     return rows
 

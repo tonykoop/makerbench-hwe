@@ -701,6 +701,10 @@ def _arena_page_round(number: int, run_dir: Path) -> dict | None:
     for row in scoreline.get("rows") or []:
         if not isinstance(row, dict) or not row.get("entrant"):
             continue
+        if row.get("confinement") == "unconfined":
+            # #785: a non-blind trial whose entrant could read outside its staged
+            # workspace is not integrity-safe; never publish its score.
+            continue
         rows.append(
             {
                 "entrant": str(row["entrant"]),
