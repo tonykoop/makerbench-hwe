@@ -1,0 +1,95 @@
+/* Agreement Studio extras (#699 D2): CI bars, per-family filter, outlier call-outs.
+   Additive to studio.css -- reuses its CSS custom properties, doesn't redefine them. */
+
+#agreementStudioExtras {
+  margin-top: 18px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+#agreementStudioExtras h3 {
+  margin-bottom: 10px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.agreement-extras-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+#familyFilterSelect {
+  background: var(--card-bg, #18202c);
+  color: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.ci-row {
+  display: grid;
+  grid-template-columns: 140px 1fr 70px;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.ci-row .ci-entrant {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ci-track {
+  position: relative;
+  height: 10px;
+  background: #0f141c;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
+.ci-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--accent, #38bdf8);
+  opacity: 0.45;
+  border-radius: 4px;
+}
+
+.ci-point {
+  position: absolute;
+  top: -2px;
+  width: 2px;
+  height: 14px;
+  background: var(--accent, #38bdf8);
+}
+
+.ci-unknown {
+  font-size: 11px;
+  color: var(--text-muted, #94a3b8);
+  font-style: italic;
+}
+
+.outlier-badge {
+  display: inline-block;
+  background: #3b1f1f;
+  color: #fca5a5;
+  border: 1px solid #7f1d1d;
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  margin: 3px 6px 3px 0;
+}
+
+.small-sample-caveat {
+  font-size: 11px;
+  color: #facc15;
+  margin-top: 6px;
+}

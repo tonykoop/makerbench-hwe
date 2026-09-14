@@ -15,7 +15,7 @@
 
       if (tabId === 'launcher') initLauncher();
       if (tabId === 'arena') loadQueue();
-      if (tabId === 'leaderboard') loadLeaderboard();
+      if (tabId === 'leaderboard') { loadLeaderboard(); loadAgreementStudioExtras(); }
       if (tabId === 'tasks') loadTasks();
     }
 
