@@ -78,6 +78,11 @@ def fake_run(tmp_path: Path) -> Path:
                 "result": {
                     "render_ok": True,
                     "artifacts": {"png_path": str(png_a)},
+                    "objective": {
+                        "objective_pass_rate": 1.0,
+                        "sub_scores": {"watertight": 1.0, "min_wall": 1.0},
+                        "passed": True,
+                    },
                 },
                 "grade": {"compiled": True, "manifold": True},
             },
@@ -90,6 +95,11 @@ def fake_run(tmp_path: Path) -> Path:
                 "result": {
                     "render_ok": True,
                     "artifacts": {"png_path": str(png_b)},
+                    "objective": {
+                        "objective_pass_rate": 0.6,
+                        "sub_scores": {"watertight": 1.0, "min_wall": 0.0},
+                        "passed": False,
+                    },
                 },
                 "grade": {"compiled": True, "manifold": True},
             },
@@ -525,6 +535,160 @@ def test_undo_vote_is_not_counted_by_the_production_elo_consumer(client: TestCli
     votes_after_revote = [v for v in votes_to_elo_votes(revealed_path) if v.voter_id == voter]
     assert len(votes_after_revote) == 1, "a revote after undo must count exactly once, not accumulate"
     assert votes_after_revote[0].winner == "right"
+
+
+# Ported from #737 (cedar R2 P3, APPROVE incl. the per-voter reveal-gate fix 4c580ee):
+# run-scoped judge panel API tests. Morning-bundle variants land with the #735 port (B11);
+# the panel markup/JS test is rewritten against the rebuilt frontend.
+def test_judge_panel_404_before_any_vote(client: TestClient, fake_run: Path):
+    """R2 P3: never before the vote — same C3/C4 anonymity invariant."""
+    res = client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id=pair-not-voted-yet")
+    assert res.status_code == 404
+
+
+def test_judge_panel_after_vote_shows_objective_and_judge_verdict(client: TestClient, fake_run: Path):
+    voter = "judge-panel-tester"
+    before = client.get(f"/api/runs/{fake_run.name}/queue?voter={voter}").json()
+    pair_id = before["current_pair"]["pair_id"]
+
+    vote_resp = client.post(
+        f"/api/runs/{fake_run.name}/vote",
+        json={"pair_id": pair_id, "winner": "left", "voter": voter},
+    )
+    assert vote_resp.status_code == 200
+
+    # Simulate `arena judge` having already run out-of-band (never invoked by us).
+    judge_record = {
+        "schema": "makerbench-code-cad-judge-v1",
+        "pair_id": pair_id,
+        "winner": "right",
+        "voter_id": "vlm:claude-code-sonnet",
+        "judge_model_id": "claude-code-sonnet",
+    }
+    (fake_run / "votes.judge.jsonl").write_text(json.dumps(judge_record) + "\n", encoding="utf-8")
+
+    res = client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}&voter={voter}")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["pair_id"] == pair_id
+    assert data["human_winner"] == "left"
+    assert data["left"]["model_id"] == "model-a"
+    assert data["left"]["objective"]["objective_pass_rate"] == 1.0
+    assert data["right"]["model_id"] == "model-b"
+    assert data["right"]["objective"]["objective_pass_rate"] == 0.6
+    assert data["judge"] == {"winner": "right", "judge_model_id": "claude-code-sonnet"}
+
+
+def test_judge_panel_omits_judge_block_when_not_yet_judged(client: TestClient, fake_run: Path):
+    voter = "no-judge-tester"
+    before = client.get(f"/api/runs/{fake_run.name}/queue?voter={voter}").json()
+    pair_id = before["current_pair"]["pair_id"]
+    client.post(
+        f"/api/runs/{fake_run.name}/vote",
+        json={"pair_id": pair_id, "winner": "draw", "voter": voter},
+    )
+
+    res = client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}&voter={voter}")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["human_winner"] == "draw"
+    assert data["judge"] is None
+
+
+def test_judge_panel_hides_again_after_undo(client: TestClient, fake_run: Path):
+    voter = "undo-then-judge-tester"
+    before = client.get(f"/api/runs/{fake_run.name}/queue?voter={voter}").json()
+    pair_id = before["current_pair"]["pair_id"]
+    client.post(
+        f"/api/runs/{fake_run.name}/vote",
+        json={"pair_id": pair_id, "winner": "left", "voter": voter},
+    )
+    assert client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}&voter={voter}").status_code == 200
+
+    undo_resp = client.post(
+        f"/api/runs/{fake_run.name}/undo-vote", json={"pair_id": pair_id, "voter": voter}
+    )
+    assert undo_resp.status_code == 200
+
+    res = client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}&voter={voter}")
+    assert res.status_code == 404
+
+
+def test_judge_panel_reveal_gate_is_per_voter_not_global(client: TestClient, fake_run: Path):
+    """R2 P3/#736 fix (post-review): the reveal gate must be scoped to the
+    REQUESTING voter, not "has anyone voted on this pair". An earlier version's
+    _pair_is_voted_by_anyone() let a second voter who had never voted on a pair see
+    the first voter's identity/objective/judge data just by passing their own
+    `voter` query value — a real cross-voter identity leak."""
+    alice_queue = client.get(f"/api/runs/{fake_run.name}/queue?voter=alice").json()
+    pair_id = alice_queue["current_pair"]["pair_id"]
+
+    alice_vote = client.post(
+        f"/api/runs/{fake_run.name}/vote",
+        json={"pair_id": pair_id, "winner": "left", "voter": "alice"},
+    )
+    assert alice_vote.status_code == 200
+
+    # Bob has NOT voted on this pair. His own queue may hand him the same pair
+    # (Swiss pairing is per-voter) — he must not be able to see its reveal yet.
+    bob_res = client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}&voter=bob")
+    assert bob_res.status_code == 404
+    assert "alice" not in bob_res.text.lower()
+
+    # Alice herself can see it.
+    alice_res = client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}&voter=alice")
+    assert alice_res.status_code == 200
+
+    # Once Bob also votes on the SAME pair, his own request succeeds and shows
+    # his own recorded winner, not a leftover from Alice's vote.
+    bob_vote = client.post(
+        f"/api/runs/{fake_run.name}/vote",
+        json={"pair_id": pair_id, "winner": "right", "voter": "bob"},
+    )
+    assert bob_vote.status_code == 200
+    bob_res_after = client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}&voter=bob")
+    assert bob_res_after.status_code == 200
+    assert bob_res_after.json()["human_winner"] == "right"
+
+
+def test_judge_panel_never_calls_a_judge_cli(
+    client: TestClient, fake_run: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The judge panel only reads what `arena judge` already wrote to disk.
+
+    Ported from #737. Its structural check (`"subprocess" not in dir(service)`)
+    cannot hold on this base: B1's honest launcher (#708) imports subprocess to
+    run `arena run --stub`. The same guarantee is asserted behaviorally instead:
+    every process-spawning entry point is blocked while a real vote -> panel
+    round trip runs.
+    """
+    import os
+    import subprocess as subprocess_mod
+
+    import makerbench.arena_studio.service as service_mod
+
+    assert not hasattr(service_mod, "claude_cli_judge")
+    assert not hasattr(service_mod, "judge_pair")
+
+    voter = "no-cli-voter"
+    queue = client.get(f"/api/runs/{fake_run.name}/queue?voter={voter}").json()
+    pair_id = queue["current_pair"]["pair_id"]
+
+    def _blocked(*args, **kwargs):
+        raise AssertionError(f"judge panel path tried to spawn a process: {args!r}")
+
+    for name in ("Popen", "run", "call", "check_call", "check_output"):
+        monkeypatch.setattr(subprocess_mod, name, _blocked)
+    monkeypatch.setattr(os, "system", _blocked)
+
+    vote = client.post(
+        f"/api/runs/{fake_run.name}/vote",
+        json={"pair_id": pair_id, "winner": "left", "voter": voter},
+    )
+    assert vote.status_code == 200
+    panel = client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}&voter={voter}")
+    assert panel.status_code == 200
+    assert panel.json()["judge"] is None
 
 
 def test_root_is_a_ui_free_placeholder(client: TestClient):

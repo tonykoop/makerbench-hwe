@@ -302,6 +302,16 @@ def create_studio_app(
             )
         return {"success": True, "pair_id": payload.pair_id}
 
+    @app.get("/api/runs/{run_id}/judge-panel")
+    def get_run_judge_panel(run_id: str, pair_id: str = Query(...), voter: str = Query("tony")):
+        run_path = _resolve_run_dir(run_id)
+        panel = service.get_judge_panel(run_path, pair_id, voter)
+        if panel is None:
+            raise HTTPException(
+                status_code=404, detail="No recorded human vote for this pair by this voter yet"
+            )
+        return panel
+
     @app.post("/api/competitions/launch")
     def launch_competition(payload: CompetitionLaunchPayload):
         try:
