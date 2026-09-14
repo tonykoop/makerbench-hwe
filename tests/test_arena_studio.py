@@ -778,8 +778,9 @@ def test_nightly_queue_endpoint_active_lease_clears_orphan_flag(client: TestClie
 
 
 def test_nightly_queue_endpoint_reconstructs_budget_from_run_dir(client: TestClient, tmp_path: Path):
-    run_dir = tmp_path / "sambuca-run"
-    run_dir.mkdir()
+    # Under runs/: a run_dir outside it is never read (see the escape tests below).
+    run_dir = tmp_path / "runs" / "sambuca-run"
+    run_dir.mkdir(parents=True)
     (run_dir / "nightly-state.json").write_text(
         json.dumps(
             {
@@ -1041,6 +1042,98 @@ def test_morning_direct_routes_refuse_run_dir_outside_runs_root(client: TestClie
     res = client.get(f"/api/morning/{job_id}/assets/host.txt?queue={queue_path}")
     assert res.status_code == 400
     assert "should never be readable" not in res.text
+
+
+_ESCAPES = ["absolute", "dotdot", "symlink"]
+_QUERY_ENCODINGS = ["plain", "encoded"]
+
+
+def _queue_with_external_run_dir(tmp_path: Path, escape: str, *, status: str) -> Path:
+    """sol CHANGES, #774: a validly contained queue under repo_root/runs/ whose job
+    run_dir points at an external directory holding sentinel data, reached three
+    ways. Returns the queue path."""
+    outside = tmp_path / "outside-runs-root"
+    outside.mkdir(exist_ok=True)
+    (outside / "nightly-state.json").write_text(
+        json.dumps(
+            {"budget": {"spent_usd": 3210.5, "charges": [{"entrant_id": "OUTSIDE_SENTINEL", "cost_usd": 3210.5}]}}
+        ),
+        encoding="utf-8",
+    )
+    (outside / "morning-summary.json").write_text(
+        json.dumps(
+            {
+                "schema": "makerbench-nightly-cad-morning-v1",
+                "votable": True,
+                "valid_candidate_count": 987654,
+                "failed_candidate_count": 0,
+                "cost_usd": 4321.25,
+            }
+        ),
+        encoding="utf-8",
+    )
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    if escape == "absolute":
+        run_dir = str(outside)
+    elif escape == "dotdot":
+        run_dir = str(runs_dir / ".." / "outside-runs-root")
+    else:
+        link = runs_dir / "escape-link"
+        link.symlink_to(outside, target_is_directory=True)
+        run_dir = str(link)
+    queue_path = runs_dir / "nightly-cad-queue.json"
+    queue_path.write_text(
+        json.dumps(
+            {
+                "schema": "makerbench-nightly-cad-queue-v1",
+                "jobs": [
+                    {
+                        "job_id": "escape-attempt",
+                        "instrument_id": "sambuca",
+                        "reference_image": "tasks/sambuca/reference.png",
+                        "budget_usd": 5.0,
+                        "status": status,
+                        "run_id": "outside-runs-root",
+                        "run_dir": run_dir,
+                        "entrants": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return queue_path
+
+
+def _queue_query(queue_path: Path, encoding: str) -> str:
+    return quote(str(queue_path), safe="") if encoding == "encoded" else str(queue_path)
+
+
+@pytest.mark.parametrize("encoding", _QUERY_ENCODINGS)
+@pytest.mark.parametrize("escape", _ESCAPES)
+def test_nightly_cockpit_never_replays_budget_from_run_dir_outside_runs_root(
+    client: TestClient, tmp_path: Path, escape: str, encoding: str
+):
+    queue_path = _queue_with_external_run_dir(tmp_path, escape, status="running")
+    res = client.get(f"/api/nightly/queue?queue={_queue_query(queue_path, encoding)}")
+    assert res.status_code == 200
+    assert res.json()["jobs"][0]["budget"] is None
+    assert "OUTSIDE_SENTINEL" not in res.text
+    assert "3210.5" not in res.text
+
+
+@pytest.mark.parametrize("encoding", _QUERY_ENCODINGS)
+@pytest.mark.parametrize("escape", _ESCAPES)
+def test_morning_discovery_never_reads_summary_from_run_dir_outside_runs_root(
+    client: TestClient, tmp_path: Path, escape: str, encoding: str
+):
+    queue_path = _queue_with_external_run_dir(tmp_path, escape, status="votable")
+    res = client.get(f"/api/morning/queue?queue={_queue_query(queue_path, encoding)}")
+    assert res.status_code == 200
+    assert res.json()["bundles"] == []
+    assert "987654" not in res.text
+    assert "4321.25" not in res.text
 
 
 def test_morning_bundle_discovery_only_lists_votable_jobs(client: TestClient, tmp_path: Path):

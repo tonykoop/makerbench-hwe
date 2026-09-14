@@ -1099,8 +1099,9 @@ class ArenaStudioService:
                 "budget": None,
             }
             if job.run_dir:
-                run_dir = Path(job.run_dir)
-                if run_dir.is_dir():
+                # Queue-provided and untrusted: never replay a budget from outside runs/.
+                run_dir = self._contained_run_dir(job.run_dir)
+                if run_dir is not None and run_dir.is_dir():
                     guard = _resume_budget(run_dir, limit_usd=job.budget_usd)
                     job_view["budget"] = {
                         "spent_usd": guard.spent_usd,
@@ -1139,7 +1140,9 @@ class ArenaStudioService:
         for job in jobs:
             if job.status != "votable" or not job.run_dir:
                 continue
-            run_dir = Path(job.run_dir)
+            run_dir = self._contained_run_dir(job.run_dir)
+            if run_dir is None:
+                continue  # a run_dir outside runs/ is never read, not even its summary
             summary_path = run_dir / "morning-summary.json"
             if not summary_path.is_file():
                 continue
@@ -1156,6 +1159,23 @@ class ArenaStudioService:
                 }
             )
         return bundles
+
+    def _contained_run_dir(self, run_dir: object) -> Optional[Path]:
+        """A queue-provided ``NightlyJob.run_dir``, resolved, or ``None`` if it is
+        not under ``repo_root / "runs"`` (sol CHANGES, #774).
+
+        The queue file is untrusted input: its *path* is already contained by
+        ``_resolve_nightly_queue_path``, but ``run_dir`` is a separate field
+        inside it. Every read of a job's run_dir goes through this one helper:
+        the cockpit's budget replay, morning-summary discovery, and the morning
+        pair/vote/asset routes. ``resolve()`` follows symlinks and ``..`` first,
+        so neither can smuggle an external directory past the check.
+        """
+        if not run_dir:
+            return None
+        allowed_root = (self.repo_root / "runs").resolve()
+        resolved = Path(str(run_dir)).resolve()
+        return resolved if resolved.is_relative_to(allowed_root) else None
 
     def _resolve_morning_run_dir(self, queue_path: Path, job_id: str) -> Path:
         """Resolve job_id -> run_dir for the pair/vote/asset routes.
@@ -1181,7 +1201,6 @@ class ArenaStudioService:
         now resolve under the same `repo_root / "runs"` root as the queue path.
         """
         _, jobs = load_queue(Path(queue_path))
-        allowed_root = (self.repo_root / "runs").resolve()
         for job in jobs:
             if job.job_id == job_id:
                 if job.status != "votable":
@@ -1190,8 +1209,8 @@ class ArenaStudioService:
                     )
                 if not job.run_dir:
                     raise ValueError(f"job {job_id!r} has no run_dir yet")
-                run_dir = Path(job.run_dir).resolve()
-                if not run_dir.is_relative_to(allowed_root):
+                run_dir = self._contained_run_dir(job.run_dir)
+                if run_dir is None:
                     raise ValueError(
                         f"job {job_id!r} run_dir must be under the configured runs root"
                     )
