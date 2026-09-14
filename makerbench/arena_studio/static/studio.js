@@ -20,6 +20,7 @@
     }
 
     async function init() {
+      initWebGLDetection();
       const res = await fetch('/api/runs');
       const data = await res.json();
       const sel = document.getElementById('runSelect');
@@ -291,35 +292,93 @@
     }
 
     /* Dual-Mode Viewport & WebGL Check (Story #698) */
+    // Primary, default surface is the zero-WebGL 24-frame DOM turntable. WebGL orbit
+    // (<model-viewer>) is strictly progressive enhancement: it only becomes selectable
+    // after a feature-detection pass, and any runtime context loss reverts to frames
+    // automatically so voters never see a blank canvas (CONTEXT_LOST_WEBGL on RDP).
     let webglSupported = false;
     let activeViewerMode = 'turntable';
+    const turntableState = {}; // imgId -> { frames, frameIdx, images, loaded, autoRotateTimer }
 
     function checkWebGLSupport() {
       try {
         const canvas = document.createElement('canvas');
-        webglSupported = !!(window.WebGL2RenderingContext && (canvas.getContext('webgl2') || canvas.getContext('experimental-webgl2')));
+        const gl = canvas.getContext('webgl2') || canvas.getContext('experimental-webgl2');
+        webglSupported = !!(window.WebGL2RenderingContext && gl && !gl.isContextLost());
       } catch (e) {
         webglSupported = false;
       }
       return webglSupported;
     }
 
+    function initWebGLDetection() {
+      checkWebGLSupport();
+      const btn = document.getElementById('btnWebglMode');
+      if (webglSupported) {
+        btn.disabled = false;
+        btn.title = 'Switch to interactive 3D orbit view';
+      } else {
+        btn.disabled = true;
+        btn.title = 'WebGL2 hardware acceleration is unavailable in this browser/session';
+      }
+      // webglcontextlost events from a <model-viewer>'s internal (shadow-DOM) canvas
+      // still bubble/compose up to window in a capture-phase listener, so one global
+      // watchdog covers both viewers without reaching into model-viewer internals.
+      window.addEventListener('webglcontextlost', (e) => {
+        e.preventDefault();
+        forceTurntableFallback('WebGL context was lost — reverted to the zero-WebGL frame turntable.');
+      }, true);
+    }
+
+    function forceTurntableFallback(message) {
+      webglSupported = false;
+      const btn = document.getElementById('btnWebglMode');
+      btn.disabled = true;
+      btn.title = message;
+      const notice = document.getElementById('webglNotice');
+      notice.style.display = 'block';
+      notice.textContent = '⚠️ ' + message;
+      setViewerMode('turntable');
+    }
+
     function setViewerMode(mode) {
-      if (mode === 'webgl') {
-        if (!checkWebGLSupport()) {
-          document.getElementById('webglNotice').style.display = 'block';
-          document.getElementById('webglNotice').textContent = '⚠️ WebGL2 hardware acceleration is unavailable in current browser/RDP session. Active mode: zero-WebGL 24-frame turntable.';
-          return;
-        }
+      if (mode === 'webgl' && !webglSupported) {
+        document.getElementById('webglNotice').style.display = 'block';
+        document.getElementById('webglNotice').textContent = '⚠️ WebGL2 hardware acceleration is unavailable in current browser/RDP session. Active mode: zero-WebGL 24-frame turntable.';
+        mode = 'turntable';
+      } else if (mode === 'turntable') {
+        document.getElementById('webglNotice').style.display = 'none';
       }
       activeViewerMode = mode;
-      document.getElementById('webglNotice').style.display = 'none';
       document.getElementById('btnTurntableMode').classList.toggle('active', mode === 'turntable');
       document.getElementById('btnWebglMode').classList.toggle('active', mode === 'webgl');
       if (currentPair) {
-        setupTurntable('imgLeft', currentPair.left.frames, currentPair.left.render_path);
-        setupTurntable('imgRight', currentPair.right.frames, currentPair.right.render_path);
+        renderViewer('imgLeft', 'mvLeft', 'viewerLeft', 'progressLeft', currentPair.left);
+        renderViewer('imgRight', 'mvRight', 'viewerRight', 'progressRight', currentPair.right);
       }
+    }
+
+    function renderViewer(imgId, mvId, containerId, progressId, candidate) {
+      stopAutoRotate(imgId);
+      const img = document.getElementById(imgId);
+      const mv = document.getElementById(mvId);
+      const progress = document.getElementById(progressId);
+
+      if (activeViewerMode === 'webgl' && candidate.model3d_path) {
+        img.style.display = 'none';
+        progress.style.display = 'none';
+        mv.style.display = 'block';
+        mv.onerror = () => forceTurntableFallback('The 3D model failed to load — reverted to the zero-WebGL frame turntable.');
+        mv.setAttribute('src', candidate.model3d_path);
+        return;
+      }
+
+      // No model3d_path (or webgl unavailable/failed): zero-WebGL frames are the
+      // fallback, never a blank viewer.
+      mv.style.display = 'none';
+      mv.removeAttribute('src');
+      img.style.display = '';
+      setupTurntable(imgId, containerId, progressId, candidate.frames, candidate.render_path);
     }
 
     /* Agreement Studio & Analytics (Story #699) */
@@ -438,33 +497,114 @@
         return;
       }
       currentPair = data.current_pair;
-      setupTurntable('imgLeft', currentPair.left.frames, currentPair.left.render_path);
-      setupTurntable('imgRight', currentPair.right.frames, currentPair.right.render_path);
+      renderViewer('imgLeft', 'mvLeft', 'viewerLeft', 'progressLeft', currentPair.left);
+      renderViewer('imgRight', 'mvRight', 'viewerRight', 'progressRight', currentPair.right);
     }
 
-    function setupTurntable(imgId, frames, fallback) {
+    function setupTurntable(imgId, containerId, progressId, frames, fallback) {
       const img = document.getElementById(imgId);
-      if (frames && frames.length > 0) {
-        let frameIdx = 0;
-        img.src = frames[frameIdx];
-        let dragging = false;
-        let startX = 0;
-        const container = img.parentElement;
-        container.onmousedown = (e) => { dragging = true; startX = e.clientX; };
-        window.onmouseup = () => { dragging = false; };
-        container.onmousemove = (e) => {
-          if (!dragging) return;
-          const delta = e.clientX - startX;
-          if (Math.abs(delta) > 15) {
-            frameIdx = (frameIdx + (delta > 0 ? 1 : -1) + frames.length) % frames.length;
-            img.src = frames[frameIdx];
-            startX = e.clientX;
+      const container = document.getElementById(containerId);
+      const progressEl = document.getElementById(progressId);
+      const countEl = progressEl ? progressEl.querySelector('span') : null;
+
+      if (!frames || frames.length === 0) {
+        if (progressEl) progressEl.style.display = 'none';
+        img.src = fallback || '';
+        turntableState[imgId] = { frames: [], frameIdx: 0, images: [], loaded: 0, autoRotateTimer: null };
+        return;
+      }
+
+      const state = { frames, frameIdx: 0, images: new Array(frames.length), loaded: 0, autoRotateTimer: null };
+      turntableState[imgId] = state;
+
+      // Preload every frame with a visible progress indicator so scrubbing/rotation
+      // never briefly flashes a broken image while a later frame is still in flight.
+      if (progressEl) {
+        progressEl.style.display = 'block';
+        if (countEl) countEl.textContent = `0/${frames.length}`;
+      }
+      frames.forEach((url, i) => {
+        const im = new Image();
+        im.onload = im.onerror = () => {
+          state.loaded += 1;
+          if (countEl) countEl.textContent = `${state.loaded}/${frames.length}`;
+          if (state.loaded === frames.length && progressEl) {
+            progressEl.style.display = 'none';
           }
         };
-      } else {
-        img.src = fallback || '';
+        im.src = url;
+        state.images[i] = im;
+      });
+
+      img.src = frames[0];
+
+      state.dragging = false;
+      state.startX = 0;
+      container.onmousedown = (e) => { state.dragging = true; state.startX = e.clientX; stopAutoRotate(imgId); };
+      container.onmousemove = (e) => {
+        if (!state.dragging) return;
+        const delta = e.clientX - state.startX;
+        if (Math.abs(delta) > 15) {
+          advanceFrame(imgId, delta > 0 ? 1 : -1);
+          state.startX = e.clientX;
+        }
+      };
+      container.onmouseenter = () => stopAutoRotate(imgId);
+      container.onmouseleave = () => { if (!state.dragging) startAutoRotate(imgId); };
+
+      startAutoRotate(imgId);
+    }
+
+    // Single shared mouseup listener (registered once) clears drag state for whichever
+    // turntable is being dragged, and resumes auto-rotate for it. Per-viewer state lives
+    // on turntableState so this doesn't need to be re-bound per setupTurntable() call —
+    // reassigning window.onmouseup per viewer would silently drop the first viewer's
+    // drag-release handling.
+    window.addEventListener('mouseup', () => {
+      Object.keys(turntableState).forEach((imgId) => {
+        const state = turntableState[imgId];
+        if (state && state.dragging) {
+          state.dragging = false;
+          startAutoRotate(imgId);
+        }
+      });
+    });
+
+    function advanceFrame(imgId, direction) {
+      const state = turntableState[imgId];
+      if (!state || !state.frames.length) return;
+      state.frameIdx = (state.frameIdx + direction + state.frames.length) % state.frames.length;
+      document.getElementById(imgId).src = state.frames[state.frameIdx];
+    }
+
+    function startAutoRotate(imgId) {
+      const state = turntableState[imgId];
+      if (!state || !state.frames.length || state.autoRotateTimer) return;
+      state.autoRotateTimer = setInterval(() => advanceFrame(imgId, 1), 180);
+    }
+
+    function stopAutoRotate(imgId) {
+      const state = turntableState[imgId];
+      if (state && state.autoRotateTimer) {
+        clearInterval(state.autoRotateTimer);
+        state.autoRotateTimer = null;
       }
     }
+
+    // Turntable keyboard arrows: only act when a specific viewer has focus (tabindex),
+    // and stop propagation so the document-level L/D/R vote shortcuts below don't also
+    // fire on the same ArrowLeft/ArrowRight press.
+    function bindTurntableKeyboard(containerId, imgId) {
+      document.getElementById(containerId).addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        e.preventDefault();
+        e.stopPropagation();
+        stopAutoRotate(imgId);
+        advanceFrame(imgId, e.key === 'ArrowRight' ? 1 : -1);
+      });
+    }
+    bindTurntableKeyboard('viewerLeft', 'imgLeft');
+    bindTurntableKeyboard('viewerRight', 'imgRight');
 
     async function castVote(winner) {
       if (!currentPair) return;

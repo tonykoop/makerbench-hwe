@@ -159,6 +159,22 @@
       object-fit: contain;
       pointer-events: none;
     }
+    .viewer-container:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+    }
+    .frame-progress {
+      position: absolute;
+      bottom: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(5, 8, 14, 0.85);
+      color: var(--text-muted);
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      pointer-events: none;
+    }
     .flags-box {
       padding: 10px 14px;
       background: #131b26;
