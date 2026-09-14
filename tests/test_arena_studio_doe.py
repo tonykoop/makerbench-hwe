@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from makerbench.arena_studio import create_studio_app
 from makerbench.arena_studio import doe
+from makerbench.arena_studio.service import ArenaStudioService
 from makerbench import nightly_cad
 
 
@@ -147,6 +148,33 @@ def test_write_queue_file_round_trips_through_load_queue(tmp_path: Path):
     assert loaded_jobs[0].instrument_id == "ocarina"
 
 
+def test_resolve_max_cost_refuses_unknown_cost_model_never_defaults_zero():
+    with pytest.raises(ValueError, match="openrouter-paid-a"):
+        doe.resolve_max_cost_usd_by_model(
+            ["openrouter-paid-a"], telemetry_store="/nonexistent/sessions.jsonl"
+        )
+
+
+def test_resolve_max_cost_known_subscription_and_explicit_override():
+    resolved = doe.resolve_max_cost_usd_by_model(
+        ["claude-code-opus-5", "openrouter-paid-a"],
+        overrides={"openrouter-paid-a": 2.5},
+        telemetry_store="/nonexistent/sessions.jsonl",
+    )
+    assert resolved == {"claude-code-opus-5": 0.0, "openrouter-paid-a": 2.5}
+
+
+def test_resolve_max_cost_zero_override_is_not_a_free_pass():
+    # A 0.0 override is indistinguishable from "no cap" for BudgetGuard, so
+    # it must be refused exactly like an absent/unknown cost, not accepted.
+    with pytest.raises(ValueError, match="openrouter-paid-a"):
+        doe.resolve_max_cost_usd_by_model(
+            ["openrouter-paid-a"],
+            overrides={"openrouter-paid-a": 0.0},
+            telemetry_store="/nonexistent/sessions.jsonl",
+        )
+
+
 @pytest.fixture
 def fake_registry(tmp_path: Path) -> Path:
     reg_path = tmp_path / "registry.json"
@@ -202,3 +230,55 @@ def test_doe_queue_route(client: TestClient, repo_root_with_reference: Path):
     assert queue_path.exists()
     payload, jobs = nightly_cad.load_queue(queue_path)
     assert len(jobs) == 1
+
+
+def test_write_doe_queue_refuses_unknown_cost_model_not_silently_zero(
+    fake_registry: Path, repo_root_with_reference: Path
+):
+    service = ArenaStudioService(registry_path=fake_registry, repo_root=repo_root_with_reference)
+    with pytest.raises(ValueError, match="openrouter-paid-a"):
+        service.write_doe_queue(
+            "doe_unknown_cost_run",
+            ["ocarina"],
+            ["openrouter-paid-a", "openrouter-paid-b"],
+            levels=["L1"],
+            seeds=[0],
+        )
+    # Refused before any queue file is written for this run.
+    run_dir = repo_root_with_reference / "runs" / "code_cad_arena" / "doe_unknown_cost_run"
+    assert not (run_dir / "doe_queue.json").exists()
+
+
+def test_write_doe_queue_accepts_unknown_cost_model_with_explicit_override(
+    fake_registry: Path, repo_root_with_reference: Path
+):
+    service = ArenaStudioService(registry_path=fake_registry, repo_root=repo_root_with_reference)
+    result = service.write_doe_queue(
+        "doe_override_run",
+        ["ocarina"],
+        ["openrouter-paid-a", "openrouter-paid-b"],
+        levels=["L1"],
+        seeds=[0],
+        max_cost_usd_by_model={"openrouter-paid-a": 1.0, "openrouter-paid-b": 1.0},
+    )
+    assert result["n_jobs"] == 1
+    _payload, jobs = nightly_cad.load_queue(Path(result["queue_path"]))
+    assert {e.max_cost_usd for e in jobs[0].entrants} == {1.0}
+
+
+@pytest.mark.parametrize("bad_run_id", ["../escaped", "/tmp/escaped", "..", "a/b"])
+def test_write_doe_queue_rejects_path_traversal_run_id(
+    bad_run_id: str, fake_registry: Path, repo_root_with_reference: Path
+):
+    service = ArenaStudioService(registry_path=fake_registry, repo_root=repo_root_with_reference)
+    with pytest.raises(ValueError, match="run_id"):
+        service.write_doe_queue(
+            bad_run_id,
+            ["ocarina"],
+            ["claude-code-opus-5", "codex-gpt-5.6"],
+            levels=["L1"],
+            seeds=[0],
+        )
+    # Nothing escaped the intended runs/code_cad_arena directory.
+    assert not (repo_root_with_reference.parent / "escaped").exists()
+    assert not Path("/tmp/escaped").exists()

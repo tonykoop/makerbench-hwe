@@ -29,6 +29,7 @@ class DoeQueuePayload(BaseModel):
     context_tiers: Optional[list[str]] = None
     seeds: Optional[list[int]] = None
     budget_usd: float = 5.0
+    max_cost_usd_by_model: Optional[dict[str, float]] = None
 
 
 def register_delta_routes(
@@ -103,6 +104,7 @@ def register_delta_routes(
                 context_tiers=payload.context_tiers,
                 seeds=payload.seeds,
                 budget_usd=payload.budget_usd,
+                max_cost_usd_by_model=payload.max_cost_usd_by_model,
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
