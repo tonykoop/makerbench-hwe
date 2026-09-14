@@ -315,13 +315,16 @@ def _studio_reference_images(request: GenerationRequest) -> list[str]:
 def _codex_image_args(request: GenerationRequest) -> list[str]:
     """Use Codex's documented vision attachment flag for image/studio trials."""
 
+    # `--image <FILE>...` is variadic: a bare `--image path` swallows the
+    # trailing prompt as another image, and codex then fails with "No prompt
+    # provided via stdin". The `--image=<path>` form binds exactly one value.
     if request.context_tier == "studio":
-        args: list[str] = []
-        for path in _studio_reference_images(request)[:_CODEX_STUDIO_MAX_IMAGES]:
-            args += ["--image", path]
-        return args
+        return [
+            f"--image={path}"
+            for path in _studio_reference_images(request)[:_CODEX_STUDIO_MAX_IMAGES]
+        ]
     image_path = _staged_image_path(request)
-    return ["--image", image_path] if image_path else []
+    return [f"--image={image_path}"] if image_path else []
 
 
 _WORKSPACE_TEXT_SUFFIXES = {".md", ".csv", ".txt"}

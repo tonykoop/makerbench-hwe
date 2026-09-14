@@ -513,8 +513,8 @@ class TestImageTierAttachment:
         monkeypatch.setattr(subprocess, "run", fake_run)
         gen = providers.make_codex_generator(retry_sleep_s=0)
         gen(request)
-        index = seen["cmd"].index("--image")
-        assert seen["cmd"][index + 1] == str(workspace / "reference-image.png")
+        assert f"--image={workspace / 'reference-image.png'}" in seen["cmd"]
+        assert "--image" not in seen["cmd"]  # bare variadic form would swallow the prompt
         assert "inspiration image" in seen["cmd"][-1]
 
     def test_blind_request_has_no_image_attachment(self, monkeypatch):
@@ -874,8 +874,8 @@ class TestStudioTierProviders:
             workspace_dir=workspace.relative_to(tmp_path),
         )
         args = providers._codex_image_args(rel_request)
-        paths = args[1::2]
-        assert args[0::2] == ["--image", "--image"]
+        assert len(args) == 2 and all(a.startswith("--image=") for a in args)
+        paths = [a.removeprefix("--image=") for a in args]
         assert paths and all(Path(p).is_absolute() and Path(p).is_file() for p in paths)
         prompt = providers.arena_prompt(rel_request, "cadquery")
         listed = [line[2:] for line in prompt.splitlines() if line.startswith("- /")]
@@ -916,8 +916,13 @@ class TestStudioTierProviders:
         monkeypatch.setattr(subprocess, "run", fake_run)
         providers.make_codex_generator(retry_sleep_s=0)(request)
         cmd = seen["cmd"]
-        attached = [cmd[i + 1] for i, part in enumerate(cmd) if part == "--image"]
+        attached = [part.removeprefix("--image=") for part in cmd if part.startswith("--image=")]
         assert attached == [str(workspace / "images" / f"view-{i}.png") for i in range(4)]
+        # Regression: `--image <FILE>...` is variadic in codex exec. A bare
+        # `--image path` swallowed the trailing prompt ("No prompt provided via
+        # stdin"); only the `=` form may appear, and the prompt stays last.
+        assert "--image" not in cmd
+        assert cmd[-1].startswith("You are") or "context tier: studio" in cmd[-1]
 
     def test_codex_studio_without_images_has_no_image_flag(self, tmp_path, monkeypatch):
         request, _ = _studio_request(tmp_path, model_id="codex-gpt-5.6-sol", n_images=0)
@@ -926,4 +931,4 @@ class TestStudioTierProviders:
             subprocess, "run", lambda cmd, **k: seen.update(cmd=cmd) or _completed("")
         )
         providers.make_codex_generator(retry_sleep_s=0)(request)
-        assert "--image" not in seen["cmd"]
+        assert not any(part.startswith("--image") for part in seen["cmd"])
