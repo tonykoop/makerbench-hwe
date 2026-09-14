@@ -114,3 +114,23 @@ def run_relative_path(value: str) -> str:
     if match:
         return match.group(1)
     return redact_host_paths(value)
+
+
+def published_run_path(value: str) -> str:
+    """Return a stable run-scoped path suitable for a published report.
+
+    Normal run trees retain their ``runs/...`` tail. Ad-hoc absolute inputs
+    (for example pytest or operator scratch directories) retain only the run
+    directory name under the synthetic ``runs/`` namespace. This preserves a
+    useful identifier without publishing any host prefix.
+    """
+
+    if not isinstance(value, str) or not value:
+        return value
+    scoped = run_relative_path(value)
+    if scoped != REDACTION_TOKEN:
+        return scoped
+    leaf = value.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    if not leaf or find_host_paths(leaf):
+        return REDACTION_TOKEN
+    return f"runs/{leaf}"

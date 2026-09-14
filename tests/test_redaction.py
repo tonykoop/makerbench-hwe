@@ -9,6 +9,7 @@ import pytest
 from makerbench.redaction import (
     REDACTION_TOKEN,
     find_host_paths,
+    published_run_path,
     redact_host_paths,
     run_relative_path,
 )
@@ -94,6 +95,20 @@ def test_run_relative_path_normalises_windows_separators():
     assert run_relative_path(r"C:\Users\Tony\runs\m\t\iter_1\x.png") == (
         "runs/m/t/iter_1/x.png"
     )
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("/tmp/pytest-123/run-blind", "runs/run-blind"),
+        (r"C:\Users\Tony\scratch\run-image", "runs/run-image"),
+        ("/home/tony/work/runs/round1", "runs/round1"),
+        ("runs/round2", "runs/round2"),
+    ],
+)
+def test_published_run_path_keeps_identity_without_host_prefix(value, expected):
+    assert published_run_path(value) == expected
+    assert find_host_paths(expected) == []
 
 
 def test_redaction_is_idempotent():

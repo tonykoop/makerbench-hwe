@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from makerbench import code_cad_tier_comparison as compare
+from makerbench.redaction import find_host_paths
 
 
 def _write_run(run_dir: Path, *, model_ids: list[str], trials: list[dict]) -> None:
@@ -35,7 +36,7 @@ class TestLoadTierRun:
         _write_run(run_dir, model_ids=["stub-a"], trials=[_trial("stub-a", 0.5)])
         loaded = compare.load_tier_run(run_dir, "blind")
         assert loaded["tier"] == "blind"
-        assert loaded["run_dir"] == str(run_dir)
+        assert loaded["run_dir"] == "runs/run-blind"
         assert loaded["objective"][0]["entrant"] == "stub-a"
         assert loaded["elo"] is None  # no votes.revealed.jsonl
 
@@ -153,4 +154,10 @@ class TestEndToEndFromRunDirs:
         summary = compare.build_tier_comparison(loaded)
         row = summary["rows"][0]
         assert row["objective_delta"] == pytest.approx(0.4)
-        assert summary["run_dirs"] == {"blind": str(blind_dir), "image": str(image_dir)}
+        assert summary["run_dirs"] == {
+            "blind": "runs/run-blind",
+            "image": "runs/run-image",
+        }
+        serialized = json.dumps(summary, sort_keys=True)
+        assert str(tmp_path) not in serialized
+        assert find_host_paths(serialized) == []
