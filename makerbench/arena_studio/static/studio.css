@@ -1,17 +1,55 @@
+    /*
+     * S2/#694: theme tokens honoring prefers-color-scheme. --stage-bg (the
+     * turntable/viewer surfaces) is deliberately NOT themed — a
+     * photography-lightbox convention (image/video stages stay dark so
+     * rendered candidates read with consistent contrast regardless of the
+     * surrounding chrome's theme), same as most media viewers. Accent/status
+     * colors (badges, success/warning/danger) also stay fixed across themes:
+     * each is a self-contained bg+text pair already chosen for its own
+     * contrast.
+     */
     :root {
       --bg: #0f141c;
+      --bg-deep: #090d14;
       --card-bg: #18202c;
       --card-hover: #222d3d;
+      --surface-alt: #111823;
+      --surface-soft: #131b26;
+      --row-hover: #1c2635;
+      --kbd-bg: #0b1119;
+      --btn-secondary-bg: #222f3e;
+      --btn-secondary-hover: #2c3e50;
       --border: #263345;
       --text: #e2e8f0;
       --text-muted: #94a3b8;
       --accent: #38bdf8;
       --accent-hover: #0284c7;
+      --on-accent: #090d14;
       --success: #22c55e;
       --warning: #f59e0b;
       --danger: #ef4444;
       --purple: #a855f7;
+      --stage-bg: #05080e;
       --font: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f4f6f9;
+        --bg-deep: #e9edf2;
+        --card-bg: #ffffff;
+        --card-hover: #eef2f7;
+        --surface-alt: #eef2f7;
+        --surface-soft: #eef2f7;
+        --row-hover: #eef2f7;
+        --kbd-bg: #e2e8f0;
+        --btn-secondary-bg: #e2e8f0;
+        --btn-secondary-hover: #d6dee8;
+        --border: #d5dce5;
+        --text: #131b26;
+        --text-muted: #5a6b81;
+        --accent-hover: #0369a1;
+        --on-accent: #ffffff;
+      }
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -24,7 +62,7 @@
       overflow: hidden;
     }
     header {
-      background: #090d14;
+      background: var(--bg-deep);
       border-bottom: 1px solid var(--border);
       padding: 12px 24px;
       display: flex;
@@ -69,7 +107,7 @@
     }
     .nav-btn.btn-launch-nav.active {
       background: var(--warning);
-      color: #090d14;
+      color: var(--on-accent);
     }
     .run-select-wrapper {
       display: flex;
@@ -135,7 +173,7 @@
     }
     .candidate-header {
       padding: 10px 16px;
-      background: #111823;
+      background: var(--surface-alt);
       border-bottom: 1px solid var(--border);
       font-weight: 600;
       font-size: 14px;
@@ -146,7 +184,7 @@
       flex: 1;
       min-height: 360px;
       position: relative;
-      background: #05080e;
+      background: var(--stage-bg);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -168,8 +206,12 @@
       bottom: 8px;
       left: 50%;
       transform: translateX(-50%);
+      /* Overlays --stage-bg, which is deliberately not themed (see :root comment
+         above) — this text needs a fixed light color in both themes, not
+         var(--text-muted), which flips dark in light mode and would go
+         low-contrast on this always-dark chip. */
       background: rgba(5, 8, 14, 0.85);
-      color: var(--text-muted);
+      color: #cbd5e1;
       font-size: 11px;
       padding: 4px 10px;
       border-radius: 999px;
@@ -177,7 +219,7 @@
     }
     .flags-box {
       padding: 10px 14px;
-      background: #131b26;
+      background: var(--surface-soft);
       border-top: 1px solid var(--border);
       font-size: 12px;
       display: flex;
@@ -191,7 +233,7 @@
       font-size: 10px;
       font-family: ui-monospace, monospace;
       color: var(--text-muted);
-      background: #0b1119;
+      background: var(--kbd-bg);
       border: 1px solid var(--border);
       border-radius: 4px;
       padding: 1px 5px;
@@ -208,7 +250,7 @@
       left: 50%;
       bottom: 20px;
       transform: translateX(-50%);
-      background: #111823;
+      background: var(--surface-alt);
       border: 1px solid var(--border);
       color: var(--text);
       padding: 10px 16px;
@@ -223,7 +265,7 @@
     }
     .undo-toast button {
       background: var(--accent);
-      color: #05131f;
+      color: var(--on-accent);
       border: none;
       border-radius: 5px;
       padding: 5px 12px;
@@ -244,12 +286,12 @@
       justify-content: center;
       gap: 8px;
     }
-    .btn-primary { background: var(--accent); color: #090d14; }
+    .btn-primary { background: var(--accent); color: var(--on-accent); }
     .btn-primary:hover { background: var(--accent-hover); }
-    .btn-warning { background: var(--warning); color: #090d14; }
+    .btn-warning { background: var(--warning); color: var(--on-accent); }
     .btn-warning:hover { background: #d97706; }
-    .btn-secondary { background: #222f3e; color: var(--text); border-color: var(--border); }
-    .btn-secondary:hover { background: #2c3e50; }
+    .btn-secondary { background: var(--btn-secondary-bg); color: var(--text); border-color: var(--border); }
+    .btn-secondary:hover { background: var(--btn-secondary-hover); }
 
     /* Launcher Form Components */
     .filter-pills {
@@ -259,7 +301,7 @@
       margin-bottom: 12px;
     }
     .pill {
-      background: #111823;
+      background: var(--surface-alt);
       border: 1px solid var(--border);
       color: var(--text-muted);
       padding: 4px 10px;
@@ -270,7 +312,7 @@
     }
     .pill.active {
       background: var(--accent);
-      color: #090d14;
+      color: var(--on-accent);
       border-color: var(--accent);
     }
     .scroll-list {
@@ -278,7 +320,7 @@
       overflow-y: auto;
       border: 1px solid var(--border);
       border-radius: 6px;
-      background: #111823;
+      background: var(--surface-alt);
       padding: 8px;
       display: flex;
       flex-direction: column;
@@ -298,7 +340,7 @@
     .task-item:hover { background: var(--card-hover); }
     .task-item label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
     .check-card {
-      background: #111823;
+      background: var(--surface-alt);
       border: 1px solid var(--border);
       border-radius: 6px;
       padding: 10px 14px;
@@ -311,7 +353,7 @@
     .check-card:hover { border-color: var(--accent); }
     .check-card label { display: flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 600; font-size: 13px; }
     .terminal-box {
-      background: #090d14;
+      background: var(--bg-deep);
       border: 1px solid var(--border);
       border-radius: 6px;
       padding: 12px;
@@ -326,8 +368,8 @@
     /* Tables */
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
     th, td { padding: 12px 14px; text-align: left; border-bottom: 1px solid var(--border); }
-    th { background: #111823; color: var(--text-muted); font-size: 12px; text-transform: uppercase; }
-    tr:hover td { background: #1c2635; }
+    th { background: var(--surface-alt); color: var(--text-muted); font-size: 12px; text-transform: uppercase; }
+    tr:hover td { background: var(--row-hover); }
     .badge {
       display: inline-block;
       padding: 2px 8px;
