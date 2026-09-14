@@ -7,7 +7,7 @@ from typing import Optional
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -24,6 +24,16 @@ class VotePayload(BaseModel):
     flags: Optional[dict[str, list[str]]] = None
 
 
+class PreflightPayload(BaseModel):
+    secrets: str
+    queue: str
+    output_root: str
+    repo_root: Optional[str] = None
+    runner_script: Optional[str] = None
+    instruments_root: Optional[str] = None
+    lock: Optional[str] = None
+
+
 class CompetitionLaunchPayload(BaseModel):
     run_id: Optional[str] = None
     instruments: list[str] = Field(default_factory=lambda: ["ocarina"])
@@ -36,12 +46,14 @@ class CompetitionLaunchPayload(BaseModel):
     timeout_s: int = 300
     seed: int = 0
     skip_image_gate: bool = False
+    live: bool = False
 
 
 def create_studio_app(
     default_run_dir: Optional[Path] = None,
     registry_path: Path = Path(DEFAULT_REGISTRY),
     repo_root: Optional[Path] = None,
+    allow_live: bool = False,
 ) -> FastAPI:
     """Create and configure the Arena Studio FastAPI instance."""
 
@@ -55,6 +67,7 @@ def create_studio_app(
         default_run_dir=default_run_dir,
         registry_path=registry_path,
         repo_root=repo_root,
+        allow_live=allow_live,
     )
 
     # Mount static assets (model-viewer, etc.)
@@ -101,6 +114,13 @@ def create_studio_app(
     def list_tasks(family: Optional[str] = Query(None)):
         tasks = service.get_registry_tasks(family=family)
         return {"tasks": tasks, "count": len(tasks)}
+
+    @app.post("/api/preflight")
+    def run_preflight(payload: PreflightPayload):
+        try:
+            return service.run_preflight(payload.model_dump())
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     @app.get("/api/runs/{run_id}/summary")
     def get_run_summary(run_id: str):
@@ -185,6 +205,8 @@ def create_studio_app(
     def launch_competition(payload: CompetitionLaunchPayload):
         try:
             return service.launch_competition(payload.model_dump())
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -196,6 +218,18 @@ def create_studio_app(
     def get_competition_logs(run_id: str, tail: int = Query(100)):
         lines = service.get_run_logs(run_id, tail=tail)
         return {"run_id": run_id, "lines": lines}
+
+    @app.get("/api/competitions/{run_id}/logs/stream")
+    def stream_competition_logs(
+        run_id: str,
+        tail: int = Query(100, ge=0, le=10_000),
+        follow: bool = Query(True),
+    ):
+        return StreamingResponse(
+            service.stream_run_logs(run_id, tail=tail, follow=follow),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     # Serve assets for any run under /runs/{run_id}/vote_pages/...
     @app.get("/runs/{run_id}/vote_pages/{file_path:path}")
