@@ -978,8 +978,8 @@ def _morning_bundle_fixture(
     votable, to prove the direct pair/vote/assets routes enforce the same gate
     discovery does (see test_morning_direct_routes_refuse_non_votable_job).
     """
-    run_dir = tmp_path / "morning_run"
-    run_dir.mkdir(exist_ok=True)
+    run_dir = tmp_path / "runs" / "morning_run"
+    run_dir.mkdir(parents=True, exist_ok=True)
     png_a = run_dir / "preview_a.png"
     png_b = run_dir / "preview_b.png"
     png_a.write_bytes(b"dummy-a")
@@ -1089,6 +1089,78 @@ def test_morning_direct_routes_refuse_non_votable_job(client: TestClient, tmp_pa
         tmp_path, status="running", write_summary=True
     )
     assert client.get(f"/api/morning/{job_id}/pair?queue={queue_path}").status_code == 400
+
+
+def test_morning_direct_routes_refuse_run_dir_outside_runs_root(client: TestClient, tmp_path: Path):
+    """Second-review-round fix: the queue *path* is contained under
+    repo_root/runs/ (#732), but job.run_dir is a SEPARATE field read from that
+    same untrusted queue file, and was never itself contained. A queue entry
+    could name an arbitrary external directory as run_dir, mark itself
+    votable, and drop a morning-summary.json there — turning the pair/vote/
+    assets routes into an arbitrary-file read/write primitive against any path
+    the server process can reach. The queue here is validly contained; only
+    run_dir points outside runs/."""
+    outside_run_dir = tmp_path / "outside-runs-root"
+    outside_run_dir.mkdir()
+    (outside_run_dir / "morning-summary.json").write_text(
+        json.dumps({"schema": "makerbench-nightly-cad-morning-v1", "votable": True}),
+        encoding="utf-8",
+    )
+    # Minimal real run_log.json so the pair/vote routes reach a real decision
+    # (not just crash on an unrelated missing file) if containment were absent.
+    (outside_run_dir / "run_log.json").write_text(
+        json.dumps(
+            {
+                "started_at": "2026-09-13T02:00:00Z",
+                "config": {"model_ids": ["a", "b"], "instruments": ["sambuca"]},
+                "trials": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    # The assets route resolves under run_dir/vote_pages/ — placing the host
+    # file there mirrors exactly what the reviewer's PoC found reachable.
+    (outside_run_dir / "vote_pages").mkdir()
+    (outside_run_dir / "vote_pages" / "host.txt").write_text(
+        "should never be readable via /assets", encoding="utf-8"
+    )
+
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    queue_path = runs_dir / "nightly-cad-queue.json"
+    job_id = "escape-attempt"
+    queue_path.write_text(
+        json.dumps(
+            {
+                "schema": "makerbench-nightly-cad-queue-v1",
+                "jobs": [
+                    {
+                        "job_id": job_id,
+                        "instrument_id": "sambuca",
+                        "reference_image": "tasks/sambuca/reference.png",
+                        "budget_usd": 5.0,
+                        "status": "votable",
+                        "run_id": "outside-runs-root",
+                        "run_dir": str(outside_run_dir),
+                        "entrants": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert client.get(f"/api/morning/{job_id}/pair?queue={queue_path}").status_code == 400
+    assert (
+        client.post(
+            f"/api/morning/{job_id}/vote?queue={queue_path}",
+            json={"pair_id": "pair-x", "winner": "left", "voter": "tony"},
+        ).status_code
+        == 400
+    )
+    res = client.get(f"/api/morning/{job_id}/assets/host.txt?queue={queue_path}")
+    assert res.status_code == 400
+    assert "should never be readable" not in res.text
 
 
 def test_morning_bundles_select_js_never_uses_raw_innerHTML_option(client: TestClient):

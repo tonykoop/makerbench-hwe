@@ -421,8 +421,20 @@ class ArenaStudioService:
         rule #734 requires). A job is usable here only once nightly_cad.py itself
         set status="votable" AND finalize_morning_bundle actually wrote
         morning-summary.json for it — never on job.status alone.
+
+        Fixed after a second review round: `job.run_dir` comes from the queue
+        file, which is treated as untrusted everywhere else in this module (the
+        queue *path* is already contained under the configured runs root by
+        `_resolve_nightly_queue_path`), but this method previously resolved
+        `run_dir` itself with no containment check at all — a queue entry could
+        name an arbitrary external directory, mark itself votable, and drop a
+        morning-summary.json there, turning the pair/vote/asset routes into an
+        arbitrary-file read (assets) and write (vote_pages/vote logs) primitive
+        against any path readable/writable by the server process. `run_dir` must
+        now resolve under the same `repo_root / "runs"` root as the queue path.
         """
         _, jobs = load_queue(Path(queue_path))
+        allowed_root = (self.repo_root / "runs").resolve()
         for job in jobs:
             if job.job_id == job_id:
                 if job.status != "votable":
@@ -432,6 +444,10 @@ class ArenaStudioService:
                 if not job.run_dir:
                     raise ValueError(f"job {job_id!r} has no run_dir yet")
                 run_dir = Path(job.run_dir).resolve()
+                if not run_dir.is_relative_to(allowed_root):
+                    raise ValueError(
+                        f"job {job_id!r} run_dir must be under the configured runs root"
+                    )
                 if not (run_dir / "morning-summary.json").is_file():
                     raise ValueError(f"job {job_id!r} has no morning-summary.json yet")
                 return run_dir
