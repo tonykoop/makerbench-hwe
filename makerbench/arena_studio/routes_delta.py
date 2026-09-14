@@ -7,11 +7,29 @@ in the same file.
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Optional
 
 from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel
 
 from .service import ArenaStudioService
+
+
+def _split_csv(value: Optional[str]) -> Optional[list[str]]:
+    if not value:
+        return None
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+class DoeQueuePayload(BaseModel):
+    run_id: str
+    instruments: list[str]
+    models: list[str]
+    levels: Optional[list[str]] = None
+    context_tiers: Optional[list[str]] = None
+    seeds: Optional[list[int]] = None
+    budget_usd: float = 5.0
+    max_cost_usd_by_model: Optional[dict[str, float]] = None
 
 
 def register_delta_routes(
@@ -52,5 +70,41 @@ def register_delta_routes(
         run_path = resolve_run_dir(run_id)
         try:
             return {"run_id": run_id, "families": service.get_run_agreement_by_family(run_path)}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # Story #697 D3: DoE Matrix Builder (preview only — never executes anything)
+    @app.get("/api/doe/preview")
+    def preview_doe_matrix(
+        instruments: str = Query(..., description="Comma-separated instrument ids"),
+        models: str = Query(..., description="Comma-separated model ids"),
+        levels: Optional[str] = Query(None, description="Comma-separated levels, default L1-L4"),
+        context_tiers: Optional[str] = Query(None, description="Comma-separated context tiers"),
+        seeds: Optional[str] = Query(None, description="Comma-separated integer seeds"),
+    ):
+        try:
+            return service.preview_doe_matrix(
+                _split_csv(instruments) or [],
+                _split_csv(models) or [],
+                levels=_split_csv(levels),
+                context_tiers=_split_csv(context_tiers),
+                seeds=[int(s) for s in _split_csv(seeds)] if seeds else None,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/doe/queue")
+    def write_doe_queue(payload: DoeQueuePayload):
+        try:
+            return service.write_doe_queue(
+                payload.run_id,
+                payload.instruments,
+                payload.models,
+                levels=payload.levels,
+                context_tiers=payload.context_tiers,
+                seeds=payload.seeds,
+                budget_usd=payload.budget_usd,
+                max_cost_usd_by_model=payload.max_cost_usd_by_model,
+            )
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
