@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import quote
 from pathlib import Path
 
 import pytest
+
+pytest.importorskip("fastapi")
+
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
@@ -120,7 +124,7 @@ def client(fake_run: Path, fake_registry: Path, tmp_path: Path) -> TestClient:
         registry_path=fake_registry,
         repo_root=tmp_path,
     )
-    return TestClient(studio_app)
+    return TestClient(studio_app, headers={"origin": "http://testserver"})
 
 
 def test_health_endpoint(client: TestClient, fake_run: Path):
@@ -204,6 +208,47 @@ def test_cli_arena_studio_help():
     result = runner.invoke(cli_app, ["arena", "studio", "--help"])
     assert result.exit_code == 0
     assert "Launch the MakerBench Arena Studio web interface" in result.stdout
+    assert "--allow-remote" in result.stdout
+
+
+def test_cli_arena_studio_refuses_remote_host_without_opt_in():
+    result = runner.invoke(cli_app, ["arena", "studio", "--host", "0.0.0.0"])
+    assert result.exit_code == 2
+    assert "Refusing a non-loopback" in result.stdout
+
+
+def test_post_rejects_missing_and_cross_origin(client: TestClient):
+    path = "/api/tasks/ocarina/approve?approved=true"
+    assert client.post(path, headers={"origin": ""}).status_code == 403
+    assert client.post(path, headers={"origin": "https://attacker.example"}).status_code == 403
+
+
+def test_run_id_cannot_be_a_filesystem_path(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    rogue = tmp_path.parent / f"{tmp_path.name}_rogue"
+    rogue.mkdir()
+    (rogue / "run_log.json").write_text("{}", encoding="utf-8")
+    monkeypatch.chdir(tmp_path.parent)
+
+    # This relative path was accepted by the old Path(run_id).is_dir() shortcut.
+    assert client.get(f"/api/runs/{rogue.name}/summary").status_code == 404
+    # Encoded absolute paths must not become an alternate run lookup channel.
+    encoded = quote(str(rogue), safe="")
+    assert client.get(f"/api/runs/{encoded}/summary").status_code == 404
+
+
+@pytest.mark.parametrize(
+    "escape",
+    [
+        "../../../../../../etc/hostname",
+        "..%2F..%2F..%2F..%2F..%2F..%2Fetc%2Fhostname",
+        "%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fhostname",
+    ],
+)
+def test_vote_page_asset_refuses_traversal(client: TestClient, fake_run: Path, escape: str):
+    response = client.get(f"/runs/{fake_run.name}/vote_pages/{escape}")
+    assert response.status_code == 404
 
 
 def test_competition_launch_and_status(client: TestClient):
@@ -315,5 +360,3 @@ def test_vote_with_structured_defect_flags(client: TestClient, fake_run: Path):
     res = client.post(f"/api/runs/{fake_run.name}/vote", json=vote_payload)
     assert res.status_code == 200
     assert res.json()["success"] is True
-
-

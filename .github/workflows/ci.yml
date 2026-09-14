@@ -36,7 +36,7 @@ jobs:
       - name: Install locked grading environment
         run: |
           python -m pip install -r requirements.lock
-          python -m pip install --no-deps -e ".[dev]"
+          python -m pip install -e ".[dev,studio]"
 
       - name: Warn on OpenSCAD reference drift
         # Surfaces when the stock runner's OpenSCAD moves off the reference

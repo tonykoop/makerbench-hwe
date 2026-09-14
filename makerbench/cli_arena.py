@@ -8,6 +8,7 @@ gitignored run directory (``runs/code_cad_arena/<run_id>/`` by convention).
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -1008,9 +1009,25 @@ def arena_studio(
         run_dir: Optional[str] = typer.Option(
             None, "--run-dir", help="Initial run directory to load in Arena Studio."),
         host: str = typer.Option("127.0.0.1", "--host", help="Bind host."),
+        allow_remote: bool = typer.Option(
+            False,
+            "--allow-remote",
+            help="Allow binding Arena Studio to a non-loopback interface.",
+        ),
         port: int = typer.Option(8080, "--port", help="Bind port."),
         registry: str = typer.Option(DEFAULT_REGISTRY, "--registry", help="Arena registry JSON path.")):
     """Launch the MakerBench Arena Studio web interface (Issue #696)."""
+
+    if host != "localhost":
+        try:
+            is_loopback = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            is_loopback = False
+        if not is_loopback and not allow_remote:
+            console.print(
+                "[red]Refusing a non-loopback Arena Studio host without --allow-remote.[/red]"
+            )
+            raise typer.Exit(code=2)
 
     try:
         import uvicorn
@@ -1024,4 +1041,3 @@ def arena_studio(
     app = create_studio_app(default_run_dir=run_path, registry_path=Path(registry))
     console.print(f"[bold green]MakerBench Arena Studio running at http://{host}:{port}/[/bold green]")
     uvicorn.run(app, host=host, port=port)
-

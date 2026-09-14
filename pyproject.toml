@@ -28,6 +28,11 @@ dev = [
     "pyyaml>=6.0",
     "ruff>=0.5",
 ]
+studio = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "httpx>=0.27",
+]
 
 [project.scripts]
 makerbench = "makerbench.cli:app"

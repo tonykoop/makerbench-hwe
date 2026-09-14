@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -51,14 +51,6 @@ def create_studio_app(
         description="Unified web cockpit for Code-CAD A/B Arena (Epic #421 / #694).",
     )
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
     service = ArenaStudioService(
         default_run_dir=default_run_dir,
         registry_path=registry_path,
@@ -70,18 +62,27 @@ def create_studio_app(
     if assets_dir.exists():
         app.mount("/static/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
-    # Helper to resolve run directories
-    def _resolve_run_dir(run_id_or_path: str) -> Path:
-        p = Path(run_id_or_path)
-        if p.is_dir() and (p / "run_log.json").exists():
-            return p
+    @app.middleware("http")
+    async def require_same_origin_for_posts(request: Request, call_next):
+        """Reject browser-driven state changes from any other origin."""
+        if request.method == "POST":
+            origin = request.headers.get("origin")
+            parsed = urlsplit(origin) if origin else None
+            if (
+                parsed is None
+                or parsed.scheme not in {"http", "https"}
+                or parsed.netloc != request.url.netloc
+            ):
+                return PlainTextResponse("Cross-origin POST refused", status_code=403)
+        return await call_next(request)
+
+    # Run identifiers are opaque discovery keys, never filesystem paths.
+    def _resolve_run_dir(run_id: str) -> Path:
         runs = service.discover_runs()
         for r in runs:
-            if r["run_id"] == run_id_or_path:
+            if r["run_id"] == run_id:
                 return Path(r["path"])
-        if service.default_run_dir and service.default_run_dir.name == run_id_or_path:
-            return service.default_run_dir
-        raise HTTPException(status_code=404, detail=f"Run '{run_id_or_path}' not found")
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
 
     # API Routes
     @app.get("/api/health")
@@ -200,7 +201,10 @@ def create_studio_app(
     @app.get("/runs/{run_id}/vote_pages/{file_path:path}")
     def serve_run_asset(run_id: str, file_path: str):
         run_path = _resolve_run_dir(run_id)
-        asset = run_path / "vote_pages" / file_path
+        vote_pages = (run_path / "vote_pages").resolve()
+        asset = (vote_pages / file_path).resolve()
+        if not asset.is_relative_to(vote_pages):
+            raise HTTPException(status_code=404, detail="Asset not found")
         if not asset.exists() or not asset.is_file():
             raise HTTPException(status_code=404, detail="Asset not found")
         return FileResponse(str(asset))
