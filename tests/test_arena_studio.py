@@ -419,11 +419,32 @@ def test_theme_honors_prefers_color_scheme(client: TestClient):
         "--warning",
         "--danger",
         "--purple",
-        "--on-accent",  # redefined, but same semantic role either way
+        # --on-accent stays fixed (not redefined) in light mode: --accent/--warning are
+        # the same bright colors in both themes, so their foreground must be too, or
+        # button/pill text contrast regresses (a real bug caught by review — see
+        # test_light_mode_on_accent_contrast_is_not_regressed below).
+        "--on-accent",
     }
     unexpected = themed_only_in_dark - intentionally_fixed
     assert not unexpected, (
         f"tokens defined on :root but never overridden for light mode: {unexpected}"
+    )
+
+
+def test_light_mode_on_accent_contrast_is_not_regressed(client: TestClient):
+    """S2/#729 fix (post-review): --on-accent must not be redefined to a light color
+    in light mode while --accent/--warning stay the same bright fixed colors — that
+    combination is a real WCAG contrast failure (~2.1:1) on primary/warning buttons,
+    the active Launch tab, and active filter pills. Bug caught by review; this pins it.
+    """
+    css = client.get("/static/studio.css").text
+    light_block = css.split("prefers-color-scheme: light)", 1)[1].split(":root {", 1)[1]
+    light_block = light_block.split("}\n    }", 1)[0]
+    # Match the CSS declaration specifically (not just the substring, which also
+    # appears in this block's own explanatory comment).
+    assert not re.search(r"--on-accent\s*:", light_block), (
+        "--on-accent must stay fixed at its dark :root value in light mode "
+        "(--accent/--warning are unthemed bright colors needing a dark foreground)"
     )
 
 

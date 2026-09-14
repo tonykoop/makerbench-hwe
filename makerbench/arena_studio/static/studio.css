@@ -48,7 +48,12 @@
         --text: #131b26;
         --text-muted: #5a6b81;
         --accent-hover: #0369a1;
-        --on-accent: #ffffff;
+        /* --on-accent intentionally NOT overridden here (fixed after review): --accent
+           (#38bdf8) and --warning (#f59e0b) stay the same bright colors in both themes,
+           so their foreground must too. An earlier version set this to white in light
+           mode, producing ~2.1:1 contrast on primary/warning buttons and active
+           filter pills/tabs — a real WCAG failure a reviewer caught. Keep the dark
+           #090d14 foreground from :root, which is ~9:1 against both backgrounds. */
       }
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
