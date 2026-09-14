@@ -436,6 +436,62 @@ class TestContextTierExecution:
             execute(trial)
 
 
+    def test_studio_tier_stages_prior_outputs_and_mapped_image(self, tmp_path):
+        registry = self._registry_with_repo_path()
+        instruments_root = self._fake_instruments_root(tmp_path)
+        image = tmp_path / "concept.png"
+        image.write_bytes(b"\x89PNG\r\n")
+        captured = []
+
+        def capturing_generator(request):
+            captured.append(request)
+            return "cube(2);\n"
+
+        execute = runner.make_execute_trial(
+            registry=registry, run_dir=tmp_path,
+            generators={"stub-a": capturing_generator},
+            compiler=_fake_compiler(tmp_path),
+            context_tier="studio",
+            instruments_root=instruments_root,
+            image_paths={"boxolin": image},
+        )
+        from makerbench.code_cad_orchestrator import ArenaTrial
+
+        trial = ArenaTrial(
+            trial_id="t7", instrument_id="boxolin", model_id="stub-a", seed=5, rep=0,
+            provider="stub",
+        )
+        payload = execute(trial)
+        assert payload["context_tier"] == "studio"
+        manifest = payload["staging_manifest"]
+        assert "master.scad" in manifest["staged_files"]
+        assert manifest["prior_outputs_included"] is True
+        assert manifest["reference_images"] == ["reference-image.png"]
+        assert manifest["image"]["image_seed"] == 5
+        workspace = tmp_path / "gen" / "t7" / "workspace"
+        assert (workspace / "master.scad").exists()
+        assert captured[0].context_tier == "studio"
+
+    def test_studio_tier_without_image_map_stages_repo_only(self, tmp_path):
+        registry = self._registry_with_repo_path()
+        instruments_root = self._fake_instruments_root(tmp_path)
+        execute = runner.make_execute_trial(
+            registry=registry, run_dir=tmp_path,
+            generators={"stub-a": make_stub_generator()},
+            compiler=_fake_compiler(tmp_path),
+            context_tier="studio",
+            instruments_root=instruments_root,
+        )
+        from makerbench.code_cad_orchestrator import ArenaTrial
+
+        trial = ArenaTrial(
+            trial_id="t8", instrument_id="boxolin", model_id="stub-a", seed=0, rep=0,
+            provider="stub",
+        )
+        manifest = execute(trial)["staging_manifest"]
+        assert manifest["reference_images"] == []
+        assert "image" not in manifest
+
 class TestVoteJoinAndAgreement:
     def _revealed_votes_file(self, tmp_path: Path) -> Path:
         left = VoteCandidate(
