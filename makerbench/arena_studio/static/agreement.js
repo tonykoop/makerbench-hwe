@@ -16,6 +16,11 @@ async function loadAgreementStudioExtras() {
       fetch(`/api/runs/${currentRun}/agreement/detailed`),
       fetch(`/api/runs/${currentRun}/agreement/families`),
     ]);
+    for (const res of [ciRes, detailedRes, familiesRes]) {
+      if (!res.ok) {
+        throw new Error(`${res.url} returned ${res.status}`);
+      }
+    }
     const ciData = await ciRes.json();
     const detailed = await detailedRes.json();
     const families = (await familiesRes.json()).families || {};
@@ -93,8 +98,23 @@ function populateFamilyFilter(families) {
   if (!select) return;
   const names = Object.keys(families).sort();
   const previous = select.value;
-  select.innerHTML = '<option value="">All families</option>' +
-    names.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
+
+  // Built via DOM properties, not string-templated HTML: escapeHtml() only
+  // safely encodes for text-node insertion, not for a value landing inside
+  // a double-quoted HTML attribute (a `"` in a family name could break out
+  // of the `value="..."` attribute -- #727 R2 finding).
+  select.textContent = '';
+  const allOption = document.createElement('option');
+  allOption.value = '';
+  allOption.textContent = 'All families';
+  select.appendChild(allOption);
+  for (const name of names) {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = name;
+    select.appendChild(option);
+  }
+
   select.value = names.includes(previous) ? previous : '';
   select.onchange = () => renderFamilyLeaderboard(families, select.value);
   renderFamilyLeaderboard(families, select.value);

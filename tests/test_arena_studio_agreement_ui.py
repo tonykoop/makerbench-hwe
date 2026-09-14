@@ -99,12 +99,24 @@ def test_studio_js_dispatches_to_agreement_extras_on_leaderboard_tab(client: Tes
     assert "loadAgreementStudioExtras()" in js
 
 
-@pytest.mark.skipif(
-    "register_delta_routes" not in Path("makerbench/arena_studio/app.py").read_text(encoding="utf-8"),
-    reason="needs #705 (analytics routes: leaderboard/ci, agreement/detailed, "
-    "agreement/families) merged into this branch's base first; this PR is UI-only "
-    "and documents that cross-dependency in its own body",
-)
+def test_agreement_js_checks_response_ok_before_treating_body_as_data(client: TestClient):
+    # A 404 with a JSON error body (e.g. {"detail": "Not Found"}) parses
+    # successfully, so a fetch() without an `ok` check would silently treat
+    # an error response as real data (#727 R2 finding).
+    js = client.get("/static/agreement.js").text
+    assert "res.ok" in js or ".ok)" in js
+
+
+def test_agreement_js_builds_family_options_via_dom_not_string_html(client: TestClient):
+    # escapeHtml() only safely encodes for text-node insertion, not for a
+    # value landing inside a double-quoted HTML attribute -- family options
+    # must be built via element properties, not `<option value="...">`
+    # string templating (#727 R2 finding).
+    js = client.get("/static/agreement.js").text
+    assert "createElement('option')" in js
+    assert 'value="${escapeHtml(name)}"' not in js
+
+
 def test_backend_endpoints_the_ui_calls_return_expected_shape(client: TestClient, fake_run: Path):
     ci = client.get(f"/api/runs/{fake_run.name}/leaderboard/ci").json()
     assert "leaderboard" in ci
