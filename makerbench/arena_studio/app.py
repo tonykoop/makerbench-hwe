@@ -218,6 +218,21 @@ def create_studio_app(
             )
         return {"success": True, "pair_id": payload.pair_id}
 
+    @app.get("/api/nightly/queue")
+    def get_nightly_queue(
+        queue: Optional[str] = Query(None, description="Path to a nightly-cad-queue.json"),
+        lock: Optional[str] = Query(None, description="Path to the nightly lease file"),
+    ):
+        queue_path = Path(queue) if queue else service.repo_root / "runs" / "nightly-cad-queue.json"
+        if not queue_path.exists():
+            raise HTTPException(status_code=404, detail=f"nightly queue not found: {queue_path}")
+        try:
+            return service.get_nightly_queue_view(
+                queue_path, Path(lock).resolve() if lock else None
+            )
+        except (OSError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
     @app.post("/api/competitions/launch")
     def launch_competition(payload: CompetitionLaunchPayload):
         try:

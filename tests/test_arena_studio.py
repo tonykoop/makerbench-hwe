@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Optional
 from urllib.parse import quote
 
 import pytest
@@ -759,3 +761,130 @@ def test_vote_with_structured_defect_flags(client: TestClient, fake_run: Path):
     res = client.post(f"/api/runs/{fake_run.name}/vote", json=vote_payload)
     assert res.status_code == 200
     assert res.json()["success"] is True
+
+
+def _nightly_queue_fixture(tmp_path: Path, *, running_job_run_dir: Optional[Path] = None) -> Path:
+    """Round 2 P1/#732: a small, committed-style fixture queue (never the real queue)."""
+    queue_path = tmp_path / "nightly-cad-queue.json"
+    running_job = {
+        "job_id": "sambuca-night",
+        "instrument_id": "sambuca",
+        "reference_image": "tasks/sambuca/reference.png",
+        "budget_usd": 5.0,
+        "status": "running",
+        "run_id": "run-sambuca-01",
+        "run_dir": str(running_job_run_dir) if running_job_run_dir else None,
+        "entrants": [
+            {
+                "entrant_id": "cadam-fable-image",
+                "kind": "cadam",
+                "model_id": "anthropic/claude-fable-5",
+                "max_cost_usd": 3.0,
+            }
+        ],
+    }
+    queued_job = {
+        "job_id": "kora-night",
+        "instrument_id": "kora",
+        "reference_image": "tasks/kora/reference.png",
+        "budget_usd": 2.0,
+        "status": "queued",
+        "entrants": [
+            {"entrant_id": "codex-openscad", "kind": "arena", "model_id": "codex-gpt-5.6-sol"}
+        ],
+    }
+    queue_path.write_text(
+        json.dumps({"schema": "makerbench-nightly-cad-queue-v1", "jobs": [running_job, queued_job]}),
+        encoding="utf-8",
+    )
+    return queue_path
+
+
+def test_nightly_queue_endpoint_shape_and_orphan_detection(client: TestClient, tmp_path: Path):
+    """R2 P1/#732: read-only nightly cockpit view, no lease file present."""
+    queue_path = _nightly_queue_fixture(tmp_path)
+    res = client.get(f"/api/nightly/queue?queue={queue_path}")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["schema"] == "makerbench-arena-studio-nightly-view-v1"
+    assert data["queue_schema"] == "makerbench-nightly-cad-queue-v1"
+    jobs_by_id = {j["job_id"]: j for j in data["jobs"]}
+    assert set(jobs_by_id) == {"sambuca-night", "kora-night"}
+
+    # No lease file exists, so a job stuck at status="running" is orphaned.
+    assert jobs_by_id["sambuca-night"]["orphaned"] is True
+    assert jobs_by_id["sambuca-night"]["budget"] is None
+    assert jobs_by_id["kora-night"]["orphaned"] is False
+
+    assert data["lease"]["status"] == "ABSENT"
+    assert data["lease"]["pid"] is None
+
+
+def test_nightly_queue_endpoint_active_lease_clears_orphan_flag(client: TestClient, tmp_path: Path):
+    lock_path = tmp_path / ".nightly-cad.lock"
+    lock_path.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    queue_path = _nightly_queue_fixture(tmp_path)
+
+    res = client.get(f"/api/nightly/queue?queue={queue_path}&lock={lock_path}")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["lease"]["status"] == "ACTIVE"
+    assert data["lease"]["pid"] == os.getpid()
+    jobs_by_id = {j["job_id"]: j for j in data["jobs"]}
+    assert jobs_by_id["sambuca-night"]["orphaned"] is False
+
+
+def test_nightly_queue_endpoint_reconstructs_budget_from_run_dir(client: TestClient, tmp_path: Path):
+    run_dir = tmp_path / "sambuca-run"
+    run_dir.mkdir()
+    (run_dir / "nightly-state.json").write_text(
+        json.dumps(
+            {
+                "budget": {
+                    "spent_usd": 1.5,
+                    "charges": [{"entrant_id": "cadam-fable-image", "cost_usd": 1.5}],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    queue_path = _nightly_queue_fixture(tmp_path, running_job_run_dir=run_dir)
+
+    res = client.get(f"/api/nightly/queue?queue={queue_path}")
+    assert res.status_code == 200
+    budget = res.json()["jobs"][0]["budget"]
+    assert budget["spent_usd"] == 1.5
+    assert budget["remaining_usd"] == 3.5
+    assert budget["outcomes"] == [{"entrant_id": "cadam-fable-image", "cost_usd": 1.5, "violation": None}]
+
+
+def test_nightly_queue_endpoint_never_mutates_queue_or_lease(client: TestClient, tmp_path: Path):
+    """Cockpit must be strictly read-only: same bytes on disk before and after."""
+    lock_path = tmp_path / ".nightly-cad.lock"
+    lock_path.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    queue_path = _nightly_queue_fixture(tmp_path)
+    queue_before = queue_path.read_bytes()
+    lock_before = lock_path.read_bytes()
+
+    res = client.get(f"/api/nightly/queue?queue={queue_path}&lock={lock_path}")
+    assert res.status_code == 200
+
+    assert queue_path.read_bytes() == queue_before
+    assert lock_path.read_bytes() == lock_before
+
+
+def test_nightly_queue_endpoint_404_for_missing_queue(client: TestClient, tmp_path: Path):
+    missing = tmp_path / "does-not-exist.json"
+    res = client.get(f"/api/nightly/queue?queue={missing}")
+    assert res.status_code == 404
+
+
+def test_nightly_queue_endpoint_never_exposes_secrets(client: TestClient, tmp_path: Path):
+    """Lease view must go through nightly_preflight.audit_lock's redaction, never a raw dict."""
+    lock_path = tmp_path / ".nightly-cad.lock"
+    lock_path.write_text(json.dumps({"pid": os.getpid(), "api_key": "sk-should-never-appear"}), encoding="utf-8")
+    queue_path = _nightly_queue_fixture(tmp_path)
+
+    res = client.get(f"/api/nightly/queue?queue={queue_path}&lock={lock_path}")
+    assert res.status_code == 200
+    assert "sk-should-never-appear" not in res.text
