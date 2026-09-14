@@ -258,7 +258,8 @@ def client(fake_run: Path, fake_registry: Path, tmp_path: Path) -> TestClient:
     studio_app = create_studio_app(
         default_run_dir=fake_run, registry_path=fake_registry, repo_root=tmp_path
     )
-    return TestClient(studio_app)
+    # Loopback base URL: B1's TrustedHost guard rejects TestClient's default "testserver".
+    return TestClient(studio_app, base_url="http://127.0.0.1")
 
 
 def test_leaderboard_ci_route(client: TestClient, fake_run: Path):

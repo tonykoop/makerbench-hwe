@@ -36,11 +36,12 @@ from makerbench.code_cad_vote_surface import (
 from makerbench.code_cad_vote_web import QueueItem, VoteQueue
 from makerbench.redaction import run_relative_path
 
+from . import analytics
+
 
 #: One path segment: the same shape launch_competition accepts for run ids.
 _SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 
-from . import analytics
 
 
 class ArenaStudioService:
