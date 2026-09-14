@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from makerbench import __version__
 from makerbench.cli_arena import DEFAULT_REGISTRY
-from makerbench.redaction import run_relative_path
+from makerbench.redaction import find_host_paths, redact_host_paths, run_relative_path
 
 from .service import ArenaStudioService
 
@@ -40,6 +42,38 @@ class CompetitionLaunchPayload(BaseModel):
     live: bool = False
 
 
+# Browser-facing URLs this app mints itself ("/runs/<id>/vote_pages/...") are not
+# filesystem paths, even when a segment happens to look like one.
+_APP_URL_PREFIXES = ("/runs/", "/api/", "/static/")
+
+
+def _publish_value(value: Any, repo_root: Path) -> Any:
+    """Strip host-absolute filesystem paths from an API payload, recursively.
+
+    The service keeps real paths for its own use (launching, log tailing); only
+    the wire form is rewritten. Paths under the repository become repo-relative,
+    anything else collapses through the shared redaction patterns.
+    """
+    if isinstance(value, dict):
+        return {key: _publish_value(item, repo_root) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_publish_value(item, repo_root) for item in value]
+    if isinstance(value, str) and not value.startswith(_APP_URL_PREFIXES) and find_host_paths(value):
+        return _publish_text(value, repo_root)
+    return value
+
+
+def _publish_text(text: str, repo_root: Path) -> str:
+    candidate = Path(text)
+    if candidate.is_absolute() and not any(ch.isspace() for ch in text):
+        try:
+            return candidate.resolve().relative_to(repo_root).as_posix()
+        except ValueError:
+            return run_relative_path(text)
+    root = str(repo_root)
+    return redact_host_paths(text.replace(root + os.sep, "").replace(root, "."))
+
+
 def create_studio_app(
     default_run_dir: Optional[Path] = None,
     registry_path: Path = Path(DEFAULT_REGISTRY),
@@ -49,12 +83,6 @@ def create_studio_app(
 ) -> FastAPI:
     """Create and configure the Arena Studio FastAPI instance."""
 
-    app = FastAPI(
-        title="MakerBench Arena Studio",
-        version=__version__,
-        description="Unified web cockpit for Code-CAD A/B Arena (Epic #421 / #694).",
-    )
-
     service = ArenaStudioService(
         default_run_dir=default_run_dir,
         registry_path=registry_path,
@@ -62,6 +90,28 @@ def create_studio_app(
         allow_live=allow_live,
         extra_run_roots=extra_run_roots,
     )
+
+    class PublishedJSONResponse(JSONResponse):
+        """JSON response that never carries a host-absolute filesystem path."""
+
+        def render(self, content: Any) -> bytes:
+            return super().render(_publish_value(content, service.repo_root))
+
+    app = FastAPI(
+        title="MakerBench Arena Studio",
+        version=__version__,
+        description="Unified web cockpit for Code-CAD A/B Arena (Epic #421 / #694).",
+        default_response_class=PublishedJSONResponse,
+    )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def published_http_exception(request: Request, exc: StarletteHTTPException):
+        # Error details often echo an OSError message, which names the host path.
+        return PublishedJSONResponse(
+            {"detail": exc.detail},
+            status_code=exc.status_code,
+            headers=getattr(exc, "headers", None),
+        )
 
     # Mount static assets (model-viewer, etc.)
     assets_dir = Path(__file__).resolve().parent.parent / "assets"

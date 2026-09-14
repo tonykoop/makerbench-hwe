@@ -321,7 +321,56 @@ def test_vote_page_asset_refuses_traversal(client: TestClient, fake_run: Path, e
     assert response.status_code == 404
 
 
-def test_competition_launch_and_status(client: TestClient):
+def _assert_no_host_path(text: str, tmp_path: Path) -> None:
+    assert str(tmp_path) not in text
+    assert find_host_paths(text) == []
+
+
+@pytest.mark.parametrize(
+    "path_template",
+    [
+        "/api/health",
+        "/api/runs",
+        "/api/tasks",
+        "/api/runs/{run}/summary",
+        "/api/runs/{run}/leaderboard",
+        "/api/runs/{run}/agreement",
+        "/api/runs/{run}/queue?voter=a-fresh-voter",
+        "/api/tasks/ocarina/reference",
+        "/api/tasks/ocarina/prompt-reference",
+        "/api/competitions/status",
+    ],
+)
+def test_get_endpoints_never_publish_host_paths(
+    client: TestClient, fake_run: Path, tmp_path: Path, path_template: str
+):
+    # New, unreviewed hardening: #741 redacted discovery and health only; trial
+    # artifacts and reference image paths still reached the wire.
+    reference = tmp_path / "tasks" / "ocarina" / "reference.png"
+    reference.parent.mkdir(parents=True)
+    reference.write_bytes(b"png")
+
+    response = client.get(path_template.format(run=fake_run.name))
+    assert response.status_code == 200
+    _assert_no_host_path(response.text, tmp_path)
+
+
+def test_error_details_never_publish_host_paths(client: TestClient, tmp_path: Path):
+    # A directory named run_log.json is discovered, then fails to load with an
+    # OSError whose message names the absolute path.
+    (tmp_path / "runs" / "code_cad_arena" / "broken_run" / "run_log.json").mkdir(parents=True)
+
+    response = client.get("/api/runs/broken_run/summary")
+    assert response.status_code == 500
+    _assert_no_host_path(response.text, tmp_path)
+
+
+def test_app_minted_urls_are_not_rewritten(client: TestClient, fake_run: Path):
+    pair = client.get(f"/api/runs/{fake_run.name}/queue?voter=a-fresh-voter").json()["current_pair"]
+    assert pair["left"]["render_path"].startswith(f"/runs/{fake_run.name}/vote_pages/blind/")
+
+
+def test_competition_launch_and_status(client: TestClient, tmp_path: Path):
     payload = {
         "run_id": "test_launch_round",
         "instruments": ["ocarina"],
@@ -343,6 +392,8 @@ def test_competition_launch_and_status(client: TestClient):
     assert data["status"] == "running"
     assert data["live"] is False
     assert data["backend"] == "openscad"
+    assert data["path"] == "runs/code_cad_arena/test_launch_round"
+    _assert_no_host_path(response.text, tmp_path)
 
     # Verify the real detached dry-run process completes and writes its run log.
     deadline = time.monotonic() + 20
@@ -357,7 +408,9 @@ def test_competition_launch_and_status(client: TestClient):
     assert job["status"] == "completed", client.get(
         "/api/competitions/test_launch_round/logs"
     ).json()
-    run_path = Path(job["run_path"])
+    assert job["run_path"] == "runs/code_cad_arena/test_launch_round"
+    _assert_no_host_path(json.dumps(job), tmp_path)
+    run_path = tmp_path / job["run_path"]
     run_log = json.loads((run_path / "run_log.json").read_text(encoding="utf-8"))
     assert run_log["summary"]["total_trials"] == 2
     launch = json.loads((run_path / "studio_launch.json").read_text(encoding="utf-8"))
@@ -425,7 +478,7 @@ def test_reference_gatekeeper_and_approval_flow(client: TestClient):
     assert "local reference images" in allowed_res.json()["detail"]
 
 
-def test_export_winners_and_report(client: TestClient, fake_run: Path):
+def test_export_winners_and_report(client: TestClient, fake_run: Path, tmp_path: Path):
     """Test Story #699: Winner export and markdown report generation."""
     # Export winners
     exp_res = client.post(f"/api/runs/{fake_run.name}/export-winners")
@@ -433,6 +486,8 @@ def test_export_winners_and_report(client: TestClient, fake_run: Path):
     data = exp_res.json()
     assert data["success"] is True
     assert data["exported_count"] >= 1
+    assert data["winners"][0]["exported_path"] == "instruments/ocarina/winner.scad"
+    _assert_no_host_path(exp_res.text, tmp_path)
 
     # Export report
     rep_res = client.get(f"/api/runs/{fake_run.name}/export-report")
