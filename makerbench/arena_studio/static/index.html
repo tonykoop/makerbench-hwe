@@ -311,6 +311,8 @@
         <span id="undoToastText">Vote cast.</span>
         <button type="button" onclick="undoLastVote()">Undo (U)</button>
       </div>
+
+      <div id="judgePanel" class="card" style="margin-top: 16px;" hidden></div>
     </section>
 
     <!-- LEADERBOARD TAB -->
@@ -478,6 +480,7 @@
           <button class="btn btn-primary" onclick="castMorningVote('right')">Candidate B is Better</button>
           <button class="btn btn-secondary" onclick="skipMorningPair()" title="Show another pair without voting">Skip</button>
         </div>
+        <div id="morningJudgePanel" class="card" style="margin-top: 16px;" hidden></div>
       </div>
     </section>
 

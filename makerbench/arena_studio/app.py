@@ -218,6 +218,14 @@ def create_studio_app(
             )
         return {"success": True, "pair_id": payload.pair_id}
 
+    @app.get("/api/runs/{run_id}/judge-panel")
+    def get_run_judge_panel(run_id: str, pair_id: str = Query(...)):
+        run_path = _resolve_run_dir(run_id)
+        panel = service.get_judge_panel(run_path, pair_id)
+        if panel is None:
+            raise HTTPException(status_code=404, detail="No recorded human vote for this pair yet")
+        return panel
+
     def _resolve_nightly_queue_path(queue: Optional[str]) -> Path:
         # Fixed after review (#732): an earlier version accepted `queue` (and a
         # separate `lock`) as independent, unconstrained absolute paths, making the
@@ -326,6 +334,18 @@ def create_studio_app(
         if not success:
             raise HTTPException(status_code=400, detail="Invalid pair ID or vote already cast")
         return {"success": True, "pair_id": payload.pair_id, "winner": payload.winner}
+
+    @app.get("/api/morning/{job_id}/judge-panel")
+    def get_morning_judge_panel(job_id: str, pair_id: str = Query(...), queue: Optional[str] = Query(None)):
+        queue_path = _resolve_nightly_queue_path(queue)
+        try:
+            run_dir = service._resolve_morning_run_dir(queue_path, job_id)
+        except (OSError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        panel = service.get_judge_panel(run_dir, pair_id)
+        if panel is None:
+            raise HTTPException(status_code=404, detail="No recorded human vote for this pair yet")
+        return panel
 
     # Serve blind-staged assets for a morning bundle under this run's own vote_pages/
     # (never the finalize_morning_bundle-owned morning-vote/ directory).

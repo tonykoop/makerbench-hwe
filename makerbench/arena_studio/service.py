@@ -9,7 +9,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from makerbench import code_cad_arena_runner as arena_runner
 from makerbench.cli_arena import (
@@ -518,6 +518,84 @@ class ArenaStudioService:
 
         self._morning_queues[key] = queue
         return queue
+
+    def _pair_is_voted_by_anyone(self, run_dir: Path, pair_id: str) -> bool:
+        """Replays retractions the same way `_voted_pair_keys` does, but for one
+        pair_id across every voter — the judge panel's own C3/C4 anonymity gate:
+        never show anything for a pair with no currently-active human vote."""
+        blind_path = run_dir / "votes.blind.jsonl"
+        if not blind_path.is_file():
+            return False
+        voted = False
+        for line in blind_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if record.get("pair_id") != pair_id:
+                continue
+            voted = not record.get("retracts")
+        return voted
+
+    def _last_jsonl_record_for_pair(self, path: Path, pair_id: str) -> Optional[dict[str, Any]]:
+        if not path.is_file():
+            return None
+        match: Optional[dict[str, Any]] = None
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if record.get("pair_id") == pair_id:
+                match = record
+        return match
+
+    def get_judge_panel(self, run_dir: Path, pair_id: str) -> Optional[dict[str, Any]]:
+        """R2 P3/#... : read-only judge verdict + objective mesh-gate panel for one
+        pair, shown only alongside a pair a human has already voted on.
+
+        Never calls a judge CLI (`code_cad_judge.py`'s judge callables are never
+        imported here) and never mutates anything — this only reads whatever
+        `votes.judge.jsonl` already has on disk (written earlier, out-of-band, by
+        `arena judge`) plus the objective mesh-gate result already recorded on each
+        trial in run_log.json. Returns None (caller returns 404) unless a human
+        vote is currently recorded for pair_id — the same "never before the vote"
+        rule C3/C4 already enforce for identity.
+        """
+        run_dir = Path(run_dir).resolve()
+        if not self._pair_is_voted_by_anyone(run_dir, pair_id):
+            return None
+
+        human_record = self._last_jsonl_record_for_pair(run_dir / "votes.revealed.jsonl", pair_id)
+        if human_record is None:
+            return None
+        reveal = human_record.get("reveal") or {}
+
+        run_log_path = run_dir / "run_log.json"
+        trials_by_id: dict[str, Any] = {}
+        if run_log_path.is_file():
+            run_log = json.loads(run_log_path.read_text(encoding="utf-8"))
+            trials_by_id = {str(t.get("trial_id")): t for t in run_log.get("trials") or []}
+
+        def _side(reveal_side: Mapping[str, Any]) -> dict[str, Any]:
+            trial = trials_by_id.get(str(reveal_side.get("trial_id"))) or {}
+            objective = (trial.get("result") or {}).get("objective")
+            return {"model_id": reveal_side.get("model_id"), "objective": objective}
+
+        judge_record = self._last_jsonl_record_for_pair(run_dir / "votes.judge.jsonl", pair_id)
+
+        return {
+            "pair_id": pair_id,
+            "human_winner": human_record.get("winner"),
+            "left": _side(reveal.get("left") or {}),
+            "right": _side(reveal.get("right") or {}),
+            "judge": (
+                {
+                    "winner": judge_record.get("winner"),
+                    "judge_model_id": judge_record.get("judge_model_id"),
+                }
+                if judge_record
+                else None
+            ),
+        }
 
     def cast_morning_vote(
         self,
