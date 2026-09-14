@@ -18,6 +18,7 @@ from rich.console import Console
 from rich.table import Table
 
 from . import blender_backend
+from . import cadquery_backend
 from . import code_cad_export as arena_export
 from . import code_cad_providers as providers
 from . import code_cad_arena_runner as arena_runner
@@ -335,7 +336,7 @@ def arena_run(
         backend: str = typer.Option(
             "openscad",
             "--backend",
-            help="CAD-backend axis (#601/#627): 'openscad', 'blender', 'solidworks', 'fusion', or the agentic live tiers 'solidworks-live'/'fusion-live'.",
+            help="CAD-backend axis (#601/#627/#752): 'openscad', 'cadquery', 'blender', 'solidworks', 'fusion', or the agentic live tiers 'solidworks-live'/'fusion-live'.",
         ),
         driver_model: str = typer.Option("gpt-5.6-sol", "--driver-model", help="Live backends only: the codex driver model each entrant agent uses."),
         image_map: Optional[str] = typer.Option(None, "--image-map", help="JSON file mapping instrument_id -> inspiration image path; required for --context-tier image (#609)."),
@@ -354,6 +355,18 @@ def arena_run(
         raise typer.Exit(code=1)
     if backend == "blender" and not blender_backend.blender_available():
         console.print("[red]blender binary not found — objective scoring needs it.[/red]")
+        raise typer.Exit(code=1)
+    if backend == "cadquery" and not cadquery_backend.cadquery_available():
+        console.print(
+            "[red]cadquery is not installed for this Python runtime — install the "
+            "optional local backend with `pip install -e '.[cadquery]'`.[/red]"
+        )
+        raise typer.Exit(code=1)
+    if backend == "cadquery" and not render.openscad_available():
+        console.print(
+            "[red]openscad binary not found — the CadQuery backend needs it for "
+            "headless preview rendering.[/red]"
+        )
         raise typer.Exit(code=1)
     if backend == "solidworks" and not solidworks_backend.solidworks_jobdir_available():
         console.print(
