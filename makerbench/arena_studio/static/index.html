@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Arena Studio</title>
+  <link rel="stylesheet" href="/static/studio.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "preact": "/static/vendor/preact.module.js",
+      "preact/hooks": "/static/vendor/preact-hooks.module.js",
+      "htm": "/static/vendor/htm.module.js"
+    }
+  }
+  </script>
+  <script type="module" src="/static/app/main.js"></script>
+</head>
+<body>
+  <div id="app"><p class="boot" role="status">Starting Arena Studio…</p></div>
+  <noscript><p class="boot">Arena Studio needs JavaScript. The JSON API is still available under /api/.</p></noscript>
+</body>
+</html>

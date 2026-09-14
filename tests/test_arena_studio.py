@@ -1531,15 +1531,6 @@ def test_studio_full_morning_flow_end_to_end(tmp_path: Path):
     assert summary_res.json()["votes_count"] == 2
 
 
-def test_root_is_a_ui_free_placeholder(client: TestClient):
-    # The API lands without #700's inline UI; the rebuilt frontend ships separately.
-    response = client.get("/")
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/plain")
-    assert "Arena Studio API is running" in response.text
-    assert "<script" not in response.text
-
-
 def test_cli_arena_studio_help():
     result = runner.invoke(
         cli_app,

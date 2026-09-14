@@ -1,0 +1,32 @@
+{
+  "//": "Third-party browser modules shipped with Arena Studio. Update by replacing the file from the named npm tarball and its sha256 here; tests/test_arena_studio_frontend.py verifies every hash.",
+  "files": [
+    {
+      "file": "preact.module.js",
+      "package": "preact",
+      "version": "10.29.8",
+      "source": "npm preact@10.29.8 dist/preact.module.js",
+      "license": "MIT",
+      "license_file": "LICENSE-preact",
+      "sha256": "c30e721ebfdc6e2ad4c18c14d2dfb82667829c8aec27de1207774e3fc16858a8"
+    },
+    {
+      "file": "preact-hooks.module.js",
+      "package": "preact",
+      "version": "10.29.8",
+      "source": "npm preact@10.29.8 hooks/dist/hooks.module.js",
+      "license": "MIT",
+      "license_file": "LICENSE-preact",
+      "sha256": "a6ee626f2d01570592dd569a792e3f050154aa02890eead8c223fa3ed5aa3d5a"
+    },
+    {
+      "file": "htm.module.js",
+      "package": "htm",
+      "version": "3.1.1",
+      "source": "npm htm@3.1.1 dist/htm.module.js",
+      "license": "Apache-2.0",
+      "license_file": "LICENSE-htm",
+      "sha256": "ab33dd3f38059b9be4d5f5350128eefb2356639c4e0bbe9d9e8b3ba75847e9e4"
+    }
+  ]
+}

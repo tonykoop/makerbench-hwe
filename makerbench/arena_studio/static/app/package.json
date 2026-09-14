@@ -1,0 +1,5 @@
+{
+  "//": "Marks the Studio's browser modules as ES modules for `node --check` and `node --test`. No dependencies, no build.",
+  "type": "module",
+  "private": true
+}

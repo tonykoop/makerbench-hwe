@@ -531,11 +531,13 @@ def create_studio_app(
             return PlainTextResponse(report_text, media_type="text/markdown")
         return {"run_id": run_id, "report": report_text}
 
-    @app.get("/", response_class=PlainTextResponse)
+    # The Studio UI: static, vendored Preact + htm ES modules, no build step and no
+    # network dependency. Mounted after /static/assets so model-viewer keeps its path.
+    studio_static_dir = Path(__file__).resolve().parent / "static"
+    app.mount("/static", StaticFiles(directory=str(studio_static_dir)), name="studio-static")
+
+    @app.get("/", include_in_schema=False)
     def studio_home():
-        # The Studio UI ships separately; the API is fully usable without it.
-        return PlainTextResponse(
-            "MakerBench Arena Studio API is running. The Studio UI is not installed in this build."
-        )
+        return FileResponse(str(studio_static_dir / "index.html"), media_type="text/html")
 
     return app
