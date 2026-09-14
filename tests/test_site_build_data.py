@@ -1885,7 +1885,7 @@ def test_landing_nav_and_footer_expose_required_surfaces():
         "Docs": "https://github.com/tonykoop/makerbench-hwe/tree/main/docs",
         "Roadmap": "#roadmap",
         "GitHub": "https://github.com/tonykoop/makerbench-hwe",
-        "HF Space soon": "https://github.com/tonykoop/makerbench-hwe/issues/98",
+        "HF Space": "https://huggingface.co/spaces/tonykoop/makerbench-hwe",
     }
     for label, href in required.items():
         assert anchors.get(label) == href
@@ -2291,13 +2291,16 @@ def test_get_started_payload_has_all_install_paths_and_resolving_links():
     assert paths["cli"]["status"] == "available"
     assert paths["pip"]["status"] == "available"
     assert paths["docker"]["status"] == "available"
-    assert paths["hf"]["status"] == "in_progress"
+    assert paths["hf"]["status"] == "available"
+    assert {"label": "Open the Space", "href": build_data.HF_SPACE_URL} in paths["hf"]["links"]
     assert paths["contribute"]["status"] == "available"
 
     for path in paths.values():
         assert path["links"], path["id"]
         for link in path["links"]:
             assert link["label"]
+            if link["href"] == build_data.HF_SPACE_URL:
+                continue  # the one sanctioned external link: the live public Space
             _assert_repo_link_resolves(link["href"])
 
 
@@ -2320,7 +2323,7 @@ def test_get_started_landing_page_keeps_copy_paste_hub_wired():
         "pip install makerbench-core",
         "makerbench-dfm-score candidate.step --json",
         "docker-compose up",
-        "python spaces/hf_dashboard/dashboard_data.py --help",
+        "https://huggingface.co/spaces/tonykoop/makerbench-hwe",
         "from makerbench_logger import WorkflowLogger",
         "python site/build_data.py",
     ]

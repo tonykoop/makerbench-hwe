@@ -343,14 +343,13 @@
         "url": "https://github.com/tonykoop/StudioPipeline-hwe"
       },
       {
-        "blurb": "An interactive, Dockerized dual-league dashboard on Hugging Face \u2014 the hands-on way to explore runs without cloning the harness.",
+        "blurb": "A live Hugging Face Space that mirrors the public leaderboard: sortable per-track tables and a capability view, no clone required.",
         "id": "hf-space",
         "kind": "surface",
         "name": "HF Space",
         "private": false,
-        "role": "Interactive Docker dashboard",
-        "status": "planned",
-        "url": "https://github.com/tonykoop/makerbench-hwe/issues/98"
+        "role": "Interactive leaderboard dashboard",
+        "url": "https://huggingface.co/spaces/tonykoop/makerbench-hwe"
       }
     ]
   },

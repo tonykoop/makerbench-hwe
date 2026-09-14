@@ -49,6 +49,9 @@ ROBOTS_META_TAG = '<meta name="robots" content="index, follow, noai, noimageai" 
 # [project.urls] Homepage and DEFAULT_SITE_BASE_URL's repo slug.
 REPO_URL = "https://github.com/tonykoop/makerbench-hwe"
 
+# Live public Hugging Face Space: the Gradio leaderboard mirror (#675).
+HF_SPACE_URL = "https://huggingface.co/spaces/tonykoop/makerbench-hwe"
+
 # "Get started" reproducibility & install hub (#173). One entry per install path.
 # `status` drives the badge; flip it here (and add the shipped link) when a path
 # lands, so the static hub never drifts from reality. Code snippets live in the
@@ -87,11 +90,11 @@ GET_STARTED_PATHS: list[dict] = [
     },
     {
         "id": "hf",
-        "status": "in_progress",
-        "status_label": "In progress",
+        "status": "available",
+        "status_label": "Live on Hugging Face",
         "links": [
-            ("docs/WORKFLOW_TRACK.md", "blob/main/docs/WORKFLOW_TRACK.md"),
-            ("track #98", "issues/98"),
+            ("Open the Space", HF_SPACE_URL),
+            ("dual-league dashboard #98", "issues/98"),
         ],
     },
     {
@@ -351,12 +354,11 @@ ECOSYSTEM_NODES: list[dict] = [
         "id": "hf-space",
         "name": "HF Space",
         "kind": "surface",
-        "role": "Interactive Docker dashboard",
-        "blurb": "An interactive, Dockerized dual-league dashboard on Hugging "
-        "Face — the hands-on way to explore runs without cloning the harness.",
-        "url": f"{GITHUB_ORG_URL}/makerbench-hwe/issues/98",
+        "role": "Interactive leaderboard dashboard",
+        "blurb": "A live Hugging Face Space that mirrors the public leaderboard: "
+        "sortable per-track tables and a capability view, no clone required.",
+        "url": HF_SPACE_URL,
         "private": False,
-        "status": "planned",
     },
 ]
 
@@ -895,7 +897,12 @@ def build_get_started(registry_path: Path) -> dict:
                 "status": path["status"],
                 "status_label": path["status_label"],
                 "links": [
-                    {"label": label, "href": f"{base}/{target}"}
+                    {
+                        "label": label,
+                        # Absolute targets (e.g. the live HF Space) pass through;
+                        # everything else is a path under the source repo.
+                        "href": target if target.startswith("https://") else f"{base}/{target}",
+                    }
                     for label, target in path["links"]
                 ],
             }
