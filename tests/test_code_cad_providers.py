@@ -716,3 +716,146 @@ class TestOpenRouterProvider:
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         missing = providers.preflight_binaries(["openrouter-glm-5.2"])
         assert missing and "OPENROUTER_API_KEY" in missing[0]
+
+
+def _claude_ok(seen, text="```scad\ncube(1);\n```"):
+    def fake_run(cmd, **kwargs):
+        seen.setdefault("cmds", []).append(cmd)
+        seen["cmd"] = cmd
+        return _completed(stdout=json.dumps({"result": text}))
+
+    return fake_run
+
+
+def _studio_request(tmp_path, *, model_id="claude-code-sonnet", n_images=0):
+    from makerbench import code_cad_context_staging as staging
+
+    repo = tmp_path / "repo"
+    (repo / "images").mkdir(parents=True)
+    (repo / "master.scad").write_text("cube(9);\n", encoding="utf-8")
+    for i in range(n_images):
+        (repo / "images" / f"view-{i}.png").write_bytes(b"\x89PNG\r\n")
+    workspace = tmp_path / "ws-studio"
+    staging.stage_workspace(
+        tier="studio", instrument_id="ocarina", repo_dir=repo, workspace_dir=workspace
+    )
+    return _request(model_id, context_tier="studio", workspace_dir=workspace), workspace
+
+
+class TestClaudeManyTurnReadOnlyContract:
+    """2026-09-14: many-turn Claude entrant with a read-only, confined tool surface."""
+
+    def test_default_max_turns_is_40(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(subprocess, "run", _claude_ok(seen))
+        providers.make_claude_generator("sonnet", retry_sleep_s=0)(_request())
+        assert seen["cmd"][seen["cmd"].index("--max-turns") + 1] == "40"
+
+    def test_blind_tier_gets_no_tools(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(subprocess, "run", _claude_ok(seen))
+        providers.make_claude_generator("sonnet", retry_sleep_s=0)(_request())
+        cmd = seen["cmd"]
+        assert "--tools=" in cmd
+        assert "--tools=Read,Glob,Grep" not in cmd
+        assert "--restricted" in cmd and "--strict-mcp-config" in cmd
+        assert cmd[cmd.index("--permission-mode") + 1] == "dontAsk"
+        assert "You are a senior mechanical" in cmd[-1]  # prompt not swallowed
+
+    @pytest.mark.parametrize("tier", ["repo", "packet", "studio"])
+    def test_non_blind_tiers_get_read_only_tools(self, tier, tmp_path, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(subprocess, "run", _claude_ok(seen))
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        providers.make_claude_generator("sonnet", retry_sleep_s=0)(
+            _request(context_tier=tier, workspace_dir=workspace)
+        )
+        cmd = seen["cmd"]
+        assert "--tools=Read,Glob,Grep" in cmd
+        assert "--tools=" not in cmd
+        assert not any(t in " ".join(cmd[:-1]) for t in ("Bash", "Edit", "Write", "WebFetch"))
+        assert "--restricted" in cmd and "--strict-mcp-config" in cmd
+        assert cmd[cmd.index("--permission-mode") + 1] == "dontAsk"
+        assert "--dangerously-skip-permissions" not in cmd
+
+    def test_model_map_max_turns_still_overrides_default(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(subprocess, "run", _claude_ok(seen))
+        gen = providers.resolve_generator(
+            "claude-code-sonnet", model_map={"claude-code-sonnet": {"max_turns": 7}}
+        )
+        gen(_request())
+        assert seen["cmd"][seen["cmd"].index("--max-turns") + 1] == "7"
+
+    def test_error_max_turns_with_fence_is_accepted(self, monkeypatch):
+        calls = []
+        payload = {
+            "type": "result", "subtype": "error_max_turns", "is_error": True,
+            "result": "Here it is:\n```scad\ncube(4);\n```",
+        }
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return _completed(stdout=json.dumps(payload), returncode=1)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        gen = providers.make_claude_generator("sonnet", retry_sleep_s=0)
+        assert gen(_request()) == "cube(4);"
+        assert len(calls) == 1
+
+    def test_error_max_turns_without_fence_still_fails(self, monkeypatch):
+        payload = {"subtype": "error_max_turns", "is_error": True, "stop_reason": "tool_use"}
+        monkeypatch.setattr(
+            subprocess, "run", lambda *a, **k: _completed(stdout=json.dumps(payload), returncode=1)
+        )
+        gen = providers.make_claude_generator("sonnet", retry_sleep_s=0)
+        with pytest.raises(RuntimeError, match="claude -p failed"):
+            gen(_request())
+
+
+class TestStudioTierProviders:
+    def test_prompt_lists_reference_images_and_many_turns(self, tmp_path):
+        request, workspace = _studio_request(tmp_path, n_images=10)
+        prompt = providers.arena_prompt(request, "cadquery")
+        assert "context tier: studio" in prompt
+        assert "as many turns as useful" in prompt
+        assert "prior design outputs" in prompt
+        assert "source of truth" in prompt
+        listed = [line for line in prompt.splitlines() if line.startswith(f"- {workspace}")]
+        assert len(listed) == 8
+        assert "and 2 more" in prompt
+        assert prompt.rstrip().endswith("block; assign the finished Workplane/Shape or build123d Part to `result`.")
+
+    def test_prompt_handles_zero_images(self, tmp_path):
+        request, _ = _studio_request(tmp_path, n_images=0)
+        prompt = providers.arena_prompt(request)
+        assert "No reference images are staged" in prompt
+
+    def test_studio_does_not_change_core_prompt_hash_input(self, tmp_path):
+        request, _ = _studio_request(tmp_path, n_images=1)
+        assert request.prompt in providers.arena_prompt(request)
+        assert request.prompt_sha256 == "0" * 64
+
+    def test_codex_studio_attaches_at_most_four_images(self, tmp_path, monkeypatch):
+        request, workspace = _studio_request(tmp_path, model_id="codex-gpt-5.6-sol", n_images=6)
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"] = cmd
+            return _completed("")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        providers.make_codex_generator(retry_sleep_s=0)(request)
+        cmd = seen["cmd"]
+        attached = [cmd[i + 1] for i, part in enumerate(cmd) if part == "--image"]
+        assert attached == [str(workspace / "images" / f"view-{i}.png") for i in range(4)]
+
+    def test_codex_studio_without_images_has_no_image_flag(self, tmp_path, monkeypatch):
+        request, _ = _studio_request(tmp_path, model_id="codex-gpt-5.6-sol", n_images=0)
+        seen = {}
+        monkeypatch.setattr(
+            subprocess, "run", lambda cmd, **k: seen.update(cmd=cmd) or _completed("")
+        )
+        providers.make_codex_generator(retry_sleep_s=0)(request)
+        assert "--image" not in seen["cmd"]
