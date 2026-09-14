@@ -384,6 +384,7 @@ def _render_turntable_openscad(mesh_path: str, out_dir: str, *, frames: int = 24
 def render_turntable(mesh_path: str, out_dir: str, *, frames: int = 24,
                      size: tuple[int, int] = (720, 720), elevation: float = 60.0,
                      prefer_gpu: bool = True,
+                     renderer: str = "auto",
                      timeout: int = 120) -> list[str]:
     """Render a turntable: N azimuth PNGs of an existing mesh.
 
@@ -392,7 +393,10 @@ def render_turntable(mesh_path: str, out_dir: str, *, frames: int = 24,
     fails, or CUDA_VISIBLE_DEVICES is disabled, falls back seamlessly to
     zero-WebGL software OpenSCAD rasterization without crashing.
     """
-    if prefer_gpu:
+    if renderer not in {"auto", "gpu", "openscad"}:
+        raise ValueError("renderer must be auto, gpu, or openscad")
+    use_gpu = prefer_gpu and renderer != "openscad"
+    if use_gpu:
         can_gpu, _ = gpu_render_available()
         if can_gpu:
             try:
