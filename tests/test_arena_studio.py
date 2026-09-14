@@ -800,6 +800,33 @@ def _nightly_queue_fixture(tmp_path: Path, *, running_job_run_dir: Optional[Path
     return queue_path
 
 
+def test_nightly_queue_tab_markup(client: TestClient):
+    """R2 P1/#732: the Nightly Queue tab markup must exist and be wired to a tab."""
+    html = client.get("/").text
+
+    assert 'data-tab="nightly"' in html
+    assert 'id="pane-nightly"' in html
+    for element_id in (
+        "nightlyQueuePath",
+        "nightlyLeaseSummary",
+        "tableNightlyQueue",
+    ):
+        assert f'id="{element_id}"' in html, f"missing #{element_id} in Nightly Queue markup"
+
+
+def test_nightly_queue_tab_js_is_read_only(client: TestClient):
+    """The frontend loader must only ever GET the cockpit endpoint, never POST/mutate."""
+    js = client.get("/static/studio.js").text
+    assert "async function loadNightlyQueue()" in js
+    assert "fetch(`/api/nightly/queue" in js
+    # No launch/lease-acquire call anywhere near the nightly loader.
+    start = js.index("async function loadNightlyQueue()")
+    end = js.index("async function exportWinnersAction()")
+    body = js[start:end]
+    assert "method: 'POST'" not in body
+    assert "method: \"POST\"" not in body
+
+
 def test_nightly_queue_endpoint_shape_and_orphan_detection(client: TestClient, tmp_path: Path):
     """R2 P1/#732: read-only nightly cockpit view, no lease file present."""
     queue_path = _nightly_queue_fixture(tmp_path)
