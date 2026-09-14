@@ -1435,7 +1435,7 @@ class WorkflowManifest(BaseModel):
         description="Disclosed Physical Verification Track (Alpha/Beta/Production "
                     "fabrication evidence) when the graded artifact was actually built.",
     )
-    structural_claims: list["StructuralClaim"] = Field(
+    structural_claims: list[StructuralClaim] = Field(
         default_factory=list,
         description="Asserted structural parameters parsed from the process trace "
                     "(counts/spacings/dims). Passively cross-checked against the graded "
