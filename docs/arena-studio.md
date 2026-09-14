@@ -75,11 +75,14 @@ side with a defect checklist and a vote bar underneath. See
 (click it, or `Tab` to it) they scrub that panel's frames instead of casting a vote.
 
 **Skip** advances a read-only cursor into the still-unvoted pairs — it never mutates
-`votes.*.jsonl` or the queue. **Undo** appends a retraction record to
-`votes.blind.jsonl` (the original vote line is never rewritten or removed) and makes the
-pair votable again; the on-screen undo toast is a client-side ~8s convenience window, not
-a server-enforced deadline — the pair stays undo-able past that window too, just without
-the toast prompt.
+`votes.*.jsonl` or the queue. **Undo** appends a retraction record to both
+`votes.blind.jsonl` and `votes.revealed.jsonl` (the original vote lines are never
+rewritten or removed), makes the pair votable again, and is honored by the Elo/agreement
+consumer (`votes_to_elo_votes()` replays retractions by `(pair_id, voter_id)` before
+counting anything, so an undone vote does not stay counted, and a subsequent revote lands
+in the correct chronological order); the on-screen undo toast is a client-side ~8s
+convenience window, not a server-enforced deadline — the pair stays undo-able past that
+window too, just without the toast prompt.
 
 ## Zero-WebGL fallback
 
@@ -90,10 +93,13 @@ Windows RDP session can lose its WebGL context mid-session
 - On page load, a throwaway `canvas.getContext('webgl2')` probe decides whether the
   WebGL toggle is enabled at all. If WebGL2 is unavailable, the toggle stays disabled
   and the frame turntable is the only option.
-- A capture-phase `window.addEventListener('webglcontextlost', …)` listener — which also
-  catches context loss from the `<model-viewer>` element's own internal (shadow-DOM)
-  canvas — and continued `isContextLost()` checks both route through the same fallback
-  path: force the mode back to the frame turntable and disable the WebGL toggle.
+- A light-DOM `'error'` listener on each `<model-viewer>` element itself routes through
+  the same fallback path as startup detection: force the mode back to the frame
+  turntable and disable the WebGL toggle. (A `webglcontextlost` event fired on
+  `<model-viewer>`'s internal shadow-DOM canvas is not `composed`, so per the DOM spec it
+  never crosses the shadow boundary to a listener on the element or on `window` —
+  `<model-viewer>` itself re-dispatches context loss as its own light-DOM `'error'`
+  event, which is what Studio actually listens for.)
 - `<model-viewer>` itself is only ever instantiated in the DOM the first time WebGL mode
   is actually selected (never present as a static element), because its underlying
   three.js renderer probes for a WebGL context — and throws console errors — the instant
@@ -144,8 +150,9 @@ explicit opt-in:
   with a clear message if it's missing rather than a stack trace.
 - **A vote stage panel stays on a blank frame turntable and the WebGL toggle is
   greyed out**: expected on a machine/session without WebGL2 — this is the fallback
-  working as intended, not a bug. Check the browser console for a
-  `webglcontextlost`-triggered fallback message if it happened mid-session.
+  working as intended, not a bug. Check the on-page notice text for a WebGL-context-loss
+  message if it happened mid-session (triggered by `<model-viewer>`'s own `'error'`
+  event, not a raw `webglcontextlost` listener — see Zero-WebGL fallback above).
 - **"Cross-origin POST refused" (403)**: something is POSTing to Studio's API from a
   different origin than the page itself (e.g. a proxy that rewrites the `Origin`
   header). Serve Studio directly rather than through an origin-rewriting proxy.
