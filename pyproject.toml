@@ -23,6 +23,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+cadquery = [
+    "cadquery>=2.6,<3",
+]
 dev = [
     "pytest>=8.0",
     "pyyaml>=6.0",
