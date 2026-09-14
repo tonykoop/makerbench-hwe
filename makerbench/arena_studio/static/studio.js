@@ -741,11 +741,7 @@
       });
       morningSkipCursor = 0;
       if (res.ok) {
-        loadJudgePanel(
-          'morningJudgePanel',
-          `/api/morning/${encodeURIComponent(morningJobId)}/judge-panel`,
-          pairId
-        );
+        loadJudgePanel('morningJudgePanel', `/api/morning/${encodeURIComponent(morningJobId)}/judge-panel`, pairId);
       }
       loadMorningPair();
     }
