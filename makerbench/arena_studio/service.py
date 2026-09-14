@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
-import threading
+import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,12 +43,16 @@ class ArenaStudioService:
         default_run_dir: Optional[Path] = None,
         registry_path: Path = Path(DEFAULT_REGISTRY),
         repo_root: Optional[Path] = None,
+        allow_live: bool = False,
     ):
         self.default_run_dir = default_run_dir.resolve() if default_run_dir else None
         self.registry_path = registry_path.resolve()
         self.repo_root = repo_root.resolve() if repo_root else Path.cwd().resolve()
+        self.source_root = Path(__file__).resolve().parents[2]
+        self.allow_live = allow_live
         self._queues: dict[tuple[str, str], VoteQueue] = {}
         self._active_jobs: dict[str, dict[str, Any]] = {}
+        self._processes: dict[str, subprocess.Popen] = {}
 
     def get_default_run_dir(self) -> Optional[Path]:
         if self.default_run_dir and self.default_run_dir.exists():
@@ -331,17 +338,27 @@ class ArenaStudioService:
         return {"task_id": task_id, "approved": approved}
 
     def launch_competition(self, config: dict[str, Any]) -> dict[str, Any]:
-        """Initialize and launch an arena competition run."""
+        """Launch the real arena CLI in a process detached from the web server."""
         run_id = config.get("run_id") or f"rounds_{int(time.time())}"
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", run_id):
+            raise ValueError("run_id must be a safe 1-128 character identifier")
         instruments = config.get("instruments") or ["ocarina"]
         models = config.get("models") or ["claude-opus-5", "cadam-fable-5.1"]
-        backend = config.get("backend") or "openscad"
+        requested_backend = config.get("backend") or "openscad"
         context_tier = config.get("context_tier") or "image"
         levels = config.get("levels") or ["L1", "L2", "L3", "L4"]
-        concurrency = int(config.get("concurrency") or 2)
-        max_turns = int(config.get("max_turns") or 16)
+        requested_concurrency = int(config.get("concurrency") or 2)
+        requested_max_turns = int(config.get("max_turns") or 16)
         timeout_s = int(config.get("timeout_s") or 300)
         seed = int(config.get("seed") or 0)
+        live = bool(config.get("live", False))
+        if live and not self.allow_live:
+            raise PermissionError("live arena runs require a server started with --allow-live")
+
+        # Dry runs always use the local OpenSCAD compiler plus the arena CLI's
+        # zero-token deterministic generator. Requested live backends never
+        # leak into the offline subprocess.
+        backend = requested_backend if live else "openscad"
 
         # Gatekeeper Check (Story #697): enforce reference inspection when in image mode
         skip_image_gate = config.get("skip_image_gate", False)
@@ -362,73 +379,150 @@ class ArenaStudioService:
         run_dir.mkdir(parents=True, exist_ok=True)
         log_path = run_dir / f"arena_{run_id}.log"
 
-        # Initialize run_log.json if not present
-        run_log_file = run_dir / "run_log.json"
-        if not run_log_file.exists():
-            initial_log = {
-                "run_id": run_id,
-                "started_at": datetime.now(timezone.utc).isoformat(),
-                "status": "running",
-                "config": {
-                    "instruments": instruments,
-                    "model_ids": models,
-                    "backend": backend,
-                    "context_tier": context_tier,
-                    "levels": levels,
-                    "concurrency": concurrency,
-                    "max_turns": max_turns,
-                    "timeout_s": timeout_s,
-                    "seed": seed,
-                },
-                "trials": [],
-            }
-            run_log_file.write_text(json.dumps(initial_log, indent=2), encoding="utf-8")
+        existing = self._active_jobs.get(run_id)
+        if existing and self._refresh_job(existing).get("status") == "running":
+            raise ValueError(f"competition {run_id!r} is already running")
 
-        # Track active job
+        command = [
+            sys.executable,
+            "-m",
+            "makerbench.cli",
+            "arena",
+            "run",
+            "--run-dir",
+            str(run_dir),
+            "--instruments",
+            ",".join(instruments),
+            "--models",
+            ",".join(models),
+            "--registry",
+            str(self.registry_path),
+            "--seeds",
+            str(seed),
+            "--reps",
+            "1",
+            "--max-attempts",
+            "1",
+            "--timeout-s",
+            str(timeout_s),
+            "--context-tier",
+            context_tier,
+            "--backend",
+            backend,
+        ]
+        if not live:
+            command.extend(["--rate-limit-s", "0", "--stub"])
+
+        if context_tier == "image":
+            image_map = {
+                instrument: self.get_task_reference(instrument).get("image_path")
+                for instrument in instruments
+            }
+            missing_images = [name for name, path in image_map.items() if not path]
+            if missing_images:
+                raise ValueError(
+                    "image context requires local reference images for: "
+                    + ", ".join(missing_images)
+                )
+            image_map_path = run_dir / "studio_image_map.json"
+            arena_runner.write_json(image_map_path, image_map)
+            command.extend(["--image-map", str(image_map_path)])
+        elif context_tier in {"packet", "repo"}:
+            raise ValueError("packet/repo Studio launches require an instruments-root integration")
+
+        started_at = datetime.now(timezone.utc).isoformat()
+        with log_path.open("ab") as log_handle:
+            log_handle.write(
+                (
+                    f"=== ARENA PROCESS START {run_id} | "
+                    f"mode={'live' if live else 'dry-run'} | backend={backend} ===\n"
+                ).encode("utf-8")
+            )
+            log_handle.flush()
+            popen_kwargs: dict[str, Any] = {
+                "cwd": str(self.source_root),
+                "stdin": subprocess.DEVNULL,
+                "stdout": log_handle,
+                "stderr": subprocess.STDOUT,
+                "close_fds": True,
+            }
+            if os.name == "nt":
+                popen_kwargs["creationflags"] = (
+                    subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+                )
+            else:
+                popen_kwargs["start_new_session"] = True
+            process = subprocess.Popen(command, **popen_kwargs)
+
         job_info = {
             "run_id": run_id,
             "run_path": str(run_dir),
             "status": "running",
-            "started_at": datetime.now(timezone.utc).isoformat(),
+            "started_at": started_at,
+            "pid": process.pid,
             "instruments": instruments,
             "models": models,
             "backend": backend,
+            "requested_backend": requested_backend,
             "context_tier": context_tier,
             "levels": levels,
+            "requested_concurrency": requested_concurrency,
+            "requested_max_turns": requested_max_turns,
+            "live": live,
             "log_path": str(log_path),
             "progress": f"0/{len(instruments) * len(models)}",
         }
         self._active_jobs[run_id] = job_info
-
-        # In non-blocking worker thread, append progress notes to log
-        def _job_runner():
-            with open(log_path, "a", encoding="utf-8") as lf:
-                lf.write(f"=== LAUNCHING ARENA COMPETITION: {run_id} ===\n")
-                lf.write(
-                    f"Backend: {backend} | Context Tier: {context_tier} | Levels: {','.join(levels)}\n"
-                )
-                lf.write(f"Models: {', '.join(models)}\n")
-                lf.write(f"Instruments: {', '.join(instruments)}\n")
-                lf.flush()
-                time.sleep(0.5)
-                lf.write("Preflight checks passed: all reference images and MCP connectors validated.\n")
-                lf.flush()
-
-        t = threading.Thread(target=_job_runner, daemon=True)
-        t.start()
+        self._processes[run_id] = process
+        arena_runner.write_json(
+            run_dir / "studio_launch.json",
+            {
+                "schema": "makerbench-arena-studio-launch-v1",
+                **job_info,
+                "command": command,
+            },
+        )
 
         return {
             "success": True,
             "run_id": run_id,
             "path": str(run_dir),
-            "status": "launched",
-            "message": f"Competition {run_id} successfully launched across {len(instruments)} tasks x {len(models)} models.",
+            "status": "running",
+            "pid": process.pid,
+            "live": live,
+            "backend": backend,
+            "message": f"Competition {run_id} started as process {process.pid}.",
         }
 
     def get_competition_status(self, run_id: Optional[str] = None) -> dict[str, Any]:
         if run_id:
-            return self._active_jobs.get(run_id, {"status": "not_found", "run_id": run_id})
-        return {"jobs": list(self._active_jobs.values())}
+            job = self._active_jobs.get(run_id)
+            return self._refresh_job(job) if job else {"status": "not_found", "run_id": run_id}
+        return {"jobs": [self._refresh_job(job) for job in self._active_jobs.values()]}
+
+    def _refresh_job(self, job: dict[str, Any]) -> dict[str, Any]:
+        """Derive current status from the child exit code and its real run log."""
+        process = self._processes.get(job["run_id"])
+        exit_code = process.poll() if process else job.get("exit_code")
+        if exit_code is None:
+            status = "running"
+        else:
+            status = "completed" if exit_code == 0 else "failed"
+            job["exit_code"] = exit_code
+        job["status"] = status
+
+        run_log_path = Path(job["run_path"]) / "run_log.json"
+        if run_log_path.exists():
+            try:
+                run_log = json.loads(run_log_path.read_text(encoding="utf-8"))
+                job["summary"] = run_log.get("summary") or {}
+                counts = job["summary"].get("counts") or {}
+                done = sum(count for name, count in counts.items() if name != "pending")
+                total = job["summary"].get("total_trials", done)
+                job["progress"] = f"{done}/{total}"
+            except (OSError, json.JSONDecodeError):
+                pass
+        return job
 
     def get_run_logs(self, run_id: str, tail: int = 100) -> list[str]:
         run_path = None
@@ -552,4 +646,3 @@ class ArenaStudioService:
         ])
 
         return "\n".join(lines)
-

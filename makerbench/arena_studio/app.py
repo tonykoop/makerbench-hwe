@@ -36,12 +36,14 @@ class CompetitionLaunchPayload(BaseModel):
     timeout_s: int = 300
     seed: int = 0
     skip_image_gate: bool = False
+    live: bool = False
 
 
 def create_studio_app(
     default_run_dir: Optional[Path] = None,
     registry_path: Path = Path(DEFAULT_REGISTRY),
     repo_root: Optional[Path] = None,
+    allow_live: bool = False,
 ) -> FastAPI:
     """Create and configure the Arena Studio FastAPI instance."""
 
@@ -55,6 +57,7 @@ def create_studio_app(
         default_run_dir=default_run_dir,
         registry_path=registry_path,
         repo_root=repo_root,
+        allow_live=allow_live,
     )
 
     # Mount static assets (model-viewer, etc.)
@@ -185,6 +188,8 @@ def create_studio_app(
     def launch_competition(payload: CompetitionLaunchPayload):
         try:
             return service.launch_competition(payload.model_dump())
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
