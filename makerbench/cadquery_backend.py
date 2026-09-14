@@ -7,9 +7,10 @@ source, and output directory are visible inside the worker; arbitrary host
 files are not mounted. The worker retains the native STEP artifact and derives
 the STL/PNG artifacts consumed by the existing arena objective and vote pipeline.
 
-This module deliberately imports CadQuery only in the worker process.  The
-public harness therefore remains importable when the optional heavy dependency
-is absent, and callers can use :func:`cadquery_available` for preflight.
+This module deliberately imports CadQuery/build123d only in the worker process.
+The public harness therefore remains importable when the optional heavy
+dependencies are absent, and callers can use :func:`cadquery_available` for
+preflight.
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ _DRIVER_CANDIDATE_ERROR = "CADQUERY_DRIVER_CANDIDATE_ERROR:"
 _DRIVER_ENVIRONMENT_ERROR = "CADQUERY_DRIVER_ENVIRONMENT_ERROR:"
 
 _DRIVER_SCRIPT = r'''
+import ast
 import sys
 
 if len(sys.argv) != 6:
@@ -52,10 +54,39 @@ stl_linear_tolerance = float(sys.argv[4])
 stl_angular_tolerance = float(sys.argv[5])
 
 try:
-    import cadquery as cq
+    with open(entrant_path, "r", encoding="utf-8") as stream:
+        source = stream.read()
+    syntax_tree = ast.parse(source, entrant_path)
+    code = compile(syntax_tree, entrant_path, "exec")
 except BaseException as exc:
-    print(f"CADQUERY_DRIVER_ENVIRONMENT_ERROR: cadquery import failed: {exc!r}")
-    raise SystemExit(21)
+    print(f"CADQUERY_DRIVER_CANDIDATE_ERROR: entrant script raised: {exc!r}")
+    raise SystemExit(2)
+
+uses_build123d = any(
+    (
+        isinstance(node, ast.Import)
+        and any(alias.name == "build123d" or alias.name.startswith("build123d.") for alias in node.names)
+    )
+    or (
+        isinstance(node, ast.ImportFrom)
+        and node.module is not None
+        and (node.module == "build123d" or node.module.startswith("build123d."))
+    )
+    for node in ast.walk(syntax_tree)
+)
+
+if uses_build123d:
+    try:
+        import build123d as b3d
+    except BaseException as exc:
+        print(f"CADQUERY_DRIVER_ENVIRONMENT_ERROR: build123d import failed: {exc!r}")
+        raise SystemExit(21)
+else:
+    try:
+        import cadquery as cq
+    except BaseException as exc:
+        print(f"CADQUERY_DRIVER_ENVIRONMENT_ERROR: cadquery import failed: {exc!r}")
+        raise SystemExit(21)
 
 shown = []
 
@@ -72,9 +103,7 @@ namespace = {
 }
 
 try:
-    with open(entrant_path, "r", encoding="utf-8") as stream:
-        source = stream.read()
-    exec(compile(source, entrant_path, "exec"), namespace)
+    exec(code, namespace)
 except BaseException as exc:
     print(f"CADQUERY_DRIVER_CANDIDATE_ERROR: entrant script raised: {exc!r}")
     raise SystemExit(2)
@@ -84,30 +113,39 @@ if result is None:
     print("CADQUERY_DRIVER_CANDIDATE_ERROR: entrant script produced no result or show(result)")
     raise SystemExit(3)
 
-if isinstance(result, cq.Workplane):
-    try:
-        result = result.val()
-    except BaseException as exc:
-        print(f"CADQUERY_DRIVER_CANDIDATE_ERROR: Workplane has no exportable value: {exc!r}")
-        raise SystemExit(4)
-
-if not isinstance(result, cq.Shape):
-    print(
-        "CADQUERY_DRIVER_CANDIDATE_ERROR: result must be a cadquery Workplane or Shape; "
-        f"got {type(result).__name__}"
-    )
-    raise SystemExit(5)
-
 try:
-    if result.isNull():
-        raise ValueError("result is a null shape")
-    cq.exporters.export(result, step_path)
-    cq.exporters.export(
-        result,
-        stl_path,
-        tolerance=stl_linear_tolerance,
-        angularTolerance=stl_angular_tolerance,
-    )
+    if uses_build123d:
+        if not isinstance(result, b3d.Part):
+            raise TypeError(
+                "result from a build123d script must be a build123d Part; "
+                f"got {type(result).__name__}"
+            )
+        if result.is_null:
+            raise ValueError("result is a null shape")
+        b3d.export_step(result, step_path)
+        b3d.export_stl(
+            result,
+            stl_path,
+            tolerance=stl_linear_tolerance,
+            angular_tolerance=stl_angular_tolerance,
+        )
+    else:
+        if isinstance(result, cq.Workplane):
+            result = result.val()
+        if not isinstance(result, cq.Shape):
+            raise TypeError(
+                "result must be a cadquery Workplane or Shape; "
+                f"got {type(result).__name__}"
+            )
+        if result.isNull():
+            raise ValueError("result is a null shape")
+        cq.exporters.export(result, step_path)
+        cq.exporters.export(
+            result,
+            stl_path,
+            tolerance=stl_linear_tolerance,
+            angularTolerance=stl_angular_tolerance,
+        )
 except BaseException as exc:
     print(f"CADQUERY_DRIVER_CANDIDATE_ERROR: STEP/STL export failed: {exc!r}")
     raise SystemExit(6)
@@ -120,6 +158,12 @@ def cadquery_available() -> bool:
     """Return whether CadQuery is importable by the current Python runtime."""
 
     return importlib.util.find_spec("cadquery") is not None
+
+
+def build123d_available() -> bool:
+    """Return whether the build123d alias runtime is importable."""
+
+    return importlib.util.find_spec("build123d") is not None
 
 
 def _is_secret_name(name: str) -> bool:

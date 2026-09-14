@@ -60,6 +60,11 @@ pytestmark_real = pytest.mark.skipif(
     not cadquery_backend.cadquery_available(), reason="cadquery optional dependency is absent"
 )
 
+pytestmark_build123d = pytest.mark.skipif(
+    not cadquery_backend.build123d_available(),
+    reason="build123d optional dependency is absent",
+)
+
 
 @pytestmark_real
 class TestRealCadQueryCompiler:
@@ -204,3 +209,40 @@ result = cq.Workplane("XY").box(10, 10, 10)
         artifacts = cadquery_backend.compile_cadquery_to_artifacts(script, tmp_path / "out")
 
         assert "network_isolation: unavailable" not in artifacts.warnings
+
+
+@pytestmark_build123d
+class TestRealBuild123dAlias:
+    def test_build123d_part_uses_the_same_step_stl_png_pipeline(self, tmp_path):
+        script = tmp_path / "build123d_part.py"
+        script.write_text(
+            "from build123d import Box\nresult = Box(60, 40, 20)\n",
+            encoding="utf-8",
+        )
+
+        artifacts = cadquery_backend.compile_cadquery_to_artifacts(
+            script, tmp_path / "out"
+        )
+
+        assert artifacts.stl_path.stat().st_size > 0
+        assert artifacts.png_path.stat().st_size > 0
+        assert artifacts.stl_path.with_name("output.step").stat().st_size > 0
+
+    def test_build123d_show_part_is_accepted(self, tmp_path):
+        script = tmp_path / "build123d_show.py"
+        script.write_text(
+            "import build123d as b3d\nshow(b3d.Cylinder(5, 20))\n",
+            encoding="utf-8",
+        )
+
+        artifacts = cadquery_backend.compile_cadquery_to_artifacts(
+            script, tmp_path / "out"
+        )
+        assert artifacts.stl_path.stat().st_size > 0
+
+    def test_build123d_import_requires_a_part_result(self, tmp_path):
+        script = tmp_path / "not_a_part.py"
+        script.write_text("import build123d\nresult = 42\n", encoding="utf-8")
+
+        with pytest.raises(render.CompileError, match="must be a build123d Part"):
+            cadquery_backend.compile_cadquery_to_artifacts(script, tmp_path / "out")
