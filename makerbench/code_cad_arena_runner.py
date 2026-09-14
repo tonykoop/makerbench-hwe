@@ -650,12 +650,18 @@ def votes_to_elo_votes(revealed_jsonl: Path) -> list[Vote]:
     path = Path(revealed_jsonl)
     if not path.exists():
         return []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for index, line in enumerate(path.read_text(encoding="utf-8").splitlines()):
         line = line.strip()
         if not line:
             continue
         record = json.loads(line)
-        key = (str(record.get("pair_id")), str(record.get("voter_id")))
+        if record.get("pair_id") is None:
+            # Historical records (written before Studio undo) carry no pair_id,
+            # so nothing can retract or revote them. Each is its own vote: a
+            # shared ("None", voter) key would keep only a voter's last one.
+            key = ("\x00legacy", str(index))
+        else:
+            key = (str(record.get("pair_id")), str(record.get("voter_id")))
         if record.get("retracts"):
             votes_by_key.pop(key, None)
             continue
