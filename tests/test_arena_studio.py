@@ -1345,7 +1345,7 @@ def test_judge_panel_after_vote_shows_objective_and_judge_verdict(client: TestCl
     }
     (fake_run / "votes.judge.jsonl").write_text(json.dumps(judge_record) + "\n", encoding="utf-8")
 
-    res = client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}")
+    res = client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}&voter={voter}")
     assert res.status_code == 200
     data = res.json()
     assert data["pair_id"] == pair_id
@@ -1366,7 +1366,7 @@ def test_judge_panel_omits_judge_block_when_not_yet_judged(client: TestClient, f
         json={"pair_id": pair_id, "winner": "draw", "voter": voter},
     )
 
-    res = client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}")
+    res = client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}&voter={voter}")
     assert res.status_code == 200
     data = res.json()
     assert data["human_winner"] == "draw"
@@ -1381,15 +1381,52 @@ def test_judge_panel_hides_again_after_undo(client: TestClient, fake_run: Path):
         f"/api/runs/{fake_run.name}/vote",
         json={"pair_id": pair_id, "winner": "left", "voter": voter},
     )
-    assert client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}").status_code == 200
+    assert client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}&voter={voter}").status_code == 200
 
     undo_resp = client.post(
         f"/api/runs/{fake_run.name}/undo-vote", json={"pair_id": pair_id, "voter": voter}
     )
     assert undo_resp.status_code == 200
 
-    res = client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}")
+    res = client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}&voter={voter}")
     assert res.status_code == 404
+
+
+def test_judge_panel_reveal_gate_is_per_voter_not_global(client: TestClient, fake_run: Path):
+    """R2 P3/#736 fix (post-review): the reveal gate must be scoped to the
+    REQUESTING voter, not "has anyone voted on this pair". An earlier version's
+    _pair_is_voted_by_anyone() let a second voter who had never voted on a pair see
+    the first voter's identity/objective/judge data just by passing their own
+    `voter` query value — a real cross-voter identity leak."""
+    alice_queue = client.get(f"/api/runs/{fake_run.name}/queue?voter=alice").json()
+    pair_id = alice_queue["current_pair"]["pair_id"]
+
+    alice_vote = client.post(
+        f"/api/runs/{fake_run.name}/vote",
+        json={"pair_id": pair_id, "winner": "left", "voter": "alice"},
+    )
+    assert alice_vote.status_code == 200
+
+    # Bob has NOT voted on this pair. His own queue may hand him the same pair
+    # (Swiss pairing is per-voter) — he must not be able to see its reveal yet.
+    bob_res = client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}&voter=bob")
+    assert bob_res.status_code == 404
+    assert "alice" not in bob_res.text.lower()
+
+    # Alice herself can see it.
+    alice_res = client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}&voter=alice")
+    assert alice_res.status_code == 200
+
+    # Once Bob also votes on the SAME pair, his own request succeeds and shows
+    # his own recorded winner, not a leftover from Alice's vote.
+    bob_vote = client.post(
+        f"/api/runs/{fake_run.name}/vote",
+        json={"pair_id": pair_id, "winner": "right", "voter": "bob"},
+    )
+    assert bob_vote.status_code == 200
+    bob_res_after = client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}&voter=bob")
+    assert bob_res_after.status_code == 200
+    assert bob_res_after.json()["human_winner"] == "right"
 
 
 def test_judge_panel_never_calls_a_judge_cli(client: TestClient, fake_run: Path, monkeypatch: pytest.MonkeyPatch):
@@ -1425,3 +1462,27 @@ def test_morning_judge_panel_after_vote(client: TestClient, tmp_path: Path):
     assert data["judge"] is None
     assert data["left"]["model_id"] in ("cadam-fable-image", "codex-openscad")
     assert data["right"]["model_id"] in ("cadam-fable-image", "codex-openscad")
+
+
+def test_morning_judge_panel_reveal_gate_is_per_voter_not_global(client: TestClient, tmp_path: Path):
+    """R2 P3/#736 fix (post-review), morning surface: same per-voter gate as the
+    regular-run judge panel."""
+    queue_path, run_dir, job_id = _morning_bundle_fixture(tmp_path)
+    pair_res = client.get(f"/api/morning/{job_id}/pair?queue={queue_path}&voter=alice")
+    pair_id = pair_res.json()["current_pair"]["pair_id"]
+
+    alice_vote = client.post(
+        f"/api/morning/{job_id}/vote?queue={queue_path}",
+        json={"pair_id": pair_id, "winner": "left", "voter": "alice"},
+    )
+    assert alice_vote.status_code == 200
+
+    bob_res = client.get(
+        f"/api/morning/{job_id}/judge-panel?pair_id={pair_id}&voter=bob&queue={queue_path}"
+    )
+    assert bob_res.status_code == 404
+
+    alice_res = client.get(
+        f"/api/morning/{job_id}/judge-panel?pair_id={pair_id}&voter=alice&queue={queue_path}"
+    )
+    assert alice_res.status_code == 200

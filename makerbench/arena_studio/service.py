@@ -519,10 +519,17 @@ class ArenaStudioService:
         self._morning_queues[key] = queue
         return queue
 
-    def _pair_is_voted_by_anyone(self, run_dir: Path, pair_id: str) -> bool:
-        """Replays retractions the same way `_voted_pair_keys` does, but for one
-        pair_id across every voter — the judge panel's own C3/C4 anonymity gate:
-        never show anything for a pair with no currently-active human vote."""
+    def _pair_is_voted_by(self, run_dir: Path, pair_id: str, voter: str) -> bool:
+        """Replays retractions the same way `_voted_pair_keys` does, scoped to ONE
+        voter — the judge panel's own C3/C4 anonymity gate: never show anything for
+        a pair unless THIS voter has a currently-active vote on it themselves.
+
+        Fixed after review: an earlier version checked whether ANY voter had voted
+        on the pair. Since the reveal gate was global, a second voter who had not
+        yet voted on a pair could request the panel for that pair (with their own
+        `voter` query value) and see the FIRST voter's reveal/identity data before
+        ever casting their own vote — a real cross-voter identity leak.
+        """
         blind_path = run_dir / "votes.blind.jsonl"
         if not blind_path.is_file():
             return False
@@ -531,12 +538,21 @@ class ArenaStudioService:
             if not line.strip():
                 continue
             record = json.loads(line)
-            if record.get("pair_id") != pair_id:
+            if record.get("pair_id") != pair_id or record.get("voter_id") != voter:
                 continue
             voted = not record.get("retracts")
         return voted
 
-    def _last_jsonl_record_for_pair(self, path: Path, pair_id: str) -> Optional[dict[str, Any]]:
+    def _last_jsonl_record_for_pair(
+        self, path: Path, pair_id: str, *, voter: Optional[str] = None
+    ) -> Optional[dict[str, Any]]:
+        """Latest record matching pair_id (and, if given, voter_id too).
+
+        `voter` is left unset for votes.judge.jsonl lookups (judge records carry a
+        `vlm:<model>` voter_id, not a human voter's) and set for votes.revealed.jsonl
+        lookups, so a multi-voter run returns THIS voter's own revealed record, not
+        whichever voter happened to vote on this pair first.
+        """
         if not path.is_file():
             return None
         match: Optional[dict[str, Any]] = None
@@ -544,27 +560,33 @@ class ArenaStudioService:
             if not line.strip():
                 continue
             record = json.loads(line)
-            if record.get("pair_id") == pair_id:
-                match = record
+            if record.get("pair_id") != pair_id:
+                continue
+            if voter is not None and record.get("voter_id") != voter:
+                continue
+            match = record
         return match
 
-    def get_judge_panel(self, run_dir: Path, pair_id: str) -> Optional[dict[str, Any]]:
-        """R2 P3/#... : read-only judge verdict + objective mesh-gate panel for one
-        pair, shown only alongside a pair a human has already voted on.
+    def get_judge_panel(self, run_dir: Path, pair_id: str, voter: str) -> Optional[dict[str, Any]]:
+        """R2 P3/#736 : read-only judge verdict + objective mesh-gate panel for one
+        pair, shown only alongside a pair THIS voter has already voted on themselves.
 
         Never calls a judge CLI (`code_cad_judge.py`'s judge callables are never
         imported here) and never mutates anything — this only reads whatever
         `votes.judge.jsonl` already has on disk (written earlier, out-of-band, by
         `arena judge`) plus the objective mesh-gate result already recorded on each
-        trial in run_log.json. Returns None (caller returns 404) unless a human
-        vote is currently recorded for pair_id — the same "never before the vote"
-        rule C3/C4 already enforce for identity.
+        trial in run_log.json. Returns None (caller returns 404) unless `voter`
+        currently has an active vote recorded for pair_id — the same "never before
+        the vote" rule C3/C4 already enforce for identity, now scoped per voter
+        rather than globally.
         """
         run_dir = Path(run_dir).resolve()
-        if not self._pair_is_voted_by_anyone(run_dir, pair_id):
+        if not self._pair_is_voted_by(run_dir, pair_id, voter):
             return None
 
-        human_record = self._last_jsonl_record_for_pair(run_dir / "votes.revealed.jsonl", pair_id)
+        human_record = self._last_jsonl_record_for_pair(
+            run_dir / "votes.revealed.jsonl", pair_id, voter=voter
+        )
         if human_record is None:
             return None
         reveal = human_record.get("reveal") or {}
