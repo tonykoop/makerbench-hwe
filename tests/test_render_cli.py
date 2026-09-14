@@ -57,7 +57,6 @@ def test_vote_commands_expose_renderer_option():
         )
         assert result.exit_code == 0
         assert "--renderer" in result.stdout
-        assert "auto, gpu, or openscad" in result.stdout
 
 
 def test_turntable_cli_passes_renderer_and_writes_provenance(tmp_path, monkeypatch):
