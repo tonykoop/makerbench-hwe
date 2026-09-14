@@ -371,13 +371,31 @@
       }
     }
 
+    // model-viewer's underlying three.js probes for a WebGL context the instant the
+    // <model-viewer> custom element is created/upgraded — even if it's never shown or
+    // given a src. That throws real console errors in a zero-WebGL session (caught by
+    // the C5 Playwright test run with WebGL disabled). So the element only exists as a
+    // placeholder <div> in the static HTML, and is lazily upgraded to a real
+    // <model-viewer> here, only the first time WebGL mode is actually used.
+    function ensureModelViewer(mvId) {
+      const existing = document.getElementById(mvId);
+      if (existing.tagName.toLowerCase() === 'model-viewer') return existing;
+      const mv = document.createElement('model-viewer');
+      mv.id = mvId;
+      mv.style.cssText = existing.style.cssText;
+      mv.setAttribute('camera-controls', '');
+      mv.setAttribute('disable-pan', '');
+      existing.replaceWith(mv);
+      return mv;
+    }
+
     function renderViewer(imgId, mvId, containerId, progressId, candidate) {
       stopAutoRotate(imgId);
       const img = document.getElementById(imgId);
-      const mv = document.getElementById(mvId);
       const progress = document.getElementById(progressId);
 
       if (activeViewerMode === 'webgl' && candidate.model3d_path) {
+        const mv = ensureModelViewer(mvId);
         img.style.display = 'none';
         progress.style.display = 'none';
         mv.style.display = 'block';
@@ -387,9 +405,11 @@
       }
 
       // No model3d_path (or webgl unavailable/failed): zero-WebGL frames are the
-      // fallback, never a blank viewer.
+      // fallback, never a blank viewer. Only touch the model-viewer element if it was
+      // ever upgraded — the placeholder <div> needs none of this.
+      const mv = document.getElementById(mvId);
       mv.style.display = 'none';
-      mv.removeAttribute('src');
+      if (mv.tagName.toLowerCase() === 'model-viewer') mv.removeAttribute('src');
       img.style.display = '';
       setupTurntable(imgId, containerId, progressId, candidate.frames, candidate.render_path);
     }
