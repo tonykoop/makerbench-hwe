@@ -699,6 +699,7 @@
     async function loadMorningPair() {
       const emptyEl = document.getElementById('morningEmptyState');
       const wrapEl = document.getElementById('morningVoteWrap');
+      document.getElementById('morningJudgePanel').hidden = true; // reset; castMorningVote() re-shows it
       if (!morningJobId) {
         emptyEl.style.display = 'block';
         wrapEl.style.display = 'none';
@@ -733,12 +734,15 @@
     async function castMorningVote(winner) {
       if (!currentMorningPair || !morningJobId) return;
       const pairId = currentMorningPair.pair_id;
-      await fetch(`/api/morning/${encodeURIComponent(morningJobId)}/vote`, {
+      const res = await fetch(`/api/morning/${encodeURIComponent(morningJobId)}/vote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pair_id: pairId, winner: winner, voter: 'tony' }),
       });
       morningSkipCursor = 0;
+      if (res.ok) {
+        loadJudgePanel('morningJudgePanel', `/api/morning/${encodeURIComponent(morningJobId)}/judge-panel`, pairId);
+      }
       loadMorningPair();
     }
 
@@ -769,6 +773,7 @@
 
     async function loadQueue() {
       if (!currentRun) return;
+      document.getElementById('judgePanel').hidden = true; // reset; castVote() re-shows it for the just-voted pair
       const res = await fetch(`/api/runs/${currentRun}/queue?skip=${skipCursor}`);
       const data = await res.json();
       document.getElementById('voteProgress').textContent = `Voted ${data.done} of ${data.total} pairs`;
@@ -907,8 +912,53 @@
       if (res.ok) {
         skipCursor = 0; // queue composition just changed under us
         showUndoToast(votedPairId, winner);
+        loadJudgePanel('judgePanel', `/api/runs/${currentRun}/judge-panel`, votedPairId);
       }
       loadQueue();
+    }
+
+    /* R2 P3: read-only judge/objective panel for the pair a human just voted on.
+       Never called before a vote; reads whatever is already on disk (votes.judge.jsonl
+       from an earlier out-of-band `arena judge` run + each trial's recorded objective
+       mesh-gate result) — never calls a judge CLI itself. 404 (nothing recorded yet,
+       or the vote was undone) just hides the panel, not an error toast. */
+    function renderJudgePanelHTML(data) {
+      const side = (label, s) => {
+        const obj = s.objective;
+        const objText = obj
+          ? `${(obj.objective_pass_rate * 100).toFixed(0)}% objective pass${obj.passed ? '' : ' <span style="color: var(--danger);">(gate failed)</span>'}`
+          : 'no objective gate result recorded';
+        return `<div><b>${label}</b>: ${s.model_id || 'unknown'} &mdash; ${objText}</div>`;
+      };
+      const judgeText = data.judge
+        ? `VLM judge (${data.judge.judge_model_id}) picked <b>${data.judge.winner}</b>`
+        : 'No VLM judge verdict recorded for this pair yet.';
+      return `
+        <h3 style="margin-bottom: 8px; font-size: 14px;">Judge & Objective Panel</h3>
+        <div style="font-size: 13px; line-height: 1.7;">
+          <div>Human vote: <b>${data.human_winner}</b></div>
+          ${side('Left', data.left)}
+          ${side('Right', data.right)}
+          <div style="margin-top: 6px; color: var(--text-muted);">${judgeText}</div>
+        </div>
+      `;
+    }
+
+    async function loadJudgePanel(panelId, endpoint, pairId) {
+      const panel = document.getElementById(panelId);
+      try {
+        const res = await fetch(`${endpoint}?pair_id=${encodeURIComponent(pairId)}`);
+        if (!res.ok) {
+          panel.hidden = true;
+          return;
+        }
+        const data = await res.json();
+        panel.innerHTML = renderJudgePanelHTML(data);
+        panel.hidden = false;
+      } catch (e) {
+        console.error('Failed to load judge panel', e);
+        panel.hidden = true;
+      }
     }
 
     // C4/#703 skip ergonomics: advance the read-only cursor and re-fetch — never votes,
