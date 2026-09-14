@@ -34,6 +34,7 @@ from makerbench.code_cad_vote_web import QueueItem, VoteQueue
 
 from . import analytics
 from . import doe
+from . import gatekeeper
 
 # A run_id becomes a path segment (``runs/code_cad_arena/<run_id>``); this
 # rejects "/", ".." and absolute paths so a queue write can never escape
@@ -393,46 +394,33 @@ class ArenaStudioService:
         p.parent.mkdir(parents=True, exist_ok=True)
         return p
 
-    def _load_approvals(self) -> dict[str, bool]:
-        p = self._get_approvals_path()
-        if p.exists():
-            try:
-                return json.loads(p.read_text(encoding="utf-8"))
-            except Exception:
-                pass
-        return {}
-
-    def _save_approvals(self, approvals: dict[str, bool]) -> None:
-        p = self._get_approvals_path()
-        try:
-            p.write_text(json.dumps(approvals, indent=2), encoding="utf-8")
-        except Exception:
-            pass
-
-    def get_task_reference(self, task_id: str) -> dict[str, Any]:
-        """Check reference visual assets and gatekeeper approval status (Story #697)."""
-        approvals = self._load_approvals()
-
+    def _find_reference_image(self, task_id: str) -> Optional[Path]:
         candidate_paths = [
             self.repo_root / "tasks" / task_id / "reference.png",
             self.repo_root / "tasks" / task_id / "assets" / "reference.png",
             self.repo_root / "tasks" / "code_cad_arena" / "references" / f"{task_id}.png",
             self.repo_root / "instruments" / task_id / "reference.png",
         ]
-
-        img_path = None
         for cp in candidate_paths:
             if cp.exists():
-                img_path = cp
-                break
+                return cp
+        return None
+
+    def get_task_reference(self, task_id: str) -> dict[str, Any]:
+        """Check reference visual assets and gatekeeper approval status (#697 D4).
+
+        ``approved`` is only ever True when an explicit approval record exists
+        *and* its sha256 still matches the image currently on disk
+        (:func:`gatekeeper.is_approved`) — an image simply existing is never
+        enough, and swapping the file after approval un-approves it silently.
+        """
+        img_path = self._find_reference_image(task_id)
+        approvals = gatekeeper.load_approvals(self._get_approvals_path())
+        approved = gatekeeper.is_approved(approvals, task_id, img_path)
 
         tasks = self.get_registry_tasks()
         task_info = next((t for t in tasks if t.get("id") == task_id), None) or {}
         envelope = task_info.get("envelope_mm") or [100, 100, 100]
-
-        has_image = img_path is not None
-        # Tasks with an existing image default to approved; others require inspection
-        approved = approvals.get(task_id, has_image)
 
         prompt_cmd = (
             f"agy -p \"Generate high-fidelity photorealistic reference view of acoustic instrument "
@@ -442,7 +430,7 @@ class ArenaStudioService:
 
         return {
             "task_id": task_id,
-            "has_image": has_image,
+            "has_image": img_path is not None,
             "image_path": str(img_path) if img_path else None,
             "approved": approved,
             "envelope_mm": envelope,
@@ -450,12 +438,40 @@ class ArenaStudioService:
             "prompt_cmd": prompt_cmd,
         }
 
-    def set_task_approval(self, task_id: str, approved: bool) -> dict[str, Any]:
-        """Approve or reject a reference image for competition gatekeeping (Story #697)."""
-        approvals = self._load_approvals()
-        approvals[task_id] = approved
-        self._save_approvals(approvals)
-        return {"task_id": task_id, "approved": approved}
+    def set_task_approval(
+        self, task_id: str, approved: bool, *, reviewer: str = "tony"
+    ) -> dict[str, Any]:
+        """Approve or revoke a reference image for competition gatekeeping (#697 D4).
+
+        Approving with no reference image on disk fails explicitly instead of
+        recording an unbacked approval — there is no image to hash.
+        """
+        approvals_path = self._get_approvals_path()
+        approvals = gatekeeper.load_approvals(approvals_path)
+
+        if approved:
+            img_path = self._find_reference_image(task_id)
+            if img_path is None:
+                return {
+                    "task_id": task_id,
+                    "approved": False,
+                    "error": "no reference image on disk to approve",
+                }
+            record = gatekeeper.approve(approvals, task_id, img_path, reviewer=reviewer)
+        else:
+            record = gatekeeper.revoke(approvals, task_id, reviewer=reviewer)
+            if record is None:
+                record = gatekeeper.ApprovalRecord(
+                    task_id=task_id,
+                    image_sha256="",
+                    approved=False,
+                    decided_at=datetime.now(timezone.utc).isoformat(),
+                    reviewer=reviewer,
+                )
+                approvals[task_id] = record
+
+        gatekeeper.save_approvals(approvals_path, approvals)
+        return record.as_dict()
 
     def launch_competition(self, config: dict[str, Any]) -> dict[str, Any]:
         """Initialize and launch an arena competition run."""
