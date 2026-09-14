@@ -117,3 +117,20 @@ class TestStudioContextTierCli:
         )
         assert result.exit_code == 1
         assert "not a readable file for" in result.stdout
+
+    def test_studio_rejects_live_before_connector_probe(self, monkeypatch, tmp_path):
+        probes = []
+
+        def spy_connector(config):
+            probes.append(config)
+            return True
+
+        monkeypatch.setattr(live_cad_runner, "connector_available", spy_connector)
+        result = runner.invoke(
+            app,
+            _run_args("fusion-live")
+            + ["--context-tier", "studio", "--instruments-root", str(tmp_path)],
+        )
+        assert result.exit_code == 1
+        assert "--context-tier studio is only wired for code-CAD backends" in result.stdout
+        assert probes == []  # rejected before any authenticated connector request

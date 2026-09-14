@@ -435,9 +435,15 @@ def make_claude_generator(
             payload = None
         failed = result.returncode != 0 or (payload or {}).get("is_error")
         result_text = (payload or {}).get("result")
-        if failed and isinstance(result_text, str) and has_candidate_fence(result_text, backend):
-            # e.g. subtype=error_max_turns after the entrant already emitted
-            # the finished fenced program: keep the candidate, don't discard it.
+        if (
+            failed
+            and (payload or {}).get("subtype") == "error_max_turns"
+            and isinstance(result_text, str)
+            and has_candidate_fence(result_text, backend)
+        ):
+            # Only a turn-budget stop after the entrant already emitted the
+            # finished fenced program keeps the candidate; any other failure
+            # (execution error, crash) still fails even if a fence is present.
             return extract_candidate(result_text, backend)
         if failed:
             if _retries > 0:

@@ -804,6 +804,23 @@ class TestClaudeManyTurnReadOnlyContract:
         assert gen(_request()) == "cube(4);"
         assert len(calls) == 1
 
+    def test_non_max_turn_error_with_fence_still_fails(self, monkeypatch):
+        calls = []
+        payload = {
+            "type": "result", "subtype": "error_during_execution", "is_error": True,
+            "result": "Partial:\n```scad\ncube(4);\n```",
+        }
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return _completed(stdout=json.dumps(payload), returncode=1)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        gen = providers.make_claude_generator("sonnet", retry_sleep_s=0)
+        with pytest.raises(RuntimeError, match="claude -p failed"):
+            gen(_request())
+        assert len(calls) == 2  # retried once, then failed; fence not accepted
+
     def test_error_max_turns_without_fence_still_fails(self, monkeypatch):
         payload = {"subtype": "error_max_turns", "is_error": True, "stop_reason": "tool_use"}
         monkeypatch.setattr(
