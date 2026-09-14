@@ -198,7 +198,10 @@ def client(fake_registry: Path, repo_root_with_reference: Path) -> TestClient:
     studio_app = create_studio_app(registry_path=fake_registry, repo_root=repo_root_with_reference)
     # feat/696-arena-studio's same-origin-POST guard (atlas's A1-A4) requires a
     # matching Origin header on every POST; TestClient sends none by default.
-    return TestClient(studio_app, headers={"origin": "http://testserver"})
+    # Loopback base URL: B1's TrustedHost guard rejects TestClient's default "testserver".
+    return TestClient(
+        studio_app, base_url="http://127.0.0.1", headers={"origin": "http://127.0.0.1"}
+    )
 
 
 def test_doe_preview_route(client: TestClient):
@@ -226,7 +229,9 @@ def test_doe_queue_route(client: TestClient, repo_root_with_reference: Path):
     assert response.status_code == 200
     data = response.json()
     assert data["n_jobs"] == 1
-    queue_path = Path(data["queue_path"])
+    # B1's API-boundary redaction publishes repo-relative paths, never host paths.
+    assert data["queue_path"] == "runs/code_cad_arena/doe_test_run/doe_queue.json"
+    queue_path = repo_root_with_reference / data["queue_path"]
     assert queue_path.exists()
     payload, jobs = nightly_cad.load_queue(queue_path)
     assert len(jobs) == 1
