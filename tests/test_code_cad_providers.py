@@ -363,6 +363,26 @@ class TestContextTierWorkspaceRouting:
         assert seen["cwd"] == str(workspace)
         assert seen["cmd"][seen["cmd"].index("-C") + 1] == str(workspace)
 
+    def test_codex_relative_workspace_becomes_absolute_dash_c_and_cwd(self, tmp_path, monkeypatch):
+        # Arena runs pass a repo-relative --run-dir. `codex exec -C <relative>`
+        # run with cwd=<relative> fails instantly ("No such file or directory
+        # (os error 2)"), so both must be absolute.
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"] = cmd
+            seen["cwd"] = kwargs.get("cwd")
+            return _completed(stdout="")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        (tmp_path / "runs" / "ws").mkdir(parents=True)
+        monkeypatch.chdir(tmp_path)
+        gen = providers.make_codex_generator(retry_sleep_s=0)
+        gen(_request("codex-gpt-5.5", context_tier="studio", workspace_dir=Path("runs/ws")))
+        expected = str((tmp_path / "runs" / "ws").resolve())
+        assert seen["cwd"] == expected
+        assert seen["cmd"][seen["cmd"].index("-C") + 1] == expected
+
     def test_gemini_uses_workspace_dir(self, tmp_path, monkeypatch):
         seen = {}
 

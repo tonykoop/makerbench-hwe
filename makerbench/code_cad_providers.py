@@ -256,9 +256,17 @@ def _isolated_cwd(provider: str) -> str:
 
 def _trial_cwd(request: GenerationRequest, fallback_cwd: str) -> str:
     """The subprocess cwd for one request: the #600 staged workspace when the
-    request carries one, else the provider's own fixed isolated blind cwd."""
+    request carries one, else the provider's own fixed isolated blind cwd.
 
-    return request.workspace_dir or fallback_cwd
+    Always absolute. Arena runs pass a repo-relative ``--run-dir``, so
+    ``workspace_dir`` arrives relative, and some CLIs re-resolve a path
+    argument after the subprocess has already chdir'd into it. Relative
+    ``codex exec -C <ws>`` with ``cwd=<ws>`` fails instantly with "No such
+    file or directory (os error 2)". Provenance keeps recording the
+    relative ``request.workspace_dir``, so no host path leaks into artifacts.
+    """
+
+    return str(Path(request.workspace_dir).resolve()) if request.workspace_dir else fallback_cwd
 
 
 def _staged_image_path(request: GenerationRequest) -> Optional[str]:
