@@ -1614,3 +1614,208 @@ def test_preflight_panel_escapes_every_server_returned_field(client: TestClient)
         "escapeHtml(data.lock.status)",
     ):
         assert escaped in body, f"missing {escaped} in runPreflight()"
+
+
+def test_studio_full_morning_flow_end_to_end(tmp_path: Path):
+    """R2 P6/#… : the whole nightly-morning cockpit flow through one TestClient,
+    against small committed-style fixture data (never a real/live run) —
+    preflight -> nightly queue -> morning bundle -> anonymous pair -> vote ->
+    reveal -> judge panel -> agreement refresh — proving every P1-P4 endpoint
+    genuinely composes end to end, not just in isolation.
+    """
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    # A run_dir reachable both by the regular Arena discovery (repo_root/runs/
+    # code_cad_arena/<run_id>) and by an absolute path in the nightly queue —
+    # a nightly morning bundle's run_dir IS a normal arena run_dir.
+    run_id = "e2e-smoke-run"
+    run_dir = repo_root / "runs" / "code_cad_arena" / run_id
+    run_dir.mkdir(parents=True)
+    png_a = run_dir / "a.png"
+    png_b = run_dir / "b.png"
+    png_a.write_bytes(b"fixture-a")
+    png_b.write_bytes(b"fixture-b")
+    run_log = {
+        "started_at": "2026-09-14T02:00:00Z",
+        "config": {"model_ids": ["cadam-fable-image", "codex-openscad"], "instruments": ["sambuca"]},
+        "trials": [
+            {
+                "trial_id": "e2e-trial-a",
+                "model_id": "cadam-fable-image",
+                "instrument_id": "sambuca",
+                "seed": 0,
+                "rep": 0,
+                "result": {
+                    "render_ok": True,
+                    "artifacts": {"png_path": str(png_a)},
+                    "objective": {"objective_pass_rate": 1.0, "sub_scores": {}, "passed": True},
+                },
+            },
+            {
+                "trial_id": "e2e-trial-b",
+                "model_id": "codex-openscad",
+                "instrument_id": "sambuca",
+                "seed": 0,
+                "rep": 0,
+                "result": {
+                    "render_ok": True,
+                    "artifacts": {"png_path": str(png_b)},
+                    "objective": {"objective_pass_rate": 0.5, "sub_scores": {}, "passed": False},
+                },
+            },
+        ],
+    }
+    (run_dir / "run_log.json").write_text(json.dumps(run_log), encoding="utf-8")
+    (run_dir / "morning-summary.json").write_text(
+        json.dumps(
+            {
+                "schema": "makerbench-nightly-cad-morning-v1",
+                "run_id": run_id,
+                "votable": True,
+                "valid_candidate_count": 2,
+                "failed_candidate_count": 0,
+                "cost_usd": 0.75,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Nightly queue.json: one votable job pointing at run_dir (P1's cockpit reads
+    # this same file), plus a secrets.env for the preflight step.
+    job_id = "sambuca-e2e"
+    queue_path = repo_root / "runs" / "nightly-cad-queue.json"
+    queue_path.write_text(
+        json.dumps(
+            {
+                "schema": "makerbench-nightly-cad-queue-v1",
+                "jobs": [
+                    {
+                        "job_id": job_id,
+                        "instrument_id": "sambuca",
+                        "reference_image": "tasks/sambuca/reference.png",
+                        "budget_usd": 5.0,
+                        "status": "votable",
+                        "run_id": run_id,
+                        "run_dir": str(run_dir),
+                        "entrants": [
+                            {"entrant_id": "cadam-fable-image", "kind": "cadam", "model_id": "anthropic/claude-fable-5"},
+                            {"entrant_id": "codex-openscad", "kind": "arena", "model_id": "codex-gpt-5.6-sol"},
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    secrets_path = repo_root / "nightly-cad-secrets.env"
+    secrets_path.write_text(
+        "CADAM_USER_ID=e2e-user\nCADAM_ACCESS_TOKEN=e2e-token\nSUPABASE_SERVICE_ROLE_KEY=e2e-key\n",
+        encoding="utf-8",
+    )
+    runner_script = repo_root / "scripts" / "windows" / "run-nightly-cad-arena.ps1"
+    runner_script.parent.mkdir(parents=True)
+    runner_script.write_text("# fixture stub, never executed", encoding="utf-8")
+
+    app = create_studio_app(repo_root=repo_root)
+    client = TestClient(app, headers={"origin": "http://testserver"})
+
+    # 1. Preflight: GO, secrets classified but never disclosed.
+    preflight_res = client.post(
+        "/api/preflight",
+        json={
+            "secrets": str(secrets_path),
+            "queue": str(queue_path),
+            "output_root": str(repo_root / "runs"),
+            "runner_script": str(runner_script),
+        },
+    )
+    assert preflight_res.status_code == 200
+    preflight_data = preflight_res.json()
+    assert preflight_data["verdict"] == "GO"
+    assert "e2e-user" not in preflight_res.text
+    assert "e2e-token" not in preflight_res.text
+
+    # 2. Nightly queue cockpit: the job shows up, not orphaned (no lock file yet
+    # means ABSENT lease, and status="votable" != "running" so never flagged).
+    nightly_res = client.get(f"/api/nightly/queue?queue={queue_path}")
+    assert nightly_res.status_code == 200
+    nightly_jobs = {j["job_id"]: j for j in nightly_res.json()["jobs"]}
+    assert nightly_jobs[job_id]["status"] == "votable"
+    assert nightly_jobs[job_id]["orphaned"] is False
+
+    # 3. Morning bundle discovery.
+    bundles_res = client.get(f"/api/morning/queue?queue={queue_path}")
+    assert bundles_res.status_code == 200
+    bundles = bundles_res.json()["bundles"]
+    assert [b["job_id"] for b in bundles] == [job_id]
+
+    # 4. Anonymous pair: no identity on the wire pre-vote.
+    pair_res = client.get(f"/api/morning/{job_id}/pair?queue={queue_path}")
+    assert pair_res.status_code == 200
+    pair_data = pair_res.json()
+    pair_id = pair_data["current_pair"]["pair_id"]
+    pair_body = json.dumps(pair_data)
+    assert "e2e-trial-a" not in pair_body
+    assert "e2e-trial-b" not in pair_body
+    assert "cadam-fable-image" not in pair_body
+
+    # No judge/objective panel exists before the vote.
+    assert (
+        client.get(f"/api/morning/{job_id}/judge-panel?pair_id={pair_id}&queue={queue_path}").status_code
+        == 404
+    )
+
+    # 5. Cast the vote.
+    vote_res = client.post(
+        f"/api/morning/{job_id}/vote?queue={queue_path}",
+        json={"pair_id": pair_id, "winner": "left", "voter": "tony"},
+    )
+    assert vote_res.status_code == 200
+
+    # 6. Reveal: the pair is no longer in the unvoted queue.
+    after_vote = client.get(f"/api/morning/{job_id}/pair?queue={queue_path}")
+    assert after_vote.json()["has_next"] is False
+    assert after_vote.json()["done"] == 1
+
+    # Seed a judge verdict, simulating an earlier out-of-band `arena judge` run —
+    # this endpoint never calls a judge CLI itself. Reuse the real reveal block
+    # votes.revealed.jsonl already has for this pair (rather than guessing which
+    # model landed left/right, which the blind shuffle hides) — this is exactly
+    # the shape code_cad_judge.judge_pair() itself produces via reveal_vote().
+    revealed_line = json.loads(
+        (run_dir / "votes.revealed.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+    )
+    (run_dir / "votes.judge.jsonl").write_text(
+        json.dumps(
+            {
+                "schema": "makerbench-code-cad-judge-v1",
+                "pair_id": pair_id,
+                "winner": "left",
+                "voter_id": "vlm:claude-code-sonnet",
+                "judge_model_id": "claude-code-sonnet",
+                "reveal": revealed_line["reveal"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    # 7. Judge & objective panel: now visible, shows both the objective gate
+    # result recorded on each trial and the judge verdict just seeded.
+    judge_res = client.get(f"/api/morning/{job_id}/judge-panel?pair_id={pair_id}&queue={queue_path}")
+    assert judge_res.status_code == 200
+    judge_data = judge_res.json()
+    assert judge_data["human_winner"] == "left"
+    assert judge_data["judge"] == {"winner": "left", "judge_model_id": "claude-code-sonnet"}
+    objective_rates = {judge_data["left"]["objective"]["objective_pass_rate"], judge_data["right"]["objective"]["objective_pass_rate"]}
+    assert objective_rates == {1.0, 0.5}
+
+    # 8. Agreement refresh: the vote cast through Morning Review feeds the same
+    # Elo/agreement math the regular Arena Analytics tab reads — proving Morning
+    # Review isn't a parallel/disconnected data path.
+    agreement_res = client.get(f"/api/runs/{run_id}/agreement")
+    assert agreement_res.status_code == 200
+    summary_res = client.get(f"/api/runs/{run_id}/summary")
+    assert summary_res.status_code == 200
+    assert summary_res.json()["votes_count"] == 1
