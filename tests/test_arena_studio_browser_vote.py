@@ -266,8 +266,12 @@ def test_keyboard_only_voting_flags_skip_undo_and_help(studio_url: str, vote_rep
         page.keyboard.press("a")  # ignored while the help dialog is open
         page.keyboard.press("Escape")
         assert not page.locator("dialog.shortcut-help").evaluate("d => d.open")
+        # Let any request the stray key could have started finish before checking.
+        page.wait_for_load_state("networkidle")
         assert _blind_votes(vote_repo) == []
+        assert "Vote saved" not in page.locator(".vote-feedback").inner_text()
 
+        controls_idle = "() => document.querySelector('.vote-bar button.vote')?.getAttribute('aria-disabled') === 'false'"
         page.keyboard.press("a")
         page.locator(".reveal").wait_for()
         vote = _blind_votes(vote_repo)[-1]
@@ -275,6 +279,8 @@ def test_keyboard_only_voting_flags_skip_undo_and_help(studio_url: str, vote_rep
         assert vote["flags"] == {"left": ["missing_critical_components"], "right": ["misaligned_assembly"]}
         assert not left_boxes.nth(0).is_checked()  # flags reset for the next pair
 
+        # Shortcuts are ignored while the next pair loads; wait until it has.
+        page.wait_for_function(controls_idle, polling=100, timeout=10_000)
         page.keyboard.press("u")
         page.get_by_text("Vote undone.").wait_for()
         assert _blind_votes(vote_repo)[-1].get("retracts") is True
