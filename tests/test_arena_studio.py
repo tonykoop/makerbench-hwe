@@ -1094,11 +1094,24 @@ def test_morning_bundle_vote_lands_in_votes_blind_jsonl(client: TestClient, tmp_
     assert again.json()["has_next"] is False
 
 
-def test_morning_bundle_asset_refuses_traversal(client: TestClient, tmp_path: Path):
+@pytest.mark.parametrize(
+    "escape",
+    [
+        "../../../../../../etc/hostname",
+        # Starlette normalizes a plain "../" before routing, so only the encoded
+        # forms actually reach the route's containment guard (the same finding as
+        # the run-scoped vote_pages traversal test above).
+        "..%2F..%2F..%2F..%2F..%2F..%2Fetc%2Fhostname",
+        "%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fhostname",
+        # One level up is a real file inside the run dir: a working escape returns it.
+        "..%2Fmorning-summary.json",
+    ],
+)
+def test_morning_bundle_asset_refuses_traversal(client: TestClient, tmp_path: Path, escape: str):
     queue_path, _run_dir, job_id = _morning_bundle_fixture(tmp_path)
     # Populate vote_pages/ by requesting a pair first.
     client.get(f"/api/morning/{job_id}/pair?queue={queue_path}")
-    res = client.get(f"/api/morning/{job_id}/assets/../../../../../../etc/hostname?queue={queue_path}")
+    res = client.get(f"/api/morning/{job_id}/assets/{escape}?queue={queue_path}")
     assert res.status_code == 404
 
 
