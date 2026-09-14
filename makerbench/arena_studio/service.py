@@ -67,6 +67,27 @@ def is_valid_task_id(task_id: object) -> bool:
     return isinstance(task_id, str) and _TASK_ID_RE.fullmatch(task_id) is not None
 
 
+def _escape_markdown_cell(value: object) -> str:
+    """Make an agent-submitted or user-supplied identifier safe inside a
+    Markdown table cell / backtick span (#716): a stray `|` would otherwise
+    split the row into extra columns, an embedded newline would break the
+    row entirely, and a backtick would close a wrapping code span early.
+
+    A backtick is *substituted*, not backslash-escaped (#718 R2 fix):
+    CommonMark code spans do not process backslash escapes at all, so
+    ``\\``` `` surviving into content a caller wraps as `` `{cell}` `` would
+    still close that span early -- the backslash before it is inert, giving
+    a false sense of safety rather than actual safety.
+    """
+    text = str(value)
+    return (
+        text.replace("\\", "\\\\")
+        .replace("`", "'")
+        .replace("|", "\\|")
+        .replace("\n", " ")
+        .replace("\r", " ")
+    )
+
 
 class ArenaStudioService:
     """Business logic and data provider for MakerBench Arena Studio."""
