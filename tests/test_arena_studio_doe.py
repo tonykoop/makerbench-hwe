@@ -175,6 +175,18 @@ def test_resolve_max_cost_zero_override_is_not_a_free_pass():
         )
 
 
+@pytest.mark.parametrize("override", [float("nan"), float("inf"), float("-inf")], ids=["nan", "+inf", "-inf"])
+def test_resolve_max_cost_rejects_non_finite_override(override: float):
+    # sol, #770: NaN <= 0 is False, so a NaN override used to be accepted as a
+    # "ceiling" that BudgetGuard's comparisons could never trip; +inf is no cap.
+    with pytest.raises(ValueError, match="openrouter-paid-a"):
+        doe.resolve_max_cost_usd_by_model(
+            ["openrouter-paid-a"],
+            overrides={"openrouter-paid-a": override},
+            telemetry_store="/nonexistent/sessions.jsonl",
+        )
+
+
 @pytest.fixture
 def fake_registry(tmp_path: Path) -> Path:
     reg_path = tmp_path / "registry.json"
@@ -235,6 +247,25 @@ def test_doe_queue_route(client: TestClient, repo_root_with_reference: Path):
     assert queue_path.exists()
     payload, jobs = nightly_cad.load_queue(queue_path)
     assert len(jobs) == 1
+
+
+@pytest.mark.parametrize("override", [float("nan"), float("inf"), float("-inf")], ids=["nan", "+inf", "-inf"])
+def test_write_doe_queue_refuses_non_finite_ceiling_before_writing(
+    fake_registry: Path, repo_root_with_reference: Path, override: float
+):
+    service = ArenaStudioService(registry_path=fake_registry, repo_root=repo_root_with_reference)
+    service.set_task_approval("ocarina", True)
+    with pytest.raises(ValueError, match="openrouter-paid-a"):
+        service.write_doe_queue(
+            "doe_non_finite_run",
+            ["ocarina"],
+            ["openrouter-paid-a", "openrouter-paid-b"],
+            levels=["L1"],
+            seeds=[0],
+            max_cost_usd_by_model={"openrouter-paid-a": override, "openrouter-paid-b": 1.0},
+        )
+    run_dir = repo_root_with_reference / "runs" / "code_cad_arena" / "doe_non_finite_run"
+    assert not (run_dir / "doe_queue.json").exists()
 
 
 def test_write_doe_queue_refuses_unknown_cost_model_not_silently_zero(

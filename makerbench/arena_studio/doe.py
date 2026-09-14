@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import itertools
+import math
 from pathlib import Path
 from typing import Callable, Iterable, Mapping, Optional
 
@@ -240,7 +241,10 @@ def resolve_max_cost_usd_by_model(
     for model_id in set(model_ids):
         override = overrides.get(model_id)
         if override is not None:
-            if override <= 0:
+            # NaN compares false against everything, so a NaN "ceiling" would
+            # silently disable BudgetGuard's reserve/charge checks; infinities
+            # are no cap at all. Only a finite positive dollar amount is a ceiling.
+            if not math.isfinite(override) or override <= 0:
                 unresolved.append(model_id)
                 continue
             resolved[model_id] = float(override)
