@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MakerBench Arena Studio</title>
   <link rel="stylesheet" href="/static/studio.css" />
+  <script type="module" src="/static/assets/model-viewer.min.js"></script>
 </head>
 <body>
   <header>
@@ -237,7 +238,7 @@
           <div id="voteProgress" style="font-weight: 600; color: var(--text-muted);">Pair 0 of 0</div>
           <div class="filter-pills" style="margin: 0;">
             <button id="btnTurntableMode" class="pill active" onclick="setViewerMode('turntable')">🔄 24-Frame Turntable (Zero-WebGL)</button>
-            <button id="btnWebglMode" class="pill" onclick="setViewerMode('webgl')">🧊 Interactive 3D (WebGL)</button>
+            <button id="btnWebglMode" class="pill" onclick="setViewerMode('webgl')" disabled title="Checking WebGL2 availability&hellip;">🧊 Interactive 3D (WebGL)</button>
           </div>
         </div>
         <div style="font-size: 13px; color: var(--text-muted);">Shortcuts: <b>L</b> = Left, <b>D</b> = Draw, <b>R</b> = Right</div>
@@ -254,8 +255,10 @@
             <span>Candidate A</span>
             <span id="labelCandA" style="color: var(--text-muted);">-</span>
           </div>
-          <div class="viewer-container" id="viewerLeft">
+          <div class="viewer-container" id="viewerLeft" tabindex="0" role="img" aria-label="Candidate A turntable, use left and right arrow keys to rotate when focused">
             <img id="imgLeft" src="" alt="Candidate Left" />
+            <model-viewer id="mvLeft" style="display:none; width:100%; height:100%;" camera-controls disable-pan></model-viewer>
+            <div class="frame-progress" id="progressLeft" style="display:none;">Loading frames&hellip; <span id="progressLeftCount">0/0</span></div>
           </div>
           <div class="flags-box" id="flagsLeft">
             <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">Defect Checklist</div>
@@ -274,8 +277,10 @@
             <span>Candidate B</span>
             <span id="labelCandB" style="color: var(--text-muted);">-</span>
           </div>
-          <div class="viewer-container" id="viewerRight">
+          <div class="viewer-container" id="viewerRight" tabindex="0" role="img" aria-label="Candidate B turntable, use left and right arrow keys to rotate when focused">
             <img id="imgRight" src="" alt="Candidate Right" />
+            <model-viewer id="mvRight" style="display:none; width:100%; height:100%;" camera-controls disable-pan></model-viewer>
+            <div class="frame-progress" id="progressRight" style="display:none;">Loading frames&hellip; <span id="progressRightCount">0/0</span></div>
           </div>
           <div class="flags-box" id="flagsRight">
             <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">Defect Checklist</div>

@@ -241,6 +241,57 @@ def test_html_ui_no_external_urls(client: TestClient):
         assert "https://" not in text, f"{label} references an external https:// URL"
 
 
+def test_turntable_html_progressive_enhancement(client: TestClient):
+    """C2/#698: WebGL orbit must start disabled — the frame turntable is the default."""
+    response = client.get("/")
+    assert response.status_code == 200
+    html = response.text
+
+    assert 'id="btnWebglMode"' in html
+    webgl_btn = re.search(r'<button id="btnWebglMode"[^>]*>', html).group(0)
+    assert "disabled" in webgl_btn, "WebGL toggle must start disabled until feature-detected"
+
+    assert 'id="btnTurntableMode"' in html
+    turntable_btn = re.search(r'<button id="btnTurntableMode"[^>]*>', html).group(0)
+    assert "active" in turntable_btn, "frame turntable must be the default active mode"
+
+    # model-viewer is loaded locally only, as an ES module, never from a CDN.
+    assert 'type="module" src="/static/assets/model-viewer.min.js"' in html
+
+
+def test_turntable_js_has_context_loss_safety_net(client: TestClient):
+    """C2/#698: WebGL context loss (real CONTEXT_LOST_WEBGL on RDP) must fall back to
+    frames automatically, and the fallback path must never be reachable without also
+    resetting to the turntable so a voter is never left with a blank viewer.
+
+    A `webglcontextlost` event fired on <model-viewer>'s internal (shadow-DOM) canvas
+    is not `composed`, so it never crosses the shadow boundary to reach a window-level
+    (or even model-viewer-element-level) listener for that raw event type — a real,
+    verified-in-browser defect in an earlier version of this safety net (see
+    test_context_loss_error_event_triggers_turntable_fallback for the real-browser
+    proof). model-viewer instead re-surfaces internal renderer failures as a plain DOM
+    'error' event dispatched on the element itself (light DOM), which a direct
+    listener on that element genuinely receives — assert THAT mechanism instead.
+    """
+    js = client.get("/static/studio.js").text
+
+    assert "isContextLost" in js
+    assert "forceTurntableFallback" in js
+    # The context-loss safety net listens directly on each <model-viewer> element's
+    # own light-DOM 'error' event, not a window-level listener for the raw (and
+    # shadow-DOM-scoped, hence unreachable) webglcontextlost event.
+    assert "document.getElementById(mvId).addEventListener('error'" in js
+    assert "window.addEventListener('webglcontextlost'" not in js
+    # The fallback handler must itself flip the UI back to turntable mode.
+    fallback_fn = js.split("function forceTurntableFallback", 1)[1].split("\n    }", 1)[0]
+    assert "setViewerMode('turntable')" in fallback_fn
+
+    # Auto-rotate and frame preloading (with a visible progress state) are required by
+    # the lane contract for the primary turntable view.
+    assert "startAutoRotate" in js
+    assert "progressEl.style.display" in js
+
+
 def test_cli_arena_studio_help():
     result = runner.invoke(
         cli_app,
