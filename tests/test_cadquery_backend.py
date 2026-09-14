@@ -83,6 +83,36 @@ class TestRealCadQueryCompiler:
         assert step.is_file() and step.read_text(encoding="utf-8", errors="ignore").startswith(
             "ISO-10303-21"
         )
+        volume_warning = next(
+            warning
+            for warning in artifacts.warnings
+            if warning.startswith("brep_mesh_volume:")
+        )
+        assert "brep_mm3=48000.000" in volume_warning
+        assert "mesh_mm3=48000.000" in volume_warning
+        assert "relative_delta=0.000000" in volume_warning
+
+    def test_brep_metric_failure_is_warning_only(self, tmp_path, monkeypatch):
+        script = tmp_path / "metric_failure.py"
+        script.write_text(
+            "import cadquery as cq\nresult = cq.Workplane('XY').box(10, 10, 10)\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            cadquery_backend,
+            "_step_mesh_volume_warning",
+            lambda *_args: (_ for _ in ()).throw(ValueError("controlled failure")),
+        )
+
+        artifacts = cadquery_backend.compile_cadquery_to_artifacts(
+            script, tmp_path / "out"
+        )
+
+        assert artifacts.stl_path.stat().st_size > 0
+        assert artifacts.png_path.stat().st_size > 0
+        assert artifacts.warnings[-1] == (
+            "brep_mesh_volume: unavailable (ValueError: controlled failure)"
+        )
 
     def test_show_shape_is_accepted(self, tmp_path):
         script = tmp_path / "shown.py"
