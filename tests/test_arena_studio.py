@@ -1838,11 +1838,12 @@ def test_studio_full_morning_flow_end_to_end(tmp_path: Path):
     objective_rates = {judge_data["left"]["objective"]["objective_pass_rate"], judge_data["right"]["objective"]["objective_pass_rate"]}
     assert objective_rates == {1.0, 0.5}
 
-    # 8. Agreement refresh: the vote cast through Morning Review feeds the same
-    # Elo/agreement math the regular Arena Analytics tab reads — proving Morning
-    # Review isn't a parallel/disconnected data path.
+    # 8. Agreement refresh: both votes cast through Morning Review (tony's and
+    # bob's, from 5b) feed the same Elo/agreement math the regular Arena
+    # Analytics tab reads — proving Morning Review isn't a parallel/disconnected
+    # data path, for more than one voter.
     agreement_res = client.get(f"/api/runs/{run_id}/agreement")
     assert agreement_res.status_code == 200
     summary_res = client.get(f"/api/runs/{run_id}/summary")
     assert summary_res.status_code == 200
-    assert summary_res.json()["votes_count"] == 1
+    assert summary_res.json()["votes_count"] == 2
