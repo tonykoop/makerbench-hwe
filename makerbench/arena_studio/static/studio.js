@@ -755,6 +755,66 @@
     bindTurntableKeyboard('morningViewerLeft', 'morningImgLeft');
     bindTurntableKeyboard('morningViewerRight', 'morningImgRight');
 
+    /* R2 P4: redacted, read-only preflight doctor panel. Only ever POSTs the file
+       PATHS the operator typed — never a secret value (there is nothing on this page
+       that could even hold one; the server itself only returns classifications). */
+    async function runPreflight() {
+        const resultEl = document.getElementById('preflightResult');
+        const secrets = document.getElementById('preflightSecretsPath').value.trim();
+        const queue = document.getElementById('preflightQueuePath').value.trim();
+        const outputRoot = document.getElementById('preflightOutputRoot').value.trim();
+        const runnerScript = document.getElementById('preflightRunnerScript').value.trim();
+
+        if (!secrets || !queue || !outputRoot) {
+          resultEl.innerHTML = '<span style="color: var(--danger);">Secrets file, queue file, and output root are all required.</span>';
+          return;
+        }
+        resultEl.textContent = 'Running preflight…';
+
+        try {
+          const body = { secrets, queue, output_root: outputRoot };
+          if (runnerScript) body.runner_script = runnerScript;
+          const res = await fetch('/api/preflight', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) {
+            const detail = (await res.json().catch(() => ({}))).detail || res.statusText;
+            resultEl.innerHTML = `<span style="color: var(--danger);">Preflight failed: ${detail}</span>`;
+            return;
+          }
+          const data = await res.json();
+          const verdictColor = data.verdict === 'GO' ? 'var(--success)' : 'var(--danger)';
+          const secretsRows = data.secrets.map(s =>
+            `<div>${s.key}: <b style="color: ${s.status === 'PRESENT' ? 'var(--success)' : 'var(--warning)'};">${s.status}</b></div>`
+          ).join('');
+          const pathsRows = data.paths.map(p =>
+            `<div>${p.name}: ${p.exists ? '✓' : '✗'} <code style="font-size:11px;">${p.path}</code></div>`
+          ).join('');
+          resultEl.innerHTML = `
+            <h3 style="font-size: 16px; margin-bottom: 10px;">Verdict: <span style="color: ${verdictColor};">${data.verdict}</span></h3>
+            <div class="grid-2">
+              <div>
+                <div style="font-weight: 700; margin-bottom: 4px;">Secrets</div>
+                ${secretsRows}
+                <div style="font-weight: 700; margin: 10px 0 4px;">Lock</div>
+                <div>${data.lock.status}${data.lock.pid ? ' (pid ' + data.lock.pid + ')' : ''}</div>
+              </div>
+              <div>
+                <div style="font-weight: 700; margin-bottom: 4px;">Queue</div>
+                <div>${data.queue.ok ? 'OK' : (data.queue.error || 'blocked jobs present')}</div>
+                <div style="font-weight: 700; margin: 10px 0 4px;">Paths</div>
+                ${pathsRows}
+              </div>
+            </div>
+          `;
+        } catch (e) {
+          console.error('Preflight request failed', e);
+          resultEl.innerHTML = '<span style="color: var(--danger);">Preflight request failed.</span>';
+        }
+    }
+
     async function exportWinnersAction() {
       if (!currentRun) return;
       try {

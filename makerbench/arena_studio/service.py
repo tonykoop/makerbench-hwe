@@ -380,6 +380,68 @@ class ArenaStudioService:
             },
         }
 
+    def run_preflight(self, config: Mapping[str, Any]) -> dict[str, Any]:
+        """R2 P4/#... : redacted, read-only nightly-cad doctor view for Studio.
+
+        Delegates entirely to the existing `nightly_preflight` module (#658) rather
+        than re-deriving any secret/lock/queue classification here — this only shapes
+        its `PreflightReport` into JSON. No queue or lock mutation code path exists in
+        `nightly_preflight` itself, and secret values never leave that module; only
+        PRESENT/MISSING/PLACEHOLDER classifications cross this boundary.
+
+        Note: atlas's #724 ships a fuller Studio preflight endpoint bundled with other,
+        unrelated stretch work (live-launch job rediscovery, log streaming) on a
+        separate branch off `feat/696-arena-studio`. This is a narrower, independent
+        implementation scoped to exactly what the P4 frontend panel needs, built so P4
+        isn't blocked on that larger PR landing first; the response shape intentionally
+        matches #724's so a later merge trivially dedups either direction.
+        """
+        from makerbench import nightly_preflight
+
+        repo_path = Path(config.get("repo_root") or self.repo_root).resolve()
+        output_path = Path(config["output_root"]).resolve()
+        queue_path = Path(config["queue"]).resolve()
+        secrets_path = Path(config["secrets"]).resolve()
+        runner_path = Path(
+            config.get("runner_script")
+            or repo_path / "scripts" / "windows" / "run-nightly-cad-arena.ps1"
+        ).resolve()
+        named_paths: dict[str, Path] = {
+            "runner_script": runner_path,
+            "repo_root": repo_path,
+            "queue": queue_path,
+            "output_root": output_path,
+        }
+        if config.get("instruments_root"):
+            named_paths["instruments_root"] = Path(config["instruments_root"]).resolve()
+
+        report = nightly_preflight.build_report(
+            secrets_path=secrets_path,
+            lock_path=(
+                Path(config["lock"]).resolve()
+                if config.get("lock")
+                else output_path / ".nightly-cad.lock"
+            ),
+            queue_path=queue_path,
+            named_paths=named_paths,
+        )
+        return {
+            "ok": report.ok,
+            "verdict": "GO" if report.ok else "NO-GO",
+            "lines": nightly_preflight.render_report_lines(report),
+            "secrets": [{"key": item.key, "status": item.status} for item in report.secrets],
+            "lock": {"status": report.lock.status, "pid": report.lock.pid},
+            "queue": {
+                "ok": report.queue.ok,
+                "error": report.queue.error,
+                "jobs": [{"job_id": job_id, "status": status} for job_id, status in report.queue.jobs],
+            },
+            "paths": [
+                {"name": item.name, "path": str(item.path), "exists": item.exists}
+                for item in report.paths
+            ],
+        }
+
     def discover_morning_bundles(self, queue_path: Path) -> list[dict[str, Any]]:
         """R2 P2/#733-follow: nightly jobs whose morning bundle is ready for review.
 

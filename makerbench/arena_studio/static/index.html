@@ -20,6 +20,7 @@
       <button class="nav-btn" data-tab="compare" onclick="switchTab('compare', this)">⚖️ Compare Runs</button>
       <button class="nav-btn" data-tab="nightly" onclick="switchTab('nightly', this)">🌙 Nightly Queue</button>
       <button class="nav-btn" data-tab="morning" onclick="switchTab('morning', this)">🌅 Morning Review</button>
+      <button class="nav-btn" data-tab="preflight" onclick="switchTab('preflight', this)">🩺 Preflight</button>
       <button class="nav-btn" data-tab="tasks" onclick="switchTab('tasks', this)">Task Matrix</button>
     </div>
     <div class="run-select-wrapper">
@@ -482,6 +483,40 @@
         </div>
         <div id="morningJudgePanel" class="card" style="margin-top: 16px;" hidden></div>
       </div>
+    </section>
+
+    <!-- PREFLIGHT DOCTOR TAB (R2 P4, redacted, read-only, refreshable) -->
+    <section id="pane-preflight" class="tab-pane">
+      <div style="margin-bottom: 16px;">
+        <h2 style="font-size: 18px; font-weight: 700;">Nightly CAD Preflight</h2>
+        <span style="font-size: 12px; color: var(--text-muted);">Redacted doctor check: secrets are classified PRESENT/MISSING/PLACEHOLDER only, values never leave the server. Read-only — no queue/lock mutation.</span>
+      </div>
+
+      <div class="card" style="margin-bottom: 16px;">
+        <div class="grid-2" style="margin-bottom: 10px;">
+          <div>
+            <label for="preflightSecretsPath" style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Secrets file</label>
+            <input id="preflightSecretsPath" type="text" placeholder="secrets.env" style="width: 100%;" />
+          </div>
+          <div>
+            <label for="preflightQueuePath" style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Queue file</label>
+            <input id="preflightQueuePath" type="text" placeholder="runs/nightly-cad-queue.json" style="width: 100%;" />
+          </div>
+        </div>
+        <div class="grid-2" style="margin-bottom: 10px;">
+          <div>
+            <label for="preflightOutputRoot" style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Output root</label>
+            <input id="preflightOutputRoot" type="text" placeholder="runs" style="width: 100%;" />
+          </div>
+          <div>
+            <label for="preflightRunnerScript" style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Runner script (optional)</label>
+            <input id="preflightRunnerScript" type="text" placeholder="scripts/windows/run-nightly-cad-arena.ps1" style="width: 100%;" />
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="runPreflight()">🩺 Run Preflight</button>
+      </div>
+
+      <div id="preflightResult" class="card"></div>
     </section>
 
     <!-- TASK MATRIX TAB -->

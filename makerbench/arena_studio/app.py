@@ -29,6 +29,16 @@ class UndoVotePayload(BaseModel):
     voter: str = "tony"
 
 
+class PreflightPayload(BaseModel):
+    secrets: str
+    queue: str
+    output_root: str
+    repo_root: Optional[str] = None
+    runner_script: Optional[str] = None
+    instruments_root: Optional[str] = None
+    lock: Optional[str] = None
+
+
 class CompetitionLaunchPayload(BaseModel):
     run_id: Optional[str] = None
     instruments: list[str] = Field(default_factory=lambda: ["ocarina"])
@@ -112,6 +122,13 @@ def create_studio_app(
     def list_tasks(family: Optional[str] = Query(None)):
         tasks = service.get_registry_tasks(family=family)
         return {"tasks": tasks, "count": len(tasks)}
+
+    @app.post("/api/preflight")
+    def run_preflight(payload: PreflightPayload):
+        try:
+            return service.run_preflight(payload.model_dump())
+        except (OSError, ValueError, KeyError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     @app.get("/api/runs/{run_id}/summary")
     def get_run_summary(run_id: str):

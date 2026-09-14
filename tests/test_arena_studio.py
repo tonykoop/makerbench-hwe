@@ -1486,3 +1486,105 @@ def test_morning_judge_panel_reveal_gate_is_per_voter_not_global(client: TestCli
         f"/api/morning/{job_id}/judge-panel?pair_id={pair_id}&voter=alice&queue={queue_path}"
     )
     assert alice_res.status_code == 200
+
+
+def test_preflight_endpoint_redacts_secret_values(client: TestClient, tmp_path: Path):
+    """R2 P4: GO/NO-GO + classifications only, never a secret's actual value."""
+    secrets_path = tmp_path / "secrets.env"
+    secrets_path.write_text(
+        "CADAM_USER_ID=super-secret-user-abc123\n"
+        "CADAM_ACCESS_TOKEN=sk-should-never-appear-xyz789\n"
+        "SUPABASE_SERVICE_ROLE_KEY=changeme\n",
+        encoding="utf-8",
+    )
+    queue_path = tmp_path / "nightly-cad-queue.json"
+    queue_path.write_text(
+        json.dumps({"schema": "makerbench-nightly-cad-queue-v1", "jobs": []}), encoding="utf-8"
+    )
+    output_root = tmp_path / "runs"
+    output_root.mkdir()
+
+    res = client.post(
+        "/api/preflight",
+        json={"secrets": str(secrets_path), "queue": str(queue_path), "output_root": str(output_root)},
+    )
+    assert res.status_code == 200
+    data = res.json()
+
+    assert "super-secret-user-abc123" not in res.text
+    assert "sk-should-never-appear-xyz789" not in res.text
+
+    by_key = {item["key"]: item["status"] for item in data["secrets"]}
+    assert by_key["CADAM_USER_ID"] == "PRESENT"
+    assert by_key["CADAM_ACCESS_TOKEN"] == "PRESENT"
+    assert by_key["SUPABASE_SERVICE_ROLE_KEY"] == "PLACEHOLDER"  # "changeme" is a stand-in
+    assert data["verdict"] == "NO-GO"  # placeholder secret -> not GO
+    assert data["lock"]["status"] == "ABSENT"
+    assert data["queue"]["ok"] is True
+    assert isinstance(data["lines"], list) and len(data["lines"]) > 0
+
+
+def test_preflight_endpoint_go_verdict_and_paths(client: TestClient, tmp_path: Path):
+    secrets_path = tmp_path / "secrets.env"
+    secrets_path.write_text(
+        "CADAM_USER_ID=real-user\nCADAM_ACCESS_TOKEN=real-token\nSUPABASE_SERVICE_ROLE_KEY=real-key\n",
+        encoding="utf-8",
+    )
+    queue_path = tmp_path / "nightly-cad-queue.json"
+    queue_path.write_text(
+        json.dumps({"schema": "makerbench-nightly-cad-queue-v1", "jobs": []}), encoding="utf-8"
+    )
+    output_root = tmp_path / "runs"
+    output_root.mkdir()
+    runner = tmp_path / "run-nightly-cad-arena.ps1"
+    runner.write_text("# stub", encoding="utf-8")
+
+    res = client.post(
+        "/api/preflight",
+        json={
+            "secrets": str(secrets_path),
+            "queue": str(queue_path),
+            "output_root": str(output_root),
+            "runner_script": str(runner),
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["ok"] is True
+    assert data["verdict"] == "GO"
+    paths_by_name = {p["name"]: p for p in data["paths"]}
+    assert paths_by_name["runner_script"]["exists"] is True
+    assert paths_by_name["output_root"]["exists"] is True
+
+
+def test_preflight_endpoint_never_mutates_queue_or_secrets(client: TestClient, tmp_path: Path):
+    secrets_path = tmp_path / "secrets.env"
+    secrets_path.write_text("CADAM_USER_ID=x\n", encoding="utf-8")
+    queue_path = tmp_path / "nightly-cad-queue.json"
+    queue_path.write_text(
+        json.dumps({"schema": "makerbench-nightly-cad-queue-v1", "jobs": []}), encoding="utf-8"
+    )
+    output_root = tmp_path / "runs"
+    output_root.mkdir()
+    secrets_before = secrets_path.read_bytes()
+    queue_before = queue_path.read_bytes()
+
+    client.post(
+        "/api/preflight",
+        json={"secrets": str(secrets_path), "queue": str(queue_path), "output_root": str(output_root)},
+    )
+
+    assert secrets_path.read_bytes() == secrets_before
+    assert queue_path.read_bytes() == queue_before
+
+
+def test_preflight_tab_markup_and_js_never_posts_secret_value_field(client: TestClient):
+    html = client.get("/").text
+    assert 'data-tab="preflight"' in html
+    assert 'id="pane-preflight"' in html
+    for element_id in ("preflightSecretsPath", "preflightQueuePath", "preflightOutputRoot", "preflightResult"):
+        assert f'id="{element_id}"' in html, f"missing #{element_id} in Preflight markup"
+
+    js = client.get("/static/studio.js").text
+    assert "async function runPreflight()" in js
+    assert "fetch('/api/preflight'" in js
