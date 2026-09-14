@@ -1021,6 +1021,11 @@ def arena_studio(
             "--allow-remote",
             help="Allow binding Arena Studio to a non-loopback interface.",
         ),
+        allow_live: bool = typer.Option(
+            False,
+            "--allow-live",
+            help="Allow explicit live arena launches from Studio (may invoke provider CLIs).",
+        ),
         port: int = typer.Option(8080, "--port", help="Bind port."),
         registry: str = typer.Option(DEFAULT_REGISTRY, "--registry", help="Arena registry JSON path.")):
     """Launch the MakerBench Arena Studio web interface (Issue #696)."""
@@ -1045,6 +1050,10 @@ def arena_studio(
     from .arena_studio import create_studio_app
 
     run_path = Path(run_dir) if run_dir else None
-    app = create_studio_app(default_run_dir=run_path, registry_path=Path(registry))
+    app = create_studio_app(
+        default_run_dir=run_path,
+        registry_path=Path(registry),
+        allow_live=allow_live,
+    )
     console.print(f"[bold green]MakerBench Arena Studio running at http://{host}:{port}/[/bold green]")
     uvicorn.run(app, host=host, port=port)
