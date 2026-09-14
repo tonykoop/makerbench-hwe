@@ -158,11 +158,16 @@ def test_studio_launcher_is_loopback_only():
 
 def test_studio_launcher_waits_for_health_before_opening_browser():
     text = STUDIO_LAUNCHER.read_text(encoding="utf-8")
-    assert "/api/health" in text
-    health_at = text.index("/api/health")
-    browser_at = text.index("Start-Process")
-    assert health_at < browser_at, "must poll health before opening the browser tab"
-    assert "$NoBrowser" in text  # opt-out escape hatch for a Playwright-style caller
+    # Compare executable code only: the <# ... #> help block mentions /api/health
+    # in prose, which would otherwise satisfy the ordering check on its own.
+    body = re.sub(r"^<#.*?#>", "", text, count=1, flags=re.DOTALL)
+    health_poll_at = body.index("Invoke-WebRequest -Uri $healthUrl")
+    browser_calls = [m.start() for m in re.finditer(r"\bStart-Process\b", body)]
+    assert browser_calls, "launcher must open the browser via Start-Process"
+    assert all(health_poll_at < at for at in browser_calls), (
+        "must poll /api/health before opening any browser tab"
+    )
+    assert "$NoBrowser" in body  # opt-out escape hatch for a Playwright-style caller
 
 
 def test_studio_launcher_never_references_legacy_checkout_path():
