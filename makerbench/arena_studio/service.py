@@ -28,6 +28,9 @@ from makerbench.code_cad_agreement import (
     build_agreement_summary,
     render_markdown_summary,
 )
+# One escaping helper for every section of an exported report: the agreement
+# renderer uses the same function for its entrant cells (sol, #767).
+from makerbench.code_cad_agreement import escape_markdown_cell as _escape_markdown_cell
 from makerbench.code_cad_vote_surface import (
     BlindPair,
     VoteCandidate,
@@ -49,27 +52,6 @@ _SAFE_RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 #: One path segment: the same shape launch_competition accepts for run ids.
 _SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 
-
-def _escape_markdown_cell(value: object) -> str:
-    """Make an agent-submitted or user-supplied identifier safe inside a
-    Markdown table cell / backtick span (#716): a stray `|` would otherwise
-    split the row into extra columns, an embedded newline would break the
-    row entirely, and a backtick would close a wrapping code span early.
-
-    A backtick is *substituted*, not backslash-escaped (#718 R2 fix):
-    CommonMark code spans do not process backslash escapes at all, so
-    ``\\``` `` surviving into content a caller wraps as `` `{cell}` `` would
-    still close that span early -- the backslash before it is inert, giving
-    a false sense of safety rather than actual safety.
-    """
-    text = str(value)
-    return (
-        text.replace("\\", "\\\\")
-        .replace("`", "'")
-        .replace("|", "\\|")
-        .replace("\n", " ")
-        .replace("\r", " ")
-    )
 
 
 class ArenaStudioService:

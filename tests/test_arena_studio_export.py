@@ -134,10 +134,8 @@ def test_export_report_escapes_malicious_entrant_and_instrument_names(
     report = service.export_report(run_dir)
     # No raw, unescaped pipe/backtick from the malicious name survives into
     # the Elo Leaderboard table this method builds (a literal backtick or
-    # pipe would corrupt row structure). The separate "Agreement Analysis"
-    # section is rendered by code_cad_agreement.render_markdown_summary,
-    # a different module (#427/#598) with its own escaping gap -- out of
-    # scope for this fix, which is limited to service.py per #716.
+    # pipe would corrupt row structure). Every other section is covered by
+    # test_export_report_escapes_hostile_entrant_in_every_section below.
     leaderboard_section = report.split("## Elo Leaderboard", 1)[1].split("##", 1)[0]
     assert "evil\\|model'name" in leaderboard_section
     assert "| evil|model`name |" not in leaderboard_section
@@ -189,3 +187,70 @@ def test_export_report_shows_real_rating_and_draws_not_fixed_defaults(
     assert f"{winner_row['rating']:.1f}" in row_line
     # The row for model-a must show its real draw count, not a hardcoded 0.
     assert row_line.rstrip().endswith("| 1 |")
+
+
+def _unescaped_pipes(line: str) -> int:
+    return line.count("|") - line.count("\\|")
+
+
+def test_export_report_escapes_hostile_entrant_in_every_section(
+    service: ArenaStudioService, tmp_path: Path
+):
+    """sol, #767: the production report renderer, end to end, with hostile entrant
+    text reaching every section -- title, Elo table, unrated list and the
+    Agreement Analysis tables -- must never let that text add a column, break a
+    row or open a code span.
+    """
+    hostile = "evil|model`x"
+    ghost = "ghost|`y\nz"
+    run_dir = tmp_path / "runs" / "code_cad_arena" / "hostile|run`name"
+    run_log = {
+        "config": {"model_ids": [hostile, "clean-model", ghost]},
+        "trials": [
+            {
+                "trial_id": "t1",
+                "model_id": hostile,
+                "instrument_id": "ocarina",
+                "status": "completed",
+                "result": {"objective": {"objective_pass_rate": 1.0}},
+            },
+            {
+                "trial_id": "t2",
+                "model_id": "clean-model",
+                "instrument_id": "ocarina",
+                "status": "completed",
+                "result": {"objective": {"objective_pass_rate": 0.5}},
+            },
+        ],
+    }
+    revealed = [
+        {
+            "winner": "left",
+            "instrument_id": "ocarina",
+            "reveal": {"left": {"model_id": hostile}, "right": {"model_id": "clean-model"}},
+        }
+    ]
+    _write_run(run_dir, run_log, revealed)
+
+    report = service.export_report(run_dir)
+
+    # The hostile text reached every section, escaped.
+    sections = report.split("\n## ")
+    assert any(section.startswith("Elo Leaderboard") and "evil\\|model'x" in section for section in sections)
+    assert any(section.startswith("Agreement Analysis") and "evil\\|model'x" in section for section in sections)
+    assert "ghost\\|'y z" in report
+
+    # Nowhere in the whole report does any raw piece of it survive.
+    for raw in ("evil|model", "model`x", "ghost|", "`y", "hostile|run", "run`name"):
+        assert raw not in report, raw
+
+    # Every table row in every table keeps its header's column count.
+    header_pipes = None
+    for line in report.splitlines():
+        if not line.startswith("|"):
+            header_pipes = None
+            continue
+        if header_pipes is None:
+            header_pipes = _unescaped_pipes(line)
+            continue
+        assert _unescaped_pipes(line) == header_pipes, line

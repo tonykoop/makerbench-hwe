@@ -18,6 +18,31 @@ from typing import Iterable, Mapping, Optional
 SCHEMA = "makerbench-code-cad-agreement-v1"
 
 
+def escape_markdown_cell(value: object) -> str:
+    """Make an agent-submitted or user-supplied identifier safe inside a
+    Markdown table cell / backtick span (#716): a stray `|` would otherwise
+    split the row into extra columns, an embedded newline would break the
+    row entirely, and a backtick would close a wrapping code span early.
+
+    A backtick is *substituted*, not backslash-escaped (#718 R2 fix):
+    CommonMark code spans do not process backslash escapes at all, so
+    ``\\``` `` surviving into content a caller wraps as `` `{cell}` `` would
+    still close that span early -- the backslash before it is inert, giving
+    a false sense of safety rather than actual safety.
+
+    The single escaping helper for every Markdown table that carries entrant
+    text: this module's scoreline tables and Arena Studio's exported report.
+    """
+    text = str(value)
+    return (
+        text.replace("\\", "\\\\")
+        .replace("`", "'")
+        .replace("|", "\\|")
+        .replace("\n", " ")
+        .replace("\r", " ")
+    )
+
+
 @dataclass(frozen=True)
 class ScorelineRow:
     """One entrant's subjective, objective, and (optional) judge aggregates."""
@@ -137,7 +162,7 @@ def render_markdown_summary(summary: Mapping[str, object]) -> str:
                     label=f"{_METRIC_LABELS[left]} x {_METRIC_LABELS[right]}",
                     rho=_fmt(cell.get("rho")),
                     n=_fmt(cell.get("n")),
-                    interp=cell.get("interpretation") or "n/a",
+                    interp=escape_markdown_cell(cell.get("interpretation") or "n/a"),
                 )
             )
         lines.append("")
@@ -153,7 +178,7 @@ def render_markdown_summary(summary: Mapping[str, object]) -> str:
         record = dict(row)
         line = (
             "| {entrant} | {subjective} | {s_rank} | {objective} | {o_rank}".format(
-                entrant=record["entrant"],
+                entrant=escape_markdown_cell(record["entrant"]),
                 subjective=_fmt(record.get("subjective_elo")),
                 s_rank=_fmt(record.get("subjective_rank")),
                 objective=_fmt(record.get("objective_pass_rate")),
