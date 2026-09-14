@@ -635,17 +635,30 @@ def build_vote_candidates(
 
 
 def votes_to_elo_votes(revealed_jsonl: Path) -> list[Vote]:
-    """Join revealed vote records into entrant-level Elo votes (#425 input)."""
+    """Join revealed vote records into entrant-level Elo votes (#425 input).
 
-    votes: list[Vote] = []
+    Retraction records (``"retracts": true``, written by Arena Studio's undo — see
+    ``ArenaStudioService.undo_vote``) are replayed by ``(pair_id, voter_id)``: a
+    retraction cancels the most recently counted vote for that key, and a later
+    revote for the same key replaces it, matching the append-only replay pattern
+    already used for votes.blind.jsonl / ``_voted_pair_keys()``. A retraction record
+    carries no ``reveal`` block and is skipped before the identity check below, so it
+    never trips the "missing model identities" guard.
+    """
+
+    votes_by_key: dict[tuple[str, str], Vote] = {}
     path = Path(revealed_jsonl)
     if not path.exists():
-        return votes
+        return []
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
             continue
         record = json.loads(line)
+        key = (str(record.get("pair_id")), str(record.get("voter_id")))
+        if record.get("retracts"):
+            votes_by_key.pop(key, None)
+            continue
         reveal = record.get("reveal") or {}
         left = (reveal.get("left") or {}).get("model_id")
         right = (reveal.get("right") or {}).get("model_id")
@@ -653,17 +666,19 @@ def votes_to_elo_votes(revealed_jsonl: Path) -> list[Vote]:
             raise ValueError("revealed vote record is missing model identities")
         if left == right:
             continue  # same-entrant pair carries no rating signal
-        votes.append(
-            Vote(
-                left=str(left),
-                right=str(right),
-                winner=str(record.get("winner") or "").lower(),
-                instrument_id=record.get("instrument_id"),
-                seed=record.get("seed"),
-                voter_id=record.get("voter_id"),
-            )
+        # Pop-then-reinsert so a revote after a retraction moves to its own
+        # chronological position (dict iteration order) instead of the original
+        # vote's position.
+        votes_by_key.pop(key, None)
+        votes_by_key[key] = Vote(
+            left=str(left),
+            right=str(right),
+            winner=str(record.get("winner") or "").lower(),
+            instrument_id=record.get("instrument_id"),
+            seed=record.get("seed"),
+            voter_id=record.get("voter_id"),
         )
-    return votes
+    return list(votes_by_key.values())
 
 
 def judge_elo_payload(run_dir: Path, run_log: Mapping[str, object]) -> dict:

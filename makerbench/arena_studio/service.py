@@ -32,8 +32,10 @@ from makerbench.code_cad_agreement import (
 # renderer uses the same function for its entrant cells (sol, #767).
 from makerbench.code_cad_agreement import escape_markdown_cell as _escape_markdown_cell
 from makerbench.code_cad_vote_surface import (
+    SCHEMA,
     BlindPair,
     VoteCandidate,
+    append_vote_record,
     build_blind_pair,
 )
 from makerbench.code_cad_vote_web import QueueItem, VoteQueue
@@ -551,6 +553,43 @@ class ArenaStudioService:
         queue = self.get_or_create_queue(run_dir, voter=voter)
         success = queue.cast(pair_id=pair_id, winner=winner, flags=flags)
         return success
+
+    def undo_vote(self, run_dir: Path, pair_id: str, voter: str = "tony") -> bool:
+        """Retract a previously-cast vote (C4/#703 undo-last-vote window).
+
+        Never rewrites or removes a line from votes.blind.jsonl / votes.revealed.jsonl
+        (they stay append-only, an honest audit trail) — this appends a retraction
+        record to each instead, then drops the cached queue for (run_dir, voter) so the
+        next fetch rebuilds it: `_voted_pair_keys` (cli_arena.py) replays retractions and
+        stops counting the pair as voted, so it becomes available to vote on again.
+
+        Both streams get a retraction record (fixed after review — an earlier version
+        of this retracted only votes.blind.jsonl, on the theory that
+        votes_to_elo_votes() requires every revealed line to carry
+        reveal.left/right.model_id so a retraction marker there would break Elo
+        computation; the real fix, applied here, is votes_to_elo_votes() itself now
+        replaying retractions by (pair_id, voter_id) before requiring identities, so a
+        retraction record with no `reveal` block is skipped safely rather than
+        breaking). Without the revealed-stream retraction, the human leaderboard would
+        keep counting the "undone" vote forever, and a later revote could double-count.
+        """
+        run_path = run_dir.resolve()
+        voted = _voted_pair_keys(run_path, voter)
+        if (pair_id, voter) not in voted:
+            return False  # nothing to retract: never voted, or already retracted
+
+        retraction = {
+            "schema": SCHEMA,
+            "pair_id": pair_id,
+            "voter_id": voter,
+            "retracts": True,
+            "retracted_at": datetime.now(timezone.utc).isoformat(),
+        }
+        append_vote_record(run_path / "votes.blind.jsonl", retraction)
+        append_vote_record(run_path / "votes.revealed.jsonl", retraction)
+
+        self._queues.pop((str(run_path), voter), None)
+        return True
 
     def _get_approvals_path(self) -> Path:
         p = self.repo_root / ".makerbench" / "reference_approvals.json"
