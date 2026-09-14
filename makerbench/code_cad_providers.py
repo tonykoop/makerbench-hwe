@@ -47,6 +47,19 @@ BPY_SYSTEM = (
     "the complete Python script in ONE ```python code block and nothing else."
 )
 
+CADQUERY_SYSTEM = (
+    "You are a senior mechanical / design-for-manufacturing engineer who writes "
+    "CadQuery Python. Reason about 3D coordinates, wall thickness, part "
+    "interference, and manufacturability before writing code. CadQuery uses "
+    "millimetres: import `cadquery as cq`, build the complete part, and assign "
+    "a `cq.Workplane` or `cq.Shape` to the global variable `result` (or call the "
+    "provided `show(result)`). Do not read or write files, access the network, "
+    "export geometry, or render; the isolated harness owns STEP/STL/PNG output. "
+    "Follow the task brief and every constraint in the registry spec JSON. "
+    "Respond with the complete script in ONE ```python or ```cadquery code block "
+    "and nothing else."
+)
+
 # The SolidWorks/Fusion backends (#627) route through a Windows-side job-dir
 # runner (see makerbench.jobdir_backend) rather than compiling in-process, but
 # the fence-language half of a "backend" (system prompt + extraction) lives
@@ -92,6 +105,7 @@ FUSION_SYSTEM = (
 BACKEND_SYSTEM: Mapping[str, str] = {
     "openscad": SYSTEM,
     "blender": BPY_SYSTEM,
+    "cadquery": CADQUERY_SYSTEM,
     "solidworks": SOLIDWORKS_SYSTEM,
     "fusion": FUSION_SYSTEM,
 }
@@ -99,6 +113,10 @@ BACKEND_SYSTEM: Mapping[str, str] = {
 _CLOSING_INSTRUCTION: Mapping[str, str] = {
     "openscad": "Output the complete OpenSCAD program in one ```scad block.",
     "blender": "Output the complete Blender Python (bpy) script in one ```python block.",
+    "cadquery": (
+        "Output the complete CadQuery Python script in one ```python or "
+        "```cadquery block; assign the finished Workplane/Shape to `result`."
+    ),
     "solidworks": (
         "Output the complete VBA macro (one `Sub BuildPart()`, using the "
         "pre-declared `swApp`/`Part` objects, no export) in one ```vba block."
@@ -112,11 +130,13 @@ _CLOSING_INSTRUCTION: Mapping[str, str] = {
 
 _SCAD_RE = re.compile(r"```(?:scad|openscad)?\s*\n(.*?)```", re.DOTALL)
 _BPY_RE = re.compile(r"```(?:python|py|bpy)?\s*\n(.*?)```", re.DOTALL)
+_CADQUERY_RE = re.compile(r"```(?:python|py|cadquery)?\s*\n(.*?)```", re.DOTALL)
 _VBA_RE = re.compile(r"```(?:vba|basic)?\s*\n(.*?)```", re.DOTALL)
 _FUSION_PY_RE = re.compile(r"```(?:fusion-python|fusionpython)?\s*\n(.*?)```", re.DOTALL)
 _FENCE_RE_BY_BACKEND: Mapping[str, "re.Pattern[str]"] = {
     "openscad": _SCAD_RE,
     "blender": _BPY_RE,
+    "cadquery": _CADQUERY_RE,
     "solidworks": _VBA_RE,
     "fusion": _FUSION_PY_RE,
 }
@@ -172,7 +192,17 @@ def arena_prompt(request: GenerationRequest, backend: str = "openscad") -> str:
             f"{request.context_tier}) — read them if useful. They are curated "
             "public design docs, not a required answer.\n"
         )
-    return f"{system}\n\n{request.prompt}{context_note}\n{closing}"
+    request_prompt = request.prompt
+    if backend == "cadquery":
+        # The generation harness predates the backend axis and its stable core
+        # prompt still says OpenSCAD. Preserve that default/provenance hash, but
+        # remove the contradictory substrate wording from the actual CadQuery
+        # entrant prompt.
+        request_prompt = request_prompt.replace(
+            "Generate one parametric OpenSCAD program",
+            "Generate one parametric CadQuery Python program",
+        ).replace("Emit OpenSCAD only.", "Emit CadQuery Python only.")
+    return f"{system}\n\n{request_prompt}{context_note}\n{closing}"
 
 
 def _isolated_cwd(provider: str) -> str:
@@ -448,7 +478,7 @@ def make_stub_generator(program: Optional[str] = None, *, backend: str = "opensc
     """Zero-token generator for smoke tests.
 
     Without an explicit ``program`` it emits a deterministic hollow box (or,
-    for ``backend="blender"``, an equivalent ``bpy`` script) whose dimensions
+    for a Python backend, equivalent ``bpy``/CadQuery code) whose dimensions
     are jittered per (model_id, instrument_id, seed) so two stub entrants
     render visibly different candidates.
     """
@@ -470,6 +500,16 @@ def make_stub_generator(program: Optional[str] = None, *, backend: str = "opensc
                 f"cube = bpy.context.active_object\n"
                 f"cube.scale = ({width / 2}, {depth / 2}, {height / 2})\n"
                 f"bpy.ops.object.transform_apply(scale=True)\n"
+            )
+        if backend == "cadquery":
+            return (
+                f"# stub CadQuery candidate for {request.model_id}\n"
+                "import cadquery as cq\n"
+                f"outer = cq.Workplane('XY').box({width}, {depth}, {height})\n"
+                f"inner = (cq.Workplane('XY').box({width - 2 * wall}, "
+                f"{depth - 2 * wall}, {height})\n"
+                f"         .translate((0, 0, {wall})))\n"
+                "result = outer.cut(inner)\n"
             )
         return (
             f"// stub candidate for {request.model_id}\n"
@@ -650,7 +690,8 @@ def resolve_generator(
     entrant for the deterministic stub (smoke runs spend zero tokens). The
     ``timeout_s`` argument is a run-level default; a per-entrant
     ``model_map`` ``timeout_s`` wins over it. ``backend`` picks the CAD-backend
-    axis (#601): ``"openscad"`` (default) or ``"blender"``.
+    axis (#601/#752): ``"openscad"`` (default), ``"blender"``, or
+    ``"cadquery"`` (plus the separately registered Windows backends).
     """
 
     if stub:

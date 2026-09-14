@@ -107,6 +107,47 @@ class TestBlenderBackendAxis:
         assert "bpy.ops.mesh.primitive_cube_add" in gen(_request())
 
 
+class TestCadQueryBackendAxis:
+    def test_extract_candidate_accepts_python_and_cadquery_fences(self):
+        python = "```python\nimport cadquery as cq\nresult = cq.Workplane('XY').box(1, 2, 3)\n```"
+        tagged = "```cadquery\nimport cadquery as cq\nresult = cq.Workplane('XY').sphere(5)\n```"
+
+        assert "box(1, 2, 3)" in providers.extract_candidate(python, "cadquery")
+        assert "sphere(5)" in providers.extract_candidate(tagged, "cadquery")
+
+    def test_arena_prompt_is_cadquery_specific_and_has_no_openscad_contradiction(self):
+        request = _request()
+        request = GenerationRequest(
+            **{
+                **request.__dict__,
+                "prompt": (
+                    "Generate one parametric OpenSCAD program for the arena.\n"
+                    "Keep it deterministic. Emit OpenSCAD only.\n"
+                ),
+            }
+        )
+
+        prompt = providers.arena_prompt(request, "cadquery")
+
+        assert "CadQuery Python" in prompt
+        assert "millimetres" in prompt
+        assert "cq.Workplane" in prompt and "cq.Shape" in prompt
+        assert "show(result)" in prompt
+        assert "Do not read or write files" in prompt
+        assert "OpenSCAD" not in prompt
+
+    def test_stub_generator_emits_compilable_cadquery_contract(self):
+        source = providers.make_stub_generator(backend="cadquery")(_request("stub-a"))
+        assert "import cadquery as cq" in source
+        assert "result =" in source
+        assert "difference()" not in source
+
+    def test_all_cadquery_prompt_maps_are_registered(self):
+        assert "cadquery" in providers.BACKEND_SYSTEM
+        assert "cadquery" in providers._CLOSING_INSTRUCTION
+        assert "cadquery" in providers._FENCE_RE_BY_BACKEND
+
+
 class TestSolidworksFusionBackendAxis:
     """CAD-backend axis (#627): SolidWorks VBA / Fusion Python entrants."""
 
