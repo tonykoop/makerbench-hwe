@@ -57,6 +57,14 @@ _SAFE_RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 
 #: One path segment: the same shape launch_competition accepts for run ids.
 _SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
+# Registry task/reference ids as they are joined into reference-image paths: no dots,
+# no separators, so no id can name "..", a hidden file, or another directory.
+_TASK_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,127}")
+
+
+def is_valid_task_id(task_id: object) -> bool:
+    """True when ``task_id`` passes the task/reference id rule, registry or not."""
+    return isinstance(task_id, str) and _TASK_ID_RE.fullmatch(task_id) is not None
 
 
 
@@ -602,6 +610,14 @@ class ArenaStudioService:
         return p
 
     def _find_reference_image(self, task_id: str) -> Optional[Path]:
+        # The id is joined into filesystem paths, so it must pass its own rule even
+        # when the registry lists it: a configured id of ".." is still a traversal.
+        if not is_valid_task_id(task_id):
+            return None
+        allowed_roots = [
+            (self.repo_root / "tasks").resolve(),
+            (self.repo_root / "instruments").resolve(),
+        ]
         candidate_paths = [
             self.repo_root / "tasks" / task_id / "reference.png",
             self.repo_root / "tasks" / task_id / "assets" / "reference.png",
@@ -609,15 +625,21 @@ class ArenaStudioService:
             self.repo_root / "instruments" / task_id / "reference.png",
         ]
         for cp in candidate_paths:
-            if cp.exists():
+            if not cp.is_file():
+                continue
+            # Contain the resolved file too: a symlinked reference.png must not
+            # serve (or get approved against) a file outside tasks/ or instruments/.
+            resolved = cp.resolve()
+            if any(resolved.is_relative_to(root) for root in allowed_roots):
                 return cp
         return None
 
     def reference_image_path(self, task_id: str) -> Optional[Path]:
         """The reference image file for a registry task, for inspection in Studio.
 
-        New, unreviewed: only ids present in the registry resolve, so a crafted
-        id such as ``..`` never walks the candidate-path join out of ``tasks/``.
+        New, unreviewed: the id must be in the registry *and* match
+        ``_TASK_ID_RE``, and the resolved file must stay under ``tasks/`` or
+        ``instruments/`` (see :meth:`_find_reference_image`).
         """
         known = {task.get("id") for task in self.get_registry_tasks()}
         if task_id not in known:
@@ -664,6 +686,9 @@ class ArenaStudioService:
         Approving with no reference image on disk fails explicitly instead of
         recording an unbacked approval — there is no image to hash.
         """
+        if not is_valid_task_id(task_id):
+            # Never write an approval or revocation record under a malformed id.
+            return {"task_id": task_id, "approved": False, "error": "invalid task id"}
         approvals_path = self._get_approvals_path()
         approvals = gatekeeper.load_approvals(approvals_path)
 
