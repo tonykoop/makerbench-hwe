@@ -155,6 +155,50 @@ def test_tasks_endpoint(client: TestClient):
     assert data_filtered["tasks"][0]["id"] == "kora"
 
 
+def test_preflight_endpoint_is_redacted_and_read_only(
+    client: TestClient, tmp_path: Path, fake_registry: Path
+):
+    fake_secret = "sk-FAKE-studio-preflight-never-echo"
+    secrets = tmp_path / "nightly.env"
+    secrets.write_text(
+        "\n".join(
+            [
+                "CADAM_USER_ID=fake-user",
+                f"CADAM_ACCESS_TOKEN={fake_secret}",
+                f"SUPABASE_SERVICE_ROLE_KEY={fake_secret}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    queue = tmp_path / "queue.json"
+    queue.write_text(
+        json.dumps({"jobs": [{"job_id": "local-smoke", "status": "queued"}]}),
+        encoding="utf-8",
+    )
+    secrets_before = secrets.read_bytes()
+    queue_before = queue.read_bytes()
+
+    response = client.post(
+        "/api/preflight",
+        json={
+            "secrets": str(secrets),
+            "queue": str(queue),
+            "output_root": str(tmp_path),
+            "repo_root": str(tmp_path),
+            "runner_script": str(fake_registry),
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["verdict"] == "GO"
+    assert {item["status"] for item in payload["secrets"]} == {"PRESENT"}
+    assert fake_secret not in response.text
+    assert secrets.read_bytes() == secrets_before
+    assert queue.read_bytes() == queue_before
+
+
 def test_runs_discovery(client: TestClient, fake_run: Path):
     response = client.get("/api/runs")
     assert response.status_code == 200

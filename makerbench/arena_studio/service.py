@@ -256,6 +256,59 @@ class ArenaStudioService:
         except Exception:
             return []
 
+    def run_preflight(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Run the existing redacted, read-only nightly preflight for Studio."""
+        from makerbench import nightly_preflight
+
+        repo_path = Path(config.get("repo_root") or self.repo_root).resolve()
+        output_path = Path(config["output_root"]).resolve()
+        queue_path = Path(config["queue"]).resolve()
+        secrets_path = Path(config["secrets"]).resolve()
+        runner_path = Path(
+            config.get("runner_script")
+            or repo_path / "scripts" / "windows" / "run-nightly-cad-arena.ps1"
+        ).resolve()
+        named_paths = {
+            "runner_script": runner_path,
+            "repo_root": repo_path,
+            "queue": queue_path,
+            "output_root": output_path,
+        }
+        if config.get("instruments_root"):
+            named_paths["instruments_root"] = Path(config["instruments_root"]).resolve()
+
+        report = nightly_preflight.build_report(
+            secrets_path=secrets_path,
+            lock_path=(
+                Path(config["lock"]).resolve()
+                if config.get("lock")
+                else output_path / ".nightly-cad.lock"
+            ),
+            queue_path=queue_path,
+            named_paths=named_paths,
+        )
+        return {
+            "ok": report.ok,
+            "verdict": "GO" if report.ok else "NO-GO",
+            "lines": nightly_preflight.render_report_lines(report),
+            "secrets": [
+                {"key": item.key, "status": item.status} for item in report.secrets
+            ],
+            "lock": {"status": report.lock.status, "pid": report.lock.pid},
+            "queue": {
+                "ok": report.queue.ok,
+                "error": report.queue.error,
+                "jobs": [
+                    {"job_id": job_id, "status": status}
+                    for job_id, status in report.queue.jobs
+                ],
+            },
+            "paths": [
+                {"name": item.name, "path": str(item.path), "exists": item.exists}
+                for item in report.paths
+            ],
+        }
+
     def get_or_create_queue(
         self,
         run_dir: Path,
