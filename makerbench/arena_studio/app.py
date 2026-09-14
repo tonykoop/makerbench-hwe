@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from makerbench import __version__
 from makerbench.cli_arena import DEFAULT_REGISTRY
 
+from .routes_delta import register_delta_routes
 from .service import ArenaStudioService
 
 
@@ -83,6 +84,8 @@ def create_studio_app(
             if r["run_id"] == run_id:
                 return Path(r["path"])
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+
+    register_delta_routes(app, service, _resolve_run_dir)  # delta lane (#699)
 
     # API Routes
     @app.get("/api/health")
