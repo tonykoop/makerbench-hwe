@@ -7,10 +7,15 @@ import { useResource } from "./hooks/useResource.js";
 import { loadVoter, normalizeVoter, saveVoter } from "./lib/prefs.js";
 import { buildHash, parseHash } from "./lib/route.js";
 import { RunsScreen } from "./screens/runs.js";
+import { VoteScreen } from "./screens/vote.js";
 
 // Screens appear in the rail only once they exist. `takesRun` screens keep the
 // header's run choice in their route (#/<screen>/<run_id>).
-export const SCREENS = [{ id: "runs", label: "Runs", component: RunsScreen, takesRun: true }];
+export const SCREENS = [
+  { id: "runs", label: "Runs", component: RunsScreen, takesRun: true },
+  // `blind` screens never request anything that names entrants before a vote.
+  { id: "vote", label: "Blind voting", component: VoteScreen, takesRun: true, blind: true },
+];
 
 function useRoute() {
   const [route, setRoute] = useState(() => parseHash(window.location.hash));
@@ -35,9 +40,10 @@ function UnknownScreen({ route }) {
 
 function App() {
   const route = useRoute();
-  const runs = useResource("/api/runs");
   const [voter, setVoter] = useState(loadVoter);
   const screen = SCREENS.find((candidate) => candidate.id === route.screen) || null;
+  // /api/runs lists each run's entrants, so blind screens don't load it.
+  const runs = useResource(screen?.blind ? null : "/api/runs");
   const mainRef = useRef(null);
   const firstScreen = useRef(true);
 
@@ -79,6 +85,7 @@ function App() {
     <div class="studio">
       <${StudioHeader}
         runs=${runs}
+        blind=${Boolean(screen?.blind)}
         runId=${runId}
         onSelectRun=${selectRun}
         voter=${voter}
