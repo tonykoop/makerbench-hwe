@@ -126,9 +126,11 @@ def repo_root(tmp_path: Path) -> Path:
 def client(fake_registry: Path, repo_root: Path) -> TestClient:
     # feat/696-arena-studio's same-origin-POST guard (atlas's A1-A4) requires a
     # matching Origin header on every POST; TestClient sends none by default.
+    # Loopback base URL: B1's TrustedHost guard rejects TestClient's default "testserver".
     return TestClient(
         create_studio_app(registry_path=fake_registry, repo_root=repo_root),
-        headers={"origin": "http://testserver"},
+        base_url="http://127.0.0.1",
+        headers={"origin": "http://127.0.0.1"},
     )
 
 

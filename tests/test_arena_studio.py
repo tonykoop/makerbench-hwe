@@ -741,9 +741,20 @@ def test_reference_gatekeeper_and_approval_flow(client: TestClient, tmp_path: Pa
     kora_ref.write_bytes(b"fake-png-bytes")
     approve_res = client.post("/api/tasks/kora/approve?approved=true")
     assert approve_res.json()["approved"] is True
+    # With a hash-approved image on disk, B1's honest launcher starts a real
+    # zero-token --stub dry run instead of refusing for a missing image.
     allowed_res = client.post("/api/competitions/launch", json=launch_payload)
-    assert allowed_res.status_code == 500
-    assert "local reference images" in allowed_res.json()["detail"]
+    assert allowed_res.status_code == 200
+    assert allowed_res.json()["success"] is True
+    assert allowed_res.json()["live"] is False
+    deadline = time.monotonic() + 20
+    job = {}
+    while time.monotonic() < deadline:
+        job = client.get("/api/competitions/status?run_id=test_gated_round").json()
+        if job.get("status") != "running":
+            break
+        time.sleep(0.1)
+    assert job["status"] != "running"
 
 
 def test_export_winners_and_report(client: TestClient, fake_run: Path, tmp_path: Path):
