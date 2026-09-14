@@ -18,6 +18,7 @@
       <button class="nav-btn" data-tab="arena" onclick="switchTab('arena', this)">Blind Voting</button>
       <button class="nav-btn" data-tab="leaderboard" onclick="switchTab('leaderboard', this)">Leaderboard & Agreement</button>
       <button class="nav-btn" data-tab="compare" onclick="switchTab('compare', this)">⚖️ Compare Runs</button>
+      <button class="nav-btn" data-tab="nightly" onclick="switchTab('nightly', this)">🌙 Nightly Queue</button>
       <button class="nav-btn" data-tab="tasks" onclick="switchTab('tasks', this)">Task Matrix</button>
     </div>
     <div class="run-select-wrapper">
@@ -399,6 +400,35 @@
             <tbody><tr><td colspan="4" style="color: var(--text-muted);">Select a run above.</td></tr></tbody>
           </table>
         </div>
+      </div>
+    </section>
+
+    <!-- NIGHTLY QUEUE COCKPIT TAB (R2 P1/#732, read-only) -->
+    <section id="pane-nightly" class="tab-pane">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 8px;">
+        <div>
+          <h2 style="font-size: 18px; font-weight: 700;">Nightly CAD Queue</h2>
+          <span style="font-size: 12px; color: var(--text-muted);">Read-only. Never acquires the lease and never mutates the queue.</span>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <input id="nightlyQueuePath" type="text" placeholder="runs/nightly-cad-queue.json (default)" style="width: 320px;" />
+          <button class="btn btn-secondary" onclick="loadNightlyQueue()">🔄 Refresh</button>
+        </div>
+      </div>
+
+      <div class="card" id="nightlyLeaseCard" style="margin-bottom: 16px;">
+        <h3 style="margin-bottom: 12px;">Lease</h3>
+        <div id="nightlyLeaseSummary" style="font-size: 13px; color: var(--text-muted);">Loading&hellip;</div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-bottom: 12px;">Jobs</h3>
+        <table id="tableNightlyQueue">
+          <thead>
+            <tr><th>Job</th><th>Instrument</th><th>Status</th><th>Entrants</th><th>Budget</th><th></th></tr>
+          </thead>
+          <tbody><tr><td colspan="6">Loading&hellip;</td></tr></tbody>
+        </table>
       </div>
     </section>
 

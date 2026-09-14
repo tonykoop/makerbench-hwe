@@ -218,6 +218,36 @@ def create_studio_app(
             )
         return {"success": True, "pair_id": payload.pair_id}
 
+    @app.get("/api/nightly/queue")
+    def get_nightly_queue(
+        queue: Optional[str] = Query(
+            None,
+            description="Path to a nightly-cad-queue.json, must be under this "
+            "server's configured runs/ root",
+        ),
+    ):
+        # Fixed after review: an earlier version accepted `queue`/`lock` as
+        # independent, unconstrained absolute paths, making the Studio server an
+        # oracle over arbitrary host JSON/lock files. Contain the queue path to a
+        # single configured root, and always DERIVE the lock path next to it
+        # (get_nightly_queue_view's own default) rather than accept it separately.
+        allowed_root = (service.repo_root / "runs").resolve()
+        if queue:
+            queue_path = Path(queue).resolve()
+            if not queue_path.is_relative_to(allowed_root):
+                raise HTTPException(
+                    status_code=400,
+                    detail="queue path must be under the configured nightly runs root",
+                )
+        else:
+            queue_path = allowed_root / "nightly-cad-queue.json"
+        if not queue_path.exists():
+            raise HTTPException(status_code=404, detail=f"nightly queue not found: {queue_path}")
+        try:
+            return service.get_nightly_queue_view(queue_path, None)
+        except (OSError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
     @app.post("/api/competitions/launch")
     def launch_competition(payload: CompetitionLaunchPayload):
         try:

@@ -32,6 +32,8 @@ from makerbench.code_cad_vote_surface import (
     build_blind_pair,
 )
 from makerbench.code_cad_vote_web import QueueItem, VoteQueue
+from makerbench.nightly_cad import _resume_budget, load_queue
+from makerbench.nightly_preflight import audit_lock
 
 
 class ArenaStudioService:
@@ -299,6 +301,82 @@ class ArenaStudioService:
 
         self._queues.pop((str(run_path), voter), None)
         return True
+
+    def get_nightly_queue_view(
+        self, queue_path: Path, lock_path: Optional[Path] = None
+    ) -> dict[str, Any]:
+        """Read-only nightly CAD queue cockpit (R2 P1/#732).
+
+        Never acquires the nightly lease and never calls NightlyExecutor — this only
+        reads the queue file and, for any job that already has a run_dir, replays its
+        recorded state via nightly_cad._resume_budget() (the exact same reconstruction
+        NightlyExecutor itself uses on resume). Lock/lease liveness is delegated to
+        nightly_preflight.audit_lock() rather than re-derived here.
+        """
+        queue_path = Path(queue_path).resolve()
+        payload, jobs = load_queue(queue_path)
+
+        lock_path = Path(lock_path).resolve() if lock_path else queue_path.parent / ".nightly-cad.lock"
+        lock = audit_lock(lock_path)
+        lease_heartbeat_utc = None
+        lease_age_s = None
+        if lock_path.exists():
+            try:
+                lease_payload = json.loads(lock_path.read_text(encoding="utf-8"))
+                lease_heartbeat_utc = lease_payload.get("heartbeat_utc")
+                if lease_heartbeat_utc:
+                    heartbeat = datetime.fromisoformat(str(lease_heartbeat_utc))
+                    lease_age_s = max(
+                        0.0,
+                        (datetime.now(timezone.utc) - heartbeat.astimezone(timezone.utc)).total_seconds(),
+                    )
+            except (ValueError, OSError, TypeError):
+                pass  # UNREADABLE case already reflected in lock.status
+
+        job_views: list[dict[str, Any]] = []
+        for job in jobs:
+            job_view: dict[str, Any] = {
+                "job_id": job.job_id,
+                "instrument_id": job.instrument_id,
+                "status": job.status,
+                "run_id": job.run_id,
+                # A job stuck at status="running" with no ACTIVE lease died mid-run —
+                # NightlyExecutor will pick it back up (it only skips queued/running
+                # jobs that already have a run_dir by resuming the same run_id), but a
+                # human should know it stalled rather than assuming it's progressing.
+                "orphaned": job.status == "running" and lock.status != "ACTIVE",
+                "budget_usd": job.budget_usd,
+                "entrant_count": len(job.entrants),
+                "budget": None,
+            }
+            if job.run_dir:
+                run_dir = Path(job.run_dir)
+                if run_dir.is_dir():
+                    guard = _resume_budget(run_dir, limit_usd=job.budget_usd)
+                    job_view["budget"] = {
+                        "spent_usd": guard.spent_usd,
+                        "remaining_usd": guard.remaining_usd,
+                        "halted_reason": guard.halted_reason,
+                        "outcomes": [
+                            {"entrant_id": c["entrant_id"], "cost_usd": c["cost_usd"], "violation": c.get("violation")}
+                            for c in guard.charges
+                        ],
+                    }
+            job_views.append(job_view)
+
+        return {
+            "schema": "makerbench-arena-studio-nightly-view-v1",
+            "queue_path": str(queue_path),
+            "queue_schema": payload.get("schema"),
+            "jobs": job_views,
+            "lease": {
+                "lock_path": str(lock_path),
+                "status": lock.status,
+                "pid": lock.pid,
+                "heartbeat_utc": lease_heartbeat_utc,
+                "age_s": lease_age_s,
+            },
+        }
 
     def _get_approvals_path(self) -> Path:
         p = self.repo_root / ".makerbench" / "reference_approvals.json"

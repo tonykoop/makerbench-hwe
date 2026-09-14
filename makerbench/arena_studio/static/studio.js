@@ -21,6 +21,7 @@
       if (tabId === 'arena') loadQueue();
       if (tabId === 'leaderboard') loadLeaderboard();
       if (tabId === 'compare') populateCompareSelects();
+      if (tabId === 'nightly') loadNightlyQueue();
       if (tabId === 'tasks') loadTasks();
     }
 
@@ -569,6 +570,74 @@
       } catch (e) {
         console.error(`Failed to load Compare Runs side ${side}`, e);
         tbody.innerHTML = '<tr><td colspan="4" style="color: var(--danger);">Failed to load this run.</td></tr>';
+      }
+    }
+
+    // Escapes untrusted text for safe interpolation into an innerHTML template
+    // literal. Several fields rendered below (job_id, instrument_id, status, a
+    // server error `detail`) come from a nightly-cad-queue.json / morning-bundle
+    // queue file, which this Studio server itself does not author — treat every
+    // field sourced from it as untrusted, the same as any other user input.
+    function escapeHtml(value) {
+      const div = document.createElement('div');
+      div.textContent = value == null ? '' : String(value);
+      return div.innerHTML;
+    }
+
+    /* R2 P1/#732: Nightly Queue Cockpit — strictly read-only. Renders whatever
+       GET /api/nightly/queue returns; never triggers a launch or acquires the lease. */
+    async function loadNightlyQueue() {
+      const leaseEl = document.getElementById('nightlyLeaseSummary');
+      const tbody = document.querySelector('#tableNightlyQueue tbody');
+      const pathInput = document.getElementById('nightlyQueuePath').value.trim();
+      const qs = pathInput ? `?queue=${encodeURIComponent(pathInput)}` : '';
+
+      leaseEl.textContent = 'Loading…';
+      tbody.innerHTML = '<tr><td colspan="6">Loading&hellip;</td></tr>';
+
+      try {
+        const res = await fetch(`/api/nightly/queue${qs}`);
+        if (!res.ok) {
+          const detail = (await res.json().catch(() => ({}))).detail || res.statusText;
+          leaseEl.innerHTML = `<span style="color: var(--danger);">No nightly queue found: ${escapeHtml(detail)}</span>`;
+          tbody.innerHTML = '<tr><td colspan="6" style="color: var(--text-muted);">No queue loaded.</td></tr>';
+          return;
+        }
+        const data = await res.json();
+
+        const lease = data.lease || {};
+        const leaseBadge = lease.status === 'ACTIVE'
+          ? `<span class="badge badge-sub">ACTIVE</span> pid ${lease.pid}, heartbeat ${Math.round(lease.age_s || 0)}s ago`
+          : lease.status === 'STALE'
+            ? `<span class="badge badge-paused">STALE</span> pid ${lease.pid} not running`
+            : lease.status === 'UNREADABLE'
+              ? `<span class="badge badge-paused">UNREADABLE</span>`
+              : `<span class="badge" style="background: var(--surface-soft); color: var(--text-muted);">ABSENT</span> no lease held`;
+        leaseEl.innerHTML = leaseBadge;
+
+        const jobs = data.jobs || [];
+        tbody.innerHTML = jobs.length
+          ? jobs.map(job => {
+              const budget = job.budget
+                ? `$${job.budget.spent_usd.toFixed(2)} spent${job.budget.halted_reason ? ' <span style="color: var(--danger);">(halted)</span>' : ''}`
+                : '&mdash;';
+              const statusLabel = job.orphaned
+                ? `<span class="badge badge-paused">orphaned</span> ${escapeHtml(job.status)}`
+                : escapeHtml(job.status);
+              return `<tr>
+                <td>${escapeHtml(job.job_id)}</td>
+                <td>${escapeHtml(job.instrument_id)}</td>
+                <td>${statusLabel}</td>
+                <td>${job.entrant_count}</td>
+                <td>${budget} / $${job.budget_usd.toFixed(2)}</td>
+                <td>${job.run_id ? escapeHtml(job.run_id) : ''}</td>
+              </tr>`;
+            }).join('')
+          : '<tr><td colspan="6" style="color: var(--text-muted);">No jobs in queue.</td></tr>';
+      } catch (e) {
+        console.error('Failed to load nightly queue', e);
+        leaseEl.innerHTML = '<span style="color: var(--danger);">Failed to load nightly queue.</span>';
+        tbody.innerHTML = '<tr><td colspan="6" style="color: var(--danger);">Failed to load.</td></tr>';
       }
     }
 
