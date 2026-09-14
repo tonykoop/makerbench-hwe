@@ -150,17 +150,22 @@ def create_studio_app(
         next_pair_data = None
         if next_item:
             pair = next_item.pair
+            # Blind-vote anonymity (C3/#702): candidate_id is the raw trial_id, which
+            # embeds the entrant/model name (see code_cad_vote_surface.py's own "No
+            # candidate_id in the page markup" precedent). The frontend never reads it
+            # (votes are cast by pair_id + winner side only) — do not put it on the wire
+            # pre-vote. Only opaque left/right side plus already-anonymized blind asset
+            # paths (staged by _stage_blind_assets under vote_pages/blind/<pair>-<side>)
+            # go to the client.
             next_pair_data = {
                 "pair_id": pair.pair_id,
                 "meta": next_item.meta,
                 "left": {
-                    "candidate_id": pair.left.candidate_id,
                     "render_path": pair.left.render_path,
                     "model3d_path": pair.left.model3d_path,
                     "frames": pair.left.frames,
                 },
                 "right": {
-                    "candidate_id": pair.right.candidate_id,
                     "render_path": pair.right.render_path,
                     "model3d_path": pair.right.model3d_path,
                     "frames": pair.right.frames,

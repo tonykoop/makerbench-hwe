@@ -232,6 +232,34 @@ def test_queue_and_vote(client: TestClient, fake_run: Path):
     assert "total" in data
 
 
+def test_queue_endpoint_never_leaks_identity_pre_vote(client: TestClient, fake_run: Path):
+    """C3/#702: the pre-vote queue payload must be blind.
+
+    candidate_id is the raw trial_id, and trial ids embed entrant/model names (the same
+    invariant code_cad_vote_surface.py's page renderer already enforces: "No candidate_id
+    in the page markup"). A fresh voter (no prior votes, so a real next_pair is served)
+    must never see entrant/model ids, and asset paths must be the anonymized aliases
+    under vote_pages/blind/, never a raw path containing the model id.
+    """
+    response = client.get(f"/api/runs/{fake_run.name}/queue?voter=an-unvoted-fresh-voter")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["current_pair"] is not None, "expected a real pair for a fresh voter"
+
+    raw = json.dumps(data)
+    for identity in ("model-a", "model-b", "trial-1", "trial-2"):
+        assert identity not in raw, f"{identity} leaked into the pre-vote queue payload"
+
+    assert "candidate_id" not in data["current_pair"]["left"]
+    assert "candidate_id" not in data["current_pair"]["right"]
+
+    for side in ("left", "right"):
+        render_path = data["current_pair"][side]["render_path"]
+        assert "/vote_pages/blind/" in render_path, (
+            f"{side} render_path must be a blind-aliased asset, got {render_path}"
+        )
+
+
 def test_root_is_a_ui_free_placeholder(client: TestClient):
     # The API lands without #700's inline UI; the rebuilt frontend ships separately.
     response = client.get("/")
