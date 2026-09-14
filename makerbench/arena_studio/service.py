@@ -36,6 +36,10 @@ from makerbench.code_cad_vote_web import QueueItem, VoteQueue
 from makerbench.redaction import run_relative_path
 
 
+#: One path segment: the same shape launch_competition accepts for run ids.
+_SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
+
+
 class ArenaStudioService:
     """Business logic and data provider for MakerBench Arena Studio."""
 
@@ -579,8 +583,19 @@ class ArenaStudioService:
             if inst:
                 by_inst.setdefault(inst, []).append(t)
 
+        instruments_root = (self.repo_root / "instruments").resolve()
         exported: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
         for inst, inst_trials in by_inst.items():
+            # instrument_id comes from run_log.json, not from this server: it must
+            # name exactly one directory under instruments/, never climb out of it.
+            target_dir = (instruments_root / str(inst)).resolve()
+            if (
+                not _SAFE_ID_RE.fullmatch(str(inst))
+                or target_dir.parent != instruments_root
+            ):
+                skipped.append({"instrument_id": inst, "reason": "unsafe instrument id"})
+                continue
             inst_trials.sort(
                 key=lambda tr: (
                     not (tr.get("grade") or {}).get("compiled", False),
@@ -592,7 +607,6 @@ class ArenaStudioService:
             if not best:
                 continue
 
-            target_dir = self.repo_root / "instruments" / inst
             target_dir.mkdir(parents=True, exist_ok=True)
             artifacts = (best.get("result") or {}).get("artifacts") or {}
             scad_src = artifacts.get("scad_path")
@@ -621,6 +635,7 @@ class ArenaStudioService:
             "run_id": run_dir.name,
             "exported_count": len(exported),
             "winners": exported,
+            "skipped": skipped,
         }
 
     def export_report(self, run_dir: Path) -> str:

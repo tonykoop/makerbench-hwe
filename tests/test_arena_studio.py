@@ -533,6 +533,32 @@ def test_export_winners_and_report(client: TestClient, fake_run: Path, tmp_path:
     assert "Agreement Analysis" in report_text
 
 
+@pytest.mark.parametrize("hostile_id", ["../../escaped", "..", "nested/dir", "/abs/escaped"])
+def test_export_winners_never_writes_outside_instruments(
+    client: TestClient, fake_run: Path, tmp_path: Path, hostile_id: str
+):
+    # New, unreviewed hardening: instrument_id comes from run_log.json and was
+    # joined straight into repo_root/instruments/<id>.
+    run_log_path = fake_run / "run_log.json"
+    run_log = json.loads(run_log_path.read_text(encoding="utf-8"))
+    for trial in run_log["trials"]:
+        trial["instrument_id"] = hostile_id
+    run_log_path.write_text(json.dumps(run_log), encoding="utf-8")
+
+    response = client.post(f"/api/runs/{fake_run.name}/export-winners")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["exported_count"] == 0
+    assert data["skipped"] == [{"instrument_id": hostile_id, "reason": "unsafe instrument id"}]
+    # Every place each hostile id would have landed stays untouched.
+    assert not (tmp_path / "winner.scad").exists()
+    assert not (tmp_path.parent / "escaped").exists()
+    assert not Path("/abs/escaped").exists()
+    instruments = tmp_path / "instruments"
+    assert not instruments.exists() or list(instruments.rglob("winner.scad")) == []
+
+
 def test_vote_with_structured_defect_flags(client: TestClient, fake_run: Path):
     """Test Story #698: Voting with structured defect and disposition flags."""
     # Get pending pair from queue
