@@ -89,6 +89,12 @@ OpenSCAD. Candidate defects become `CompileError`; a missing CadQuery/OpenSCAD
 runtime or filesystem sandbox remains an environment failure and is rejected
 by CLI preflight.
 
+CadQuery STL export uses an explicit 0.01 mm linear tolerance and 0.1 radian
+angular tolerance. Curved surfaces can therefore differ slightly from
+OpenSCAD's polygonization even when both kernels describe the same solid; the
+parity contract requires identical objective verdicts and allows up to 0.5%
+relative mesh-volume difference.
+
 Zero-token smoke:
 
 ```bash
