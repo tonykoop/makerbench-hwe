@@ -755,6 +755,14 @@
     bindTurntableKeyboard('morningViewerLeft', 'morningImgLeft');
     bindTurntableKeyboard('morningViewerRight', 'morningImgRight');
 
+    // Escapes untrusted text for safe interpolation into an innerHTML template
+    // literal (textContent round-trip through a detached <div>).
+    function escapeHtml(value) {
+      const div = document.createElement('div');
+      div.textContent = value == null ? '' : String(value);
+      return div.innerHTML;
+    }
+
     /* R2 P4: redacted, read-only preflight doctor panel. Only ever POSTs the file
        PATHS the operator typed — never a secret value (there is nothing on this page
        that could even hold one; the server itself only returns classifications). */
@@ -781,29 +789,33 @@
           });
           if (!res.ok) {
             const detail = (await res.json().catch(() => ({}))).detail || res.statusText;
-            resultEl.innerHTML = `<span style="color: var(--danger);">Preflight failed: ${detail}</span>`;
+            resultEl.innerHTML = `<span style="color: var(--danger);">Preflight failed: ${escapeHtml(detail)}</span>`;
             return;
           }
           const data = await res.json();
           const verdictColor = data.verdict === 'GO' ? 'var(--success)' : 'var(--danger)';
+          // Fixed after review: p.path is the operator-typed filesystem path echoed
+          // back verbatim by the server, and data.queue.error can carry a parse-error
+          // message derived from file content — both untrusted, along with the error
+          // `detail` above. Escape every field before interpolating into innerHTML.
           const secretsRows = data.secrets.map(s =>
-            `<div>${s.key}: <b style="color: ${s.status === 'PRESENT' ? 'var(--success)' : 'var(--warning)'};">${s.status}</b></div>`
+            `<div>${escapeHtml(s.key)}: <b style="color: ${s.status === 'PRESENT' ? 'var(--success)' : 'var(--warning)'};">${escapeHtml(s.status)}</b></div>`
           ).join('');
           const pathsRows = data.paths.map(p =>
-            `<div>${p.name}: ${p.exists ? '✓' : '✗'} <code style="font-size:11px;">${p.path}</code></div>`
+            `<div>${escapeHtml(p.name)}: ${p.exists ? '✓' : '✗'} <code style="font-size:11px;">${escapeHtml(p.path)}</code></div>`
           ).join('');
           resultEl.innerHTML = `
-            <h3 style="font-size: 16px; margin-bottom: 10px;">Verdict: <span style="color: ${verdictColor};">${data.verdict}</span></h3>
+            <h3 style="font-size: 16px; margin-bottom: 10px;">Verdict: <span style="color: ${verdictColor};">${escapeHtml(data.verdict)}</span></h3>
             <div class="grid-2">
               <div>
                 <div style="font-weight: 700; margin-bottom: 4px;">Secrets</div>
                 ${secretsRows}
                 <div style="font-weight: 700; margin: 10px 0 4px;">Lock</div>
-                <div>${data.lock.status}${data.lock.pid ? ' (pid ' + data.lock.pid + ')' : ''}</div>
+                <div>${escapeHtml(data.lock.status)}${data.lock.pid ? ' (pid ' + escapeHtml(data.lock.pid) + ')' : ''}</div>
               </div>
               <div>
                 <div style="font-weight: 700; margin-bottom: 4px;">Queue</div>
-                <div>${data.queue.ok ? 'OK' : (data.queue.error || 'blocked jobs present')}</div>
+                <div>${data.queue.ok ? 'OK' : escapeHtml(data.queue.error || 'blocked jobs present')}</div>
                 <div style="font-weight: 700; margin: 10px 0 4px;">Paths</div>
                 ${pathsRows}
               </div>

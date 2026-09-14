@@ -1588,3 +1588,29 @@ def test_preflight_tab_markup_and_js_never_posts_secret_value_field(client: Test
     js = client.get("/static/studio.js").text
     assert "async function runPreflight()" in js
     assert "fetch('/api/preflight'" in js
+
+
+def test_preflight_panel_escapes_every_server_returned_field(client: TestClient):
+    """R2 P4/#739 fix (post-review): the panel interpolates several
+    server-returned fields into innerHTML — the error `detail`, secret key/status,
+    lock status, queue error text, and (highest-risk, since it's an
+    operator-typed filesystem path echoed back verbatim) paths[].path. All must
+    be wrapped in escapeHtml(...); see test_arena_studio_preflight_xss.py for the
+    real-browser proof that a hostile payload actually renders as inert text."""
+    js = client.get("/static/studio.js").text
+    assert "function escapeHtml(" in js
+    start = js.index("async function runPreflight()")
+    end = js.index("catch (e) {\n          console.error('Preflight request failed'", start)
+    body = js[start:end]
+    for raw_field in ("${detail}", "${s.key}", "${s.status}", "${data.verdict}", "${p.name}", "${p.path}"):
+        assert raw_field not in body, f"{raw_field} must be wrapped in escapeHtml(...)"
+    for escaped in (
+        "escapeHtml(detail)",
+        "escapeHtml(s.key)",
+        "escapeHtml(s.status)",
+        "escapeHtml(data.verdict)",
+        "escapeHtml(p.name)",
+        "escapeHtml(p.path)",
+        "escapeHtml(data.lock.status)",
+    ):
+        assert escaped in body, f"missing {escaped} in runPreflight()"
