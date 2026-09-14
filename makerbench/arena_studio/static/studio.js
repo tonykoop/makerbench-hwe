@@ -667,9 +667,17 @@
           return;
         }
         const previous = morningJobId;
-        sel.innerHTML = bundles.map(b =>
-          `<option value="${b.job_id}">${b.instrument_id} — ${b.job_id} (${b.valid_candidate_count} candidates)</option>`
-        ).join('');
+        sel.innerHTML = '';
+        // Fixed after review: job_id/instrument_id come from a queue file this
+        // Studio server does not author — build option nodes via textContent, not
+        // an innerHTML template literal, so a crafted queue value can't become
+        // same-origin script (or break out of the value="..." attribute).
+        bundles.forEach(b => {
+          const opt = document.createElement('option');
+          opt.value = b.job_id;
+          opt.textContent = `${b.instrument_id} — ${b.job_id} (${b.valid_candidate_count} candidates)`;
+          sel.appendChild(opt);
+        });
         if (previous && bundles.some(b => b.job_id === previous)) {
           sel.value = previous;
         } else {
@@ -697,7 +705,7 @@
         return;
       }
       try {
-        const res = await fetch(`/api/morning/${morningJobId}/pair?skip=${morningSkipCursor}`);
+        const res = await fetch(`/api/morning/${encodeURIComponent(morningJobId)}/pair?skip=${morningSkipCursor}`);
         if (!res.ok) {
           emptyEl.textContent = 'Failed to load this bundle’s queue.';
           emptyEl.style.display = 'block';
@@ -725,7 +733,7 @@
     async function castMorningVote(winner) {
       if (!currentMorningPair || !morningJobId) return;
       const pairId = currentMorningPair.pair_id;
-      await fetch(`/api/morning/${morningJobId}/vote`, {
+      await fetch(`/api/morning/${encodeURIComponent(morningJobId)}/vote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pair_id: pairId, winner: winner, voter: 'tony' }),

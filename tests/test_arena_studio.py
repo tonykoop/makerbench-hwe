@@ -967,11 +967,16 @@ def test_nightly_queue_endpoint_never_exposes_secrets(client: TestClient, tmp_pa
     assert "sk-should-never-appear" not in res.text
 
 
-def _morning_bundle_fixture(tmp_path: Path) -> tuple[Path, Path, str]:
+def _morning_bundle_fixture(
+    tmp_path: Path, *, status: str = "votable", write_summary: bool = True
+) -> tuple[Path, Path, str]:
     """R2 P2: a nightly job whose morning bundle is ready for review.
 
     Returns (queue_path, morning_run_dir, job_id). Two candidates in the same
     arena cell so exactly one blind pair is produced (mirrors fake_run's shape).
+    `status`/`write_summary` let a test build a job with a run_dir that is NOT yet
+    votable, to prove the direct pair/vote/assets routes enforce the same gate
+    discovery does (see test_morning_direct_routes_refuse_non_votable_job).
     """
     run_dir = tmp_path / "morning_run"
     run_dir.mkdir()
@@ -1002,20 +1007,21 @@ def _morning_bundle_fixture(tmp_path: Path) -> tuple[Path, Path, str]:
         ],
     }
     (run_dir / "run_log.json").write_text(json.dumps(run_log), encoding="utf-8")
-    (run_dir / "morning-summary.json").write_text(
-        json.dumps(
-            {
-                "schema": "makerbench-nightly-cad-morning-v1",
-                "run_id": run_dir.name,
-                "votable": True,
-                "valid_candidate_count": 2,
-                "failed_candidate_count": 0,
-                "pair_files": ["pair-000.html"],
-                "cost_usd": 0.42,
-            }
-        ),
-        encoding="utf-8",
-    )
+    if write_summary:
+        (run_dir / "morning-summary.json").write_text(
+            json.dumps(
+                {
+                    "schema": "makerbench-nightly-cad-morning-v1",
+                    "run_id": run_dir.name,
+                    "votable": True,
+                    "valid_candidate_count": 2,
+                    "failed_candidate_count": 0,
+                    "pair_files": ["pair-000.html"],
+                    "cost_usd": 0.42,
+                }
+            ),
+            encoding="utf-8",
+        )
 
     queue_path = tmp_path / "nightly-cad-queue.json"
     job_id = "sambuca-night"
@@ -1029,7 +1035,7 @@ def _morning_bundle_fixture(tmp_path: Path) -> tuple[Path, Path, str]:
                         "instrument_id": "sambuca",
                         "reference_image": "tasks/sambuca/reference.png",
                         "budget_usd": 5.0,
-                        "status": "votable",
+                        "status": status,
                         "run_id": run_dir.name,
                         "run_dir": str(run_dir),
                         "entrants": [
@@ -1043,6 +1049,63 @@ def _morning_bundle_fixture(tmp_path: Path) -> tuple[Path, Path, str]:
         encoding="utf-8",
     )
     return queue_path, run_dir, job_id
+
+
+def test_morning_direct_routes_refuse_non_votable_job(client: TestClient, tmp_path: Path):
+    """R2 P2/#734 fix (post-review): the pair/vote/assets routes must enforce the
+    SAME votable gate discovery does. An earlier version only gated
+    discover_morning_bundles() (the bundle picker) — a job with a run_dir but
+    status="running" (or "queued"/"failed") was still directly reachable via
+    /api/morning/{job_id}/pair|vote|assets, bypassing #734's "only after
+    finalize_morning_bundle marked it votable" rule."""
+    for status in ("queued", "running", "failed"):
+        base = tmp_path / status
+        base.mkdir()
+        queue_path, run_dir, job_id = _morning_bundle_fixture(
+            base, status=status, write_summary=False
+        )
+        assert client.get(f"/api/morning/{job_id}/pair?queue={queue_path}").status_code == 400
+        assert (
+            client.post(
+                f"/api/morning/{job_id}/vote?queue={queue_path}",
+                json={"pair_id": "pair-x", "winner": "left", "voter": "tony"},
+            ).status_code
+            == 400
+        )
+        assert (
+            client.get(f"/api/morning/{job_id}/assets/blind/x.png?queue={queue_path}").status_code
+            == 400
+        )
+
+    # Also refused when a run_dir HAS a morning-summary.json but the queue's own
+    # status field hasn't caught up to "votable" yet (status is authoritative, not
+    # file presence alone).
+    stale_base = tmp_path / "stale-status"
+    stale_base.mkdir()
+    queue_path, run_dir, job_id = _morning_bundle_fixture(
+        stale_base, status="running", write_summary=True
+    )
+    assert client.get(f"/api/morning/{job_id}/pair?queue={queue_path}").status_code == 400
+
+
+def test_morning_bundles_select_js_never_uses_raw_innerHTML_option(client: TestClient):
+    """R2 P2/#734 fix (post-review): job_id/instrument_id come from a queue file this
+    Studio server does not author — option nodes must be built via textContent/
+    .value, not an innerHTML template literal a crafted queue value could exploit."""
+    js = client.get("/static/studio.js").text
+    start = js.index("async function loadMorningBundles()")
+    end = js.index("function selectMorningBundle()")
+    body = js[start:end]
+    assert "<option value=\"${b.job_id}\">" not in body
+    assert "opt.value = b.job_id" in body
+    assert "opt.textContent" in body
+
+
+def test_morning_job_id_is_url_encoded_in_pair_and_vote_requests(client: TestClient):
+    js = client.get("/static/studio.js").text
+    assert "encodeURIComponent(morningJobId)" in js
+    assert "/api/morning/${morningJobId}/pair" not in js
+    assert "/api/morning/${morningJobId}/vote" not in js
 
 
 def test_morning_review_tab_markup(client: TestClient):

@@ -411,12 +411,30 @@ class ArenaStudioService:
         return bundles
 
     def _resolve_morning_run_dir(self, queue_path: Path, job_id: str) -> Path:
+        """Resolve job_id -> run_dir for the pair/vote/asset routes.
+
+        Enforces the SAME state invariant `discover_morning_bundles()` uses for
+        listing (fixed after review: an earlier version only gated bundle
+        *discovery*, not these routes themselves — a direct call to
+        /api/morning/{job_id}/pair|vote|assets with a queued/running/failed job's
+        job_id bypassed the "only after finalize_morning_bundle marked it votable"
+        rule #734 requires). A job is usable here only once nightly_cad.py itself
+        set status="votable" AND finalize_morning_bundle actually wrote
+        morning-summary.json for it — never on job.status alone.
+        """
         _, jobs = load_queue(Path(queue_path))
         for job in jobs:
             if job.job_id == job_id:
+                if job.status != "votable":
+                    raise ValueError(
+                        f"job {job_id!r} is not votable yet (status={job.status!r})"
+                    )
                 if not job.run_dir:
                     raise ValueError(f"job {job_id!r} has no run_dir yet")
-                return Path(job.run_dir).resolve()
+                run_dir = Path(job.run_dir).resolve()
+                if not (run_dir / "morning-summary.json").is_file():
+                    raise ValueError(f"job {job_id!r} has no morning-summary.json yet")
+                return run_dir
         raise ValueError(f"job {job_id!r} not found in queue")
 
     def get_morning_queue(self, run_dir: Path, job_id: str, voter: str = "tony") -> VoteQueue:
