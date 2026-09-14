@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import shutil
 import threading
@@ -49,6 +50,7 @@ class ArenaStudioService:
         self.registry_path = registry_path.resolve()
         self.repo_root = repo_root.resolve() if repo_root else Path.cwd().resolve()
         self._queues: dict[tuple[str, str], VoteQueue] = {}
+        self._morning_queues: dict[tuple[str, str], VoteQueue] = {}
         self._active_jobs: dict[str, dict[str, Any]] = {}
 
     def get_default_run_dir(self) -> Optional[Path]:
@@ -377,6 +379,157 @@ class ArenaStudioService:
                 "age_s": lease_age_s,
             },
         }
+
+    def discover_morning_bundles(self, queue_path: Path) -> list[dict[str, Any]]:
+        """R2 P2/#733-follow: nightly jobs whose morning bundle is ready for review.
+
+        Only jobs `nightly_cad.py` itself already marked status="votable" (meaning
+        `finalize_morning_bundle` already ran and wrote morning-summary.json) are
+        offered here. Never runs finalize_morning_bundle and never mutates the queue.
+        """
+        _, jobs = load_queue(Path(queue_path))
+        bundles: list[dict[str, Any]] = []
+        for job in jobs:
+            if job.status != "votable" or not job.run_dir:
+                continue
+            run_dir = Path(job.run_dir)
+            summary_path = run_dir / "morning-summary.json"
+            if not summary_path.is_file():
+                continue
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            bundles.append(
+                {
+                    "job_id": job.job_id,
+                    "instrument_id": job.instrument_id,
+                    "run_id": job.run_id,
+                    "votable": bool(summary.get("votable")),
+                    "valid_candidate_count": summary.get("valid_candidate_count"),
+                    "failed_candidate_count": summary.get("failed_candidate_count"),
+                    "cost_usd": summary.get("cost_usd"),
+                }
+            )
+        return bundles
+
+    def _resolve_morning_run_dir(self, queue_path: Path, job_id: str) -> Path:
+        """Resolve job_id -> run_dir for the pair/vote/asset routes.
+
+        Enforces the SAME state invariant `discover_morning_bundles()` uses for
+        listing (fixed after review: an earlier version only gated bundle
+        *discovery*, not these routes themselves — a direct call to
+        /api/morning/{job_id}/pair|vote|assets with a queued/running/failed job's
+        job_id bypassed the "only after finalize_morning_bundle marked it votable"
+        rule #734 requires). A job is usable here only once nightly_cad.py itself
+        set status="votable" AND finalize_morning_bundle actually wrote
+        morning-summary.json for it — never on job.status alone.
+
+        Fixed after a second review round: `job.run_dir` comes from the queue
+        file, which is treated as untrusted everywhere else in this module (the
+        queue *path* is already contained under the configured runs root by
+        `_resolve_nightly_queue_path`), but this method previously resolved
+        `run_dir` itself with no containment check at all — a queue entry could
+        name an arbitrary external directory, mark itself votable, and drop a
+        morning-summary.json there, turning the pair/vote/asset routes into an
+        arbitrary-file read (assets) and write (vote_pages/vote logs) primitive
+        against any path readable/writable by the server process. `run_dir` must
+        now resolve under the same `repo_root / "runs"` root as the queue path.
+        """
+        _, jobs = load_queue(Path(queue_path))
+        allowed_root = (self.repo_root / "runs").resolve()
+        for job in jobs:
+            if job.job_id == job_id:
+                if job.status != "votable":
+                    raise ValueError(
+                        f"job {job_id!r} is not votable yet (status={job.status!r})"
+                    )
+                if not job.run_dir:
+                    raise ValueError(f"job {job_id!r} has no run_dir yet")
+                run_dir = Path(job.run_dir).resolve()
+                if not run_dir.is_relative_to(allowed_root):
+                    raise ValueError(
+                        f"job {job_id!r} run_dir must be under the configured runs root"
+                    )
+                if not (run_dir / "morning-summary.json").is_file():
+                    raise ValueError(f"job {job_id!r} has no morning-summary.json yet")
+                return run_dir
+        raise ValueError(f"job {job_id!r} not found in queue")
+
+    def get_morning_queue(self, run_dir: Path, job_id: str, voter: str = "tony") -> VoteQueue:
+        """Blind pairs for one nightly morning bundle, presented via the Studio C2/C3
+        anonymous vote stage rather than the standalone `morning-vote/pair-NNN.html`
+        static pages (those, and morning.html, are untouched by this — both keep
+        working independently).
+
+        Mirrors `nightly_cad.finalize_morning_bundle`'s exact cell/pairing/hint/
+        pair_seed sequence so `pair_id` values match its private reveal.json 1:1;
+        candidates are re-staged (idempotently, same source bytes) into this run's
+        own `vote_pages/` directory rather than reusing `morning-vote/`, so nothing
+        here ever writes into a path finalize_morning_bundle already owns. Votes are
+        appended to this run_dir's votes.blind.jsonl / votes.revealed.jsonl — the
+        same append-only files & schema `code_cad_vote_web.py` itself writes.
+        """
+        run_dir = Path(run_dir).resolve()
+        key = (str(run_dir), voter)
+        if key in self._morning_queues:
+            return self._morning_queues[key]
+
+        run_log = json.loads((run_dir / "run_log.json").read_text(encoding="utf-8"))
+        cells = arena_runner.build_vote_candidates(run_log)
+        vote_pages = run_dir / "vote_pages"
+        vote_pages.mkdir(parents=True, exist_ok=True)
+        already = _voted_pair_keys(run_dir, voter)
+        queue = VoteQueue(run_dir=run_dir, voter=voter)
+
+        def _asset_relative(candidate: VoteCandidate) -> VoteCandidate:
+            prefix = f"/api/morning/{job_id}/assets"
+            return VoteCandidate(
+                candidate_id=candidate.candidate_id,
+                model_id=candidate.model_id,
+                trial_id=candidate.trial_id,
+                render_path=f"{prefix}/{candidate.render_path}",
+                provenance=candidate.provenance,
+                model3d_path=f"{prefix}/{candidate.model3d_path}" if candidate.model3d_path else None,
+                frames=(
+                    tuple(f"{prefix}/{p}" for p in candidate.frames) if candidate.frames else None
+                ),
+            )
+
+        pair_index = 0
+        for cell, candidates in sorted(cells.items()):
+            for left_raw, right_raw in itertools.combinations(candidates, 2):
+                hint = f"night-{pair_index:03d}"
+                left_staged = _stage_blind_assets(left_raw, hint, "left", vote_pages)
+                right_staged = _stage_blind_assets(right_raw, hint, "right", vote_pages)
+                pair_seed = f"{run_dir.name}:{cell}:{pair_index}"
+                pair_index += 1
+                shuffled = build_blind_pair(left_staged, right_staged, pair_seed=pair_seed)
+                if (shuffled.pair_id, voter) in already:
+                    continue
+                pair = BlindPair(
+                    pair_id=shuffled.pair_id,
+                    left=_asset_relative(shuffled.left),
+                    right=_asset_relative(shuffled.right),
+                )
+                queue.items.append(
+                    QueueItem(
+                        pair=pair,
+                        meta={"instrument_id": cell[0], "seed": cell[1], "rep": cell[2]},
+                    )
+                )
+
+        self._morning_queues[key] = queue
+        return queue
+
+    def cast_morning_vote(
+        self,
+        run_dir: Path,
+        job_id: str,
+        pair_id: str,
+        winner: str,
+        voter: str = "tony",
+        flags: Optional[dict] = None,
+    ) -> bool:
+        queue = self.get_morning_queue(run_dir, job_id, voter=voter)
+        return queue.cast(pair_id=pair_id, winner=winner, flags=flags)
 
     def _get_approvals_path(self) -> Path:
         p = self.repo_root / ".makerbench" / "reference_approvals.json"

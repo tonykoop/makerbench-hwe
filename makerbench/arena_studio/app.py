@@ -218,19 +218,14 @@ def create_studio_app(
             )
         return {"success": True, "pair_id": payload.pair_id}
 
-    @app.get("/api/nightly/queue")
-    def get_nightly_queue(
-        queue: Optional[str] = Query(
-            None,
-            description="Path to a nightly-cad-queue.json, must be under this "
-            "server's configured runs/ root",
-        ),
-    ):
-        # Fixed after review: an earlier version accepted `queue`/`lock` as
-        # independent, unconstrained absolute paths, making the Studio server an
-        # oracle over arbitrary host JSON/lock files. Contain the queue path to a
-        # single configured root, and always DERIVE the lock path next to it
-        # (get_nightly_queue_view's own default) rather than accept it separately.
+    def _resolve_nightly_queue_path(queue: Optional[str]) -> Path:
+        # Fixed after review (#732): an earlier version accepted `queue` (and a
+        # separate `lock`) as independent, unconstrained absolute paths, making the
+        # Studio server an oracle over arbitrary host JSON/lock files. Every route
+        # that resolves a nightly/morning queue path (nightly queue, morning queue,
+        # morning pair/vote/assets) goes through this one helper, so the containment
+        # check applies uniformly rather than only to whichever route happened to
+        # inline it first.
         allowed_root = (service.repo_root / "runs").resolve()
         if queue:
             queue_path = Path(queue).resolve()
@@ -243,10 +238,111 @@ def create_studio_app(
             queue_path = allowed_root / "nightly-cad-queue.json"
         if not queue_path.exists():
             raise HTTPException(status_code=404, detail=f"nightly queue not found: {queue_path}")
+        return queue_path
+
+    @app.get("/api/nightly/queue")
+    def get_nightly_queue(
+        queue: Optional[str] = Query(
+            None,
+            description="Path to a nightly-cad-queue.json, must be under this "
+            "server's configured runs/ root",
+        ),
+    ):
+        queue_path = _resolve_nightly_queue_path(queue)
         try:
             return service.get_nightly_queue_view(queue_path, None)
         except (OSError, ValueError) as e:
             raise HTTPException(status_code=400, detail=str(e))
+
+    @app.get("/api/morning/queue")
+    def list_morning_bundles(queue: Optional[str] = Query(None)):
+        queue_path = _resolve_nightly_queue_path(queue)
+        try:
+            return {"bundles": service.discover_morning_bundles(queue_path)}
+        except (OSError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.get("/api/morning/{job_id}/pair")
+    def get_morning_pair(
+        job_id: str,
+        queue: Optional[str] = Query(None),
+        voter: str = Query("tony"),
+        skip: int = Query(0, ge=0),
+    ):
+        queue_path = _resolve_nightly_queue_path(queue)
+        try:
+            run_dir = service._resolve_morning_run_dir(queue_path, job_id)
+            vqueue = service.get_morning_queue(run_dir, job_id, voter=voter)
+        except (OSError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        done, total = vqueue.progress()
+        unvoted_items = [i for i in vqueue.items if i.pair.pair_id not in vqueue.voted_pair_ids]
+        next_item = unvoted_items[skip % len(unvoted_items)] if unvoted_items else None
+
+        next_pair_data = None
+        if next_item:
+            pair = next_item.pair
+            next_pair_data = {
+                "pair_id": pair.pair_id,
+                "meta": next_item.meta,
+                "left": {
+                    "render_path": pair.left.render_path,
+                    "model3d_path": pair.left.model3d_path,
+                    "frames": pair.left.frames,
+                },
+                "right": {
+                    "render_path": pair.right.render_path,
+                    "model3d_path": pair.right.model3d_path,
+                    "frames": pair.right.frames,
+                },
+            }
+
+        return {
+            "job_id": job_id,
+            "voter": voter,
+            "done": done,
+            "total": total,
+            "has_next": next_item is not None,
+            "skippable": len(unvoted_items),
+            "current_pair": next_pair_data,
+        }
+
+    @app.post("/api/morning/{job_id}/vote")
+    def cast_morning_vote(job_id: str, payload: VotePayload, queue: Optional[str] = Query(None)):
+        queue_path = _resolve_nightly_queue_path(queue)
+        try:
+            run_dir = service._resolve_morning_run_dir(queue_path, job_id)
+        except (OSError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        success = service.cast_morning_vote(
+            run_dir=run_dir,
+            job_id=job_id,
+            pair_id=payload.pair_id,
+            winner=payload.winner,
+            voter=payload.voter,
+            flags=payload.flags,
+        )
+        if not success:
+            raise HTTPException(status_code=400, detail="Invalid pair ID or vote already cast")
+        return {"success": True, "pair_id": payload.pair_id, "winner": payload.winner}
+
+    # Serve blind-staged assets for a morning bundle under this run's own vote_pages/
+    # (never the finalize_morning_bundle-owned morning-vote/ directory).
+    @app.get("/api/morning/{job_id}/assets/{file_path:path}")
+    def serve_morning_asset(job_id: str, file_path: str, queue: Optional[str] = Query(None)):
+        queue_path = _resolve_nightly_queue_path(queue)
+        try:
+            run_dir = service._resolve_morning_run_dir(queue_path, job_id)
+        except (OSError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        vote_pages = (run_dir / "vote_pages").resolve()
+        asset = (vote_pages / file_path).resolve()
+        if not asset.is_relative_to(vote_pages):
+            raise HTTPException(status_code=404, detail="Asset not found")
+        if not asset.exists() or not asset.is_file():
+            raise HTTPException(status_code=404, detail="Asset not found")
+        return FileResponse(str(asset))
 
     @app.post("/api/competitions/launch")
     def launch_competition(payload: CompetitionLaunchPayload):
