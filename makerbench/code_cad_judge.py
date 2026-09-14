@@ -22,6 +22,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Mapping, Optional
 
 from .code_cad_vote_surface import BlindPair, VoteChoice, record_vote, reveal_vote
@@ -36,10 +37,10 @@ class JudgeError(RuntimeError):
     """A VLM judge call failed to produce a usable decision.
 
     A failed / empty / timed-out subprocess must never be parsed as a DRAW:
-    ``_parse_choice("")`` returns ``"draw"``, so a broken judge call would
-    otherwise be recorded as a real DRAW vote and folded into judge Elo and
-    the #427 agreement math, silently corrupting the scoreline. Callers skip
-    the pair instead of recording a vote.
+    A broken judge call or an answer without a strict final decision would
+    otherwise risk being recorded as a real DRAW vote and folded into judge
+    Elo and the #427 agreement math, silently corrupting the scoreline. Callers
+    skip the pair instead of recording a vote.
     """
 
 _JUDGE_PROMPT_TEMPLATE = """You are judging two candidate CAD renders of the same design brief in a blind A/B comparison. Reply with exactly one word: LEFT, RIGHT, or DRAW.
@@ -105,17 +106,32 @@ def claude_cli_judge(
 ) -> JudgeCallable:
     """A VLM judge backed by the local ``claude -p`` CLI with image attachments.
 
-    ``model_id`` is provenance only (recorded on the resulting vote as
-    ``voter_id``); the CLI itself picks its configured model.
+    ``model_id`` is recorded on the resulting vote as ``voter_id``. Recognized
+    Claude model families are also pinned on the CLI invocation so provenance
+    matches the model that made the decision.
     """
 
     def judge(prompt: JudgePrompt) -> VoteChoice:
+        left_path = Path(prompt.left_render_path).resolve()
+        right_path = Path(prompt.right_render_path).resolve()
         text = _JUDGE_PROMPT_TEMPLATE.format(
             instrument_id=prompt.instrument_id, brief=prompt.brief
         )
+        text += (
+            "\n\nUse the Read tool to view both render images before deciding."
+            f"\nLEFT render: {left_path}"
+            f"\nRIGHT render: {right_path}"
+            "\nYour final line must be exactly one word: LEFT, RIGHT, or DRAW."
+        )
+        command = [binary, "-p", text, "--allowedTools", "Read"]
+        for render_dir in sorted({left_path.parent, right_path.parent}, key=str):
+            command.extend(["--add-dir", str(render_dir)])
+        model_alias = _claude_model_alias(model_id)
+        if model_alias:
+            command.extend(["--model", model_alias])
         try:
             result = runner(
-                [binary, "-p", text, prompt.left_render_path, prompt.right_render_path],
+                command,
                 capture_output=True,
                 text=True,
                 timeout=timeout_s,
@@ -139,14 +155,26 @@ def claude_cli_judge(
 
 
 def _parse_choice(text: str) -> VoteChoice:
-    upper = (text or "").upper()
-    has_left = "LEFT" in upper
-    has_right = "RIGHT" in upper
-    if has_left and not has_right:
-        return "left"
-    if has_right and not has_left:
-        return "right"
-    return "draw"
+    lines = (text or "").strip().splitlines()
+    final_line = lines[-1].strip().lower() if lines else ""
+    choices: dict[str, VoteChoice] = {
+        "left": "left",
+        "right": "right",
+        "draw": "draw",
+    }
+    if final_line in choices:
+        return choices[final_line]
+    raise JudgeError("judge response final line must be exactly LEFT, RIGHT, or DRAW")
+
+
+def _claude_model_alias(model_id: str) -> Optional[str]:
+    """Return the Claude CLI family encoded in a provenance model id."""
+
+    tokens = model_id.lower().replace(".", "-").split("-")
+    for family in ("sonnet", "opus", "haiku"):
+        if family in tokens:
+            return family
+    return None
 
 
 def judge_pair(
