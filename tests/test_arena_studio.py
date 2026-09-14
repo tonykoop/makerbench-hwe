@@ -391,6 +391,63 @@ def test_html_ui_no_external_urls(client: TestClient):
         assert "https://" not in text, f"{label} references an external https:// URL"
 
 
+def test_theme_honors_prefers_color_scheme(client: TestClient):
+    """S2/#694: dark/light theme via prefers-color-scheme, no manual toggle needed.
+
+    Every structural surface/text token defined on :root must also be redefined in the
+    light-mode media query, or a viewer with a light OS/browser preference would see a
+    half-themed page (e.g. dark text on a dark background left over from :root).
+    --stage-bg is deliberately excluded: the turntable/viewer surfaces intentionally stay
+    dark in both themes (a photography-lightbox convention), documented in a CSS comment.
+    """
+    css = client.get("/static/studio.css").text
+    assert "prefers-color-scheme: light" in css
+
+    root_block = css.split(":root {", 1)[1].split("}", 1)[0]
+    root_tokens = set(re.findall(r"(--[a-z-]+):", root_block))
+
+    light_block = css.split("prefers-color-scheme: light)", 1)[1].split(":root {", 1)[1]
+    light_block = light_block.split("}\n    }", 1)[0]
+    light_tokens = set(re.findall(r"(--[a-z-]+):", light_block))
+
+    themed_only_in_dark = root_tokens - light_tokens
+    intentionally_fixed = {
+        "--font",
+        "--stage-bg",
+        "--accent",
+        "--success",
+        "--warning",
+        "--danger",
+        "--purple",
+        # --on-accent stays fixed (not redefined) in light mode: --accent/--warning are
+        # the same bright colors in both themes, so their foreground must be too, or
+        # button/pill text contrast regresses (a real bug caught by review — see
+        # test_light_mode_on_accent_contrast_is_not_regressed below).
+        "--on-accent",
+    }
+    unexpected = themed_only_in_dark - intentionally_fixed
+    assert not unexpected, (
+        f"tokens defined on :root but never overridden for light mode: {unexpected}"
+    )
+
+
+def test_light_mode_on_accent_contrast_is_not_regressed(client: TestClient):
+    """S2/#729 fix (post-review): --on-accent must not be redefined to a light color
+    in light mode while --accent/--warning stay the same bright fixed colors — that
+    combination is a real WCAG contrast failure (~2.1:1) on primary/warning buttons,
+    the active Launch tab, and active filter pills. Bug caught by review; this pins it.
+    """
+    css = client.get("/static/studio.css").text
+    light_block = css.split("prefers-color-scheme: light)", 1)[1].split(":root {", 1)[1]
+    light_block = light_block.split("}\n    }", 1)[0]
+    # Match the CSS declaration specifically (not just the substring, which also
+    # appears in this block's own explanatory comment).
+    assert not re.search(r"--on-accent\s*:", light_block), (
+        "--on-accent must stay fixed at its dark :root value in light mode "
+        "(--accent/--warning are unthemed bright colors needing a dark foreground)"
+    )
+
+
 def test_turntable_html_progressive_enhancement(client: TestClient):
     """C2/#698: WebGL orbit must start disabled — the frame turntable is the default."""
     response = client.get("/")
