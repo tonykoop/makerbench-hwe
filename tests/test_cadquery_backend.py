@@ -42,6 +42,7 @@ def test_missing_cadquery_is_an_environment_error(tmp_path, monkeypatch):
     script = tmp_path / "entrant.py"
     script.write_text("result = None\n", encoding="utf-8")
     monkeypatch.setattr(cadquery_backend, "_bubblewrap_available", lambda _env: True)
+    monkeypatch.setattr(cadquery_backend.shutil, "which", lambda _name: "/usr/bin/bwrap")
 
     def fake_run(cmd, **kwargs):
         del cmd, kwargs
