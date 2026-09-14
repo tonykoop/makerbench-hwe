@@ -702,8 +702,13 @@ def test_live_launch_is_refused_without_server_opt_in(client: TestClient):
     assert "--allow-live" in response.json()["detail"]
 
 
-def test_reference_gatekeeper_and_approval_flow(client: TestClient):
-    """Test Story #697: Reference image gatekeeper check and approval flow."""
+def test_reference_gatekeeper_and_approval_flow(client: TestClient, tmp_path: Path):
+    """Test Story #697: Reference image gatekeeper check and approval flow.
+
+    #697 D4 binds approval to the reference image's sha256 — approving
+    requires a real file on disk to hash, so this test provides one before
+    step 3 (it did not need one under the old plain {task: bool} approvals).
+    """
     # 1. Check initial reference status
     ref_res = client.get("/api/tasks/kora/reference")
     assert ref_res.status_code == 200
@@ -730,8 +735,12 @@ def test_reference_gatekeeper_and_approval_flow(client: TestClient):
     assert blocked_res.json()["success"] is False
     assert "Visual Reference Gatekeeper" in blocked_res.json()["error"]
 
-    # 3. Approve and retry
-    client.post("/api/tasks/kora/approve?approved=true")
+    # 3. Approve and retry (needs a real reference image to hash-bind to)
+    kora_ref = tmp_path / "tasks" / "kora" / "reference.png"
+    kora_ref.parent.mkdir(parents=True, exist_ok=True)
+    kora_ref.write_bytes(b"fake-png-bytes")
+    approve_res = client.post("/api/tasks/kora/approve?approved=true")
+    assert approve_res.json()["approved"] is True
     allowed_res = client.post("/api/competitions/launch", json=launch_payload)
     assert allowed_res.status_code == 500
     assert "local reference images" in allowed_res.json()["detail"]
