@@ -362,6 +362,14 @@ def arena_run(
             "optional local backend with `pip install -e '.[cadquery]'`.[/red]"
         )
         raise typer.Exit(code=1)
+    if backend == "cadquery" and not cadquery_backend._bubblewrap_available(
+        cadquery_backend._scrub_environment(os.environ)
+    ):
+        console.print(
+            "[red]Bubblewrap filesystem sandbox unavailable — the CadQuery "
+            "backend requires `bwrap` and unprivileged user namespaces.[/red]"
+        )
+        raise typer.Exit(code=1)
     if backend == "cadquery" and not render.openscad_available():
         console.print(
             "[red]openscad binary not found — the CadQuery backend needs it for "

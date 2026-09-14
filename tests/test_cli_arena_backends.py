@@ -65,8 +65,16 @@ class TestCadQueryBackendPreflight:
         assert result.exit_code == 1
         assert "cadquery is not installed" in result.stdout
 
+    def test_fails_closed_when_filesystem_sandbox_is_unavailable(self, monkeypatch):
+        monkeypatch.setattr(cadquery_backend, "cadquery_available", lambda: True)
+        monkeypatch.setattr(cadquery_backend, "_bubblewrap_available", lambda _env: False)
+        result = runner.invoke(app, _run_args("cadquery"))
+        assert result.exit_code == 1
+        assert "Bubblewrap filesystem sandbox unavailable" in result.stdout
+
     def test_fails_cleanly_when_preview_renderer_is_missing(self, monkeypatch):
         monkeypatch.setattr(cadquery_backend, "cadquery_available", lambda: True)
+        monkeypatch.setattr(cadquery_backend, "_bubblewrap_available", lambda _env: True)
         monkeypatch.setattr("makerbench.cli_arena.render.openscad_available", lambda: False)
         result = runner.invoke(app, _run_args("cadquery"))
         assert result.exit_code == 1
