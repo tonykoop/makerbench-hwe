@@ -153,6 +153,8 @@ class Session:
         self.console: list[str] = []
         self.errors: list[str] = []
         self.api_bodies: list[str] = []
+        self.requests: list[str] = []
+        self.page.on("request", lambda request: self.requests.append(request.url))
         self.page.on("console", self._on_console)
         self.page.on("pageerror", lambda error: self.errors.append(str(error)))
         self.page.on("response", self._on_response)
@@ -311,6 +313,8 @@ def test_zero_webgl_turntable_turns_and_steps(studio_url: str, screenshot_dir: P
         assert orbit.is_disabled()
         assert "needs WebGL" in page.locator("#viewer-note").inner_text()
         assert page.locator("model-viewer").count() == 0
+        # The 3D viewer script loads only on demand in a WebGL browser (#722).
+        assert not [url for url in session.requests if "model-viewer" in url]
 
         turntable = page.locator(".turntable").first
         start = int(turntable.get_attribute("data-frame"))
