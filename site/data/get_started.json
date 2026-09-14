@@ -53,16 +53,16 @@
       "id": "hf",
       "links": [
         {
-          "href": "https://github.com/tonykoop/makerbench-hwe/blob/main/docs/WORKFLOW_TRACK.md",
-          "label": "docs/WORKFLOW_TRACK.md"
+          "href": "https://huggingface.co/spaces/tonykoop/makerbench-hwe",
+          "label": "Open the Space"
         },
         {
           "href": "https://github.com/tonykoop/makerbench-hwe/issues/98",
-          "label": "track #98"
+          "label": "dual-league dashboard #98"
         }
       ],
-      "status": "in_progress",
-      "status_label": "In progress"
+      "status": "available",
+      "status_label": "Live on Hugging Face"
     },
     {
       "id": "contribute",
