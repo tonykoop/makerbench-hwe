@@ -1,0 +1,56 @@
+name: studio-browser
+
+# Real-browser checks for the Arena Studio UI: zero-WebGL rendering, blind-vote
+# anonymity in the DOM, keyboard-only use, phone width. Non-required and
+# path-filtered (Tony, rebuild Q2). Playwright is installed here only; it is
+# never a project dependency.
+
+on:
+  pull_request:
+    paths:
+      - "makerbench/arena_studio/**"
+      - "tests/test_arena_studio_browser*.py"
+      - "tests/js/**"
+      - ".github/workflows/studio-browser.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  studio-browser:
+    name: studio-browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install locked environment
+        run: |
+          python -m pip install -r requirements.lock
+          python -m pip install --no-deps -e ".[dev]"
+
+      - name: Install Playwright and Chromium (CI only)
+        run: |
+          python -m pip install "playwright==1.62.0"
+          python -m playwright install --with-deps chromium
+
+      - name: Browser checks
+        env:
+          ARENA_STUDIO_REQUIRE_BROWSER: "1"
+          ARENA_STUDIO_SCREENSHOTS: studio-screens
+        run: python -m pytest -q tests/test_arena_studio_browser.py
+
+      - name: Keep screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: studio-screens
+          path: studio-screens
+          if-no-files-found: ignore
