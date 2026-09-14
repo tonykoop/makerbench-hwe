@@ -573,6 +573,17 @@
       }
     }
 
+    // Escapes untrusted text for safe interpolation into an innerHTML template
+    // literal. Several fields rendered below (job_id, instrument_id, status, a
+    // server error `detail`) come from a nightly-cad-queue.json / morning-bundle
+    // queue file, which this Studio server itself does not author — treat every
+    // field sourced from it as untrusted, the same as any other user input.
+    function escapeHtml(value) {
+      const div = document.createElement('div');
+      div.textContent = value == null ? '' : String(value);
+      return div.innerHTML;
+    }
+
     /* R2 P1/#732: Nightly Queue Cockpit — strictly read-only. Renders whatever
        GET /api/nightly/queue returns; never triggers a launch or acquires the lease. */
     async function loadNightlyQueue() {
@@ -588,7 +599,7 @@
         const res = await fetch(`/api/nightly/queue${qs}`);
         if (!res.ok) {
           const detail = (await res.json().catch(() => ({}))).detail || res.statusText;
-          leaseEl.innerHTML = `<span style="color: var(--danger);">No nightly queue found: ${detail}</span>`;
+          leaseEl.innerHTML = `<span style="color: var(--danger);">No nightly queue found: ${escapeHtml(detail)}</span>`;
           tbody.innerHTML = '<tr><td colspan="6" style="color: var(--text-muted);">No queue loaded.</td></tr>';
           return;
         }
@@ -611,15 +622,15 @@
                 ? `$${job.budget.spent_usd.toFixed(2)} spent${job.budget.halted_reason ? ' <span style="color: var(--danger);">(halted)</span>' : ''}`
                 : '&mdash;';
               const statusLabel = job.orphaned
-                ? `<span class="badge badge-paused">orphaned</span> ${job.status}`
-                : job.status;
+                ? `<span class="badge badge-paused">orphaned</span> ${escapeHtml(job.status)}`
+                : escapeHtml(job.status);
               return `<tr>
-                <td>${job.job_id}</td>
-                <td>${job.instrument_id}</td>
+                <td>${escapeHtml(job.job_id)}</td>
+                <td>${escapeHtml(job.instrument_id)}</td>
                 <td>${statusLabel}</td>
                 <td>${job.entrant_count}</td>
                 <td>${budget} / $${job.budget_usd.toFixed(2)}</td>
-                <td>${job.run_id ? job.run_id : ''}</td>
+                <td>${job.run_id ? escapeHtml(job.run_id) : ''}</td>
               </tr>`;
             }).join('')
           : '<tr><td colspan="6" style="color: var(--text-muted);">No jobs in queue.</td></tr>';

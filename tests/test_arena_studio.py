@@ -763,9 +763,16 @@ def test_vote_with_structured_defect_flags(client: TestClient, fake_run: Path):
     assert res.json()["success"] is True
 
 
-def _nightly_queue_fixture(tmp_path: Path, *, running_job_run_dir: Optional[Path] = None) -> Path:
-    """Round 2 P1/#732: a small, committed-style fixture queue (never the real queue)."""
-    queue_path = tmp_path / "nightly-cad-queue.json"
+def _nightly_queue_fixture(repo_root: Path, *, running_job_run_dir: Optional[Path] = None) -> Path:
+    """Round 2 P1/#732: a small, committed-style fixture queue (never the real queue).
+
+    Written under repo_root/runs/ — the only root /api/nightly/queue accepts a
+    `queue=` override beneath (fixed after review: an earlier version accepted any
+    absolute path with no containment check, making the Studio server an oracle over
+    arbitrary host files)."""
+    runs_dir = repo_root / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    queue_path = runs_dir / "nightly-cad-queue.json"
     running_job = {
         "job_id": "sambuca-night",
         "instrument_id": "sambuca",
@@ -827,6 +834,32 @@ def test_nightly_queue_tab_js_is_read_only(client: TestClient):
     assert "method: \"POST\"" not in body
 
 
+def test_nightly_queue_tab_js_escapes_queue_controlled_fields(client: TestClient):
+    """R2 P1/#732 fix (post-review): job_id/instrument_id/status/run_id and the error
+    `detail` come from a queue file this Studio server does not author — a crafted
+    queue value (e.g. an <img onerror=...> payload as a job_id) must never become
+    same-origin script via a raw innerHTML interpolation."""
+    js = client.get("/static/studio.js").text
+    assert "function escapeHtml(" in js
+    start = js.index("async function loadNightlyQueue()")
+    end = js.index("async function exportWinnersAction()")
+    body = js[start:end]
+    for raw_field in ("${job.job_id}", "${job.instrument_id}", "${detail}"):
+        assert raw_field not in body, f"{raw_field} must be wrapped in escapeHtml(...)"
+    # job.run_id is interpolated only inside a ternary guarded by escapeHtml(...) —
+    # check the unescaped closing-brace form specifically, not the ternary condition
+    # (which legitimately reads the raw `job.run_id` boolean-ish check).
+    assert "${job.run_id}" not in body
+    for escaped_field in (
+        "escapeHtml(job.job_id)",
+        "escapeHtml(job.instrument_id)",
+        "escapeHtml(job.run_id)",
+        "escapeHtml(job.status)",
+        "escapeHtml(detail)",
+    ):
+        assert escaped_field in body, f"missing {escaped_field} in loadNightlyQueue()"
+
+
 def test_nightly_queue_endpoint_shape_and_orphan_detection(client: TestClient, tmp_path: Path):
     """R2 P1/#732: read-only nightly cockpit view, no lease file present."""
     queue_path = _nightly_queue_fixture(tmp_path)
@@ -848,11 +881,14 @@ def test_nightly_queue_endpoint_shape_and_orphan_detection(client: TestClient, t
 
 
 def test_nightly_queue_endpoint_active_lease_clears_orphan_flag(client: TestClient, tmp_path: Path):
-    lock_path = tmp_path / ".nightly-cad.lock"
-    lock_path.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
     queue_path = _nightly_queue_fixture(tmp_path)
+    # The lock path is always derived as queue_path.parent/.nightly-cad.lock (fixed
+    # after review: an earlier version accepted an independent `lock=` override with
+    # no containment check either).
+    lock_path = queue_path.parent / ".nightly-cad.lock"
+    lock_path.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
 
-    res = client.get(f"/api/nightly/queue?queue={queue_path}&lock={lock_path}")
+    res = client.get(f"/api/nightly/queue?queue={queue_path}")
     assert res.status_code == 200
     data = res.json()
     assert data["lease"]["status"] == "ACTIVE"
@@ -887,13 +923,13 @@ def test_nightly_queue_endpoint_reconstructs_budget_from_run_dir(client: TestCli
 
 def test_nightly_queue_endpoint_never_mutates_queue_or_lease(client: TestClient, tmp_path: Path):
     """Cockpit must be strictly read-only: same bytes on disk before and after."""
-    lock_path = tmp_path / ".nightly-cad.lock"
-    lock_path.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
     queue_path = _nightly_queue_fixture(tmp_path)
+    lock_path = queue_path.parent / ".nightly-cad.lock"
+    lock_path.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
     queue_before = queue_path.read_bytes()
     lock_before = lock_path.read_bytes()
 
-    res = client.get(f"/api/nightly/queue?queue={queue_path}&lock={lock_path}")
+    res = client.get(f"/api/nightly/queue?queue={queue_path}")
     assert res.status_code == 200
 
     assert queue_path.read_bytes() == queue_before
@@ -901,17 +937,31 @@ def test_nightly_queue_endpoint_never_mutates_queue_or_lease(client: TestClient,
 
 
 def test_nightly_queue_endpoint_404_for_missing_queue(client: TestClient, tmp_path: Path):
-    missing = tmp_path / "does-not-exist.json"
+    missing = tmp_path / "runs" / "does-not-exist.json"
     res = client.get(f"/api/nightly/queue?queue={missing}")
     assert res.status_code == 404
 
 
+def test_nightly_queue_endpoint_refuses_queue_outside_allowed_root(client: TestClient, tmp_path: Path):
+    """R2 P1/#732 fix (post-review): the Studio server must not become an oracle over
+    arbitrary host files. A `queue=` path outside repo_root/runs/ — even one that
+    genuinely exists and is a well-formed queue — must be refused, not served."""
+    outside_root = tmp_path.parent / "outside-repo-root"
+    outside_root.mkdir(exist_ok=True)
+    outside_queue = _nightly_queue_fixture(outside_root)
+
+    res = client.get(f"/api/nightly/queue?queue={outside_queue}")
+    assert res.status_code == 400
+    assert "must be under" in res.text.lower()
+    assert str(outside_queue) not in res.text
+
+
 def test_nightly_queue_endpoint_never_exposes_secrets(client: TestClient, tmp_path: Path):
     """Lease view must go through nightly_preflight.audit_lock's redaction, never a raw dict."""
-    lock_path = tmp_path / ".nightly-cad.lock"
-    lock_path.write_text(json.dumps({"pid": os.getpid(), "api_key": "sk-should-never-appear"}), encoding="utf-8")
     queue_path = _nightly_queue_fixture(tmp_path)
+    lock_path = queue_path.parent / ".nightly-cad.lock"
+    lock_path.write_text(json.dumps({"pid": os.getpid(), "api_key": "sk-should-never-appear"}), encoding="utf-8")
 
-    res = client.get(f"/api/nightly/queue?queue={queue_path}&lock={lock_path}")
+    res = client.get(f"/api/nightly/queue?queue={queue_path}")
     assert res.status_code == 200
     assert "sk-should-never-appear" not in res.text
