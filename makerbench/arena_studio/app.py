@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from makerbench import __version__
 from makerbench.cli_arena import DEFAULT_REGISTRY
+from makerbench.redaction import run_relative_path
 
 from .service import ArenaStudioService
 
@@ -44,6 +45,7 @@ def create_studio_app(
     registry_path: Path = Path(DEFAULT_REGISTRY),
     repo_root: Optional[Path] = None,
     allow_live: bool = False,
+    extra_run_roots: Optional[Sequence[Path]] = None,
 ) -> FastAPI:
     """Create and configure the Arena Studio FastAPI instance."""
 
@@ -58,6 +60,7 @@ def create_studio_app(
         registry_path=registry_path,
         repo_root=repo_root,
         allow_live=allow_live,
+        extra_run_roots=extra_run_roots,
     )
 
     # Mount static assets (model-viewer, etc.)
@@ -81,10 +84,9 @@ def create_studio_app(
 
     # Run identifiers are opaque discovery keys, never filesystem paths.
     def _resolve_run_dir(run_id: str) -> Path:
-        runs = service.discover_runs()
-        for r in runs:
-            if r["run_id"] == run_id:
-                return Path(r["path"])
+        run_path = service.resolve_run_dir(run_id)
+        if run_path is not None:
+            return run_path
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
 
     # API Routes
@@ -93,7 +95,11 @@ def create_studio_app(
         return {
             "status": "ok",
             "version": __version__,
-            "default_run_dir": str(service.default_run_dir) if service.default_run_dir else None,
+            "default_run_dir": (
+                run_relative_path(str(service.default_run_dir))
+                if service.default_run_dir
+                else None
+            ),
         }
 
     @app.get("/api/runs")

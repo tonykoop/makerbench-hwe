@@ -11,7 +11,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from makerbench import code_cad_arena_runner as arena_runner
 from makerbench.cli_arena import (
@@ -33,6 +33,7 @@ from makerbench.code_cad_vote_surface import (
     build_blind_pair,
 )
 from makerbench.code_cad_vote_web import QueueItem, VoteQueue
+from makerbench.redaction import run_relative_path
 
 
 class ArenaStudioService:
@@ -44,12 +45,16 @@ class ArenaStudioService:
         registry_path: Path = Path(DEFAULT_REGISTRY),
         repo_root: Optional[Path] = None,
         allow_live: bool = False,
+        extra_run_roots: Optional[Sequence[Path]] = None,
     ):
         self.default_run_dir = default_run_dir.resolve() if default_run_dir else None
         self.registry_path = registry_path.resolve()
         self.repo_root = repo_root.resolve() if repo_root else Path.cwd().resolve()
         self.source_root = Path(__file__).resolve().parents[2]
         self.allow_live = allow_live
+        self.extra_run_roots = tuple(
+            Path(root).resolve() for root in (extra_run_roots or ())
+        )
         self._queues: dict[tuple[str, str], VoteQueue] = {}
         self._active_jobs: dict[str, dict[str, Any]] = {}
         self._processes: dict[str, subprocess.Popen] = {}
@@ -57,19 +62,27 @@ class ArenaStudioService:
     def get_default_run_dir(self) -> Optional[Path]:
         if self.default_run_dir and self.default_run_dir.exists():
             return self.default_run_dir
-        # Auto-discover first candidate
-        runs = self.discover_runs()
-        if runs:
-            return Path(runs[0]["path"])
-        return None
+        paths = self._discover_run_paths()
+        return paths[0] if paths else None
 
     def discover_runs(self) -> list[dict[str, Any]]:
         """Search workspace directories for arena runs with a run_log.json."""
-        discovered: list[dict[str, Any]] = []
+        return [self._summarize_run_dir(path) for path in self._discover_run_paths()]
+
+    def resolve_run_dir(self, run_id: str) -> Optional[Path]:
+        """Resolve an opaque discovered run ID without exposing its host path."""
+        return next(
+            (path for path in self._discover_run_paths() if path.name == run_id),
+            None,
+        )
+
+    def _discover_run_paths(self) -> list[Path]:
+        """Return actual run paths for internal use only."""
+        discovered: list[Path] = []
         search_roots = [
             self.repo_root / "runs" / "code_cad_arena",
             self.repo_root / "arena_gen",
-            Path("/home/tony/bench-wt/arena_gen"),
+            *self.extra_run_roots,
         ]
         if self.default_run_dir:
             search_roots.insert(0, self.default_run_dir.parent)
@@ -86,11 +99,20 @@ class ArenaStudioService:
                     continue
                 visited_paths.add(path_str)
 
-                summary = self._summarize_run_dir(run_path)
-                discovered.append(summary)
+                discovered.append(run_path)
 
-        discovered.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+        discovered.sort(
+            key=lambda path: self._run_created_at(path) or "", reverse=True
+        )
         return discovered
+
+    @staticmethod
+    def _run_created_at(run_path: Path) -> Optional[str]:
+        try:
+            data = json.loads((run_path / "run_log.json").read_text(encoding="utf-8"))
+            return data.get("started_at") or data.get("created_at")
+        except Exception:
+            return None
 
     def _summarize_run_dir(self, run_path: Path) -> dict[str, Any]:
         """Produce lightweight metadata for a single run directory."""
@@ -124,7 +146,7 @@ class ArenaStudioService:
 
         return {
             "run_id": run_path.name,
-            "path": str(run_path),
+            "path": run_relative_path(str(run_path)),
             "created_at": created_at,
             "models": models,
             "instruments": instruments,
@@ -529,11 +551,7 @@ class ArenaStudioService:
         if run_id in self._active_jobs:
             run_path = Path(self._active_jobs[run_id]["run_path"])
         else:
-            runs = self.discover_runs()
-            for r in runs:
-                if r["run_id"] == run_id:
-                    run_path = Path(r["path"])
-                    break
+            run_path = self.resolve_run_dir(run_id)
         if not run_path or not run_path.exists():
             return []
 

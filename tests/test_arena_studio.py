@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 
 from makerbench.arena_studio import create_studio_app
 from makerbench.cli import app as cli_app
+from makerbench.redaction import find_host_paths
 
 runner = CliRunner()
 
@@ -133,7 +134,7 @@ def test_health_endpoint(client: TestClient, fake_run: Path):
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ok"
-    assert data["default_run_dir"] == str(fake_run.resolve())
+    assert data["default_run_dir"] == "<redacted-host-path>"
 
 
 def test_tasks_endpoint(client: TestClient):
@@ -158,6 +159,39 @@ def test_runs_discovery(client: TestClient, fake_run: Path):
     runs = data["runs"]
     assert len(runs) >= 1
     assert any(r["run_id"] == fake_run.name for r in runs)
+    assert find_host_paths(json.dumps(runs)) == []
+
+
+def test_extra_run_root_is_opt_in_and_never_publishes_host_path(
+    fake_registry: Path, tmp_path: Path
+):
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    external_root = tmp_path / "private-worktree" / "arena_gen"
+    external_run = external_root / "external-run"
+    external_run.mkdir(parents=True)
+    (external_run / "run_log.json").write_text(
+        json.dumps({"started_at": "2026-09-13T12:00:00Z", "trials": []}),
+        encoding="utf-8",
+    )
+
+    without_opt_in = create_studio_app(
+        registry_path=fake_registry, repo_root=repo_root
+    )
+    assert TestClient(without_opt_in).get("/api/runs").json()["runs"] == []
+
+    with_opt_in = create_studio_app(
+        registry_path=fake_registry,
+        repo_root=repo_root,
+        extra_run_roots=[external_root],
+    )
+    api = TestClient(with_opt_in)
+    runs = api.get("/api/runs").json()["runs"]
+    assert [run["run_id"] for run in runs] == ["external-run"]
+    assert runs[0]["path"] == "<redacted-host-path>"
+    assert str(tmp_path) not in json.dumps(runs)
+    assert find_host_paths(json.dumps(runs)) == []
+    assert api.get("/api/runs/external-run/summary").status_code == 200
 
 
 def test_run_summary(client: TestClient, fake_run: Path):
