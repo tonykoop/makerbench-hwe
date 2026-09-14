@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from urllib.parse import quote
 
@@ -438,6 +440,33 @@ def test_turntable_js_has_context_loss_safety_net(client: TestClient):
     # the lane contract for the primary turntable view.
     assert "startAutoRotate" in js
     assert "progressEl.style.display" in js
+
+
+def test_static_js_files_are_syntactically_valid():
+    """Every makerbench/arena_studio/static/*.js file must parse as valid JavaScript.
+
+    The HTML contract tests only check that /static/studio.js resolves with a 200 and
+    that referenced assets exist — none of them actually parse the JS, so a real syntax
+    error (e.g. an escape sequence collapsed into a literal newline inside a Python
+    triple-quoted string, which dead-ends the whole page in a browser without ever
+    showing up as a Python-side test failure) can slip through silently. Skips instead
+    of failing if `node` isn't on PATH — never a required dependency.
+    """
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not available on PATH")
+
+    static_dir = Path(__file__).resolve().parents[1] / "makerbench" / "arena_studio" / "static"
+    js_files = sorted(static_dir.glob("*.js"))
+    assert js_files, f"expected at least one .js file under {static_dir}"
+
+    for js_file in js_files:
+        result = subprocess.run(
+            [node, "--check", str(js_file)], capture_output=True, text=True
+        )
+        assert result.returncode == 0, (
+            f"{js_file.name} failed `node --check`:\n{result.stderr}"
+        )
 
 
 def test_voting_ergonomics_markup(client: TestClient):
