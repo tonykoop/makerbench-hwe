@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import threading
 import time
@@ -33,6 +34,11 @@ from makerbench.code_cad_vote_web import QueueItem, VoteQueue
 
 from . import analytics
 from . import doe
+
+# A run_id becomes a path segment (``runs/code_cad_arena/<run_id>``); this
+# rejects "/", ".." and absolute paths so a queue write can never escape
+# that directory (#709).
+_SAFE_RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 
 
 class ArenaStudioService:
@@ -230,6 +236,7 @@ class ArenaStudioService:
         context_tiers: Optional[list[str]] = None,
         seeds: Optional[list[int]] = None,
         budget_usd: float = 5.0,
+        max_cost_usd_by_model: Optional[dict[str, float]] = None,
     ) -> dict[str, Any]:
         """Build and persist a #647-compatible nightly queue file (#697 D3).
 
@@ -237,7 +244,20 @@ class ArenaStudioService:
         reads the file this writes. Only instruments with an approved
         reference image (D4 gatekeeper) get a job; the rest are reported in
         ``skipped``, not silently dropped.
+
+        ``run_id`` must be a bare path segment (#709): it is rejected if it
+        contains ``/`` or otherwise doesn't match ``_SAFE_RUN_ID_RE``, so it
+        can never escape ``runs/code_cad_arena/`` via ``..`` or an absolute
+        path. Every requested model's cost ceiling is resolved via
+        ``doe.resolve_max_cost_usd_by_model`` (overridable per-model via
+        ``max_cost_usd_by_model``), which fails closed instead of silently
+        treating an unknown cost as a known $0.00.
         """
+        if not _SAFE_RUN_ID_RE.fullmatch(run_id):
+            raise ValueError(
+                f"run_id must be a safe path segment (letters/digits/_.-, no "
+                f"'/' or leading '.'), got {run_id!r}"
+            )
         cells = doe.expand_matrix(
             instruments,
             models,
@@ -248,11 +268,16 @@ class ArenaStudioService:
         reference_images = {
             inst: self.get_task_reference(inst)["image_path"] for inst in instruments
         }
+        resolved_max_cost = doe.resolve_max_cost_usd_by_model(
+            {cell["model_id"] for cell in cells},
+            overrides=max_cost_usd_by_model,
+        )
         payload, jobs = doe.build_nightly_queue(
             cells,
             reference_images=reference_images,
             is_approved=lambda inst: self.get_task_reference(inst)["approved"],
             budget_usd=budget_usd,
+            max_cost_usd_by_model=resolved_max_cost,
         )
         run_dir = self.repo_root / "runs" / "code_cad_arena" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)

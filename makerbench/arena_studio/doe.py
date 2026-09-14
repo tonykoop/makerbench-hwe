@@ -216,6 +216,55 @@ def matrix_summary(annotated_cells: list[dict]) -> dict:
     }
 
 
+def resolve_max_cost_usd_by_model(
+    model_ids: Iterable[str],
+    *,
+    overrides: Optional[Mapping[str, float]] = None,
+    telemetry_store: str = DEFAULT_TELEMETRY_STORE,
+) -> dict[str, float]:
+    """Resolve a real per-model cost ceiling for the nightly budget guard (#709).
+
+    Fails closed: a model with no known cost (``cost_source: "unknown"`` --
+    e.g. a metered API model with no telemetry history) raises rather than
+    being defaulted to ``$0.00``. ``nightly_cad.BudgetGuard.reserve()`` treats
+    ``max_cost_usd`` as a falsy-check "no cap at all" when it is ``0.0``, so a
+    silent ``0.0`` default for an unknown-cost model would mean that model's
+    spend is never capped -- exactly backwards for the metered/paid entrants
+    this ceiling exists to protect against. Callers with a known real ceiling
+    for a model (e.g. an operator-supplied budget) pass it via ``overrides``.
+    """
+
+    overrides = overrides or {}
+    resolved: dict[str, float] = {}
+    unresolved: list[str] = []
+    for model_id in set(model_ids):
+        override = overrides.get(model_id)
+        if override is not None:
+            if override <= 0:
+                unresolved.append(model_id)
+                continue
+            resolved[model_id] = float(override)
+            continue
+
+        estimate = estimate_model_cost_and_time(model_id, telemetry_store=telemetry_store)
+        if estimate["cost_source"] == "subscription_zero_marginal":
+            resolved[model_id] = 0.0
+        elif estimate["cost_usd"] is not None:
+            resolved[model_id] = float(estimate["cost_usd"])
+        else:
+            unresolved.append(model_id)
+
+    if unresolved:
+        raise ValueError(
+            "no known cost ceiling for model(s) "
+            f"{sorted(unresolved)!r}; pass an explicit positive max_cost_usd "
+            "override for each -- an unknown cost must never silently "
+            "default to $0.00 (nightly_cad.BudgetGuard.reserve() treats that "
+            "as 'no cap', not 'known free')"
+        )
+    return resolved
+
+
 def build_nightly_queue(
     cells: list[dict],
     *,
