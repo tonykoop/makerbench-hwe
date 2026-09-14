@@ -16,7 +16,7 @@
       if (tabId === 'launcher') initLauncher();
       if (tabId === 'arena') loadQueue();
       if (tabId === 'leaderboard') { loadLeaderboard(); loadAgreementStudioExtras(); }
-      if (tabId === 'tasks') loadTasks();
+      if (tabId === 'tasks') { loadTasks(); loadDoeWhatIf(); }
     }
 
     async function init() {

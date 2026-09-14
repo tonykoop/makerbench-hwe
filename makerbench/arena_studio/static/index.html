@@ -6,6 +6,7 @@
   <title>MakerBench Arena Studio</title>
   <link rel="stylesheet" href="/static/studio.css" />
   <link rel="stylesheet" href="/static/agreement.css" />
+  <link rel="stylesheet" href="/static/doe.css" />
 </head>
 <body>
   <header>
@@ -377,10 +378,28 @@
           <tbody><tr><td colspan="5">Loading tasks...</td></tr></tbody>
         </table>
       </div>
+
+      <!-- DoE what-if budget slider (#697 S2, stretch): read-only, client-side estimate explorer -->
+      <div id="doeWhatIfCard" class="card">
+        <h3 style="margin-bottom: 6px;">DoE What-If: Per-Cell Budget</h3>
+        <span style="font-size: 12px; color: var(--text-muted);">
+          Preview only (level L1, seed 0) — never launches or writes a queue file.
+        </span>
+        <div style="margin-top: 12px;">
+          <input type="range" id="doeBudgetSlider" min="0" max="5" step="0.05" value="0.5" />
+          <div id="doeBudgetLabel" style="font-size: 12px; margin-top: 4px; color: var(--text-muted);">$0.50 per cell</div>
+        </div>
+        <div id="doeWhatIfSummary" class="doe-whatif-summary">Loading DoE preview...</div>
+        <div class="doe-whatif-note">
+          "Unknown cost" cells are never assumed free — a subscription-CLI model shows a real
+          $0.00, everything else without cost history stays unknown until it has run once.
+        </div>
+      </div>
     </section>
   </main>
 
   <script src="/static/studio.js"></script>
   <script src="/static/agreement.js"></script>
+  <script src="/static/doe.js"></script>
 </body>
 </html>

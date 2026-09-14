@@ -1,0 +1,43 @@
+/* DoE "what-if" budget slider (#697 S2, stretch). Additive to studio.css. */
+
+#doeWhatIfCard {
+  margin-top: 18px;
+}
+
+#doeBudgetSlider {
+  width: 100%;
+  accent-color: var(--accent, #38bdf8);
+}
+
+.doe-whatif-summary {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.doe-whatif-stat {
+  background: #0f141c;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  min-width: 120px;
+}
+
+.doe-whatif-stat .value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent, #38bdf8);
+}
+
+.doe-whatif-stat .label {
+  color: var(--text-muted, #94a3b8);
+  margin-top: 2px;
+}
+
+.doe-whatif-note {
+  font-size: 11px;
+  color: var(--text-muted, #94a3b8);
+  margin-top: 8px;
+}
