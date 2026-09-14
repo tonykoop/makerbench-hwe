@@ -18,9 +18,10 @@ script never passes --allow-remote and never accepts a -Host parameter, so
 Arena Studio is unreachable from any other machine on the network no matter
 how it is invoked. Waits for /api/health to answer before opening the
 Windows default browser at http://127.0.0.1:<port>/, so the tab never loads
-before the server is ready. The WSL server process is left running in the
-foreground of its own job; close the opened PowerShell/job or Ctrl+C this
-script to stop it. See docs/arena-studio.md.
+before the server is ready. The script then waits on the server job; Ctrl+C
+(or the server exiting) runs a finally block that stops and removes the job
+and pkills the exact loopback `arena studio` command inside WSL, so no server
+is left bound to the port. See docs/arena-studio.md.
 
 STATUS: written and unit-tested (path-lint + a fake-server smoke test) in
 this sandbox, which has no Windows desktop or wsl.exe to launch a real
@@ -104,6 +105,16 @@ if (-not $NoBrowser.IsPresent) {
     Start-Process "http://127.0.0.1:$Port/"
 }
 
-Write-Host "Press Ctrl+C or run 'Stop-Job -Id $($serverJob.Id)' to stop the server."
-Wait-Job -Job $serverJob | Out-Null
-Receive-Job -Job $serverJob | Write-Host
+Write-Host "Press Ctrl+C to stop the server."
+# Ctrl+C interrupts Wait-Job in this console but does not stop the Start-Job child
+# that owns wsl.exe, nor the python process inside WSL (Tony's live run, #743).
+# The finally block runs on Ctrl+C as well as on a normal exit, and stops all three.
+try {
+    Wait-Job -Job $serverJob | Out-Null
+    Receive-Job -Job $serverJob | Write-Host
+} finally {
+    Stop-Job -Job $serverJob -ErrorAction SilentlyContinue
+    Remove-Job -Job $serverJob -Force -ErrorAction SilentlyContinue
+    & wsl.exe -d $Distro -- pkill -f "makerbench.cli arena studio --host 127.0.0.1 --port $Port"
+    Write-Host "Arena Studio stopped."
+}

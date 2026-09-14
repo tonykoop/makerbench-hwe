@@ -170,6 +170,35 @@ def test_studio_launcher_waits_for_health_before_opening_browser():
     assert "$NoBrowser" in body  # opt-out escape hatch for a Playwright-style caller
 
 
+def test_studio_launcher_stops_the_server_on_ctrl_c():
+    """#743 live Windows run: Ctrl+C interrupted Wait-Job but left the Start-Job child
+    and the WSL-side server running. The wait must sit in try/finally, and the finally
+    block must stop and remove the job and kill the exact server command inside WSL."""
+    text = STUDIO_LAUNCHER.read_text(encoding="utf-8")
+    body = re.sub(r"^<#.*?#>", "", text, count=1, flags=re.DOTALL)
+    # Executable lines only: the explanatory comments above the block name Wait-Job.
+    body = "\n".join(line for line in body.splitlines() if not line.lstrip().startswith("#"))
+    # Brace-free bodies pin the match to the try/finally around Wait-Job itself, not
+    # the earlier try/catch in the health-poll loop.
+    match = re.search(r"\btry\s*\{(?P<try>[^{}]*)\}\s*finally\s*\{(?P<finally>[^{}]*)\}", body)
+    assert match, "Wait-Job must be wrapped in try { ... } finally { ... }"
+    assert re.search(r"\bWait-Job\s+-Job\s+\$serverJob\b", match.group("try"))
+    assert not re.search(r"\bWait-Job\b", body[: match.start()]), "no Wait-Job outside the try block"
+    cleanup = match.group("finally")
+    stop_at = cleanup.find("Stop-Job -Job $serverJob")
+    remove_at = cleanup.find("Remove-Job -Job $serverJob -Force")
+    kill = re.search(
+        r'wsl\.exe -d \$Distro -- pkill -f "makerbench\.cli arena studio --host 127\.0\.0\.1 --port \$Port"',
+        cleanup,
+    )
+    assert stop_at != -1, "finally must Stop-Job the server job"
+    assert remove_at != -1, "finally must Remove-Job -Force the server job"
+    assert stop_at < remove_at, "stop the job before removing it"
+    assert kill, "finally must pkill the exact loopback arena studio command inside WSL"
+    # The pkill pattern must match what the script actually launches.
+    assert "python3 -m makerbench.cli arena studio --host 127.0.0.1 --port $Port" in body
+
+
 def test_studio_launcher_never_references_legacy_checkout_path():
     # Redundant with test_no_windows_script_references_legacy_checkout_path's
     # rglob, but pinned explicitly so this file's own regression survives a future
