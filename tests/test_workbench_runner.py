@@ -57,6 +57,8 @@ def registry(tmp_path: Path) -> Path:
              "envelope_mm": [10, 10, 10], "repo_path": "strings/alias-outside"},
             {"id": "alias-family", "display_name": "Alias family", "family": "strings", "task_kind": "single_part",
              "envelope_mm": [10, 10, 10], "repo_path": "linked-family/boxolin"},
+            {"id": "alias-public", "display_name": "Alias public", "family": "strings", "task_kind": "single_part",
+             "envelope_mm": [100, 100, 100], "repo_path": "strings/alias-public"},
         ],
     }), encoding="utf-8")
     return path
@@ -81,6 +83,8 @@ def instruments_root(tmp_path: Path) -> Path:
     os.symlink(root / "private" / "hidden", root / "strings" / "alias-private", target_is_directory=True)
     os.symlink(tmp_path / "outside", root / "strings" / "alias-outside", target_is_directory=True)
     os.symlink(root / "private", root / "linked-family", target_is_directory=True)
+    # benign: a symlink to a public repo inside the root; refused purely for being a symlink
+    os.symlink(root / "strings" / "boxolin", root / "strings" / "alias-public", target_is_directory=True)
     return root
 
 
@@ -201,6 +205,7 @@ class TestOrigins:
         ({"master": {"instrument_id": "alias-private", "file": "oracle.scad"}}, NotFound, "unknown instrument"),
         ({"master": {"instrument_id": "alias-outside", "file": "secret.scad"}}, NotFound, "unknown instrument"),
         ({"master": {"instrument_id": "alias-family", "file": "oracle.scad"}}, NotFound, "unknown instrument"),
+        ({"master": {"instrument_id": "alias-public", "file": "boxolin.scad"}}, NotFound, "unknown instrument"),
         ({"master": {"instrument_id": "Nope", "file": "x.scad"}}, NotFound, "unknown instrument"),
         ({"trial": {"run_id": "round9", "trial_id": "boxolin__seed0__rep0__evil"}}, NotFound, "not inside its run"),
         ({"trial": {"run_id": "round9", "trial_id": "boxolin__seed0__rep0__nosrc"}}, WorkbenchError, "no generated source"),
@@ -232,9 +237,11 @@ class TestOrigins:
         """Sol (#810): a registry repo_path with no literal `private` component
         must not reach a private (or outside) tree through a symlinked directory."""
 
-        for instrument in ("alias-private", "alias-outside", "alias-family"):
+        for instrument in ("alias-private", "alias-outside", "alias-family", "alias-public"):
             with pytest.raises(NotFound, match="unknown instrument"):
                 service.master_files(instrument)
+        # the benign alias resolves to a public repo the workbench serves under its real name
+        assert service.master_files("boxolin") == ["boxolin.scad", "private-notes.scad"]
         # the private master is real and readable by the OS; only the workbench refuses it
         assert (tmp_path / "instruments" / "private" / "hidden" / "cad" / "oracle.scad").is_file()
 
