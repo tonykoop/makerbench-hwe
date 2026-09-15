@@ -1346,7 +1346,12 @@ def arena_studio(
             help="Allow explicit live arena launches from Studio (may invoke provider CLIs).",
         ),
         port: int = typer.Option(8080, "--port", help="Bind port."),
-        registry: str = typer.Option(DEFAULT_REGISTRY, "--registry", help="Arena registry JSON path.")):
+        registry: str = typer.Option(DEFAULT_REGISTRY, "--registry", help="Arena registry JSON path."),
+        instruments_root: Optional[str] = typer.Option(
+            None,
+            "--instruments-root",
+            help="Root of the instrument build repos (registry repo_path values are relative to it); enables opening masters in the design workbench (#788).",
+        )):
     """Launch the MakerBench Arena Studio web interface (Issue #696)."""
 
     is_loopback = host == "localhost"
@@ -1378,6 +1383,7 @@ def arena_studio(
         # A loopback bind keeps the DNS-rebinding guard even with --allow-remote;
         # a deliberate remote bind accepts any Host header.
         allowed_hosts=LOOPBACK_HOSTS if is_loopback else ("*",),
+        instruments_root=Path(instruments_root) if instruments_root else None,
     )
     console.print(f"[bold green]MakerBench Arena Studio running at http://{host}:{port}/[/bold green]")
     uvicorn.run(app, host=host, port=port)

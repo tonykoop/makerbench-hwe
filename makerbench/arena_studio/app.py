@@ -19,6 +19,7 @@ from makerbench.cli_arena import DEFAULT_REGISTRY
 from makerbench.redaction import find_host_paths, redact_host_paths, run_relative_path
 
 from .routes_delta import register_delta_routes
+from .routes_workbench import register_workbench_routes
 from .service import ArenaStudioService, is_valid_task_id
 
 
@@ -102,6 +103,7 @@ def create_studio_app(
     allow_live: bool = False,
     extra_run_roots: Optional[Sequence[Path]] = None,
     allowed_hosts: Sequence[str] = LOOPBACK_HOSTS,
+    instruments_root: Optional[Path] = None,
 ) -> FastAPI:
     """Create and configure the Arena Studio FastAPI instance."""
 
@@ -111,6 +113,7 @@ def create_studio_app(
         repo_root=repo_root,
         allow_live=allow_live,
         extra_run_roots=extra_run_roots,
+        instruments_root=instruments_root,
     )
 
     class PublishedJSONResponse(JSONResponse):
@@ -125,6 +128,10 @@ def create_studio_app(
         description="Unified web cockpit for Code-CAD A/B Arena (Epic #421 / #694).",
         default_response_class=PublishedJSONResponse,
     )
+
+    # Tests and embedders reach the service objects here; routes close over them.
+    app.state.service = service
+    app.state.workbench = service.workbench
 
     # DNS-rebinding guard: a hostile page can point its own hostname at
     # 127.0.0.1, which a loopback bind does not stop and the same-origin POST
@@ -167,6 +174,9 @@ def create_studio_app(
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
 
     register_delta_routes(app, service, _resolve_run_dir)  # delta lane (#699)
+    register_workbench_routes(  # design workbench (#788 W3)
+        app, service.workbench, _resolve_run_dir, lambda value: _publish_value(value, service.repo_root)
+    )
 
     # API Routes
     @app.get("/api/health")
