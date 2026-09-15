@@ -137,6 +137,14 @@ extra axis in the trial-id/matrix (kept that way deliberately so this change
 carries zero risk to any run already in flight under the existing trial-id
 format).
 
+## Sandboxed compile (opt-in, #788 Q11)
+
+`arena run --sandboxed-compile` compiles OpenSCAD candidates inside the
+workbench's Bubblewrap sandbox instead of on the host (see
+`docs/CODE_CAD_BACKEND_AXIS.md`). It is off by default; when on, the run
+fails closed if the sandbox cannot start, refuses backends without a
+sandboxed compiler, and records `compile_sandboxed: true` in the run log.
+
 ## Caveats
 
 Single-voter arena runs are directional. If Tony is the only voter, the Elo table

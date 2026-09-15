@@ -34,6 +34,11 @@ class OrchestrationConfig:
     model_providers: Mapping[str, str] = field(default_factory=dict)
     provider_rate_limits_s: Mapping[str, float] = field(default_factory=dict)
     backend: str = "openscad"
+    #: #788 Q11: when true, every OpenSCAD compile in this run ran inside the
+    #: Bubblewrap sandbox (``scad_sandbox``) instead of on the host. Recorded
+    #: so a run_log is self-describing about its compile path; timings of
+    #: sandboxed and host runs are not directly comparable.
+    compile_sandboxed: bool = False
 
     def validate(self) -> None:
         if not self.instrument_ids or any(not item.strip() for item in self.instrument_ids):
@@ -64,6 +69,7 @@ class OrchestrationConfig:
             "model_providers": dict(self.model_providers),
             "provider_rate_limits_s": dict(self.provider_rate_limits_s),
             "backend": self.backend,
+            "compile_sandboxed": bool(self.compile_sandboxed),
         }
 
 

@@ -26,6 +26,7 @@ from . import code_cad_arena_runner as arena_runner
 from . import fusion_backend
 from . import live_cad_runner
 from . import render
+from . import scad_sandbox
 from . import solidworks_backend
 from .live_cad_runner import LIVE_BACKENDS, LiveCadConfig, make_live_execute_trial
 from .parametric_backend import (
@@ -353,7 +354,12 @@ def arena_run(
         ),
         driver_model: str = typer.Option("gpt-5.6-sol", "--driver-model", help="Live backends only: the codex driver model each entrant agent uses."),
         image_map: Optional[str] = typer.Option(None, "--image-map", help="JSON file mapping instrument_id -> inspiration image path; required for --context-tier image (#609), optional lead reference image for studio."),
-        stub: bool = typer.Option(False, "--stub", help="Swap every entrant for the zero-token stub generator (smoke runs).")):
+        stub: bool = typer.Option(False, "--stub", help="Swap every entrant for the zero-token stub generator (smoke runs)."),
+        sandboxed_compile: bool = typer.Option(
+            False,
+            "--sandboxed-compile",
+            help="Compile OpenSCAD candidates inside the Bubblewrap sandbox (#788 W0) instead of on the host. Off by default; fails closed if the sandbox cannot start. Only openscad and cadquery support it.",
+        )):
     """Run (or resume) the 4D arena matrix and write the objective scoreline."""
 
     is_live = backend in LIVE_BACKENDS
@@ -383,6 +389,28 @@ def arena_run(
             "backend requires `bwrap` and unprivileged user namespaces.[/red]"
         )
         raise typer.Exit(code=1)
+    if sandboxed_compile:
+        # #788 Q11: opt-in sandboxed compile. Refuse backends without a
+        # sandboxed compiler and fail closed when the sandbox cannot start;
+        # never fall back to the host compiler silently.
+        if is_live or is_parametric:
+            console.print(
+                f"[red]--sandboxed-compile does not apply to the '{backend}' backend "
+                "(no sandboxed compiler).[/red]"
+            )
+            raise typer.Exit(code=1)
+        try:
+            arena_runner.compiler_for_backend(backend, sandboxed=True)
+        except ValueError as exc:
+            console.print(f"[red]--sandboxed-compile: {exc}[/red]")
+            raise typer.Exit(code=1)
+        if backend == "openscad" and not scad_sandbox.sandbox_available():
+            console.print(
+                "[red]--sandboxed-compile: the OpenSCAD sandbox cannot start here "
+                "(needs bwrap, openscad, xvfb-run and unprivileged user namespaces). "
+                "Not falling back to the host compiler.[/red]"
+            )
+            raise typer.Exit(code=1)
     if backend == "cadquery" and not render.openscad_available():
         console.print(
             "[red]openscad binary not found — the CadQuery backend needs it for "
@@ -509,6 +537,7 @@ def arena_run(
             else {}
         ),
         backend=backend,
+        compile_sandboxed=sandboxed_compile,
     )
     image_paths = None
     if image_map:
@@ -558,13 +587,15 @@ def arena_run(
             registry=registry_payload,
             run_dir=run_path,
             generators=generators,
-            compiler=arena_runner.compiler_for_backend(backend),
+            compiler=arena_runner.compiler_for_backend(backend, sandboxed=sandboxed_compile),
             context_tier=context_tier,
             instruments_root=Path(instruments_root) if instruments_root else None,
             image_paths=image_paths,
         )
     total = len(instrument_ids) * len(seed_values) * reps * len(model_ids)
     tier_note = f" (context tier: {context_tier})" if context_tier != "blind" else ""
+    if sandboxed_compile:
+        tier_note += " (sandboxed compile)"
     console.print(
         f"arena matrix: {len(instrument_ids)} instruments x {len(seed_values)} seeds "
         f"x {reps} reps x {len(model_ids)} models = {total} trials{tier_note}"
