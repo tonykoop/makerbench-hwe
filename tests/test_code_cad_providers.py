@@ -982,6 +982,26 @@ class TestClaudeManyTurnReadOnlyContract:
         providers.make_claude_generator("sonnet", retry_sleep_s=0)(_request())
         assert seen["cmd"][seen["cmd"].index("--max-turns") + 1] == "40"
 
+    def test_zero_retry_budget_makes_exactly_one_cli_call(self, monkeypatch):
+        calls = []
+
+        def fail(cmd, **kwargs):
+            calls.append((cmd, kwargs))
+            return _completed(returncode=1, stderr="controlled failure")
+
+        monkeypatch.setattr(subprocess, "run", fail)
+        generator = providers.resolve_generator(
+            "claude-code-sonnet", retry_attempts=0, backend="cadquery"
+        )
+        with pytest.raises(RuntimeError, match="claude -p failed"):
+            generator(_request(context_tier="studio", workspace_dir=None))
+        assert len(calls) == 1
+
+    def test_cadquery_prompt_allows_only_explicit_readonly_fixture_input(self):
+        prompt = providers.arena_prompt(_request(), backend="cadquery")
+        assert "staged public input under `/inputs`" in prompt
+        assert "never write there" in prompt
+
     def test_blind_tier_gets_no_tools(self, monkeypatch):
         seen = {}
         monkeypatch.setattr(subprocess, "run", _claude_ok(seen))

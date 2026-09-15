@@ -221,7 +221,11 @@ def _bubblewrap_available(env: Mapping[str, str]) -> bool:
 
 
 def _bubblewrap_command(
-    *, driver_path: Path, script_path: Path, out_dir: Path
+    *,
+    driver_path: Path,
+    script_path: Path,
+    out_dir: Path,
+    readonly_input_dir: Path | None = None,
 ) -> list[str]:
     """Build a sandbox command exposing only runtime and job files."""
 
@@ -263,6 +267,12 @@ def _bubblewrap_command(
             "--bind",
             out_dir.as_posix(),
             "/out",
+        )
+    )
+    if readonly_input_dir is not None:
+        cmd.extend(("--ro-bind", readonly_input_dir.as_posix(), "/inputs"))
+    cmd.extend(
+        (
             "--chdir",
             "/work",
             sys.executable,
@@ -360,7 +370,12 @@ def _step_mesh_volume_warning(step_path: Path, stl_path: Path) -> str:
     )
 
 
-def compile_cadquery_to_artifacts(script_path: Path, out_dir: Path) -> RenderArtifacts:
+def compile_cadquery_to_artifacts(
+    script_path: Path,
+    out_dir: Path,
+    *,
+    readonly_input_dir: Path | None = None,
+) -> RenderArtifacts:
     """Compile one CadQuery entrant into retained STEP, STL, and preview PNG.
 
     Candidate defects raise :class:`makerbench.render.CompileError`. Missing
@@ -373,6 +388,10 @@ def compile_cadquery_to_artifacts(script_path: Path, out_dir: Path) -> RenderArt
         raise ValueError(f"{CADQUERY_TIMEOUT_ENV} must be a positive integer")
 
     script_path = Path(script_path).resolve(strict=True)
+    if readonly_input_dir is not None:
+        readonly_input_dir = Path(readonly_input_dir).resolve(strict=True)
+        if not readonly_input_dir.is_dir():
+            raise ValueError("readonly_input_dir must resolve to a directory")
     out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     step_path = out_dir / "output.step"
@@ -395,6 +414,7 @@ def compile_cadquery_to_artifacts(script_path: Path, out_dir: Path) -> RenderArt
             driver_path=driver_path,
             script_path=script_path,
             out_dir=worker_out_dir,
+            readonly_input_dir=readonly_input_dir,
         )
         try:
             proc = subprocess.run(

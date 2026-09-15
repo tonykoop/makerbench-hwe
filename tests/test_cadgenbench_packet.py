@@ -84,6 +84,21 @@ def test_dry_run_validates_and_writes_nothing(tmp_path, capsys):
     assert "submission.zip" in printed
 
 
+def test_profile_override_is_recorded_in_meta_and_provenance(tmp_path):
+    steps = _make_steps_dir(tmp_path)
+    out = tmp_path / "dist"
+    rc = packet.main(_base_args(steps, out, "--profile", "cadquery"))
+    assert rc == 0
+
+    run_dir = out / "makerbench-test-run"
+    meta = json.loads(
+        (run_dir / "results" / "makerbench-test-run" / "meta.json").read_text(encoding="utf-8")
+    )
+    provenance = json.loads((run_dir / "provenance.json").read_text(encoding="utf-8"))
+    assert "MakerBench cadquery run" in meta["notes"]
+    assert provenance["profile"] == "cadquery"
+
+
 @pytest.mark.parametrize("layout", ["flat", "nested"])
 def test_full_build_layout_and_meta(tmp_path, layout):
     steps = _make_steps_dir(tmp_path, layout=layout)
