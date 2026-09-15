@@ -67,7 +67,6 @@ def is_valid_task_id(task_id: object) -> bool:
     return isinstance(task_id, str) and _TASK_ID_RE.fullmatch(task_id) is not None
 
 
-
 class ArenaStudioService:
     """Business logic and data provider for MakerBench Arena Studio."""
 
