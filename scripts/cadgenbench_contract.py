@@ -98,6 +98,7 @@ def record_attempt(
     diagnostics: str | None = None,
     output_step_bytes: int | None = None,
     topology: dict[str, Any] | None = None,
+    upstream_sanity: dict[str, Any] | None = None,
     resolved_model: str | None = None,
 ) -> dict[str, Any]:
     """Return a copy of *ledger* with one honest entrant attempt appended."""
@@ -121,6 +122,7 @@ def record_attempt(
         "diagnostics": diagnostics,
         "output_step_bytes": output_step_bytes,
         "topology": topology,
+        "upstream_sanity": upstream_sanity,
     }
     sample["attempts"].append(attempt)
     sample["status"] = outcome

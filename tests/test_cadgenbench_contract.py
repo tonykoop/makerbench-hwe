@@ -61,6 +61,7 @@ def test_ledger_records_attempt_without_mutating_prior_state(tmp_path):
         elapsed_seconds=12.5,
         output_step_bytes=2048,
         topology={"solids": 1},
+        upstream_sanity={"status": "pass", "returncode": 0, "summary": "PASS"},
         resolved_model="claude-example",
     )
 
@@ -69,6 +70,7 @@ def test_ledger_records_attempt_without_mutating_prior_state(tmp_path):
     assert updated["cli_calls"] == {"maximum": 10, "used": 1}
     assert updated["samples"][0]["status"] == "generated"
     assert updated["samples"][0]["attempts"][0]["topology"] == {"solids": 1}
+    assert updated["samples"][0]["attempts"][0]["upstream_sanity"]["status"] == "pass"
     assert updated["model"]["resolved"] == "claude-example"
 
 
