@@ -352,6 +352,130 @@ class TestEditLoop:
         assert len(studio.get(f"/api/workbench/designs/{did}").json()["drafts"]) == 1
 
 
+# --- curate and export (W7, G14) --------------------------------------------------
+
+
+def _repo_snapshot(root: Path) -> dict:
+    return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+
+class TestCurateAndExport:
+    def test_curation_history_is_listed_in_order(self, studio):
+        _fake_launch(studio.workbench)
+        did, r0 = _origin_revision(studio)
+        _post(studio, f"/api/workbench/designs/{did}/curation", {"title": "First"})
+        _post(studio, f"/api/workbench/designs/{did}/curation", {"rev_id": r0, "pick": True, "note": "keep"})
+        r = studio.get(f"/api/workbench/designs/{did}/curation")
+        assert r.status_code == 200, r.text
+        assert r.json()["state"]["pick"] == r0 and r.json()["state"]["title"] == "First" and r.json()["state"]["note"] == "keep"
+        assert [(row["title"], row["pick"], row["note"]) for row in r.json()["history"]] == [("First", None, None), (None, True, "keep")]
+        assert studio.get("/api/workbench/designs/d-nope-000000/curation").status_code == 404
+
+    def test_export_preview_reads_only_and_export_writes_the_set(self, studio, instruments_root, tmp_path):
+        _fake_launch(studio.workbench)
+        did, r0 = _origin_revision(studio)
+        _post(studio, f"/api/workbench/designs/{did}/curation", {"rev_id": r0, "pick": True, "title": "Best box"})
+        before = _repo_snapshot(instruments_root)
+        r = studio.get(f"/api/workbench/designs/{did}/revisions/{r0}/export")
+        assert r.status_code == 200, r.text
+        preview = r.json()
+        target = f"strings/boxolin/arena/workbench/{did}/{r0}"
+        assert preview["target"] == target and preview["exists"] is False
+        assert [f["name"] for f in preview["files"]] == ["boxolin-workbench-r1.scad", "boxolin-workbench-r1.stl", "boxolin-workbench-r1.png", "provenance.json", "README.md"]
+        assert all(f["path"] == f"{target}/{f['name']}" and f["exists"] is False for f in preview["files"])
+        assert _repo_snapshot(instruments_root) == before  # a preview writes nothing
+        _assert_no_host_paths(preview, tmp_path)
+
+        r = _post(studio, f"/api/workbench/designs/{did}/revisions/{r0}/export", {})
+        assert r.status_code == 201, r.text
+        result = r.json()
+        assert result["written"] == [f["path"] for f in preview["files"]] and result["replaced"] == []
+        _assert_no_host_paths(result, tmp_path)
+        after = _repo_snapshot(instruments_root)
+        new_files = sorted(set(after) - set(before))
+        assert new_files == sorted(result["written"])
+        assert all(k in after and after[k] == before[k] for k in before), "an existing repo file changed"
+        dest = instruments_root / target
+        assert (dest / "boxolin-workbench-r1.scad").read_text() == studio.get(f"/api/workbench/designs/{did}/revisions/{r0}/source").text
+        assert (dest / "boxolin-workbench-r1.png").read_bytes()[:4] == b"\x89PNG"
+        provenance = json.loads((dest / "provenance.json").read_text())
+        assert provenance["schema"] == "makerbench-workbench-export-v1" and provenance["generated"] is True
+        assert provenance["design_id"] == did and provenance["rev_id"] == r0 and provenance["seq"] == 1
+        assert provenance["curation"] == {"pick": True, "title": "Best box", "note": None}
+        assert provenance["compile"]["sandbox"]["kind"] == "bwrap" and provenance["objective"]["render_ok"] is True
+        assert tmp_path.as_posix() not in (dest / "provenance.json").read_text()
+        readme = (dest / "README.md").read_text()
+        assert "NOT a measured master" in readme and "Best box" in readme and "commit it in the instrument repo" in readme
+        # the preview now says the target exists
+        preview = studio.get(f"/api/workbench/designs/{did}/revisions/{r0}/export").json()
+        assert preview["exists"] is True and all(f["exists"] for f in preview["files"])
+
+    def test_export_conflicts_until_replace_is_confirmed(self, studio, instruments_root):
+        _fake_launch(studio.workbench)
+        did, r0 = _origin_revision(studio)
+        assert _post(studio, f"/api/workbench/designs/{did}/revisions/{r0}/export", {}).status_code == 201
+        dest = instruments_root / "strings" / "boxolin" / "arena" / "workbench" / did / r0
+        (dest / "README.md").write_text("edited by hand\n", encoding="utf-8")
+        before = _repo_snapshot(instruments_root)
+        r = _post(studio, f"/api/workbench/designs/{did}/revisions/{r0}/export", {})
+        assert r.status_code == 409 and "Replace" in r.json()["detail"]
+        assert _repo_snapshot(instruments_root) == before  # a refused export writes nothing
+        r = _post(studio, f"/api/workbench/designs/{did}/revisions/{r0}/export", {"replace": True})
+        assert r.status_code == 201, r.text
+        assert r.json()["replaced"] == ["README.md", "boxolin-workbench-r1.png", "boxolin-workbench-r1.scad", "boxolin-workbench-r1.stl", "provenance.json"]
+        assert "NOT a measured master" in (dest / "README.md").read_text()
+        assert sorted(p.name for p in dest.iterdir()) == sorted(r.json()["replaced"])
+
+    def test_export_never_touches_cad_or_runs_git(self, studio, instruments_root, monkeypatch):
+        """G14: after an export the instrument repo's `cad/` bytes are unchanged
+        and git sees only new files under arena/workbench/. The export itself
+        must not spawn anything (git included)."""
+        import subprocess
+
+        repo = instruments_root / "strings" / "boxolin"
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@x", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-q", "-m", "fixture"], cwd=repo, check=True)
+        _fake_launch(studio.workbench)
+        did, r0 = _origin_revision(studio)
+        cad_before = _repo_snapshot(repo / "CAD")
+
+        def no_spawn(*args, **kwargs):
+            raise AssertionError(f"export spawned a process: {args[:1]}")
+
+        with monkeypatch.context() as m:
+            m.setattr(subprocess, "run", no_spawn)
+            m.setattr(subprocess, "Popen", no_spawn)
+            m.setattr(subprocess, "check_output", no_spawn)
+            m.setattr(os, "system", no_spawn)
+            r = _post(studio, f"/api/workbench/designs/{did}/revisions/{r0}/export", {})
+        assert r.status_code == 201, r.text
+        assert _repo_snapshot(repo / "CAD") == cad_before
+        status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=repo, check=True, capture_output=True, text=True).stdout.splitlines()
+        assert status and all(line.startswith("?? arena/workbench/") for line in status), status
+        assert subprocess.run(["git", "log", "--oneline"], cwd=repo, check=True, capture_output=True, text=True).stdout.count("\n") == 1  # no commit
+
+    def test_export_refuses_uncontained_repo_paths_and_no_instruments_root(self, studio, instruments_root, tmp_path, registry, fake_run):
+        _fake_launch(studio.workbench)
+        before = _repo_snapshot(tmp_path / "outside") | {"private": json.dumps(sorted(p.as_posix() for p in (instruments_root / "private").rglob("*")))}
+        for instrument in ("sneaky", "hidden"):
+            did, r0 = _origin_revision(studio, blank={"backend": "openscad", "instrument_id": instrument})
+            for method in ("get", "post"):
+                r = studio.get(f"/api/workbench/designs/{did}/revisions/{r0}/export") if method == "get" else _post(studio, f"/api/workbench/designs/{did}/revisions/{r0}/export", {})
+                assert r.status_code == 404, (instrument, method, r.text)
+        assert _repo_snapshot(tmp_path / "outside") | {"private": json.dumps(sorted(p.as_posix() for p in (instruments_root / "private").rglob("*")))} == before
+        assert not (instruments_root / "strings" / "boxolin" / "arena").exists()
+        # unknown revision and unknown design
+        did, r0 = _origin_revision(studio)
+        assert studio.get(f"/api/workbench/designs/{did}/revisions/r-nope/export").status_code == 404
+        assert _post(studio, f"/api/workbench/designs/{did}/revisions/{r0[:-1]}x/export", {}).status_code == 404
+        # a Studio without --instruments-root cannot export at all
+        app = create_studio_app(default_run_dir=fake_run, registry_path=registry, repo_root=tmp_path)
+        client = TestClient(app, base_url="http://127.0.0.1", headers={"origin": "http://127.0.0.1"})
+        r = client.get(f"/api/workbench/designs/{did}/revisions/{r0}/export")
+        assert r.status_code == 400 and "instruments-root" in r.json()["detail"]
+
+
 # --- guards ---------------------------------------------------------------------
 
 

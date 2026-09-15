@@ -32,6 +32,7 @@ import {
   stateText,
   unitText,
 } from "../lib/params.js";
+import { curationChanges, curationRows, exportSummary, pickText, writtenText } from "../lib/curate.js";
 import { useResource } from "../hooks/useResource.js";
 import { CodeEditor } from "../components/codeEditor.js";
 import { ModelViewer } from "../components/modelViewer.js";
@@ -387,7 +388,7 @@ const TABS = [
   { id: "code", label: "Code" },
   { id: "parameters", label: "Parameters" },
   { id: "revise", label: "Revise", later: true },
-  { id: "curate", label: "Curate", later: true },
+  { id: "curate", label: "Curate" },
 ];
 
 // A WAI-ARIA tab list with automatic activation: arrow keys move between the
@@ -624,6 +625,162 @@ function ParametersTab({ designId, revId, running, onApply, busy }) {
   `;
 }
 
+// --- curate tab (#788 W7) ------------------------------------------------------------
+
+// Pick, title and note go to the append-only curation log; the history is
+// shown as stored. Export first previews the target paths, then writes only
+// under <repo>/arena/workbench/<design>/<rev>/ and never commits (G14).
+function CurateTab({ designId, revId, revisions, onSaved }) {
+  const curation = useResource(`${base(designId)}/curation`);
+  const [form, setForm] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState({ text: "", error: false });
+  const [preview, setPreview] = useState(null);
+  const [previewError, setPreviewError] = useState(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportResult, setExportResult] = useState({ text: "", error: false, written: [] });
+  const saveStatusRef = useRef(null);
+  const exportTitleRef = useRef(null);
+  const exportResultRef = useRef(null);
+  const exportButtonRef = useRef(null);
+
+  // The log is kept locally after the first read: a save appends the row the
+  // API returns instead of reloading, so the form, the status line and its
+  // focus survive (a reload would blank the tab while it fetches).
+  const [local, setLocal] = useState(null);
+  useEffect(() => {
+    if (curation.status === "ready") setLocal({ state: curation.data.state, history: curation.data.history || [] });
+  }, [curation.status]);
+  const state = local?.state || null;
+  useEffect(() => {
+    if (state && form == null) setForm({ title: state.title || "", note: state.note || "", pick: Boolean(revId) && state.pick === revId });
+  }, [state, revId]);
+
+  const changes = state && form ? curationChanges(state, form, revId) : {};
+  const dirty = Object.keys(changes).length > 0;
+
+  const save = async () => {
+    if (saving || !dirty) return;
+    setSaving(true);
+    try {
+      const result = await api(`${base(designId)}/curation`, { method: "POST", body: changes });
+      const what = [];
+      if ("pick" in changes) what.push(changes.pick ? "picked this revision" : "removed the pick");
+      if ("title" in changes) what.push("title saved");
+      if ("note" in changes) what.push("note saved");
+      setSaveStatus({ text: `Curation saved: ${what.join(", ")}.`, error: false });
+      setLocal((prev) => ({ state: result.state, history: [...(prev?.history || []), result.row] }));
+      onSaved?.(result.state);
+    } catch (err) {
+      setSaveStatus({ text: err.message, error: true });
+    } finally {
+      setSaving(false);
+      setTimeout(() => saveStatusRef.current?.focus(), 0);
+    }
+  };
+
+  const openExport = async () => {
+    if (!revId) return;
+    setPreviewError(null);
+    setExportResult({ text: "", error: false, written: [] });
+    try {
+      const data = await api(`${base(designId)}/revisions/${enc(revId)}/export`);
+      setPreview(data);
+      setTimeout(() => exportTitleRef.current?.focus(), 0);
+    } catch (err) {
+      setPreviewError(err);
+    }
+  };
+
+  const closeExport = () => {
+    setPreview(null);
+    setTimeout(() => exportButtonRef.current?.focus(), 0);
+  };
+
+  const runExport = async () => {
+    if (exporting || !preview) return;
+    setExporting(true);
+    try {
+      const result = await api(`${base(designId)}/revisions/${enc(revId)}/export`, { method: "POST", body: { replace: Boolean(preview.exists) } });
+      setPreview(null);
+      setExportResult({ text: writtenText(result), error: false, written: result.written || [] });
+    } catch (err) {
+      setExportResult({ text: err.message, error: true, written: [] });
+      setPreview(null);
+    } finally {
+      setExporting(false);
+      setTimeout(() => exportResultRef.current?.focus(), 0);
+    }
+  };
+
+  if (curation.status === "error") return html`<${ErrorState} error=${curation.error} onRetry=${curation.reload} />`;
+  if (!local) return html`<${Loading} label="Reading the curation log…" />`;
+  const rows = curationRows(local.history);
+  return html`
+    <div class="curate-tab">
+      <section class="curate-form" aria-labelledby="curate-title">
+        <h4 id="curate-title">Catalog pick, title and note</h4>
+        <p class="hint" role="status">${pickText(state, revId, revisions)}</p>
+        ${form &&
+        html`<label class="field field-check">
+            <input type="checkbox" name="pick" data-curate="pick" checked=${form.pick} disabled=${!revId} onChange=${(event) => setForm({ ...form, pick: event.currentTarget.checked })} />
+            <span>${revId ? "Pick this revision as the catalog pick" : "Save a revision before picking one"}</span>
+          </label>
+          <label class="field">
+            <span class="field-label">Title</span>
+            <input type="text" name="title" data-curate="title" maxlength="1000" value=${form.title} onInput=${(event) => setForm({ ...form, title: event.currentTarget.value })} />
+          </label>
+          <label class="field">
+            <span class="field-label">Note</span>
+            <input type="text" name="note" data-curate="note" maxlength="1000" value=${form.note} onInput=${(event) => setForm({ ...form, note: event.currentTarget.value })} />
+          </label>
+          <div class="actions">
+            <button type="button" class="button" data-action="save-curation" aria-disabled=${saving || !dirty ? "true" : "false"} onClick=${save}>Save curation</button>
+          </div>`}
+        <p class=${`panel-status${saveStatus.error ? " is-error" : ""}`} role="status" tabindex="-1" ref=${saveStatusRef}>${saveStatus.text}</p>
+        <h4>History</h4>
+        ${rows.length
+          ? html`<ol class="curation-history" aria-label="Curation history, oldest first">
+              ${rows.map((row) => html`<li key=${row.key}><span class="curation-when">${formatWhen(row.created_at)}</span> ${row.voter}: ${row.text}</li>`)}
+            </ol>`
+          : html`<p class="hint">Nothing curated yet. Every save is appended here; nothing is ever rewritten.</p>`}
+      </section>
+      <section class="curate-export" aria-labelledby="export-title">
+        <h4 id="export-title">Export to the instrument repo</h4>
+        <p class="hint">
+          Writes this revision's source, mesh, preview, provenance and a README under
+          <code>arena/workbench/</code> in the instrument repo. It never touches <code>cad/</code> and never commits.
+        </p>
+        <div class="actions">
+          <button type="button" class="button" data-action="export" ref=${exportButtonRef} aria-disabled=${revId ? "false" : "true"} onClick=${openExport}>
+            Export this revision…
+          </button>
+        </div>
+        ${previewError && html`<${ErrorState} error=${previewError} onRetry=${openExport} />`}
+        ${preview &&
+        html`<section class="panel confirm export-confirm" aria-labelledby="export-confirm-title">
+          <h5 id="export-confirm-title" tabindex="-1" ref=${exportTitleRef}>${preview.exists ? "Replace the existing export?" : "Export these files?"}</h5>
+          <p class="hint" role="status">${exportSummary(preview)}</p>
+          <ul class="export-paths">
+            ${preview.files.map((file) => html`<li key=${file.name}><code>${file.path}</code>${file.exists ? html` <span class="gate" data-kind="review">exists</span>` : ""}</li>`)}
+          </ul>
+          <div class="actions">
+            <button type="button" class="button" data-action=${preview.exists ? "confirm-replace" : "confirm-export"} aria-disabled=${exporting ? "true" : "false"} onClick=${runExport}>
+              ${preview.exists ? "Replace" : "Export"}
+            </button>
+            <button type="button" class="button button-quiet" data-action="cancel-export" onClick=${closeExport}>${preview.exists ? "Keep the existing files" : "Cancel"}</button>
+          </div>
+        </section>`}
+        <div class=${`panel-status export-result${exportResult.error ? " is-error" : ""}`} role="status" tabindex="-1" ref=${exportResultRef}>
+          ${exportResult.text}
+          ${exportResult.written.length > 0 &&
+          html`<ul class="export-paths">${exportResult.written.map((path) => html`<li key=${path}><code>${path}</code></li>`)}</ul>`}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 // --- the design view ------------------------------------------------------------------
 
 function useDraftStatus(designId, draftId) {
@@ -669,6 +826,7 @@ function DesignView({ designId, revId }) {
   const [compareWith, setCompareWith] = useState(null);
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState("code");
+  const [curationState, setCurationState] = useState(null);
   const editorRef = useRef(null);
   const statusRef = useRef(null);
   const resultRef = useRef(null);
@@ -805,7 +963,7 @@ function DesignView({ designId, revId }) {
   if (design.status === "loading" || design.status === "idle") return html`<${Loading} label="Loading the design…" />`;
   if (design.status === "error") return html`<${ErrorState} error=${design.error} onRetry=${design.reload} />`;
   const d = design.data;
-  const title = d.curation?.title || d.title || d.design_id;
+  const title = (curationState || d.curation)?.title || d.title || d.design_id;
   const canSave = draft?.job?.status === "succeeded" && draft.parent_rev_id === currentRevId;
   const draftFailed = draft?.job?.status === "failed";
   const lineRefs = draftFailed ? findLineReferences(draft.job.error) : [];
@@ -850,6 +1008,10 @@ function DesignView({ designId, revId }) {
           <div role="tabpanel" id="panel-parameters" aria-labelledby="tab-parameters" hidden=${tab !== "parameters"}>
             ${tab === "parameters" &&
             html`<${ParametersTab} key=${currentRevId || "none"} designId=${designId} revId=${currentRevId} running=${Boolean(running)} busy=${busy} onApply=${applyParams} />`}
+          </div>
+          <div role="tabpanel" id="panel-curate" aria-labelledby="tab-curate" hidden=${tab !== "curate"}>
+            ${tab === "curate" &&
+            html`<${CurateTab} key=${currentRevId || "none"} designId=${designId} revId=${currentRevId} revisions=${revisions} onSaved=${setCurationState} />`}
           </div>
           <div class="workbench-job">
             <div class="actions">

@@ -96,6 +96,13 @@ class SaveRevisionPayload(BaseModel):
     _note = field_validator("note")(_text(MAX_TEXT_BYTES, "note"))
 
 
+class ExportPayload(BaseModel):
+    replace: bool = False
+    voter: str = "tony"
+
+    _voter = field_validator("voter")(_text(MAX_TEXT_BYTES, "voter"))
+
+
 class CurationPayload(BaseModel):
     rev_id: Optional[str] = Field(default=None, max_length=64)
     pick: Optional[bool] = None
@@ -313,6 +320,30 @@ def register_workbench_routes(
         except Exception as exc:  # noqa: BLE001
             raise _http(exc)
         return {"row": row, "state": store.curation_state(design_id)}
+
+    @app.get("/api/workbench/designs/{design_id}/curation")
+    def get_curation(design_id: str):
+        try:
+            store.read_design(design_id)
+            return {"state": store.curation_state(design_id), "history": store.curation_history(design_id)}
+        except Exception as exc:  # noqa: BLE001
+            raise _http(exc)
+
+    # --- export (W7, G14) ------------------------------------------------
+
+    @app.get("/api/workbench/designs/{design_id}/revisions/{rev_id}/export")
+    def preview_export(design_id: str, rev_id: str):
+        try:
+            return workbench.export_preview(design_id, rev_id)
+        except Exception as exc:  # noqa: BLE001
+            raise _http(exc)
+
+    @app.post("/api/workbench/designs/{design_id}/revisions/{rev_id}/export", status_code=201, dependencies=[Depends(require_json)])
+    def export_revision(design_id: str, rev_id: str, payload: ExportPayload):
+        try:
+            return workbench.export_revision(design_id, rev_id, replace=payload.replace, voter=payload.voter)
+        except Exception as exc:  # noqa: BLE001
+            raise _http(exc)
 
     @app.get("/api/workbench/sources/masters")
     def list_masters(instrument: str = Query(..., min_length=1, max_length=64)):
