@@ -682,6 +682,50 @@ class TestVoteJoinAndAgreement:
     def test_missing_votes_file_returns_empty(self, tmp_path):
         assert runner.votes_to_elo_votes(tmp_path / "nope.jsonl") == []
 
+    def test_legacy_votes_without_pair_id_all_count(self, tmp_path):
+        """sol, #771: historical revealed records have no pair_id. They must not
+        collapse under one ("None", voter) key -- every one still counts in Elo."""
+        path = tmp_path / "votes.revealed.jsonl"
+        legacy = [
+            ("left", "tony", "stub-a", "stub-b"),
+            ("right", "tony", "stub-a", "stub-b"),
+            ("left", "tony", "stub-b", "stub-c"),
+            ("draw", "dan", "stub-a", "stub-c"),
+        ]
+        path.write_text(
+            "\n".join(
+                json.dumps(
+                    {
+                        "winner": winner,
+                        "instrument_id": "flute",
+                        "seed": index,
+                        "voter_id": voter,
+                        "reveal": {"left": {"model_id": left}, "right": {"model_id": right}},
+                    }
+                )
+                for index, (winner, voter, left, right) in enumerate(legacy)
+            ),
+            encoding="utf-8",
+        )
+        votes = runner.votes_to_elo_votes(path)
+        assert len(votes) == 4
+        assert [vote.winner for vote in votes] == ["left", "right", "left", "draw"]
+        elo = build_elo_leaderboard(votes, entrants=["stub-a", "stub-b", "stub-c"])
+        assert elo["votes"] == 4
+
+    def test_keyed_retraction_still_replays_alongside_legacy_votes(self, tmp_path):
+        path = tmp_path / "votes.revealed.jsonl"
+        reveal = {"left": {"model_id": "stub-a"}, "right": {"model_id": "stub-b"}}
+        records = [
+            {"winner": "left", "voter_id": "tony", "reveal": reveal},
+            {"pair_id": "p1", "winner": "left", "voter_id": "tony", "reveal": reveal},
+            {"pair_id": "p1", "voter_id": "tony", "retracts": True},
+            {"pair_id": "p1", "winner": "right", "voter_id": "tony", "reveal": reveal},
+        ]
+        path.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+        votes = runner.votes_to_elo_votes(path)
+        assert [vote.winner for vote in votes] == ["left", "right"]
+
     def test_elo_and_agreement_pipeline(self, tmp_path):
         votes = runner.votes_to_elo_votes(self._revealed_votes_file(tmp_path))
         elo = build_elo_leaderboard(votes, entrants=["stub-a", "stub-b"])

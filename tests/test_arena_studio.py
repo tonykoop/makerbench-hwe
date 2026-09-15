@@ -405,6 +405,128 @@ def test_queue_endpoint_never_leaks_identity_pre_vote(client: TestClient, fake_r
         )
 
 
+# Ported from #713 (cedar C4, APPROVE after the undo/Elo fix at 2746c35): backend and API
+# tests only. The keyboard/markup/JS tests are rewritten against the rebuilt frontend.
+def test_skip_cursor_never_mutates_and_wraps(client: TestClient, fake_run: Path):
+    """C4/#703 skip ergonomics: `skip` is a pure read-only cursor into the unvoted
+    items — must never change `done`/`total`, and must wrap around modulo the unvoted
+    count rather than 500ing on an out-of-range value."""
+    voter = "cursor-tester"
+    base = client.get(f"/api/runs/{fake_run.name}/queue?voter={voter}").json()
+    assert base["has_next"] is True
+    skippable = base["skippable"]
+
+    same_again = client.get(f"/api/runs/{fake_run.name}/queue?voter={voter}&skip=0").json()
+    assert same_again["current_pair"]["pair_id"] == base["current_pair"]["pair_id"]
+    assert same_again["done"] == base["done"]
+    assert same_again["total"] == base["total"]
+
+    wrapped = client.get(f"/api/runs/{fake_run.name}/queue?voter={voter}&skip={skippable}").json()
+    assert wrapped["current_pair"]["pair_id"] == base["current_pair"]["pair_id"]
+
+
+def test_undo_vote_retracts_without_mutating_jsonl(client: TestClient, fake_run: Path):
+    """C4/#703 undo-last-vote: must append a retraction record (never rewrite/delete a
+    line) and make the pair votable again."""
+    voter = "undo-tester"
+    before = client.get(f"/api/runs/{fake_run.name}/queue?voter={voter}").json()
+    pair_id = before["current_pair"]["pair_id"]
+
+    blind_jsonl = fake_run / "votes.blind.jsonl"
+    lines_before = blind_jsonl.read_text(encoding="utf-8").splitlines()
+
+    vote_resp = client.post(
+        f"/api/runs/{fake_run.name}/vote",
+        json={"pair_id": pair_id, "winner": "left", "voter": voter},
+    )
+    assert vote_resp.status_code == 200
+
+    after_vote = client.get(f"/api/runs/{fake_run.name}/queue?voter={voter}").json()
+    assert after_vote["done"] == before["done"] + 1
+
+    undo_resp = client.post(
+        f"/api/runs/{fake_run.name}/undo-vote", json={"pair_id": pair_id, "voter": voter}
+    )
+    assert undo_resp.status_code == 200
+    assert undo_resp.json()["success"] is True
+
+    # The original vote lines are untouched; only new lines were appended.
+    lines_after = blind_jsonl.read_text(encoding="utf-8").splitlines()
+    assert lines_after[: len(lines_before)] == lines_before
+    assert len(lines_after) > len(lines_before)
+
+    retraction_lines = [
+        json.loads(line) for line in lines_after[len(lines_before) :]
+    ]
+    assert any(
+        r.get("pair_id") == pair_id and r.get("voter_id") == voter and r.get("retracts") is True
+        for r in retraction_lines
+    )
+
+    # The pair is votable again.
+    after_undo = client.get(f"/api/runs/{fake_run.name}/queue?voter={voter}").json()
+    assert after_undo["has_next"] is True
+    assert after_undo["current_pair"]["pair_id"] == pair_id
+    assert after_undo["done"] == before["done"]
+
+    # Undoing a pair that was never voted (or already undone) is rejected, not silently
+    # accepted.
+    repeat_undo = client.post(
+        f"/api/runs/{fake_run.name}/undo-vote", json={"pair_id": pair_id, "voter": voter}
+    )
+    assert repeat_undo.status_code == 400
+
+
+def test_undo_vote_is_not_counted_by_the_production_elo_consumer(client: TestClient, fake_run: Path):
+    """C4/#703 fix (post-review): undo must be honored by the SAME consumer the human
+    leaderboard reads (code_cad_arena_runner.votes_to_elo_votes), not just the queue.
+
+    An earlier version of undo_vote() retracted only votes.blind.jsonl; the revealed
+    stream votes_to_elo_votes() reads kept the original vote live forever, so Elo/
+    agreement could still count a vote the UI showed as "undone", and a later revote
+    could double-count. Fixed: undo_vote() also appends a retraction to
+    votes.revealed.jsonl, and votes_to_elo_votes() replays retractions by
+    (pair_id, voter_id) before requiring the reveal identities a plain retraction
+    record doesn't carry.
+    """
+    from makerbench.code_cad_arena_runner import votes_to_elo_votes
+
+    voter = "elo-undo-tester"
+    queue = client.get(f"/api/runs/{fake_run.name}/queue?voter={voter}").json()
+    pair_id = queue["current_pair"]["pair_id"]
+
+    vote_resp = client.post(
+        f"/api/runs/{fake_run.name}/vote",
+        json={"pair_id": pair_id, "winner": "left", "voter": voter},
+    )
+    assert vote_resp.status_code == 200
+
+    revealed_path = fake_run / "votes.revealed.jsonl"
+    votes = votes_to_elo_votes(revealed_path)
+    assert any(v.voter_id == voter for v in votes), "vote must be counted before undo"
+
+    undo_resp = client.post(
+        f"/api/runs/{fake_run.name}/undo-vote", json={"pair_id": pair_id, "voter": voter}
+    )
+    assert undo_resp.status_code == 200
+
+    # The production Elo consumer must no longer count the undone vote.
+    votes_after_undo = votes_to_elo_votes(revealed_path)
+    assert not any(v.voter_id == voter for v in votes_after_undo), (
+        "the production Elo consumer still counts a vote the UI reports as undone"
+    )
+
+    # A replacement vote for the same pair must count exactly once, not twice.
+    revote_resp = client.post(
+        f"/api/runs/{fake_run.name}/vote",
+        json={"pair_id": pair_id, "winner": "right", "voter": voter},
+    )
+    assert revote_resp.status_code == 200
+    votes_after_revote = [v for v in votes_to_elo_votes(revealed_path) if v.voter_id == voter]
+    assert len(votes_after_revote) == 1, "a revote after undo must count exactly once, not accumulate"
+    assert votes_after_revote[0].winner == "right"
+
+
 def test_root_is_a_ui_free_placeholder(client: TestClient):
     # The API lands without #700's inline UI; the rebuilt frontend ships separately.
     response = client.get("/")
