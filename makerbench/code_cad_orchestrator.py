@@ -159,10 +159,16 @@ def run_orchestration(
             entry["status"] = str(result.get("status") or "ok")
             entry["result"] = result
             entry["error"] = None
+            entry.pop("meta", None)
         except Exception as exc:  # noqa: BLE001 - failed trials remain resumable.
             entry["status"] = "error"
             entry["result"] = None
             entry["error"] = str(exc) or exc.__class__.__name__
+            # #785: executors may attach classification (context tier,
+            # confinement) to the exception so a failed row keeps it.
+            meta = getattr(exc, "trial_meta", None)
+            if isinstance(meta, dict):
+                entry["meta"] = dict(meta)
         last_provider_call[trial.provider] = clock_fn()
         merged = _merge_and_write(run_log_path, config, managed_rows())
 

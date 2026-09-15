@@ -363,6 +363,26 @@ class TestContextTierWorkspaceRouting:
         assert seen["cwd"] == str(workspace)
         assert seen["cmd"][seen["cmd"].index("-C") + 1] == str(workspace)
 
+    def test_codex_relative_workspace_becomes_absolute_dash_c_and_cwd(self, tmp_path, monkeypatch):
+        # Arena runs pass a repo-relative --run-dir. `codex exec -C <relative>`
+        # run with cwd=<relative> fails instantly ("No such file or directory
+        # (os error 2)"), so both must be absolute.
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"] = cmd
+            seen["cwd"] = kwargs.get("cwd")
+            return _completed(stdout="")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        (tmp_path / "runs" / "ws").mkdir(parents=True)
+        monkeypatch.chdir(tmp_path)
+        gen = providers.make_codex_generator(retry_sleep_s=0)
+        gen(_request("codex-gpt-5.5", context_tier="studio", workspace_dir=Path("runs/ws")))
+        expected = str((tmp_path / "runs" / "ws").resolve())
+        assert seen["cwd"] == expected
+        assert seen["cmd"][seen["cmd"].index("-C") + 1] == expected
+
     def test_gemini_uses_workspace_dir(self, tmp_path, monkeypatch):
         seen = {}
 
@@ -390,6 +410,17 @@ class TestContextTierWorkspaceRouting:
         workspace.mkdir()
         gen(_request("antigravity-gemini-default", context_tier="repo", workspace_dir=workspace))
         assert seen["cwd"] == str(workspace)
+
+    def test_agy_empty_stdout_surfaces_stderr_reason(self, monkeypatch):
+        # Headless agy exits 0 with empty stdout when it auto-denies a tool; the
+        # reason is only on stderr and must reach the run log.
+        reason = 'jetski: no output produced — a tool required the "command" permission'
+        monkeypatch.setattr(
+            subprocess, "run", lambda *a, **k: _completed(stdout="", stderr=reason, returncode=0)
+        )
+        gen = providers.make_agy_generator(retry_sleep_s=0)
+        with pytest.raises(RuntimeError, match="agy produced no output.*command"):
+            gen(_request("antigravity-gemini-default"))
 
     def test_arena_prompt_notes_context_tier_when_non_blind(self, tmp_path):
         workspace = tmp_path / "ws"
@@ -482,8 +513,8 @@ class TestImageTierAttachment:
         monkeypatch.setattr(subprocess, "run", fake_run)
         gen = providers.make_codex_generator(retry_sleep_s=0)
         gen(request)
-        index = seen["cmd"].index("--image")
-        assert seen["cmd"][index + 1] == str(workspace / "reference-image.png")
+        assert f"--image={workspace / 'reference-image.png'}" in seen["cmd"]
+        assert "--image" not in seen["cmd"]  # bare variadic form would swallow the prompt
         assert "inspiration image" in seen["cmd"][-1]
 
     def test_blind_request_has_no_image_attachment(self, monkeypatch):
@@ -716,3 +747,188 @@ class TestOpenRouterProvider:
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         missing = providers.preflight_binaries(["openrouter-glm-5.2"])
         assert missing and "OPENROUTER_API_KEY" in missing[0]
+
+
+def _claude_ok(seen, text="```scad\ncube(1);\n```"):
+    def fake_run(cmd, **kwargs):
+        seen.setdefault("cmds", []).append(cmd)
+        seen["cmd"] = cmd
+        return _completed(stdout=json.dumps({"result": text}))
+
+    return fake_run
+
+
+def _studio_request(tmp_path, *, model_id="claude-code-sonnet", n_images=0):
+    from makerbench import code_cad_context_staging as staging
+
+    repo = tmp_path / "repo"
+    (repo / "images").mkdir(parents=True)
+    (repo / "master.scad").write_text("cube(9);\n", encoding="utf-8")
+    for i in range(n_images):
+        (repo / "images" / f"view-{i}.png").write_bytes(b"\x89PNG\r\n")
+    workspace = tmp_path / "ws-studio"
+    staging.stage_workspace(
+        tier="studio", instrument_id="ocarina", repo_dir=repo, workspace_dir=workspace
+    )
+    return _request(model_id, context_tier="studio", workspace_dir=workspace), workspace
+
+
+class TestClaudeManyTurnReadOnlyContract:
+    """2026-09-14: many-turn Claude entrant with a read-only, confined tool surface."""
+
+    def test_default_max_turns_is_40(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(subprocess, "run", _claude_ok(seen))
+        providers.make_claude_generator("sonnet", retry_sleep_s=0)(_request())
+        assert seen["cmd"][seen["cmd"].index("--max-turns") + 1] == "40"
+
+    def test_blind_tier_gets_no_tools(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(subprocess, "run", _claude_ok(seen))
+        providers.make_claude_generator("sonnet", retry_sleep_s=0)(_request())
+        cmd = seen["cmd"]
+        assert "--tools=" in cmd
+        assert "--tools=Read,Glob,Grep" not in cmd
+        assert "--restricted" in cmd and "--strict-mcp-config" in cmd
+        assert cmd[cmd.index("--permission-mode") + 1] == "dontAsk"
+        assert "You are a senior mechanical" in cmd[-1]  # prompt not swallowed
+
+    @pytest.mark.parametrize("tier", ["repo", "packet", "studio"])
+    def test_non_blind_tiers_get_read_only_tools(self, tier, tmp_path, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(subprocess, "run", _claude_ok(seen))
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        providers.make_claude_generator("sonnet", retry_sleep_s=0)(
+            _request(context_tier=tier, workspace_dir=workspace)
+        )
+        cmd = seen["cmd"]
+        assert "--tools=Read,Glob,Grep" in cmd
+        assert "--tools=" not in cmd
+        assert not any(t in " ".join(cmd[:-1]) for t in ("Bash", "Edit", "Write", "WebFetch"))
+        assert "--restricted" in cmd and "--strict-mcp-config" in cmd
+        assert cmd[cmd.index("--permission-mode") + 1] == "dontAsk"
+        assert "--dangerously-skip-permissions" not in cmd
+
+    def test_model_map_max_turns_still_overrides_default(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(subprocess, "run", _claude_ok(seen))
+        gen = providers.resolve_generator(
+            "claude-code-sonnet", model_map={"claude-code-sonnet": {"max_turns": 7}}
+        )
+        gen(_request())
+        assert seen["cmd"][seen["cmd"].index("--max-turns") + 1] == "7"
+
+    def test_error_max_turns_with_fence_is_accepted(self, monkeypatch):
+        calls = []
+        payload = {
+            "type": "result", "subtype": "error_max_turns", "is_error": True,
+            "result": "Here it is:\n```scad\ncube(4);\n```",
+        }
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return _completed(stdout=json.dumps(payload), returncode=1)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        gen = providers.make_claude_generator("sonnet", retry_sleep_s=0)
+        assert gen(_request()) == "cube(4);"
+        assert len(calls) == 1
+
+    def test_non_max_turn_error_with_fence_still_fails(self, monkeypatch):
+        calls = []
+        payload = {
+            "type": "result", "subtype": "error_during_execution", "is_error": True,
+            "result": "Partial:\n```scad\ncube(4);\n```",
+        }
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return _completed(stdout=json.dumps(payload), returncode=1)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        gen = providers.make_claude_generator("sonnet", retry_sleep_s=0)
+        with pytest.raises(RuntimeError, match="claude -p failed"):
+            gen(_request())
+        assert len(calls) == 2  # retried once, then failed; fence not accepted
+
+    def test_error_max_turns_without_fence_still_fails(self, monkeypatch):
+        payload = {"subtype": "error_max_turns", "is_error": True, "stop_reason": "tool_use"}
+        monkeypatch.setattr(
+            subprocess, "run", lambda *a, **k: _completed(stdout=json.dumps(payload), returncode=1)
+        )
+        gen = providers.make_claude_generator("sonnet", retry_sleep_s=0)
+        with pytest.raises(RuntimeError, match="claude -p failed"):
+            gen(_request())
+
+
+class TestStudioTierProviders:
+    def test_reference_image_paths_are_absolute_for_relative_run_dirs(self, tmp_path, monkeypatch):
+        # Arena runs pass a repo-relative --run-dir, so workspace_dir arrives
+        # relative; entrant CLIs run with cwd=workspace, so every image path
+        # handed to them must be absolute and exist.
+        _, workspace = _studio_request(tmp_path, n_images=2)
+        monkeypatch.chdir(tmp_path)
+        rel_request = _request(
+            "codex-gpt-5.6-sol", context_tier="studio",
+            workspace_dir=workspace.relative_to(tmp_path),
+        )
+        args = providers._codex_image_args(rel_request)
+        assert len(args) == 2 and all(a.startswith("--image=") for a in args)
+        paths = [a.removeprefix("--image=") for a in args]
+        assert paths and all(Path(p).is_absolute() and Path(p).is_file() for p in paths)
+        prompt = providers.arena_prompt(rel_request, "cadquery")
+        listed = [line[2:] for line in prompt.splitlines() if line.startswith("- /")]
+        assert listed == paths
+        monkeypatch.chdir(workspace)  # the entrant's cwd: paths still resolve
+        assert all(Path(p).is_file() for p in paths)
+
+    def test_prompt_lists_reference_images_and_many_turns(self, tmp_path):
+        request, workspace = _studio_request(tmp_path, n_images=10)
+        prompt = providers.arena_prompt(request, "cadquery")
+        assert "context tier: studio" in prompt
+        assert "as many turns as useful" in prompt
+        assert "prior design outputs" in prompt
+        assert "source of truth" in prompt
+        listed = [line for line in prompt.splitlines() if line.startswith(f"- {workspace}")]
+        assert len(listed) == 8
+        assert "and 2 more" in prompt
+        assert prompt.rstrip().endswith("block; assign the finished Workplane/Shape or build123d Part to `result`.")
+
+    def test_prompt_handles_zero_images(self, tmp_path):
+        request, _ = _studio_request(tmp_path, n_images=0)
+        prompt = providers.arena_prompt(request)
+        assert "No reference images are staged" in prompt
+
+    def test_studio_does_not_change_core_prompt_hash_input(self, tmp_path):
+        request, _ = _studio_request(tmp_path, n_images=1)
+        assert request.prompt in providers.arena_prompt(request)
+        assert request.prompt_sha256 == "0" * 64
+
+    def test_codex_studio_attaches_at_most_four_images(self, tmp_path, monkeypatch):
+        request, workspace = _studio_request(tmp_path, model_id="codex-gpt-5.6-sol", n_images=6)
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"] = cmd
+            return _completed("")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        providers.make_codex_generator(retry_sleep_s=0)(request)
+        cmd = seen["cmd"]
+        attached = [part.removeprefix("--image=") for part in cmd if part.startswith("--image=")]
+        assert attached == [str(workspace / "images" / f"view-{i}.png") for i in range(4)]
+        # Regression: `--image <FILE>...` is variadic in codex exec. A bare
+        # `--image path` swallowed the trailing prompt ("No prompt provided via
+        # stdin"); only the `=` form may appear, and the prompt stays last.
+        assert "--image" not in cmd
+        assert cmd[-1].startswith("You are") or "context tier: studio" in cmd[-1]
+
+    def test_codex_studio_without_images_has_no_image_flag(self, tmp_path, monkeypatch):
+        request, _ = _studio_request(tmp_path, model_id="codex-gpt-5.6-sol", n_images=0)
+        seen = {}
+        monkeypatch.setattr(
+            subprocess, "run", lambda cmd, **k: seen.update(cmd=cmd) or _completed("")
+        )
+        providers.make_codex_generator(retry_sleep_s=0)(request)
+        assert not any(part.startswith("--image") for part in seen["cmd"])

@@ -83,6 +83,14 @@ adds three opt-in tiers:
   Needs `--image-map <file.json>` (`{"instrument_id": "path/to/image.png"}`)
   — generating that image (`_meta/image-gen` prompt-forge + the `agy -p`
   recipe) is an external, ops-time step, not something this tier does.
+- `studio` (2026-09-14) — a copy of the full instrument repo **including
+  prior outputs** (master models, exports, `arena/round*/` winners, renders)
+  and every reference image, for a many-turn workflow. Only `private/`,
+  `.git/`, `__pycache__/`, Non-Claims, symlinks and single files over 5 MB
+  are withheld. Needs `--instruments-root`; `--image-map` optionally adds a
+  lead `reference-image.<ext>`. The manifest adds `reference_images`,
+  `skipped_large_files` and `prior_outputs_included`. Studio scores are not
+  comparable to blind rounds — see [`ARENA_PHILOSOPHY.md`](ARENA_PHILOSOPHY.md).
 
 `packet`/`repo` need `--instruments-root <dir>` (registry `repo_path` values
 are relative to it, same convention as `arena export-winners`). The

@@ -96,3 +96,41 @@ def test_live_image_backend_rejects_missing_mapped_file(monkeypatch, tmp_path):
 
     assert result.exit_code == 1
     assert "live image tier has no readable mapped image for" in result.stdout
+
+
+class TestStudioContextTierCli:
+    def test_studio_requires_instruments_root(self, monkeypatch):
+        monkeypatch.setattr("makerbench.cli_arena.render.openscad_available", lambda: True)
+        result = runner.invoke(app, _run_args("openscad") + ["--context-tier", "studio"])
+        assert result.exit_code == 1
+        assert "--context-tier studio needs --instruments-root" in result.stdout
+
+    def test_studio_rejects_unreadable_image_map_entry(self, monkeypatch, tmp_path):
+        monkeypatch.setattr("makerbench.cli_arena.render.openscad_available", lambda: True)
+        image_map = tmp_path / "images.json"
+        image_map.write_text(json.dumps({"ocarina": str(tmp_path / "missing.png")}), encoding="utf-8")
+        result = runner.invoke(
+            app,
+            _run_args("openscad")
+            + ["--run-dir", str(tmp_path / "run"), "--context-tier", "studio",
+               "--instruments-root", str(tmp_path), "--image-map", str(image_map)],
+        )
+        assert result.exit_code == 1
+        assert "not a readable file for" in result.stdout
+
+    def test_studio_rejects_live_before_connector_probe(self, monkeypatch, tmp_path):
+        probes = []
+
+        def spy_connector(config):
+            probes.append(config)
+            return True
+
+        monkeypatch.setattr(live_cad_runner, "connector_available", spy_connector)
+        result = runner.invoke(
+            app,
+            _run_args("fusion-live")
+            + ["--context-tier", "studio", "--instruments-root", str(tmp_path)],
+        )
+        assert result.exit_code == 1
+        assert "--context-tier studio is only wired for code-CAD backends" in result.stdout
+        assert probes == []  # rejected before any authenticated connector request
