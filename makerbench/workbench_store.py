@@ -627,21 +627,37 @@ class WorkbenchStore:
                 if staging.exists():
                     shutil.rmtree(staging, ignore_errors=True)
             # Publication is the index row. If appending it fails at any point
-            # (before or after the bytes hit the file), unpublish the directory
-            # and cut the index back to its pre-append length, so no dangling
-            # row survives and the next save is an ordinary save.
+            # (before or after the bytes hit the file), cut the index back to
+            # its pre-append length first, durably, and only then unpublish the
+            # directory. If the rollback itself fails the directory stays: a
+            # complete row keeps pointing at a readable revision, and a torn or
+            # missing row is reconciled from revision.json on the next save. An
+            # index row must never name a missing revision directory.
             index_length = index_path.stat().st_size if index_path.exists() else 0
             try:
                 self._append_index_row(index_path, payload)
             except BaseException:
-                shutil.rmtree(rev_dir, ignore_errors=True)
-                try:
-                    if index_path.exists():
-                        os.truncate(index_path, index_length)
-                except OSError:
-                    pass
+                if self._rollback_index(index_path, index_length):
+                    shutil.rmtree(rev_dir, ignore_errors=True)
                 raise
         return payload
+
+    @staticmethod
+    def _rollback_index(index_path: Path, length: int) -> bool:
+        """Truncate the index back to ``length`` and sync it. False when the
+        rollback itself failed (the caller then keeps the revision directory)."""
+
+        try:
+            if index_path.exists():
+                os.truncate(index_path, length)
+                fd = os.open(index_path, os.O_RDONLY)
+                try:
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+        except OSError:
+            return False
+        return True
 
     @staticmethod
     def _index_row(payload: Mapping[str, Any]) -> dict:
@@ -652,7 +668,16 @@ class WorkbenchStore:
 
     def _append_index_row(self, index_path: Path, payload: Mapping[str, Any]) -> None:
         line = json.dumps(self._index_row(payload), sort_keys=True) + "\n"
+        # A torn last line (a crash mid-append whose rollback also failed) has
+        # no newline; start this row on its own line so neither is corrupted.
+        torn = False
+        if index_path.is_file() and index_path.stat().st_size:
+            with index_path.open("rb") as tail:
+                tail.seek(-1, os.SEEK_END)
+                torn = tail.read(1) != b"\n"
         with index_path.open("a", encoding="utf-8") as handle:
+            if torn:
+                handle.write("\n")
             handle.write(line)
             handle.flush()
             os.fsync(handle.fileno())

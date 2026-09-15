@@ -47,6 +47,12 @@ def _finished_draft(store, design_id, *, parent=None, source="cube(1);\n", statu
     return draft
 
 
+def draft_rev_id(rows: list[dict]) -> str:
+    """The rev_id of the second row (the one whose rollback failed)."""
+
+    return rows[1]["rev_id"]
+
+
 def _snapshot(root: Path) -> dict[str, tuple[int, bytes]]:
     """Every file's mtime and bytes, except the zero-byte ``*.lock`` files
     that ``run_log_io.file_lock`` creates on first use (not store content)."""
@@ -596,6 +602,70 @@ class TestRevisions:
         r2 = store.save_revision(did, draft_id=draft["draft_id"])
         assert [r["rev_id"] for r in store.list_revisions(did)] == [r1["rev_id"], r2["rev_id"]]
         assert len(index.read_text(encoding="utf-8").splitlines()) == 2
+
+    def test_failed_index_rollback_keeps_the_revision_directory(self, store, monkeypatch):
+        """Sol (#792/#810 review): when the post-write failure's rollback
+        *also* fails, no index row may name a missing revision directory."""
+
+        design = _design(store)
+        did = design["design_id"]
+        r1 = store.save_revision(did, draft_id=_finished_draft(store, did)["draft_id"])
+        draft = _finished_draft(store, did, parent=r1["rev_id"], source="cube(2);\n")
+        real_fsync = os.fsync
+        calls = {"n": 0}
+
+        def boom(fd):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise OSError(5, "Input/output error")
+            return real_fsync(fd)
+
+        def no_truncate(path, length):
+            raise OSError(30, "Read-only file system")
+
+        monkeypatch.setattr(ws.os, "fsync", boom)
+        monkeypatch.setattr(ws.os, "truncate", no_truncate)
+        with pytest.raises(OSError, match="Input/output"):
+            store.save_revision(did, draft_id=draft["draft_id"])
+        monkeypatch.undo()
+        rows = store.list_revisions(did)
+        dirs = sorted(p.name for p in (store.root / did / "revisions").iterdir())
+        # every indexed row names a readable revision directory
+        for row in rows:
+            assert row["rev_id"] in dirs
+            assert store.revision_dir(did, row["rev_id"]).is_dir()
+            assert store.read_revision(did, row["rev_id"])["rev_id"] == row["rev_id"]
+        # the written row survived the failed truncate, and so did its directory
+        assert [r["rev_id"] for r in rows] == [r1["rev_id"], draft_rev_id(rows)]
+        assert dirs == sorted([r1["rev_id"], rows[1]["rev_id"]])
+        # the next save is an ordinary save: seq 3, no duplicate row, no repair needed
+        r3 = store.save_revision(did, draft_id=_finished_draft(store, did, parent=r1["rev_id"], source="cube(3);\n")["draft_id"])
+        rows = store.list_revisions(did)
+        assert [r["seq"] for r in rows] == [1, 2, 3]
+        assert rows[-1]["rev_id"] == r3["rev_id"]
+        assert len((store.root / did / "index.jsonl").read_text(encoding="utf-8").splitlines()) == 3
+
+    def test_torn_index_line_is_isolated_and_the_directory_reconciled(self, store):
+        """The other half of a failed rollback: a torn last row without its
+        newline. The next append starts on a fresh line and the directory is
+        indexed again from its revision.json."""
+
+        design = _design(store)
+        did = design["design_id"]
+        r1 = store.save_revision(did, draft_id=_finished_draft(store, did)["draft_id"])
+        r2 = store.save_revision(did, draft_id=_finished_draft(store, did, parent=r1["rev_id"], source="cube(2);\n")["draft_id"])
+        index = store.root / did / "index.jsonl"
+        lines = index.read_text(encoding="utf-8").splitlines(keepends=True)
+        index.write_text(lines[0] + lines[1][:20], encoding="utf-8")  # r2's row torn mid-write
+        assert [r["rev_id"] for r in store.list_revisions(did)] == [r1["rev_id"]]
+        r3 = store.save_revision(did, draft_id=_finished_draft(store, did, parent=r1["rev_id"], source="cube(3);\n")["draft_id"])
+        rows = store.list_revisions(did)
+        assert [r["rev_id"] for r in rows] == [r1["rev_id"], r2["rev_id"], r3["rev_id"]]
+        assert [r["seq"] for r in rows] == [1, 2, 3]
+        raw = index.read_text(encoding="utf-8").splitlines()
+        assert len(raw) == 4 and raw[1] == lines[1][:20].rstrip("\n")  # the torn fragment sits alone
+        for row in rows:
+            assert store.revision_dir(did, row["rev_id"]).is_dir()
 
     def test_crash_between_rename_and_index_is_reconciled_on_the_next_save(self, store):
         # Simulate a crash after the publish rename: the directory is complete
