@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import time
 from pathlib import Path
 from urllib.parse import quote
@@ -15,6 +17,7 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from makerbench.arena_studio import create_studio_app
+from makerbench.arena_studio.service import ArenaStudioService
 from makerbench.cli import app as cli_app
 from makerbench.redaction import find_host_paths
 
@@ -459,6 +462,91 @@ def test_competition_launch_and_status(client: TestClient, tmp_path: Path):
     assert len(lines) >= 1
     assert any("ARENA PROCESS START" in line for line in lines)
     assert not any("Preflight checks passed" in line for line in lines)
+
+
+def test_sse_endpoint_tails_existing_log(client: TestClient, fake_run: Path):
+    (fake_run / "arena_test.log").write_text("first\nsecond\n", encoding="utf-8")
+
+    response = client.get(
+        f"/api/competitions/{fake_run.name}/logs/stream?tail=1&follow=false"
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.text == 'data: "second"\n\n'
+
+
+def test_sse_stream_never_publishes_host_paths(
+    client: TestClient, fake_run: Path, tmp_path: Path
+):
+    # New, unreviewed: extends the API-boundary host-path redaction to SSE events.
+    (fake_run / "arena_test.log").write_text(
+        f"wrote {fake_run / 'model.stl'}\nread /home/someone/private/ref.png\n",
+        encoding="utf-8",
+    )
+
+    response = client.get(
+        f"/api/competitions/{fake_run.name}/logs/stream?tail=5&follow=false"
+    )
+
+    assert response.status_code == 200
+    _assert_no_host_path(response.text, tmp_path)
+    events = [
+        json.loads(chunk.removeprefix("data: "))
+        for chunk in response.text.strip().split("\n\n")
+    ]
+    assert events == ["wrote test_run/model.stl", "read <redacted-host-path>"]
+
+
+def test_server_restart_rediscovers_live_detached_job(tmp_path: Path, fake_registry: Path):
+    run_path = tmp_path / "runs" / "code_cad_arena" / "recovered-run"
+    run_path.mkdir(parents=True)
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)", "makerbench.cli", str(run_path)]
+    )
+    try:
+        launch = {
+            "schema": "makerbench-arena-studio-launch-v1",
+            "run_id": run_path.name,
+            "run_path": str(run_path),
+            "log_path": str(run_path / "arena_recovered-run.log"),
+            "status": "running",
+            "pid": process.pid,
+            "progress": "0/2",
+        }
+        (run_path / "studio_launch.json").write_text(json.dumps(launch), encoding="utf-8")
+
+        service = ArenaStudioService(registry_path=fake_registry, repo_root=tmp_path)
+        status = service.get_competition_status(run_path.name)
+
+        assert status["status"] == "running"
+        assert status["pid"] == process.pid
+        assert status["run_path"] == str(run_path)
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+
+def test_server_restart_marks_dead_unfinished_job_interrupted(
+    tmp_path: Path, fake_registry: Path
+):
+    run_path = tmp_path / "runs" / "code_cad_arena" / "dead-run"
+    run_path.mkdir(parents=True)
+    launch = {
+        "schema": "makerbench-arena-studio-launch-v1",
+        "run_id": run_path.name,
+        "status": "running",
+        "pid": 2_147_483_647,
+        "progress": "0/2",
+    }
+    launch_path = run_path / "studio_launch.json"
+    launch_path.write_text(json.dumps(launch), encoding="utf-8")
+
+    service = ArenaStudioService(registry_path=fake_registry, repo_root=tmp_path)
+    status = service.get_competition_status(run_path.name)
+
+    assert status["status"] == "interrupted"
+    assert json.loads(launch_path.read_text(encoding="utf-8"))["status"] == "interrupted"
 
 
 def test_live_launch_is_refused_without_server_opt_in(client: TestClient):
