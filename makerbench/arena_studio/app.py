@@ -19,7 +19,7 @@ from makerbench.cli_arena import DEFAULT_REGISTRY
 from makerbench.redaction import find_host_paths, redact_host_paths, run_relative_path
 
 from .routes_delta import register_delta_routes
-from .service import ArenaStudioService
+from .service import ArenaStudioService, is_valid_task_id
 
 
 class VotePayload(BaseModel):
@@ -504,18 +504,37 @@ def create_studio_app(
         return FileResponse(str(asset))
 
     # Story #697: Reference Image Gatekeeper Endpoints
+    def _require_task_id(task_id: str) -> None:
+        # Task ids are joined into reference-image paths and approval records, so
+        # they pass their own rule even when a registry lists them (e.g. "..").
+        if not is_valid_task_id(task_id):
+            raise HTTPException(status_code=404, detail="Unknown task id")
+
     @app.get("/api/tasks/{task_id}/reference")
     def get_task_reference(task_id: str):
+        _require_task_id(task_id)
         return service.get_task_reference(task_id)
 
     @app.post("/api/tasks/{task_id}/approve")
     def approve_task_reference(task_id: str, approved: bool = Query(True)):
+        _require_task_id(task_id)
         return service.set_task_approval(task_id, approved)
 
     @app.get("/api/tasks/{task_id}/prompt-reference")
     def get_task_prompt_reference(task_id: str):
+        _require_task_id(task_id)
         ref = service.get_task_reference(task_id)
         return {"task_id": task_id, "prompt_cmd": ref["prompt_cmd"]}
+
+    # New, unreviewed: lets a person see the exact image they are asked to approve.
+    @app.get("/api/tasks/{task_id}/reference/image")
+    def get_task_reference_image(task_id: str):
+        _require_task_id(task_id)
+        image = service.reference_image_path(task_id)
+        if image is None:
+            raise HTTPException(status_code=404, detail="No reference image for this task")
+        # Approval binds to the file's hash, so never show a cached older image.
+        return FileResponse(str(image), headers={"Cache-Control": "no-store"})
 
     # Story #699: Export Winners & Reports
     @app.post("/api/runs/{run_id}/export-winners")

@@ -1874,6 +1874,96 @@ def test_reference_gatekeeper_and_approval_flow(client: TestClient, tmp_path: Pa
     assert job["status"] != "running"
 
 
+def test_reference_image_is_served_only_for_registry_tasks(client: TestClient, tmp_path: Path):
+    # New, unreviewed: Studio shows the image a person is asked to approve.
+    image = tmp_path / "tasks" / "kora" / "reference.png"
+    image.parent.mkdir(parents=True, exist_ok=True)
+    image.write_bytes(b"\x89PNG-kora")
+    # Where tasks/<id>/../reference.png lands for a crafted ".." id.
+    (tmp_path / "reference.png").write_bytes(b"\x89PNG-outside-any-task")
+
+    response = client.get("/api/tasks/kora/reference/image")
+    assert response.status_code == 200
+    assert response.content == b"\x89PNG-kora"
+    assert response.headers["cache-control"] == "no-store"
+
+    assert client.get("/api/tasks/ocarina/reference/image").status_code == 404  # no image yet
+    assert client.get("/api/tasks/not-in-registry/reference/image").status_code == 404
+    crafted = client.get("/api/tasks/%2E%2E/reference/image")
+    assert crafted.status_code == 404
+    assert b"outside-any-task" not in crafted.content
+
+
+def _registry_with_ids(tmp_path: Path, *ids: str) -> Path:
+    reg_path = tmp_path / "hostile-registry.json"
+    reg_path.write_text(
+        json.dumps(
+            {
+                "schema": "makerbench-code-cad-arena-registry-v1",
+                "instruments": [
+                    {"id": task_id, "display_name": task_id, "family": "strings", "envelope_mm": [1, 1, 1]}
+                    for task_id in ids
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return reg_path
+
+
+@pytest.mark.parametrize("task_path", ["..", "%2E%2E"])
+def test_reference_image_rejects_configured_dotdot_registry_id(
+    fake_run: Path, tmp_path: Path, task_path: str
+):
+    # Sol CHANGES #778: registry membership is not an id rule. A registry that
+    # itself lists ".." must still never resolve tasks/../reference.png.
+    (tmp_path / "reference.png").write_bytes(b"\x89PNG-outside-any-task")
+    registry = _registry_with_ids(tmp_path, "kora", "..")
+    service = ArenaStudioService(registry_path=registry, repo_root=tmp_path)
+    assert ".." in {task["id"] for task in service.get_registry_tasks()}
+
+    assert service.reference_image_path("..") is None
+    assert service.get_task_reference("..")["image_path"] is None
+    assert service.set_task_approval("..", True)["approved"] is False
+    assert service.set_task_approval("..", False)["error"] == "invalid task id"
+
+    studio_app = create_studio_app(default_run_dir=fake_run, registry_path=registry, repo_root=tmp_path)
+    local = TestClient(studio_app, base_url="http://127.0.0.1", headers={"origin": "http://127.0.0.1"})
+    # The id rule itself answers, before any path join: every task route is a 404.
+    for url in (
+        f"/api/tasks/{task_path}/reference/image",
+        f"/api/tasks/{task_path}/reference",
+        f"/api/tasks/{task_path}/prompt-reference",
+    ):
+        response = local.get(url)
+        assert response.status_code == 404, url
+        assert b"outside-any-task" not in response.content
+    assert local.post(f"/api/tasks/{task_path}/approve?approved=false").status_code == 404
+    approvals = tmp_path / ".makerbench" / "reference_approvals.json"
+    assert not approvals.exists() or '".."' not in approvals.read_text(encoding="utf-8")
+    # A valid registry id still works on the same app.
+    assert local.get("/api/tasks/kora/reference").status_code == 200
+
+
+def test_reference_image_rejects_symlink_out_of_tasks_root(fake_run: Path, tmp_path: Path):
+    # The resolved image path is contained, not just the joined one.
+    outside = tmp_path / "outside" / "secret.png"
+    outside.parent.mkdir()
+    outside.write_bytes(b"\x89PNG-outside-any-task")
+    link = tmp_path / "tasks" / "kora" / "reference.png"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(outside)
+    registry = _registry_with_ids(tmp_path, "kora")
+    studio_app = create_studio_app(default_run_dir=fake_run, registry_path=registry, repo_root=tmp_path)
+    local = TestClient(studio_app, base_url="http://127.0.0.1", headers={"origin": "http://127.0.0.1"})
+
+    response = local.get("/api/tasks/kora/reference/image")
+    assert response.status_code == 404
+    assert b"outside-any-task" not in response.content
+    service = ArenaStudioService(registry_path=registry, repo_root=tmp_path)
+    assert service.set_task_approval("kora", True)["approved"] is False
+
+
 def test_export_winners_and_report(client: TestClient, fake_run: Path, tmp_path: Path):
     """Test Story #699: Winner export and markdown report generation."""
     # Export winners
