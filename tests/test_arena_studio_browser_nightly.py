@@ -353,6 +353,84 @@ def test_morning_review_votes_blind_without_undo(
         browser.close()
 
 
+def _votes(run_dir: Path) -> list[dict]:
+    path = run_dir / "votes.blind.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _wait_for_stage(page) -> None:
+    page.locator(".stage").wait_for()
+    page.locator(".plate").nth(1).wait_for()
+    page.wait_for_load_state("networkidle")
+
+
+def test_vote_and_morning_never_double_bind_the_shared_key_handler(studio_url: str, nightly_repo: Path):
+    """Claude UI review #781: both screens mount the same VoteStage, whose shortcut handler
+    lives on document. Moving between them in the SPA must leave exactly one live handler:
+    one key press, one POST, to the screen on view."""
+    arena_run = _morning_run(nightly_repo / "runs" / "code_cad_arena")
+    morning_run = nightly_repo / "runs" / "morning_run"
+    with sync_playwright() as playwright:
+        browser = _launch(playwright, "zero-webgl")
+        session = Session(browser, f"{studio_url}/#/vote/{arena_run.name}", viewport={"width": 1440, "height": 1000})
+        page = session.page
+        _wait_for_stage(page)
+
+        # Vote -> Morning by hash change (no reload), then one key press.
+        page.evaluate("(hash) => { window.location.hash = hash; }", f"#/morning/{JOB}")
+        page.wait_for_function("() => document.title === 'Morning review: Arena Studio'")
+        _wait_for_stage(page)
+        mark = len(session.requests)
+        page.keyboard.press("b")
+        page.locator(".reveal").wait_for()
+        page.wait_for_load_state("networkidle")
+        posts = [url for method, url in session.requests[mark:] if method == "POST"]
+        assert len(posts) == 1 and posts[0].endswith(f"/api/morning/{JOB}/vote"), posts
+        assert len(_votes(morning_run)) == 1 and _votes(arena_run) == []
+
+        # Morning -> Vote, then one key press.
+        page.evaluate("(hash) => { window.location.hash = hash; }", f"#/vote/{arena_run.name}")
+        page.wait_for_function("() => document.title === 'Blind voting: Arena Studio'")
+        _wait_for_stage(page)
+        mark = len(session.requests)
+        page.keyboard.press("a")
+        page.locator(".reveal").wait_for()
+        page.wait_for_load_state("networkidle")
+        posts = [url for method, url in session.requests[mark:] if method == "POST"]
+        assert len(posts) == 1 and posts[0].endswith(f"/api/runs/{arena_run.name}/vote"), posts
+        assert len(_votes(arena_run)) == 1 and len(_votes(morning_run)) == 1
+        assert session.errors == []
+        session.close()
+        browser.close()
+
+
+def test_focus_lands_on_the_done_state_after_the_last_morning_vote(studio_url: str, screenshot_dir: Path):
+    """Claude UI review #781: voting the bundle's last pair unmounts the stage; keyboard
+    focus must move to the "voted every pair" state instead of <body>."""
+    with sync_playwright() as playwright:
+        browser = _launch(playwright, "zero-webgl")
+        session = Session(browser, f"{studio_url}/#/morning/{JOB}", viewport={"width": 1440, "height": 1000})
+        page = session.page
+        _wait_for_stage(page)
+        for _ in range(80):
+            page.keyboard.press("Tab")
+            if page.evaluate("() => Boolean(document.activeElement?.closest('.vote-bar')) && (document.activeElement.textContent || '').includes('Draw')"):
+                break
+        else:
+            raise AssertionError("Tab never reached the Draw button")
+        page.keyboard.press("Enter")
+        page.locator(".vote-done").wait_for()
+        page.wait_for_function("() => Boolean(document.activeElement?.closest('.vote-done'))", timeout=5_000)
+        page.locator(".reveal").wait_for()
+        assert page.evaluate("() => document.activeElement !== document.body")
+        page.screenshot(path=str(screenshot_dir / "f6-morning-done-focus.png"), full_page=True)
+        assert session.errors == []
+        session.close()
+        browser.close()
+
+
 def test_nightly_and_morning_at_phone_width(studio_url: str, screenshot_dir: Path):
     with sync_playwright() as playwright:
         browser = _launch(playwright, "zero-webgl")

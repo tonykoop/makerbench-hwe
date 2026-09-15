@@ -21,6 +21,8 @@ export function VoteSession({ endpoints, voter }) {
   const [message, setMessage] = useState("");
   const [focusToken, setFocusToken] = useState(0);
   const alive = useRef(true);
+  const [afterVote, setAfterVote] = useState(0);
+  const doneRef = useRef(null);
   useEffect(() => () => (alive.current = false), []);
   const canUndoAtAll = Boolean(endpoints.undo);
 
@@ -42,6 +44,14 @@ export function VoteSession({ endpoints, voter }) {
   useEffect(() => {
     loadQueue(skip);
   }, [loadQueue, skip]);
+
+  // Voting the last pair (of a run or a morning bundle) unmounts the stage and the
+  // control that had focus. Put focus on the "voted every pair" state, not <body>.
+  useEffect(() => {
+    if (!afterVote || queue.status !== "ready" || queue.data?.current_pair) return;
+    doneRef.current?.focus();
+    setAfterVote(0);
+  }, [afterVote, queue]);
 
   // The undo offer lasts a few seconds; the server itself has no deadline.
   useEffect(() => {
@@ -81,6 +91,7 @@ export function VoteSession({ endpoints, voter }) {
     setFlags(emptyFlags());
     setMessage(`Vote saved: ${WINNER_TEXT[winner]}.`);
     loadReveal(pair.pair_id);
+    setAfterVote((value) => value + 1);
     if (skip === 0) await loadQueue(0);
     else setSkip(0);
   };
@@ -119,10 +130,12 @@ export function VoteSession({ endpoints, voter }) {
     body = html`<${ErrorState} error=${queue.error} onRetry=${() => loadQueue(skip)} />`;
   } else if (!pair) {
     body = html`
-      <${Empty} title=${endpoints.doneTitle}>
-        <p>${endpoints.doneNote}</p>
-        <p><a href=${endpoints.doneHref}>${endpoints.doneLink}</a></p>
-      <//>
+      <div class="vote-done" tabindex="-1" ref=${doneRef}>
+        <${Empty} title=${endpoints.doneTitle}>
+          <p>${endpoints.doneNote}</p>
+          <p><a href=${endpoints.doneHref}>${endpoints.doneLink}</a></p>
+        <//>
+      </div>
     `;
   } else if (leaks.length) {
     body = html`
