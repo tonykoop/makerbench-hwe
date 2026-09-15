@@ -228,6 +228,11 @@ def test_doe_preview_route(client: TestClient):
 
 
 def test_doe_queue_route(client: TestClient, repo_root_with_reference: Path):
+    # #697 D4 landed after this test was first written: an existing reference
+    # image is no longer enough on its own, it must be explicitly approved.
+    approve_res = client.post("/api/tasks/ocarina/approve?approved=true")
+    assert approve_res.json()["approved"] is True
+
     response = client.post(
         "/api/doe/queue",
         json={
@@ -338,6 +343,9 @@ def test_write_doe_queue_accepts_unknown_cost_model_with_explicit_override(
     fake_registry: Path, repo_root_with_reference: Path
 ):
     service = ArenaStudioService(registry_path=fake_registry, repo_root=repo_root_with_reference)
+    # #697 D4 gatekeeper: an existing reference image alone is no longer
+    # enough, it must be explicitly approved.
+    service.set_task_approval("ocarina", True)
     result = service.write_doe_queue(
         "doe_override_run",
         ["ocarina"],
