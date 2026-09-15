@@ -11,7 +11,9 @@ Two layers, no model calls:
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -149,8 +151,39 @@ class TestCommandConstruction:
         wrapped = self._build(layout, sb.agy_profile("agy", host_home=layout["home"]), argv=("agy", "--print", "hi"))
         sources = {src for _f, src, _d in sb.bound_sources(wrapped.argv)}
         exposed = {Path(s).relative_to(state).as_posix() for s in sources if Path(s).is_relative_to(state)}
-        assert exposed == {"antigravity-oauth-token", "settings.json", "installation_id", "bin/agentapi"}
+        # The real settings.json (with its git/gh/python allow list) is never mounted.
+        assert exposed == {"antigravity-oauth-token", "installation_id", "bin/agentapi"}
         assert all(flag == "--ro-bind" for flag, src, _d in sb.bound_sources(wrapped.argv) if Path(src).is_relative_to(state))
+        # A generated per-trial settings.json is bound read-only from scratch instead.
+        dest = f"{sb.SANDBOX_HOME}/.gemini/antigravity-cli/settings.json"
+        settings_binds = [b for b in sb.bound_sources(wrapped.argv) if b[2] == dest]
+        assert len(settings_binds) == 1
+        flag, source, _dest = settings_binds[0]
+        assert flag == "--ro-bind" and Path(source).is_relative_to(layout["scratch"].resolve())
+        generated = json.loads(Path(source).read_text(encoding="utf-8"))
+        assert generated == sb.agy_settings(layout["workspace"].resolve())
+
+    def test_real_agy_settings_content_is_never_copied(self, layout, tmp_path, monkeypatch):
+        state = layout["home"] / ".gemini" / "antigravity-cli"
+        state.mkdir(parents=True, exist_ok=True)
+        (state / "antigravity-oauth-token").write_text("x", encoding="utf-8")
+        (state / "settings.json").write_text(
+            json.dumps({"permissions": {"allow": ["command(git commit)", "command(gh)", "command(python3)"]},
+                        "model": "host-model-canary"}),
+            encoding="utf-8",
+        )
+        exe = tmp_path / "agy"
+        exe.write_text("#!/bin/sh\n", encoding="utf-8")
+        monkeypatch.setattr(sb.shutil, "which", lambda name, path=None: str(exe) if name == "agy" else "/usr/bin/bwrap")
+        self._build(layout, sb.agy_profile("agy", host_home=layout["home"]), argv=("agy", "--print", "hi"))
+        text = (layout["scratch"] / "home" / ".gemini" / "antigravity-cli" / "settings.json").read_text(encoding="utf-8")
+        generated = json.loads(text)
+        assert "host-model-canary" not in text and "model" not in generated
+        assert "command(git commit)" not in text
+        for host_rule in ("command(git commit)", "command(gh)", "command(python3)"):
+            assert host_rule not in generated["permissions"]["allow"]
+        assert generated == sb.agy_settings(layout["workspace"].resolve())
+
 
     def test_missing_auth_fails_closed(self, layout, monkeypatch, tmp_path):
         monkeypatch.setattr(sb.shutil, "which", lambda name, path=None: "/usr/bin/true")
@@ -234,3 +267,41 @@ class TestRealConfinement:
         assert proc.returncode == 0, proc.stderr
         assert "leak-canary-785" not in proc.stdout
         assert f"HOME={sb.SANDBOX_HOME}" in proc.stdout
+
+
+class TestAgyGeneratedSettings:
+    """Tony, 2026-09-15: sandboxed agy gets a read-only allow list only."""
+
+    WRITE_OR_EXEC = re.compile(
+        r"^(write_file|read_url|execute_url|unsandboxed|escalate_admin)\(|"
+        r"^command\((sh|bash|zsh|dash|fish|env|xargs|python\d*(\.\d+)?|node|npx|perl|ruby|curl|wget|git|gh|"
+        r"rm|mv|cp|tee|touch|mkdir|chmod|dd|sed|awk)\b"
+    )
+
+    def test_exact_allow_list(self, tmp_path):
+        settings = sb.agy_settings(tmp_path / "ws")
+        assert settings["permissions"]["allow"] == [
+            "read_file(*)",
+            "command(ls)", "command(cat)", "command(find)", "command(grep)",
+            "command(head)", "command(tail)", "command(wc)", "command(pwd)",
+        ]
+
+    def test_allow_list_has_no_write_interpreter_network_or_git_rules(self, tmp_path):
+        for rule in sb.agy_settings(tmp_path / "ws")["permissions"]["allow"]:
+            assert not self.WRITE_OR_EXEC.search(rule), f"non-read-only rule in allow list: {rule}"
+
+    def test_deny_list_keeps_write_and_exec_risks_explicit(self, tmp_path):
+        deny = set(sb.agy_settings(tmp_path / "ws")["permissions"]["deny"])
+        for rule in ("write_file(*)", "read_url(*)", "execute_url(*)", "unsandboxed(*)", "escalate_admin(*)",
+                     "command(sh)", "command(bash)", "command(python3)", "command(node)", "command(git)",
+                     "command(gh)", "command(curl)", "command(wget)", "command(rm)", "command(find -delete)",
+                     "command(find -exec)"):
+            assert rule in deny
+        assert not deny & set(sb.agy_settings(tmp_path / "ws")["permissions"]["allow"])
+
+    def test_workspace_only_and_no_non_workspace_access(self, tmp_path):
+        settings = sb.agy_settings(tmp_path / "ws")
+        assert settings["allowNonWorkspaceAccess"] is False
+        assert settings["trustedWorkspaces"] == [(tmp_path / "ws").as_posix()]
+        assert set(settings) == {"allowNonWorkspaceAccess", "trustedWorkspaces", "permissions"}
+        assert set(settings["permissions"]) == {"allow", "deny"}
