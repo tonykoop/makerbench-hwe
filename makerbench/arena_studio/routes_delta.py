@@ -31,6 +31,8 @@ class DoeQueuePayload(BaseModel):
     seeds: Optional[list[int]] = None
     budget_usd: float = 5.0
     max_cost_usd_by_model: Optional[dict[str, float]] = None
+    # An existing doe_queue.json is only replaced when the client says so (409 otherwise).
+    replace: bool = False
 
 
 def register_delta_routes(
@@ -113,7 +115,10 @@ def register_delta_routes(
                 seeds=payload.seeds,
                 budget_usd=payload.budget_usd,
                 max_cost_usd_by_model=payload.max_cost_usd_by_model,
+                replace=payload.replace,
             )
+        except doe.DoeQueueExistsError as e:
+            raise HTTPException(status_code=409, detail=str(e))
         except doe.DoeValidationError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:

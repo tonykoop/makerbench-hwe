@@ -362,6 +362,7 @@ class ArenaStudioService:
         seeds: Optional[list[int]] = None,
         budget_usd: float = 5.0,
         max_cost_usd_by_model: Optional[dict[str, float]] = None,
+        replace: bool = False,
     ) -> dict[str, Any]:
         """Build and persist a #647-compatible nightly queue file (#697 D3).
 
@@ -383,6 +384,11 @@ class ArenaStudioService:
                 f"run_id must be a safe path segment (letters/digits/_.-, no "
                 f"'/' or leading '.'), got {run_id!r}"
             )
+        queue_rel = f"runs/code_cad_arena/{run_id}/doe_queue.json"
+        if not replace and (self.repo_root / queue_rel).exists():
+            # The nightly runner may already be working through that queue's jobs
+            # (Claude UI review #780): never replace it without an explicit confirm.
+            raise doe.DoeQueueExistsError(f"{queue_rel} already exists; confirm to replace it")
         cells = doe.expand_matrix(
             instruments,
             models,

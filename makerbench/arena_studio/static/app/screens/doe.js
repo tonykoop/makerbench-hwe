@@ -271,6 +271,13 @@ export function DoeScreen() {
   const [budget, setBudget] = useState("5");
   const [ceilings, setCeilings] = useState({});
   const [write, setWrite] = useState({ status: "idle" });
+  const writeRef = useRef(null);
+  const replaceRef = useRef(null);
+  // The replace confirm and its dismissal each unmount the focused control.
+  useEffect(() => {
+    if (write.status === "exists") replaceRef.current?.focus();
+    else if (write.status === "idle" && write.returnFocus) writeRef.current?.focus();
+  }, [write]);
 
   const models = parseModelList(modelsText);
   const { seeds, invalid: invalidSeeds } = parseSeeds(seedsText);
@@ -291,8 +298,7 @@ export function DoeScreen() {
     loadReference(taskId);
   };
 
-  const submit = async (event) => {
-    event.preventDefault();
+  const send = async (replace) => {
     if (busy || blockers.length) return;
     setWrite({ status: "sending" });
     try {
@@ -307,13 +313,20 @@ export function DoeScreen() {
           seeds,
           budget_usd: Number(budget),
           max_cost_usd_by_model: ceilingsPayload(unknownModels, ceilings),
+          replace,
         },
       });
       setWrite({ status: "done", result });
     } catch (error) {
-      setWrite({ status: "error", error });
+      // 409: a queue already exists for this run name. Ask before replacing it.
+      setWrite(error.status === 409 ? { status: "exists", error } : { status: "error", error });
     }
   };
+  const submit = (event) => {
+    event.preventDefault();
+    send(false);
+  };
+  const keepExisting = () => setWrite({ status: "idle", returnFocus: true });
 
   return html`
     <div class="screen screen-doe">
@@ -423,12 +436,28 @@ export function DoeScreen() {
             ${blockers.map((blocker) => html`<li key=${blocker}>${blocker}</li>`)}
           </ul>`}
           <div class="actions">
-            <button type="submit" class="button" aria-disabled=${busy || blockers.length ? "true" : "false"}>
+            <button type="submit" class="button" ref=${writeRef} aria-disabled=${busy || blockers.length ? "true" : "false"}>
               Write nightly queue
             </button>
           </div>
         </form>
         ${busy && html`<${Loading} label="Writing the queue…" />`}
+        ${write.status === "exists" &&
+        html`<div
+          class="doe-replace"
+          role="group"
+          aria-labelledby="doe-replace-title"
+          onKeyDown=${(event) => event.key === "Escape" && keepExisting()}
+        >
+          <p id="doe-replace-title" class="state-title" tabindex="-1" ref=${replaceRef}>
+            ${"A queue already exists at "}<code>${`runs/code_cad_arena/${runId}/doe_queue.json`}</code>${". Replace it?"}
+          </p>
+          <p class="hint">The nightly runner may already be working through its jobs. Replacing it resets every job's status.</p>
+          <div class="actions">
+            <button type="button" class="button button-danger" onClick=${() => send(true)}>Replace the queue</button>
+            <button type="button" class="button button-quiet" onClick=${keepExisting}>Keep the existing queue</button>
+          </div>
+        </div>`}
         ${write.status === "error" && html`<${ErrorState} error=${write.error} />`}
         ${write.status === "done" &&
         html`<div class="export-result doe-result" role="status">

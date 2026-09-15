@@ -284,6 +284,31 @@ def test_doe_queue_route_answers_400_for_unsafe_run_id(client: TestClient, bad_r
     assert "run_id" in response.json()["detail"]
 
 
+def test_doe_queue_route_refuses_to_replace_an_existing_queue_without_confirmation(
+    client: TestClient, fake_registry: Path, repo_root_with_reference: Path
+):
+    # Claude UI review #780: a reused run name must not silently reset a queue the
+    # nightly runner may already be working through.
+    ArenaStudioService(registry_path=fake_registry, repo_root=repo_root_with_reference).set_task_approval("ocarina", True)
+    # Two entrants: a nightly job needs at least two to compare.
+    body = {"run_id": "doe_replace_run", "instruments": ["ocarina"], "models": ["claude-code-opus-5", "codex-gpt-5.6"], "levels": ["L1"], "seeds": [0]}
+    assert client.post("/api/doe/queue", json=body).status_code == 200
+    queue_path = repo_root_with_reference / "runs" / "code_cad_arena" / "doe_replace_run" / "doe_queue.json"
+    before = queue_path.read_bytes()
+
+    again = client.post("/api/doe/queue", json={**body, "budget_usd": 9.0})
+    assert again.status_code == 409
+    detail = again.json()["detail"]
+    assert "runs/code_cad_arena/doe_replace_run/doe_queue.json" in detail
+    assert str(repo_root_with_reference) not in detail
+    assert queue_path.read_bytes() == before
+
+    confirmed = client.post("/api/doe/queue", json={**body, "budget_usd": 9.0, "replace": True})
+    assert confirmed.status_code == 200
+    _payload, jobs = nightly_cad.load_queue(queue_path)
+    assert jobs[0].budget_usd == 9.0
+
+
 def test_doe_routes_keep_500_for_unexpected_server_errors(client: TestClient, monkeypatch: pytest.MonkeyPatch):
     def boom(*_args, **_kwargs):
         raise RuntimeError("telemetry store unreadable")

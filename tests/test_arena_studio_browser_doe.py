@@ -266,6 +266,54 @@ def test_unapproved_instruments_are_reported_as_skipped(studio_url: str, doe_rep
         browser.close()
 
 
+def test_existing_queue_asks_before_it_is_replaced(studio_url: str, doe_repo: Path, screenshot_dir: Path):
+    """Claude UI review #780: writing a run name whose doe_queue.json already exists asks in
+    the page first. Keeping it writes nothing, and keyboard focus never falls to <body>."""
+    run_dir = doe_repo / "runs" / "code_cad_arena" / "doe-ui-existing"
+    run_dir.mkdir(parents=True)
+    existing = run_dir / "doe_queue.json"
+    existing.write_text('{"schema": "existing-queue-sentinel", "jobs": []}', encoding="utf-8")
+    before = existing.read_bytes()
+    with sync_playwright() as playwright:
+        browser = _launch(playwright, "zero-webgl")
+        session = Session(browser, f"{studio_url}/#/doe", viewport={"width": 1440, "height": 1000})
+        page = session.page
+        page.locator("input[name=instrument][value=ocarina]").wait_for()
+        session.pick("ocarina")
+        page.fill("textarea[name=models]", SUBSCRIPTION)
+        page.fill("input[name=run_id]", "doe-ui-existing")
+        page.wait_for_function(
+            "() => document.querySelector('.doe-write-form button[type=submit]').getAttribute('aria-disabled') === 'false'"
+        )
+        _write_button(page).focus()
+        page.keyboard.press("Enter")
+        confirm = page.locator(".doe-replace")
+        confirm.wait_for()
+        assert "runs/code_cad_arena/doe-ui-existing/doe_queue.json" in " ".join(confirm.inner_text().split())
+        page.wait_for_function("() => document.activeElement?.id === 'doe-replace-title'", timeout=5_000)
+        assert existing.read_bytes() == before
+        page.screenshot(path=str(screenshot_dir / "f5-doe-replace-confirm.png"), full_page=True)
+
+        confirm.get_by_role("button", name="Keep the existing queue").focus()
+        page.keyboard.press("Enter")
+        confirm.wait_for(state="detached")
+        page.wait_for_function("() => document.activeElement?.matches('.doe-write-form button[type=submit]')", timeout=5_000)
+        assert existing.read_bytes() == before
+        assert page.locator(".doe-result").count() == 0
+
+        page.keyboard.press("Enter")
+        confirm.wait_for()
+        confirm.get_by_role("button", name="Replace the queue").click()
+        page.locator(".doe-result").wait_for()
+        _payload, jobs = nightly_cad.load_queue(existing)
+        assert existing.read_bytes() != before and len(jobs) == 1
+        assert len([url for url in session.requests if url.endswith("/api/doe/queue")]) == 3
+        # The browser logs the 409 answers the page turns into a question.
+        assert [error for error in session.errors if "409" not in error] == []
+        session.close()
+        browser.close()
+
+
 def test_doe_hostile_registry_text_and_phone_width(studio_url: str, screenshot_dir: Path):
     with sync_playwright() as playwright:
         browser = _launch(playwright, "zero-webgl")

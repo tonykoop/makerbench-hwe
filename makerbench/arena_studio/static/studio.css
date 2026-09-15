@@ -1638,3 +1638,19 @@ kbd {
     scroll-behavior: auto !important;
   }
 }
+
+/* DoE: in-page confirm before replacing an existing queue file. */
+
+.doe-replace {
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--danger);
+  background: var(--ground);
+}
+
+.button-danger {
+  border-color: var(--danger);
+  background: transparent;
+  color: var(--danger);
+}
