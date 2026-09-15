@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import re
@@ -10,6 +11,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterator
+from urllib.parse import quote
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -39,6 +41,8 @@ from makerbench.code_cad_vote_surface import (
     build_blind_pair,
 )
 from makerbench.code_cad_vote_web import QueueItem, VoteQueue
+from makerbench.nightly_cad import _resume_budget, load_queue
+from makerbench.nightly_preflight import audit_lock
 from makerbench.redaction import run_relative_path
 
 from . import analytics
@@ -76,6 +80,7 @@ class ArenaStudioService:
             Path(root).resolve() for root in (extra_run_roots or ())
         )
         self._queues: dict[tuple[str, str], VoteQueue] = {}
+        self._morning_queues: dict[tuple[str, str], VoteQueue] = {}
         self._active_jobs: dict[str, dict[str, Any]] = {}
         self._processes: dict[str, subprocess.Popen] = {}
         self._rediscover_jobs()
@@ -1046,6 +1051,254 @@ class ArenaStudioService:
                 else None
             ),
         }
+
+    def get_nightly_queue_view(
+        self, queue_path: Path, lock_path: Optional[Path] = None
+    ) -> dict[str, Any]:
+        """Read-only nightly CAD queue cockpit (R2 P1/#732).
+
+        Never acquires the nightly lease and never calls NightlyExecutor — this only
+        reads the queue file and, for any job that already has a run_dir, replays its
+        recorded state via nightly_cad._resume_budget() (the exact same reconstruction
+        NightlyExecutor itself uses on resume). Lock/lease liveness is delegated to
+        nightly_preflight.audit_lock() rather than re-derived here.
+        """
+        queue_path = Path(queue_path).resolve()
+        payload, jobs = load_queue(queue_path)
+
+        lock_path = Path(lock_path).resolve() if lock_path else queue_path.parent / ".nightly-cad.lock"
+        lock = audit_lock(lock_path)
+        lease_heartbeat_utc = None
+        lease_age_s = None
+        if lock_path.exists():
+            try:
+                lease_payload = json.loads(lock_path.read_text(encoding="utf-8"))
+                lease_heartbeat_utc = lease_payload.get("heartbeat_utc")
+                if lease_heartbeat_utc:
+                    heartbeat = datetime.fromisoformat(str(lease_heartbeat_utc))
+                    lease_age_s = max(
+                        0.0,
+                        (datetime.now(timezone.utc) - heartbeat.astimezone(timezone.utc)).total_seconds(),
+                    )
+            except (ValueError, OSError, TypeError):
+                pass  # UNREADABLE case already reflected in lock.status
+
+        job_views: list[dict[str, Any]] = []
+        for job in jobs:
+            job_view: dict[str, Any] = {
+                "job_id": job.job_id,
+                "instrument_id": job.instrument_id,
+                "status": job.status,
+                "run_id": job.run_id,
+                # A job stuck at status="running" with no ACTIVE lease died mid-run —
+                # NightlyExecutor will pick it back up (it only skips queued/running
+                # jobs that already have a run_dir by resuming the same run_id), but a
+                # human should know it stalled rather than assuming it's progressing.
+                "orphaned": job.status == "running" and lock.status != "ACTIVE",
+                "budget_usd": job.budget_usd,
+                "entrant_count": len(job.entrants),
+                "budget": None,
+            }
+            if job.run_dir:
+                # Queue-provided and untrusted: never replay a budget from outside runs/.
+                run_dir = self._contained_run_dir(job.run_dir)
+                if run_dir is not None and run_dir.is_dir():
+                    guard = _resume_budget(run_dir, limit_usd=job.budget_usd)
+                    job_view["budget"] = {
+                        "spent_usd": guard.spent_usd,
+                        "remaining_usd": guard.remaining_usd,
+                        "halted_reason": guard.halted_reason,
+                        "outcomes": [
+                            {"entrant_id": c["entrant_id"], "cost_usd": c["cost_usd"], "violation": c.get("violation")}
+                            for c in guard.charges
+                        ],
+                    }
+            job_views.append(job_view)
+
+        return {
+            "schema": "makerbench-arena-studio-nightly-view-v1",
+            "queue_path": str(queue_path),
+            "queue_schema": payload.get("schema"),
+            "jobs": job_views,
+            "lease": {
+                "lock_path": str(lock_path),
+                "status": lock.status,
+                "pid": lock.pid,
+                "heartbeat_utc": lease_heartbeat_utc,
+                "age_s": lease_age_s,
+            },
+        }
+
+    def discover_morning_bundles(self, queue_path: Path) -> list[dict[str, Any]]:
+        """R2 P2/#733-follow: nightly jobs whose morning bundle is ready for review.
+
+        Only jobs `nightly_cad.py` itself already marked status="votable" (meaning
+        `finalize_morning_bundle` already ran and wrote morning-summary.json) are
+        offered here. Never runs finalize_morning_bundle and never mutates the queue.
+        """
+        _, jobs = load_queue(Path(queue_path))
+        bundles: list[dict[str, Any]] = []
+        for job in jobs:
+            if job.status != "votable" or not job.run_dir:
+                continue
+            run_dir = self._contained_run_dir(job.run_dir)
+            if run_dir is None:
+                continue  # a run_dir outside runs/ is never read, not even its summary
+            summary_path = run_dir / "morning-summary.json"
+            if not summary_path.is_file():
+                continue
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            bundles.append(
+                {
+                    "job_id": job.job_id,
+                    "instrument_id": job.instrument_id,
+                    "run_id": job.run_id,
+                    "votable": bool(summary.get("votable")),
+                    "valid_candidate_count": summary.get("valid_candidate_count"),
+                    "failed_candidate_count": summary.get("failed_candidate_count"),
+                    "cost_usd": summary.get("cost_usd"),
+                }
+            )
+        return bundles
+
+    def _contained_run_dir(self, run_dir: object) -> Optional[Path]:
+        """A queue-provided ``NightlyJob.run_dir``, resolved, or ``None`` if it is
+        not under ``repo_root / "runs"`` (sol CHANGES, #774).
+
+        The queue file is untrusted input: its *path* is already contained by
+        ``_resolve_nightly_queue_path``, but ``run_dir`` is a separate field
+        inside it. Every read of a job's run_dir goes through this one helper:
+        the cockpit's budget replay, morning-summary discovery, and the morning
+        pair/vote/asset routes. ``resolve()`` follows symlinks and ``..`` first,
+        so neither can smuggle an external directory past the check.
+        """
+        if not run_dir:
+            return None
+        allowed_root = (self.repo_root / "runs").resolve()
+        resolved = Path(str(run_dir)).resolve()
+        return resolved if resolved.is_relative_to(allowed_root) else None
+
+    def _resolve_morning_run_dir(self, queue_path: Path, job_id: str) -> Path:
+        """Resolve job_id -> run_dir for the pair/vote/asset routes.
+
+        Enforces the SAME state invariant `discover_morning_bundles()` uses for
+        listing (fixed after review: an earlier version only gated bundle
+        *discovery*, not these routes themselves — a direct call to
+        /api/morning/{job_id}/pair|vote|assets with a queued/running/failed job's
+        job_id bypassed the "only after finalize_morning_bundle marked it votable"
+        rule #734 requires). A job is usable here only once nightly_cad.py itself
+        set status="votable" AND finalize_morning_bundle actually wrote
+        morning-summary.json for it — never on job.status alone.
+
+        Fixed after a second review round: `job.run_dir` comes from the queue
+        file, which is treated as untrusted everywhere else in this module (the
+        queue *path* is already contained under the configured runs root by
+        `_resolve_nightly_queue_path`), but this method previously resolved
+        `run_dir` itself with no containment check at all — a queue entry could
+        name an arbitrary external directory, mark itself votable, and drop a
+        morning-summary.json there, turning the pair/vote/asset routes into an
+        arbitrary-file read (assets) and write (vote_pages/vote logs) primitive
+        against any path readable/writable by the server process. `run_dir` must
+        now resolve under the same `repo_root / "runs"` root as the queue path.
+        """
+        _, jobs = load_queue(Path(queue_path))
+        for job in jobs:
+            if job.job_id == job_id:
+                if job.status != "votable":
+                    raise ValueError(
+                        f"job {job_id!r} is not votable yet (status={job.status!r})"
+                    )
+                if not job.run_dir:
+                    raise ValueError(f"job {job_id!r} has no run_dir yet")
+                run_dir = self._contained_run_dir(job.run_dir)
+                if run_dir is None:
+                    raise ValueError(
+                        f"job {job_id!r} run_dir must be under the configured runs root"
+                    )
+                if not (run_dir / "morning-summary.json").is_file():
+                    raise ValueError(f"job {job_id!r} has no morning-summary.json yet")
+                return run_dir
+        raise ValueError(f"job {job_id!r} not found in queue")
+
+    def get_morning_queue(self, run_dir: Path, job_id: str, voter: str = "tony") -> VoteQueue:
+        """Blind pairs for one nightly morning bundle, presented via the Studio C2/C3
+        anonymous vote stage rather than the standalone `morning-vote/pair-NNN.html`
+        static pages (those, and morning.html, are untouched by this — both keep
+        working independently).
+
+        Mirrors `nightly_cad.finalize_morning_bundle`'s exact cell/pairing/hint/
+        pair_seed sequence so `pair_id` values match its private reveal.json 1:1;
+        candidates are re-staged (idempotently, same source bytes) into this run's
+        own `vote_pages/` directory rather than reusing `morning-vote/`, so nothing
+        here ever writes into a path finalize_morning_bundle already owns. Votes are
+        appended to this run_dir's votes.blind.jsonl / votes.revealed.jsonl — the
+        same append-only files & schema `code_cad_vote_web.py` itself writes.
+        """
+        run_dir = Path(run_dir).resolve()
+        key = (str(run_dir), voter)
+        if key in self._morning_queues:
+            return self._morning_queues[key]
+
+        run_log = json.loads((run_dir / "run_log.json").read_text(encoding="utf-8"))
+        cells = arena_runner.build_vote_candidates(run_log)
+        vote_pages = run_dir / "vote_pages"
+        vote_pages.mkdir(parents=True, exist_ok=True)
+        already = _voted_pair_keys(run_dir, voter)
+        queue = VoteQueue(run_dir=run_dir, voter=voter)
+
+        def _asset_relative(candidate: VoteCandidate) -> VoteCandidate:
+            # job_id comes from the queue file and is only required to be non-empty, so
+            # encode it: an id with "?", "#", "&", "/" or a space must still round-trip.
+            prefix = f"/api/morning/{quote(job_id, safe='')}/assets"
+            return VoteCandidate(
+                candidate_id=candidate.candidate_id,
+                model_id=candidate.model_id,
+                trial_id=candidate.trial_id,
+                render_path=f"{prefix}/{candidate.render_path}",
+                provenance=candidate.provenance,
+                model3d_path=f"{prefix}/{candidate.model3d_path}" if candidate.model3d_path else None,
+                frames=(
+                    tuple(f"{prefix}/{p}" for p in candidate.frames) if candidate.frames else None
+                ),
+            )
+
+        pair_index = 0
+        for cell, candidates in sorted(cells.items()):
+            for left_raw, right_raw in itertools.combinations(candidates, 2):
+                hint = f"night-{pair_index:03d}"
+                left_staged = _stage_blind_assets(left_raw, hint, "left", vote_pages)
+                right_staged = _stage_blind_assets(right_raw, hint, "right", vote_pages)
+                pair_seed = f"{run_dir.name}:{cell}:{pair_index}"
+                pair_index += 1
+                shuffled = build_blind_pair(left_staged, right_staged, pair_seed=pair_seed)
+                if (shuffled.pair_id, voter) in already:
+                    continue
+                pair = BlindPair(
+                    pair_id=shuffled.pair_id,
+                    left=_asset_relative(shuffled.left),
+                    right=_asset_relative(shuffled.right),
+                )
+                queue.items.append(
+                    QueueItem(
+                        pair=pair,
+                        meta={"instrument_id": cell[0], "seed": cell[1], "rep": cell[2]},
+                    )
+                )
+
+        self._morning_queues[key] = queue
+        return queue
+
+    def cast_morning_vote(
+        self,
+        run_dir: Path,
+        job_id: str,
+        pair_id: str,
+        winner: str,
+        voter: str = "tony",
+        flags: Optional[dict] = None,
+    ) -> bool:
+        queue = self.get_morning_queue(run_dir, job_id, voter=voter)
+        return queue.cast(pair_id=pair_id, winner=winner, flags=flags)
 
     def export_winners(self, run_dir: Path) -> dict[str, Any]:
         """Export winning CAD models from a run into the instruments repository (Story #699)."""

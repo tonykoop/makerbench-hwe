@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 from urllib.parse import quote
 
 import pytest
@@ -689,6 +691,607 @@ def test_judge_panel_never_calls_a_judge_cli(
     panel = client.get(f"/api/runs/{fake_run.name}/judge-panel?pair_id={pair_id}&voter={voter}")
     assert panel.status_code == 200
     assert panel.json()["judge"] is None
+
+
+# Ported from #733 (nightly cockpit, R2 P1), #735 (morning review, R2 P2, incl. the run_dir
+# containment fix 1acfc45) and #737's morning judge panel, all APPROVE: backend API tests only.
+# Their tab markup / JS tests are rewritten against the rebuilt frontend.
+def _nightly_queue_fixture(repo_root: Path, *, running_job_run_dir: Optional[Path] = None) -> Path:
+    """Round 2 P1/#732: a small, committed-style fixture queue (never the real queue).
+
+    Written under repo_root/runs/ — the only root /api/nightly/queue accepts a
+    `queue=` override beneath (fixed after review: an earlier version accepted any
+    absolute path with no containment check, making the Studio server an oracle over
+    arbitrary host files)."""
+    runs_dir = repo_root / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    queue_path = runs_dir / "nightly-cad-queue.json"
+    running_job = {
+        "job_id": "sambuca-night",
+        "instrument_id": "sambuca",
+        "reference_image": "tasks/sambuca/reference.png",
+        "budget_usd": 5.0,
+        "status": "running",
+        "run_id": "run-sambuca-01",
+        "run_dir": str(running_job_run_dir) if running_job_run_dir else None,
+        "entrants": [
+            {
+                "entrant_id": "cadam-fable-image",
+                "kind": "cadam",
+                "model_id": "anthropic/claude-fable-5",
+                "max_cost_usd": 3.0,
+            }
+        ],
+    }
+    queued_job = {
+        "job_id": "kora-night",
+        "instrument_id": "kora",
+        "reference_image": "tasks/kora/reference.png",
+        "budget_usd": 2.0,
+        "status": "queued",
+        "entrants": [
+            {"entrant_id": "codex-openscad", "kind": "arena", "model_id": "codex-gpt-5.6-sol"}
+        ],
+    }
+    queue_path.write_text(
+        json.dumps({"schema": "makerbench-nightly-cad-queue-v1", "jobs": [running_job, queued_job]}),
+        encoding="utf-8",
+    )
+    return queue_path
+
+
+def test_nightly_queue_endpoint_shape_and_orphan_detection(client: TestClient, tmp_path: Path):
+    """R2 P1/#732: read-only nightly cockpit view, no lease file present."""
+    queue_path = _nightly_queue_fixture(tmp_path)
+    res = client.get(f"/api/nightly/queue?queue={queue_path}")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["schema"] == "makerbench-arena-studio-nightly-view-v1"
+    assert data["queue_schema"] == "makerbench-nightly-cad-queue-v1"
+    jobs_by_id = {j["job_id"]: j for j in data["jobs"]}
+    assert set(jobs_by_id) == {"sambuca-night", "kora-night"}
+
+    # No lease file exists, so a job stuck at status="running" is orphaned.
+    assert jobs_by_id["sambuca-night"]["orphaned"] is True
+    assert jobs_by_id["sambuca-night"]["budget"] is None
+    assert jobs_by_id["kora-night"]["orphaned"] is False
+
+    assert data["lease"]["status"] == "ABSENT"
+    assert data["lease"]["pid"] is None
+
+
+def test_nightly_queue_endpoint_active_lease_clears_orphan_flag(client: TestClient, tmp_path: Path):
+    queue_path = _nightly_queue_fixture(tmp_path)
+    # The lock path is always derived as queue_path.parent/.nightly-cad.lock (fixed
+    # after review: an earlier version accepted an independent `lock=` override with
+    # no containment check either).
+    lock_path = queue_path.parent / ".nightly-cad.lock"
+    lock_path.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+
+    res = client.get(f"/api/nightly/queue?queue={queue_path}")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["lease"]["status"] == "ACTIVE"
+    assert data["lease"]["pid"] == os.getpid()
+    jobs_by_id = {j["job_id"]: j for j in data["jobs"]}
+    assert jobs_by_id["sambuca-night"]["orphaned"] is False
+
+
+def test_nightly_queue_endpoint_reconstructs_budget_from_run_dir(client: TestClient, tmp_path: Path):
+    # Under runs/: a run_dir outside it is never read (see the escape tests below).
+    run_dir = tmp_path / "runs" / "sambuca-run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "nightly-state.json").write_text(
+        json.dumps(
+            {
+                "budget": {
+                    "spent_usd": 1.5,
+                    "charges": [{"entrant_id": "cadam-fable-image", "cost_usd": 1.5}],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    queue_path = _nightly_queue_fixture(tmp_path, running_job_run_dir=run_dir)
+
+    res = client.get(f"/api/nightly/queue?queue={queue_path}")
+    assert res.status_code == 200
+    budget = res.json()["jobs"][0]["budget"]
+    assert budget["spent_usd"] == 1.5
+    assert budget["remaining_usd"] == 3.5
+    assert budget["outcomes"] == [{"entrant_id": "cadam-fable-image", "cost_usd": 1.5, "violation": None}]
+
+
+def test_nightly_queue_endpoint_never_mutates_queue_or_lease(client: TestClient, tmp_path: Path):
+    """Cockpit must be strictly read-only: same bytes on disk before and after."""
+    queue_path = _nightly_queue_fixture(tmp_path)
+    lock_path = queue_path.parent / ".nightly-cad.lock"
+    lock_path.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    queue_before = queue_path.read_bytes()
+    lock_before = lock_path.read_bytes()
+
+    res = client.get(f"/api/nightly/queue?queue={queue_path}")
+    assert res.status_code == 200
+
+    assert queue_path.read_bytes() == queue_before
+    assert lock_path.read_bytes() == lock_before
+
+
+def test_nightly_queue_endpoint_404_for_missing_queue(client: TestClient, tmp_path: Path):
+    missing = tmp_path / "runs" / "does-not-exist.json"
+    res = client.get(f"/api/nightly/queue?queue={missing}")
+    assert res.status_code == 404
+
+
+def test_nightly_queue_endpoint_refuses_queue_outside_allowed_root(client: TestClient, tmp_path: Path):
+    """R2 P1/#732 fix (post-review): the Studio server must not become an oracle over
+    arbitrary host files. A `queue=` path outside repo_root/runs/ — even one that
+    genuinely exists and is a well-formed queue — must be refused, not served."""
+    outside_root = tmp_path.parent / "outside-repo-root"
+    outside_root.mkdir(exist_ok=True)
+    outside_queue = _nightly_queue_fixture(outside_root)
+
+    res = client.get(f"/api/nightly/queue?queue={outside_queue}")
+    assert res.status_code == 400
+    assert "must be under" in res.text.lower()
+    assert str(outside_queue) not in res.text
+
+
+def test_nightly_queue_endpoint_never_exposes_secrets(client: TestClient, tmp_path: Path):
+    """Lease view must go through nightly_preflight.audit_lock's redaction, never a raw dict."""
+    queue_path = _nightly_queue_fixture(tmp_path)
+    lock_path = queue_path.parent / ".nightly-cad.lock"
+    lock_path.write_text(json.dumps({"pid": os.getpid(), "api_key": "sk-should-never-appear"}), encoding="utf-8")
+
+    res = client.get(f"/api/nightly/queue?queue={queue_path}")
+    assert res.status_code == 200
+    assert "sk-should-never-appear" not in res.text
+
+
+def _morning_bundle_fixture(
+    tmp_path: Path, *, status: str = "votable", write_summary: bool = True, job_id: str = "sambuca-night"
+) -> tuple[Path, Path, str]:
+    """R2 P2: a nightly job whose morning bundle is ready for review.
+
+    Returns (queue_path, morning_run_dir, job_id). Two candidates in the same
+    arena cell so exactly one blind pair is produced (mirrors fake_run's shape).
+    `status`/`write_summary` let a test build a job with a run_dir that is NOT yet
+    votable, to prove the direct pair/vote/assets routes enforce the same gate
+    discovery does (see test_morning_direct_routes_refuse_non_votable_job).
+    """
+    run_dir = tmp_path / "runs" / "morning_run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    png_a = run_dir / "preview_a.png"
+    png_b = run_dir / "preview_b.png"
+    png_a.write_bytes(b"dummy-a")
+    png_b.write_bytes(b"dummy-b")
+    run_log = {
+        "started_at": "2026-09-13T02:00:00Z",
+        "config": {"model_ids": ["cadam-fable-image", "codex-openscad"], "instruments": ["sambuca"]},
+        "trials": [
+            {
+                "trial_id": "trial-morning-a",
+                "model_id": "cadam-fable-image",
+                "instrument_id": "sambuca",
+                "seed": 0,
+                "rep": 0,
+                "result": {"render_ok": True, "artifacts": {"png_path": str(png_a)}},
+            },
+            {
+                "trial_id": "trial-morning-b",
+                "model_id": "codex-openscad",
+                "instrument_id": "sambuca",
+                "seed": 0,
+                "rep": 0,
+                "result": {"render_ok": True, "artifacts": {"png_path": str(png_b)}},
+            },
+        ],
+    }
+    (run_dir / "run_log.json").write_text(json.dumps(run_log), encoding="utf-8")
+    if write_summary:
+        (run_dir / "morning-summary.json").write_text(
+            json.dumps(
+                {
+                    "schema": "makerbench-nightly-cad-morning-v1",
+                    "run_id": run_dir.name,
+                    "votable": True,
+                    "valid_candidate_count": 2,
+                    "failed_candidate_count": 0,
+                    "pair_files": ["pair-000.html"],
+                    "cost_usd": 0.42,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    # Under repo_root/runs/ — the only root /api/nightly/queue and /api/morning/*
+    # accept a `queue=` override beneath (#732's containment fix).
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    queue_path = runs_dir / "nightly-cad-queue.json"
+    queue_path.write_text(
+        json.dumps(
+            {
+                "schema": "makerbench-nightly-cad-queue-v1",
+                "jobs": [
+                    {
+                        "job_id": job_id,
+                        "instrument_id": "sambuca",
+                        "reference_image": "tasks/sambuca/reference.png",
+                        "budget_usd": 5.0,
+                        "status": status,
+                        "run_id": run_dir.name,
+                        "run_dir": str(run_dir),
+                        "entrants": [
+                            {"entrant_id": "cadam-fable-image", "kind": "cadam", "model_id": "anthropic/claude-fable-5"},
+                            {"entrant_id": "codex-openscad", "kind": "arena", "model_id": "codex-gpt-5.6-sol"},
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return queue_path, run_dir, job_id
+
+
+def test_morning_direct_routes_refuse_non_votable_job(client: TestClient, tmp_path: Path):
+    """R2 P2/#734 fix (post-review): the pair/vote/assets routes must enforce the
+    SAME votable gate discovery does. An earlier version only gated
+    discover_morning_bundles() (the bundle picker) — a job with a run_dir but
+    status="running" (or "queued"/"failed") was still directly reachable via
+    /api/morning/{job_id}/pair|vote|assets, bypassing #734's "only after
+    finalize_morning_bundle marked it votable" rule."""
+    for status in ("queued", "running", "failed"):
+        # Reuse the same tmp_path (== client's repo_root) each iteration, not a
+        # subdirectory — the queue must live under repo_root/runs/ per #732's
+        # containment fix, and each call fully overwrites the fixture's files.
+        queue_path, run_dir, job_id = _morning_bundle_fixture(
+            tmp_path, status=status, write_summary=False
+        )
+        assert client.get(f"/api/morning/{job_id}/pair?queue={queue_path}").status_code == 400
+        assert (
+            client.post(
+                f"/api/morning/{job_id}/vote?queue={queue_path}",
+                json={"pair_id": "pair-x", "winner": "left", "voter": "tony"},
+            ).status_code
+            == 400
+        )
+        assert (
+            client.get(f"/api/morning/{job_id}/assets/blind/x.png?queue={queue_path}").status_code
+            == 400
+        )
+
+    # Also refused when a run_dir HAS a morning-summary.json but the queue's own
+    # status field hasn't caught up to "votable" yet (status is authoritative, not
+    # file presence alone).
+    queue_path, run_dir, job_id = _morning_bundle_fixture(
+        tmp_path, status="running", write_summary=True
+    )
+    assert client.get(f"/api/morning/{job_id}/pair?queue={queue_path}").status_code == 400
+
+
+def test_morning_direct_routes_refuse_run_dir_outside_runs_root(client: TestClient, tmp_path: Path):
+    """Second-review-round fix: the queue *path* is contained under
+    repo_root/runs/ (#732), but job.run_dir is a SEPARATE field read from that
+    same untrusted queue file, and was never itself contained. A queue entry
+    could name an arbitrary external directory as run_dir, mark itself
+    votable, and drop a morning-summary.json there — turning the pair/vote/
+    assets routes into an arbitrary-file read/write primitive against any path
+    the server process can reach. The queue here is validly contained; only
+    run_dir points outside runs/."""
+    outside_run_dir = tmp_path / "outside-runs-root"
+    outside_run_dir.mkdir()
+    (outside_run_dir / "morning-summary.json").write_text(
+        json.dumps({"schema": "makerbench-nightly-cad-morning-v1", "votable": True}),
+        encoding="utf-8",
+    )
+    # Minimal real run_log.json so the pair/vote routes reach a real decision
+    # (not just crash on an unrelated missing file) if containment were absent.
+    (outside_run_dir / "run_log.json").write_text(
+        json.dumps(
+            {
+                "started_at": "2026-09-13T02:00:00Z",
+                "config": {"model_ids": ["a", "b"], "instruments": ["sambuca"]},
+                "trials": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    # The assets route resolves under run_dir/vote_pages/ — placing the host
+    # file there mirrors exactly what the reviewer's PoC found reachable.
+    (outside_run_dir / "vote_pages").mkdir()
+    (outside_run_dir / "vote_pages" / "host.txt").write_text(
+        "should never be readable via /assets", encoding="utf-8"
+    )
+
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    queue_path = runs_dir / "nightly-cad-queue.json"
+    job_id = "escape-attempt"
+    queue_path.write_text(
+        json.dumps(
+            {
+                "schema": "makerbench-nightly-cad-queue-v1",
+                "jobs": [
+                    {
+                        "job_id": job_id,
+                        "instrument_id": "sambuca",
+                        "reference_image": "tasks/sambuca/reference.png",
+                        "budget_usd": 5.0,
+                        "status": "votable",
+                        "run_id": "outside-runs-root",
+                        "run_dir": str(outside_run_dir),
+                        "entrants": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert client.get(f"/api/morning/{job_id}/pair?queue={queue_path}").status_code == 400
+    assert (
+        client.post(
+            f"/api/morning/{job_id}/vote?queue={queue_path}",
+            json={"pair_id": "pair-x", "winner": "left", "voter": "tony"},
+        ).status_code
+        == 400
+    )
+    res = client.get(f"/api/morning/{job_id}/assets/host.txt?queue={queue_path}")
+    assert res.status_code == 400
+    assert "should never be readable" not in res.text
+
+
+_ESCAPES = ["absolute", "dotdot", "symlink"]
+_QUERY_ENCODINGS = ["plain", "encoded"]
+
+
+def _queue_with_external_run_dir(tmp_path: Path, escape: str, *, status: str) -> Path:
+    """sol CHANGES, #774: a validly contained queue under repo_root/runs/ whose job
+    run_dir points at an external directory holding sentinel data, reached three
+    ways. Returns the queue path."""
+    outside = tmp_path / "outside-runs-root"
+    outside.mkdir(exist_ok=True)
+    (outside / "nightly-state.json").write_text(
+        json.dumps(
+            {"budget": {"spent_usd": 3210.5, "charges": [{"entrant_id": "OUTSIDE_SENTINEL", "cost_usd": 3210.5}]}}
+        ),
+        encoding="utf-8",
+    )
+    (outside / "morning-summary.json").write_text(
+        json.dumps(
+            {
+                "schema": "makerbench-nightly-cad-morning-v1",
+                "votable": True,
+                "valid_candidate_count": 987654,
+                "failed_candidate_count": 0,
+                "cost_usd": 4321.25,
+            }
+        ),
+        encoding="utf-8",
+    )
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    if escape == "absolute":
+        run_dir = str(outside)
+    elif escape == "dotdot":
+        run_dir = str(runs_dir / ".." / "outside-runs-root")
+    else:
+        link = runs_dir / "escape-link"
+        link.symlink_to(outside, target_is_directory=True)
+        run_dir = str(link)
+    queue_path = runs_dir / "nightly-cad-queue.json"
+    queue_path.write_text(
+        json.dumps(
+            {
+                "schema": "makerbench-nightly-cad-queue-v1",
+                "jobs": [
+                    {
+                        "job_id": "escape-attempt",
+                        "instrument_id": "sambuca",
+                        "reference_image": "tasks/sambuca/reference.png",
+                        "budget_usd": 5.0,
+                        "status": status,
+                        "run_id": "outside-runs-root",
+                        "run_dir": run_dir,
+                        "entrants": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return queue_path
+
+
+def _queue_query(queue_path: Path, encoding: str) -> str:
+    return quote(str(queue_path), safe="") if encoding == "encoded" else str(queue_path)
+
+
+@pytest.mark.parametrize("encoding", _QUERY_ENCODINGS)
+@pytest.mark.parametrize("escape", _ESCAPES)
+def test_nightly_cockpit_never_replays_budget_from_run_dir_outside_runs_root(
+    client: TestClient, tmp_path: Path, escape: str, encoding: str
+):
+    queue_path = _queue_with_external_run_dir(tmp_path, escape, status="running")
+    res = client.get(f"/api/nightly/queue?queue={_queue_query(queue_path, encoding)}")
+    assert res.status_code == 200
+    assert res.json()["jobs"][0]["budget"] is None
+    assert "OUTSIDE_SENTINEL" not in res.text
+    assert "3210.5" not in res.text
+
+
+@pytest.mark.parametrize("encoding", _QUERY_ENCODINGS)
+@pytest.mark.parametrize("escape", _ESCAPES)
+def test_morning_discovery_never_reads_summary_from_run_dir_outside_runs_root(
+    client: TestClient, tmp_path: Path, escape: str, encoding: str
+):
+    queue_path = _queue_with_external_run_dir(tmp_path, escape, status="votable")
+    res = client.get(f"/api/morning/queue?queue={_queue_query(queue_path, encoding)}")
+    assert res.status_code == 200
+    assert res.json()["bundles"] == []
+    assert "987654" not in res.text
+    assert "4321.25" not in res.text
+
+
+def test_morning_bundle_discovery_only_lists_votable_jobs(client: TestClient, tmp_path: Path):
+    queue_path, _run_dir, job_id = _morning_bundle_fixture(tmp_path)
+    res = client.get(f"/api/morning/queue?queue={queue_path}")
+    assert res.status_code == 200
+    bundles = res.json()["bundles"]
+    assert len(bundles) == 1
+    assert bundles[0]["job_id"] == job_id
+    assert bundles[0]["votable"] is True
+    assert bundles[0]["valid_candidate_count"] == 2
+
+
+def test_morning_bundle_pair_never_leaks_identity_pre_vote(client: TestClient, tmp_path: Path):
+    queue_path, _run_dir, job_id = _morning_bundle_fixture(tmp_path)
+    res = client.get(f"/api/morning/{job_id}/pair?queue={queue_path}")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["has_next"] is True
+    pair = data["current_pair"]
+    body = json.dumps(pair)
+    # candidate_id/trial_id/model_id must never reach the wire pre-vote (C3 invariant).
+    assert "trial-morning-a" not in body
+    assert "trial-morning-b" not in body
+    assert "cadam-fable-image" not in body
+    assert "codex-openscad" not in body
+    assert pair["left"]["render_path"].startswith(f"/api/morning/{job_id}/assets/blind/")
+    assert pair["right"]["render_path"].startswith(f"/api/morning/{job_id}/assets/blind/")
+
+
+# A "/" in a job_id cannot round-trip through any /api/morning/{job_id}/... route:
+# Starlette decodes %2F before routing, so the pair route itself 404s (pre-existing,
+# logged). Everything a single path segment can carry must work.
+@pytest.mark.parametrize("job_id", ["night job?#&x", "nightly α 2026-09-15"])
+def test_morning_asset_urls_encode_the_job_id(client: TestClient, tmp_path: Path, job_id: str):
+    """Tony (2026-09-15), from the claude UI review of #781: a queue job_id is only required
+    to be non-empty, so the asset URLs the pair API mints must encode it. Unencoded, an id
+    like "night job?#&x" turns everything after "?" into a query string and the stage's
+    images never load."""
+    queue_path, _run_dir, job_id = _morning_bundle_fixture(tmp_path, job_id=job_id)
+    encoded_job = quote(job_id, safe="")
+    res = client.get(f"/api/morning/{encoded_job}/pair?queue={quote(str(queue_path), safe='')}")
+    assert res.status_code == 200, res.text
+    pair = res.json()["current_pair"]
+    for side in ("left", "right"):
+        render_path = pair[side]["render_path"]
+        assert render_path.startswith(f"/api/morning/{encoded_job}/assets/blind/"), render_path
+        asset = client.get(f"{render_path}?queue={quote(str(queue_path), safe='')}")
+        assert asset.status_code == 200, (render_path, asset.status_code)
+        assert asset.content.startswith(b"dummy-")
+
+
+def test_morning_bundle_vote_lands_in_votes_blind_jsonl(client: TestClient, tmp_path: Path):
+    """Votes land in the same run_dir/votes.blind.jsonl path code_cad_vote_web.py writes."""
+    queue_path, run_dir, job_id = _morning_bundle_fixture(tmp_path)
+    pair_res = client.get(f"/api/morning/{job_id}/pair?queue={queue_path}")
+    pair_id = pair_res.json()["current_pair"]["pair_id"]
+
+    vote_res = client.post(
+        f"/api/morning/{job_id}/vote?queue={queue_path}",
+        json={"pair_id": pair_id, "winner": "left", "voter": "tony"},
+    )
+    assert vote_res.status_code == 200
+    assert vote_res.json()["success"] is True
+
+    votes_path = run_dir / "votes.blind.jsonl"
+    assert votes_path.is_file()
+    lines = [json.loads(line) for line in votes_path.read_text(encoding="utf-8").splitlines()]
+    assert any(v["pair_id"] == pair_id and v["winner"] == "left" for v in lines)
+
+    # Voting again for the same voter must be refused (queue rebuilds without this pair).
+    again = client.get(f"/api/morning/{job_id}/pair?queue={queue_path}")
+    assert again.json()["has_next"] is False
+
+
+@pytest.mark.parametrize(
+    "escape",
+    [
+        "../../../../../../etc/hostname",
+        # Starlette normalizes a plain "../" before routing, so only the encoded
+        # forms actually reach the route's containment guard (the same finding as
+        # the run-scoped vote_pages traversal test above).
+        "..%2F..%2F..%2F..%2F..%2F..%2Fetc%2Fhostname",
+        "%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fhostname",
+        # One level up is a real file inside the run dir: a working escape returns it.
+        "..%2Fmorning-summary.json",
+    ],
+)
+def test_morning_bundle_asset_refuses_traversal(client: TestClient, tmp_path: Path, escape: str):
+    queue_path, _run_dir, job_id = _morning_bundle_fixture(tmp_path)
+    # Populate vote_pages/ by requesting a pair first.
+    client.get(f"/api/morning/{job_id}/pair?queue={queue_path}")
+    res = client.get(f"/api/morning/{job_id}/assets/{escape}?queue={queue_path}")
+    assert res.status_code == 404
+
+
+def test_morning_bundle_never_writes_into_morning_vote_dir(client: TestClient, tmp_path: Path):
+    """The Studio queue stages into its own vote_pages/, never finalize_morning_bundle's
+    morning-vote/ directory — morning.html and morning-vote/*.html stay untouched."""
+    queue_path, run_dir, job_id = _morning_bundle_fixture(tmp_path)
+    morning_vote_dir = run_dir / "morning-vote"
+    morning_vote_dir.mkdir()
+    sentinel = morning_vote_dir / "pair-000.html"
+    sentinel.write_text("<html>original static page</html>", encoding="utf-8")
+    before = sentinel.read_bytes()
+
+    client.get(f"/api/morning/{job_id}/pair?queue={queue_path}")
+
+    assert sentinel.read_bytes() == before
+    assert (run_dir / "vote_pages").is_dir()
+
+
+def test_morning_judge_panel_after_vote(client: TestClient, tmp_path: Path):
+    queue_path, run_dir, job_id = _morning_bundle_fixture(tmp_path)
+    pair_res = client.get(f"/api/morning/{job_id}/pair?queue={queue_path}")
+    pair_id = pair_res.json()["current_pair"]["pair_id"]
+
+    assert (
+        client.get(f"/api/morning/{job_id}/judge-panel?pair_id={pair_id}&queue={queue_path}").status_code
+        == 404
+    )
+
+    vote_res = client.post(
+        f"/api/morning/{job_id}/vote?queue={queue_path}",
+        json={"pair_id": pair_id, "winner": "right", "voter": "tony"},
+    )
+    assert vote_res.status_code == 200
+
+    res = client.get(f"/api/morning/{job_id}/judge-panel?pair_id={pair_id}&queue={queue_path}")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["human_winner"] == "right"
+    assert data["judge"] is None
+    assert data["left"]["model_id"] in ("cadam-fable-image", "codex-openscad")
+    assert data["right"]["model_id"] in ("cadam-fable-image", "codex-openscad")
+
+
+def test_morning_judge_panel_reveal_gate_is_per_voter_not_global(client: TestClient, tmp_path: Path):
+    """R2 P3/#736 fix (post-review), morning surface: same per-voter gate as the
+    regular-run judge panel."""
+    queue_path, run_dir, job_id = _morning_bundle_fixture(tmp_path)
+    pair_res = client.get(f"/api/morning/{job_id}/pair?queue={queue_path}&voter=alice")
+    pair_id = pair_res.json()["current_pair"]["pair_id"]
+
+    alice_vote = client.post(
+        f"/api/morning/{job_id}/vote?queue={queue_path}",
+        json={"pair_id": pair_id, "winner": "left", "voter": "alice"},
+    )
+    assert alice_vote.status_code == 200
+
+    bob_res = client.get(
+        f"/api/morning/{job_id}/judge-panel?pair_id={pair_id}&voter=bob&queue={queue_path}"
+    )
+    assert bob_res.status_code == 404
+
+    alice_res = client.get(
+        f"/api/morning/{job_id}/judge-panel?pair_id={pair_id}&voter=alice&queue={queue_path}"
+    )
+    assert alice_res.status_code == 200
 
 
 def test_root_is_a_ui_free_placeholder(client: TestClient):
