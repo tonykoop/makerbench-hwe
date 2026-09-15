@@ -27,7 +27,11 @@ jobs:
 
       - name: Fetch base ref
         if: github.event_name == 'pull_request'
-        run: git fetch origin "${{ github.base_ref }}" --depth=1
+        # Full history, never --depth (#811). A shallow fetch re-grafts the base
+        # tip as a parentless commit, so once the base moves past the commit this
+        # PR's merge ref was built on, `git diff origin/<base>...HEAD` has no merge
+        # base and exits 128 on every run and re-run.
+        run: git fetch --no-tags origin "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
 
       - uses: actions/setup-python@v7
         with:
