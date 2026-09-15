@@ -144,8 +144,22 @@ edited in the Studio workbench must never compile that way: OpenSCAD's
 
 `tests/test_scad_sandbox.py` runs the real wrapper against sentinels outside
 the workspace; CI installs `bubblewrap` and sets `MAKERBENCH_REQUIRE_SANDBOX=1`
-so a sandbox that cannot start fails the job instead of skipping. The arena
-runner itself still uses the host compiler; switching it is a follow-up.
+so a sandbox that cannot start fails the job instead of skipping.
+
+**Arena runs can opt in** with `arena run --sandboxed-compile` (#788 Q11).
+Off by default, so blind series keep their compile timings. With the flag:
+
+- `openscad` compiles go through `compile_scad_sandboxed`; `cadquery` already
+  compiles in its own Bubblewrap and is unchanged.
+- `blender`, `solidworks`, `fusion`, the live tiers and `parametric` are
+  refused up front ("no sandboxed compiler"): there is no host fallback.
+- A sandbox that cannot start fails the run before any trial, and no
+  `openscad` process is launched outside `bwrap`
+  (`tests/test_arena_sandboxed_compile.py` asserts this on a real stub run).
+- `run_log.json` records `config.compile_sandboxed: true`, so scorelines from
+  sandboxed and host runs are distinguishable. Expect a small per-compile
+  overhead for the namespace setup and the in-sandbox `Xvfb`; the PR that
+  added the flag reports a measured comparison.
 
 ## SolidWorks / Fusion 360 (Windows job-dir runner, #627)
 
