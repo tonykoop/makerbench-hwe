@@ -450,13 +450,14 @@ class TestRevisions:
             store.save_revision(did, draft_id=draft["draft_id"])
         assert _snapshot(store.root) == before
 
-    @pytest.mark.parametrize("failing", ["copytree", "copyfile"])
+    @pytest.mark.parametrize("failing", ["_copy_artifact_tree", "copyfile", "atomic_write_json"])
     def test_injected_failure_leaves_nothing_and_retry_succeeds(self, store, monkeypatch, failing):
         design = _design(store)
         did = design["design_id"]
         draft = _finished_draft(store, did, objective={"render_ok": True})
         before = _snapshot(store.root)
-        real = getattr(ws.shutil, failing)
+        holder = ws.shutil if failing == "copyfile" else ws
+        real = getattr(holder, failing)
         calls = {"n": 0}
 
         def boom(*args, **kwargs):
@@ -465,7 +466,7 @@ class TestRevisions:
                 raise OSError(28, "No space left on device")
             return real(*args, **kwargs)
 
-        monkeypatch.setattr(ws.shutil, failing, boom)
+        monkeypatch.setattr(holder, failing, boom)
         with pytest.raises(OSError):
             store.save_revision(did, draft_id=draft["draft_id"])
         assert _snapshot(store.root) == before, "a failed save left bytes behind"
@@ -495,6 +496,92 @@ class TestRevisions:
         monkeypatch.setattr(Path, "rename", real_rename)
         rev = store.save_revision(did, draft_id=draft["draft_id"])
         assert store.list_revisions(did)[0]["rev_id"] == rev["rev_id"]
+
+    @pytest.mark.parametrize("where", ["file", "nested_dir", "nested_file"])
+    def test_symlink_anywhere_in_the_artifact_tree_refuses_the_save(self, store, tmp_path, where):
+        design = _design(store)
+        did = design["design_id"]
+        draft = _finished_draft(store, did)
+        ddir = store.draft_dir(did, draft["draft_id"])
+        secret = tmp_path / "host-secret.txt"
+        secret.write_text("HOST-BYTES", encoding="utf-8")
+        outside_dir = tmp_path / "host-dir"
+        outside_dir.mkdir()
+        (outside_dir / "inner.stl").write_text("HOST-BYTES", encoding="utf-8")
+        if where == "file":
+            os.symlink(secret, ddir / "artifacts" / "leak.txt")
+        elif where == "nested_dir":
+            (ddir / "artifacts" / "views").mkdir()
+            os.symlink(outside_dir, ddir / "artifacts" / "views" / "link")
+        else:
+            (ddir / "artifacts" / "views").mkdir()
+            os.symlink(secret, ddir / "artifacts" / "views" / "leak.txt")
+        before = _snapshot(store.root)
+        with pytest.raises(WorkbenchError, match="symlink"):
+            store.save_revision(did, draft_id=draft["draft_id"])
+        assert _snapshot(store.root) == before
+        assert list((store.root / did / "revisions").iterdir()) == []
+        assert store.list_revisions(did) == []
+        # no store-owned file carries the host bytes (the draft's own link is skipped)
+        assert b"HOST-BYTES" not in b"".join(
+            p.read_bytes() for p in store.root.rglob("*") if p.is_file() and not p.is_symlink()
+        )
+
+    def test_nested_regular_artifact_dirs_are_copied(self, store):
+        design = _design(store)
+        did = design["design_id"]
+        draft = _finished_draft(store, did)
+        ddir = store.draft_dir(did, draft["draft_id"])
+        (ddir / "artifacts" / "views").mkdir()
+        (ddir / "artifacts" / "views" / "iso.png").write_bytes(b"\x89PNG")
+        rev = store.save_revision(did, draft_id=draft["draft_id"])
+        rdir = store.revision_dir(did, rev["rev_id"])
+        assert (rdir / "artifacts" / "views" / "iso.png").read_bytes() == b"\x89PNG"
+        assert (rdir / "artifacts" / "output.stl").is_file()
+
+    def test_index_append_failure_unpublishes_and_retry_succeeds(self, store, monkeypatch):
+        design = _design(store)
+        did = design["design_id"]
+        draft = _finished_draft(store, did)
+        before = _snapshot(store.root)
+        real = WorkbenchStore._append_index_row
+        calls = {"n": 0}
+
+        def boom(self, index_path, payload):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise OSError(28, "No space left on device")
+            return real(self, index_path, payload)
+
+        monkeypatch.setattr(WorkbenchStore, "_append_index_row", boom)
+        with pytest.raises(OSError):
+            store.save_revision(did, draft_id=draft["draft_id"])
+        assert _snapshot(store.root) == before, "a failed publish left bytes behind"
+        assert list((store.root / did / "revisions").iterdir()) == []
+        assert store.list_revisions(did) == []
+        rev = store.save_revision(did, draft_id=draft["draft_id"])
+        assert [r["rev_id"] for r in store.list_revisions(did)] == [rev["rev_id"]]
+        assert store.revision_source(did, rev["rev_id"]) == "cube(1);\n"
+
+    def test_crash_between_rename_and_index_is_reconciled_on_the_next_save(self, store):
+        # Simulate a crash after the publish rename: the directory is complete
+        # but its index row never landed.
+        design = _design(store)
+        did = design["design_id"]
+        r1 = store.save_revision(did, draft_id=_finished_draft(store, did)["draft_id"])
+        r2 = store.save_revision(did, draft_id=_finished_draft(store, did, parent=r1["rev_id"], source="cube(2);\n")["draft_id"])
+        index = store.root / did / "index.jsonl"
+        lines = index.read_text(encoding="utf-8").splitlines(keepends=True)
+        index.write_text("".join(lines[:1]), encoding="utf-8")  # drop r2's row; its dir stays
+        assert [r["rev_id"] for r in store.list_revisions(did)] == [r1["rev_id"]]
+        with pytest.raises(Conflict, match="already saved"):
+            # the same bytes are still a conflict: the directory exists
+            store.save_revision(did, draft_id=_finished_draft(store, did, parent=r1["rev_id"], source="cube(2);\n")["draft_id"])
+        r3 = store.save_revision(did, draft_id=_finished_draft(store, did, parent=r1["rev_id"], source="cube(3);\n")["draft_id"])
+        rows = store.list_revisions(did)
+        assert [r["rev_id"] for r in rows] == [r1["rev_id"], r2["rev_id"], r3["rev_id"]]
+        assert [r["seq"] for r in rows] == [1, 2, 3]
+        assert store.read_revision(did, r2["rev_id"])["seq"] == 2
 
     def test_no_staging_directory_survives_a_successful_save(self, store):
         design = _design(store)

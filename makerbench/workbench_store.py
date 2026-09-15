@@ -43,6 +43,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import os
 import re
 import secrets
 import shutil
@@ -181,6 +182,36 @@ def source_diff(a: str, b: str, *, context: int = 3) -> list[dict]:
         else:
             rows.append({"op": line[:1], "text": line[1:]})
     return rows
+
+
+def _copy_artifact_tree(src: Path, dst: Path) -> None:
+    """Copy a draft's ``artifacts/`` into staging: regular files and real
+    directories only. Any symlink anywhere in the tree (file or directory,
+    at any depth) refuses the whole save before a byte is copied, so a link
+    to a host file can never become an immutable revision artifact."""
+
+    entries: list[tuple[Path, Path]] = []
+
+    def walk(directory: Path, target: Path) -> None:
+        for entry in sorted(os.scandir(directory), key=lambda e: e.name):
+            if entry.is_symlink():
+                raise WorkbenchError(
+                    f"draft artifacts contain a symlink ({entry.name}); refusing to publish"
+                )
+            if entry.is_dir(follow_symlinks=False):
+                walk(Path(entry.path), target / entry.name)
+            elif entry.is_file(follow_symlinks=False):
+                entries.append((Path(entry.path), target / entry.name))
+            else:
+                raise WorkbenchError(
+                    f"draft artifacts contain a special file ({entry.name}); refusing to publish"
+                )
+
+    walk(src, dst)
+    dst.mkdir(parents=True, exist_ok=False)
+    for source, target in entries:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
 
 
 class WorkbenchStore:
@@ -517,6 +548,7 @@ class WorkbenchStore:
         revisions_dir = self.contained(design_id, "revisions")
         index_path = self.contained(design_id, "index.jsonl")
         with file_lock(index_path):
+            self._reconcile_unindexed(design_id, index_path)
             if parent is not None and not self._revision_dir(design_id, parent):
                 raise NotFound("unknown parent revision")
             # Provenance comes from the bytes being saved, hashed under the
@@ -559,7 +591,7 @@ class WorkbenchStore:
                         pass
                 artifacts_src = draft_dir / "artifacts"
                 if artifacts_src.is_dir() and not artifacts_src.is_symlink():
-                    shutil.copytree(artifacts_src, staging / "artifacts", symlinks=False)
+                    _copy_artifact_tree(artifacts_src, staging / "artifacts")
                 if (draft_dir / "job.log").is_file():
                     shutil.copyfile(draft_dir / "job.log", staging / "job.log")
                 payload = {
@@ -594,15 +626,50 @@ class WorkbenchStore:
             finally:
                 if staging.exists():
                     shutil.rmtree(staging, ignore_errors=True)
-            index_row = {
-                k: payload[k]
-                for k in ("rev_id", "seq", "parent_rev_id", "source_sha256", "created_at", "note")
-            }
-            index_row["editor_kind"] = payload["editor"]["kind"]
-            index_row["compile_status"] = compile_summary["status"]
-            with index_path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(index_row, sort_keys=True) + "\n")
+            # Publication is the index row. If appending it fails, unpublish
+            # the directory again so the next save is an ordinary save.
+            try:
+                self._append_index_row(index_path, payload)
+            except BaseException:
+                shutil.rmtree(rev_dir, ignore_errors=True)
+                raise
         return payload
+
+    @staticmethod
+    def _index_row(payload: Mapping[str, Any]) -> dict:
+        row = {k: payload[k] for k in ("rev_id", "seq", "parent_rev_id", "source_sha256", "created_at", "note")}
+        row["editor_kind"] = payload["editor"]["kind"]
+        row["compile_status"] = (payload.get("compile") or {}).get("status")
+        return row
+
+    def _append_index_row(self, index_path: Path, payload: Mapping[str, Any]) -> None:
+        line = json.dumps(self._index_row(payload), sort_keys=True) + "\n"
+        with index_path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    def _reconcile_unindexed(self, design_id: str, index_path: Path) -> list[str]:
+        """Runs under the index lock. A crash between the publish rename and
+        the index append leaves a complete ``revisions/<rev_id>/`` with no
+        index row; its ``revision.json`` carries everything the row needs,
+        so it is indexed now (before the next ``seq`` is chosen)."""
+
+        indexed = {r.get("rev_id") for r in self.list_revisions(design_id)}
+        repaired = []
+        revisions_dir = self.contained(design_id, "revisions")
+        for rev_id, rev_dir in self._contained_children(revisions_dir, "revision.json"):
+            if rev_id in indexed:
+                continue
+            try:
+                payload = json.loads((rev_dir / "revision.json").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if payload.get("rev_id") != rev_id:
+                continue
+            self._append_index_row(index_path, payload)
+            repaired.append(rev_id)
+        return repaired
 
     def list_revisions(self, design_id: str) -> list[dict]:
         index_path = self.contained(design_id, "index.jsonl")

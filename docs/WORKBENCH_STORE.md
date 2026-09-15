@@ -30,7 +30,14 @@ runs/workbench/<design_id>/
   is no update or delete method. Saving a draft whose revision already exists
   is a `Conflict` that changes no bytes, and a failure before publication
   removes the staging directory, so a retry is a normal save, never a
-  spurious conflict.
+  spurious conflict. **Publication is the index row:** if appending it fails
+  after the rename, the directory is removed again; if the process dies in
+  between, the next save (under the same lock) indexes the complete
+  directory from its own `revision.json` before choosing a `seq`.
+- **Only regular files become artifacts.** The draft's `artifacts/` tree is
+  copied file by file; a symlink anywhere in it (file or directory, any
+  depth) refuses the save before a byte is copied, so a link to a host file
+  can never become an immutable revision artifact.
 - **Provenance comes from the bytes saved.** The source hash in
   `revision.json` is computed from the draft's source file under the index
   lock, and the staged copy is hashed again before publication. A draft whose
