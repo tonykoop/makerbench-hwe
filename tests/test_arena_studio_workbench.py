@@ -455,6 +455,25 @@ class TestCurateAndExport:
         assert status and all(line.startswith("?? arena/workbench/") for line in status), status
         assert subprocess.run(["git", "log", "--oneline"], cwd=repo, check=True, capture_output=True, text=True).stdout.count("\n") == 1  # no commit
 
+    @pytest.mark.parametrize("level", ["arena", "arena/workbench", "arena/workbench/<design>"])
+    def test_export_refuses_a_symlinked_ancestor_at_every_level(self, studio, instruments_root, level):
+        """G14 (Sonnet, #820): a symlink planted at `arena/`, `arena/workbench/`
+        or the design directory pointing at `cad/` must refuse preview and
+        export, leaving `cad/` untouched."""
+        _fake_launch(studio.workbench)
+        did, r0 = _origin_revision(studio)
+        repo = instruments_root / "strings" / "boxolin"
+        link = repo / level.replace("<design>", did)
+        link.parent.mkdir(parents=True, exist_ok=True)
+        os.symlink(repo / "CAD", link, target_is_directory=True)
+        cad_before = _repo_snapshot(repo / "CAD")
+        r = studio.get(f"/api/workbench/designs/{did}/revisions/{r0}/export")
+        assert r.status_code == 409 and "symlink" in r.json()["detail"], r.text
+        r = _post(studio, f"/api/workbench/designs/{did}/revisions/{r0}/export", {"replace": True})
+        assert r.status_code == 409 and "symlink" in r.json()["detail"], r.text
+        assert _repo_snapshot(repo / "CAD") == cad_before
+        assert sorted(p.name for p in (repo / "CAD").iterdir()) == ["boxolin.scad", "linked.scad", "notes.md", "private-notes.scad"]
+
     def test_export_refuses_uncontained_repo_paths_and_no_instruments_root(self, studio, instruments_root, tmp_path, registry, fake_run):
         _fake_launch(studio.workbench)
         before = _repo_snapshot(tmp_path / "outside") | {"private": json.dumps(sorted(p.as_posix() for p in (instruments_root / "private").rglob("*")))}

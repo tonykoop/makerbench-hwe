@@ -628,14 +628,19 @@ class WorkbenchService:
         design = self.store.read_design(design_id)
         revision = self.store.read_revision(design_id, rev_id)
         repo_dir, repo_path = self._repo_dir(design["instrument_id"], what="exports")
-        target = repo_dir / EXPORT_SUBDIR / design_id / rev_id
-        # Belt and braces: the ids passed the store's id rule, so the target
-        # cannot leave the repo; check anyway and refuse a symlinked prefix.
+        # Walk from the repo down to the target one component at a time and
+        # refuse a symlink at any level (`arena`, `workbench`, the design, the
+        # revision): `Path.is_symlink()` only inspects the last component, so
+        # a symlinked `arena/` -> `cad/` would otherwise pass unnoticed
+        # (Sonnet, #820). The ids passed the store's id rule, so the target
+        # cannot leave the repo; the resolve check is belt and braces.
+        target = repo_dir
+        for part in (*Path(EXPORT_SUBDIR).parts, design_id, rev_id):
+            target = target / part
+            if target.is_symlink():
+                raise Conflict(f"export target has a symlink at {part!r}; refusing to write through it")
         if not target.resolve().is_relative_to(repo_dir):  # pragma: no cover - ids are validated above
             raise NotFound("export target is not inside the instrument repo")
-        for ancestor in (repo_dir / EXPORT_SUBDIR, repo_dir / EXPORT_SUBDIR / design_id, target):
-            if ancestor.is_symlink():
-                raise Conflict("export target is a symlink; refusing to write through it")
         published = f"{repo_path}/{EXPORT_SUBDIR}/{design_id}/{rev_id}"
         return target, published, design, revision
 

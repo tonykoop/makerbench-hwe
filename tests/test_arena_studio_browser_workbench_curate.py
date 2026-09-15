@@ -270,7 +270,7 @@ def test_curate_tab_without_a_revision_cannot_pick_or_export(studio_url: str):
         page = session.page
         page.locator("#tab-curate").wait_for()
         page.locator("#tab-curate").click()
-        page.locator(".curate-form").wait_for()
+        page.locator("[data-curate='pick']").wait_for()  # the form renders once the log has loaded
         assert "Save a revision before picking one" in page.locator(".curate-form").inner_text()
         assert page.locator("[data-curate='pick']").is_disabled()
         assert page.locator("[data-action='export']").get_attribute("aria-disabled") == "true"
