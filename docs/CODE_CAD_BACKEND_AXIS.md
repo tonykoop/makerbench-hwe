@@ -114,6 +114,39 @@ makerbench arena run --stub --backend cadquery \
 The manager-only comparison matrix and interpretation rules for a real
 subscription-CLI proof are in [`CODE_CAD_BREP_PROOF.md`](CODE_CAD_BREP_PROOF.md).
 
+### Sandboxed OpenSCAD (design workbench, #788)
+
+`compile_scad_to_artifacts` runs `openscad` directly on the host. That is fine
+for arena candidates the harness generated, but code a person or a model
+edited in the Studio workbench must never compile that way: OpenSCAD's
+`include`/`use`/`import()`/`surface()` read any host path. The workbench uses
+`makerbench.scad_sandbox.compile_scad_sandboxed` instead, reachable through
+`compiler_for_backend(backend, sandboxed=True)`:
+
+- Same signature and artifact layout (`output.stl`, `preview.png`), so it drops
+  into `evaluate_objective_trial` unchanged.
+- Unprivileged Bubblewrap with user, PID, IPC, UTS and **network** namespaces
+  unshared, `/usr` read-only, a size-capped tmpfs `/tmp`, `--clearenv` with a
+  four-variable allow-list, and `--die-with-parent`. `/`, `/mnt`, `$HOME`, the
+  repo, `runs/` and `private/` are never mounted.
+- Only the **single source file** is copied into the read-only `/work`; the
+  output directory is the only writable bind. A relative `include` next to the
+  source fails inside the sandbox by design (the instrument masters use none).
+- The preview PNG runs `xvfb-run` *inside* the sandbox. An empty PNG or mesh
+  is a compile failure, never a success.
+- Address-space and file-size rlimits, the shared
+  `MAKERBENCH_OPENSCAD_TIMEOUT_S` budget, and an output cap
+  (`MAKERBENCH_SCAD_SANDBOX_OUTPUT_CAP_BYTES`, default 200 MiB).
+- **Fails closed.** No bwrap, no openscad or no xvfb-run raises
+  `SandboxUnavailable` (a `RuntimeError`, an environment failure) and nothing
+  runs on the host. `compiler_for_backend(..., sandboxed=True)` refuses
+  backends without a confined compiler (`blender`, `solidworks`, `fusion`).
+
+`tests/test_scad_sandbox.py` runs the real wrapper against sentinels outside
+the workspace; CI installs `bubblewrap` and sets `MAKERBENCH_REQUIRE_SANDBOX=1`
+so a sandbox that cannot start fails the job instead of skipping. The arena
+runner itself still uses the host compiler; switching it is a follow-up.
+
 ## SolidWorks / Fusion 360 (Windows job-dir runner, #627)
 
 SolidWorks and Fusion 360 scripting only runs inside those apps, on Windows.
