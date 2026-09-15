@@ -148,12 +148,17 @@ def _normalize_gate_result(result: Mapping[str, object]) -> dict:
     passed = result.get("passed")
     if passed is None:
         passed = float(rate) >= 1.0
-    return {
+    normalized = {
         "passed": bool(passed),
         "objective_pass_rate": round(float(rate), 6),
         "sub_scores": dict(sub_scores),
         "gate": result.get("gate"),
     }
+    advisory = result.get("advisory")
+    if isinstance(advisory, Mapping):
+        # #800: labelled advisory checks ride along; they never affect the rate.
+        normalized["advisory"] = dict(advisory)
+    return normalized
 
 
 def _auto_fail(
