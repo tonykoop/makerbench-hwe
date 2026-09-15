@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterator
+from urllib.parse import quote
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -1246,7 +1247,9 @@ class ArenaStudioService:
         queue = VoteQueue(run_dir=run_dir, voter=voter)
 
         def _asset_relative(candidate: VoteCandidate) -> VoteCandidate:
-            prefix = f"/api/morning/{job_id}/assets"
+            # job_id comes from the queue file and is only required to be non-empty, so
+            # encode it: an id with "?", "#", "&", "/" or a space must still round-trip.
+            prefix = f"/api/morning/{quote(job_id, safe='')}/assets"
             return VoteCandidate(
                 candidate_id=candidate.candidate_id,
                 model_id=candidate.model_id,

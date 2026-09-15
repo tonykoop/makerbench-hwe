@@ -849,7 +849,7 @@ def test_nightly_queue_endpoint_never_exposes_secrets(client: TestClient, tmp_pa
 
 
 def _morning_bundle_fixture(
-    tmp_path: Path, *, status: str = "votable", write_summary: bool = True
+    tmp_path: Path, *, status: str = "votable", write_summary: bool = True, job_id: str = "sambuca-night"
 ) -> tuple[Path, Path, str]:
     """R2 P2: a nightly job whose morning bundle is ready for review.
 
@@ -909,7 +909,6 @@ def _morning_bundle_fixture(
     runs_dir = tmp_path / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
     queue_path = runs_dir / "nightly-cad-queue.json"
-    job_id = "sambuca-night"
     queue_path.write_text(
         json.dumps(
             {
@@ -1162,6 +1161,28 @@ def test_morning_bundle_pair_never_leaks_identity_pre_vote(client: TestClient, t
     assert "codex-openscad" not in body
     assert pair["left"]["render_path"].startswith(f"/api/morning/{job_id}/assets/blind/")
     assert pair["right"]["render_path"].startswith(f"/api/morning/{job_id}/assets/blind/")
+
+
+# A "/" in a job_id cannot round-trip through any /api/morning/{job_id}/... route:
+# Starlette decodes %2F before routing, so the pair route itself 404s (pre-existing,
+# logged). Everything a single path segment can carry must work.
+@pytest.mark.parametrize("job_id", ["night job?#&x", "nightly α 2026-09-15"])
+def test_morning_asset_urls_encode_the_job_id(client: TestClient, tmp_path: Path, job_id: str):
+    """Tony (2026-09-15), from the claude UI review of #781: a queue job_id is only required
+    to be non-empty, so the asset URLs the pair API mints must encode it. Unencoded, an id
+    like "night job?#&x" turns everything after "?" into a query string and the stage's
+    images never load."""
+    queue_path, _run_dir, job_id = _morning_bundle_fixture(tmp_path, job_id=job_id)
+    encoded_job = quote(job_id, safe="")
+    res = client.get(f"/api/morning/{encoded_job}/pair?queue={quote(str(queue_path), safe='')}")
+    assert res.status_code == 200, res.text
+    pair = res.json()["current_pair"]
+    for side in ("left", "right"):
+        render_path = pair[side]["render_path"]
+        assert render_path.startswith(f"/api/morning/{encoded_job}/assets/blind/"), render_path
+        asset = client.get(f"{render_path}?queue={quote(str(queue_path), safe='')}")
+        assert asset.status_code == 200, (render_path, asset.status_code)
+        assert asset.content.startswith(b"dummy-")
 
 
 def test_morning_bundle_vote_lands_in_votes_blind_jsonl(client: TestClient, tmp_path: Path):
