@@ -237,6 +237,61 @@ def test_gatekeeper_blocks_launch_until_approved_then_the_dry_run_log_streams(
         browser.close()
 
 
+def _tab_to(page, predicate: str, *, key: str = "Tab", limit: int = 80) -> None:
+    """Keyboard only: press Tab (or Shift+Tab) until `predicate` holds for the focused element."""
+    for _ in range(limit):
+        page.keyboard.press(key)
+        if page.evaluate(predicate):
+            return
+    raise AssertionError(f"{key} never reached: {predicate}")
+
+
+def test_launch_screen_is_usable_by_keyboard_alone(studio_url: str, launch_repo: Path, screenshot_dir: Path):
+    """Claude UI review #778: include, inspect, approve, close and start a dry run with the
+    keyboard only, and keyboard focus never falls to <body> along the way."""
+    focus_in_panel = "() => Boolean(document.activeElement?.closest('.reference-panel'))"
+    with sync_playwright() as playwright:
+        browser = _launch(playwright, "zero-webgl")
+        session = Session(browser, f"{studio_url}/#/launch", viewport={"width": 1440, "height": 1000})
+        page = session.page
+        session.row("kora").wait_for()
+
+        _tab_to(page, "() => document.activeElement?.matches('input[type=checkbox]') && document.activeElement.closest('tr')?.querySelector('code.task-id')?.textContent === 'kora'")
+        page.keyboard.press("Space")
+        assert session.row("kora").locator("input[type=checkbox]").is_checked()
+
+        _tab_to(page, "() => document.activeElement?.dataset?.inspect === 'kora'")
+        page.keyboard.press("Enter")
+        page.wait_for_function("() => document.activeElement?.id === 'reference-title'", timeout=5_000)
+
+        _tab_to(page, "() => (document.activeElement?.textContent || '').trim() === 'Approve this image'")
+        page.keyboard.press("Enter")
+        session.row("kora").locator(".gate", has_text="Approved").wait_for()
+        page.wait_for_function(focus_in_panel, timeout=5_000)
+        assert page.evaluate("() => document.activeElement !== document.body")
+
+        _tab_to(page, "() => (document.activeElement?.textContent || '').trim() === 'Close'", key="Shift+Tab")
+        page.keyboard.press("Enter")
+        page.locator(".reference-panel").wait_for(state="detached")
+        page.wait_for_function("() => document.activeElement?.dataset?.inspect === 'kora'", timeout=5_000)
+
+        _tab_to(page, "() => document.activeElement?.name === 'models'")
+        page.keyboard.type("stub-a, stub-b")
+        _tab_to(page, "() => document.activeElement?.name === 'run_id'")
+        page.keyboard.type("keyboard-dry-run")
+        _tab_to(page, "() => document.activeElement?.matches('.launch-form button[type=submit]')")
+        page.keyboard.press("Enter")
+        page.get_by_text("Started keyboard-dry-run as a dry run.").wait_for()
+        page.wait_for_function(
+            "() => (document.querySelector('pre.log')?.textContent || '').includes('ARENA PROCESS START keyboard-dry-run')",
+            timeout=20_000,
+        )
+        page.screenshot(path=str(screenshot_dir / "f3-launch-keyboard.png"), full_page=True)
+        assert session.errors == []
+        session.close()
+        browser.close()
+
+
 def test_live_launch_on_a_dry_run_server_explains_allow_live(studio_url: str, launch_repo: Path):
     with sync_playwright() as playwright:
         browser = _launch(playwright, "zero-webgl")

@@ -133,6 +133,7 @@ function Catalog({ tasks, family, onFamily, selected, onToggle, references, insp
                     type="button"
                     class="button button-quiet"
                     aria-label=${`Inspect the reference image for ${name}`}
+                    data-inspect=${task.id}
                     onClick=${() => onInspect(task.id)}
                   >
                     Inspect
@@ -150,7 +151,19 @@ function Catalog({ tasks, family, onFamily, selected, onToggle, references, insp
 function ReferencePanel({ taskId, task, reference, onRecheck, onClose }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState({ text: "", error: false });
+  const [decided, setDecided] = useState(0);
+  const titleRef = useRef(null);
+  const decisionRef = useRef(null);
+  const statusRef = useRef(null);
   const name = task?.display_name || taskId;
+
+  // Opening the panel moves keyboard focus to it rather than leaving it a Tab walk away.
+  useEffect(() => titleRef.current?.focus(), []);
+  // Approve and Withdraw replace each other, so the focused button unmounts on a
+  // decision: focus whichever decision control now stands, or the status line.
+  useEffect(() => {
+    if (decided) (decisionRef.current || statusRef.current)?.focus();
+  }, [decided]);
 
   const decide = async (approved) => {
     if (busy) return;
@@ -165,6 +178,7 @@ function ReferencePanel({ taskId, task, reference, onRecheck, onClose }) {
       setMessage({ text: error.message, error: true });
     } finally {
       setBusy(false);
+      setDecided((value) => value + 1);
     }
   };
 
@@ -208,6 +222,7 @@ function ReferencePanel({ taskId, task, reference, onRecheck, onClose }) {
         html`<button
           type="button"
           class="button"
+          ref=${decisionRef}
           aria-disabled=${busy ? "true" : "false"}
           onClick=${() => decide(true)}
         >
@@ -217,12 +232,15 @@ function ReferencePanel({ taskId, task, reference, onRecheck, onClose }) {
         html`<button
           type="button"
           class="button button-quiet"
+          ref=${decisionRef}
           aria-disabled=${busy ? "true" : "false"}
           onClick=${() => decide(false)}
         >
           Withdraw approval
         </button>`}
-        <p class=${`panel-status${message.error ? " is-error" : ""}`} role="status">${message.text}</p>
+        <p class=${`panel-status${message.error ? " is-error" : ""}`} role="status" tabindex="-1" ref=${statusRef}>
+          ${message.text}
+        </p>
       </div>
     `;
   }
@@ -230,7 +248,7 @@ function ReferencePanel({ taskId, task, reference, onRecheck, onClose }) {
   return html`
     <section class="panel reference-panel" aria-labelledby="reference-title">
       <div class="panel-head">
-        <h2 id="reference-title">Reference image for ${name}</h2>
+        <h2 id="reference-title" tabindex="-1" ref=${titleRef}>Reference image for ${name}</h2>
         <button type="button" class="button button-quiet" onClick=${onClose}>Close</button>
       </div>
       ${body}
@@ -647,6 +665,7 @@ export function LaunchScreen() {
   const [family, setFamily] = useState("");
   const [selected, setSelected] = useState([]);
   const [inspecting, setInspecting] = useState(null);
+  const [returnTo, setReturnTo] = useState(null);
   const [references, loadReference] = useReferences();
   const jobs = useJobs();
   const [logRun, setLogRun] = useState(null);
@@ -663,6 +682,17 @@ export function LaunchScreen() {
     setLogRun(runId);
     jobs.refresh();
   };
+  const closeInspect = () => {
+    setReturnTo(inspecting);
+    setInspecting(null);
+  };
+  // Closing the panel unmounts its Close button: hand focus back to the Inspect
+  // button that opened it.
+  useEffect(() => {
+    if (!returnTo) return;
+    document.querySelector(`[data-inspect="${CSS.escape(returnTo)}"]`)?.focus();
+    setReturnTo(null);
+  }, [returnTo]);
   const inspectedTask = (tasks.data?.tasks || []).find((task) => task.id === inspecting);
   const logJob = (jobs.data?.jobs || []).find((job) => job.run_id === logRun);
 
@@ -695,7 +725,7 @@ export function LaunchScreen() {
             task=${inspectedTask}
             reference=${references[inspecting]}
             onRecheck=${(taskId) => loadReference(taskId, { force: true })}
-            onClose=${() => setInspecting(null)}
+            onClose=${closeInspect}
           />`}
           <section class="panel" aria-labelledby="launch-title">
             <h2 id="launch-title">Start a run</h2>
