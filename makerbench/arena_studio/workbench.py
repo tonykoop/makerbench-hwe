@@ -168,15 +168,28 @@ class WorkbenchService:
         if not repo_path:
             raise WorkbenchError(f"instrument {instrument_id!r} has no repo_path in the registry")
         parts = Path(repo_path).parts
-        if not parts or any(p in ("..", "private") or p.lower() == "private" for p in parts) or Path(repo_path).is_absolute():
+        if not parts or any(p == ".." or p.lower() == "private" for p in parts) or Path(repo_path).is_absolute():
             raise NotFound("unknown instrument")
-        repo_dir = (self.instruments_root / repo_path).resolve()
+        # Walk the *unresolved* path one component at a time: a symlink
+        # anywhere in it (not only at the cad/ entry) could point into a
+        # private tree or outside the root, so every component must be a
+        # real directory.
+        current = self.instruments_root
+        for part in parts:
+            current = current / part
+            if current.is_symlink() or not current.is_dir():
+                raise NotFound("unknown instrument")
+        repo_dir = current.resolve()
         if not repo_dir.is_relative_to(self.instruments_root) or not repo_dir.is_dir():
             raise NotFound("instrument repo is not under the instruments root")
+        if any(p.lower() == "private" for p in repo_dir.relative_to(self.instruments_root).parts):
+            raise NotFound("unknown instrument")
         for entry in os.scandir(repo_dir):
             if entry.name.lower() == "cad" and entry.is_dir() and not entry.is_symlink():
                 cad_dir = Path(entry.path).resolve()
-                if cad_dir.is_relative_to(self.instruments_root):
+                if cad_dir.is_relative_to(self.instruments_root) and not any(
+                    p.lower() == "private" for p in cad_dir.relative_to(self.instruments_root).parts
+                ):
                     return cad_dir
         raise NotFound("instrument has no cad/ directory")
 
