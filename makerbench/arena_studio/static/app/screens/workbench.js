@@ -450,6 +450,7 @@ function DesignView({ designId, revId }) {
   }, [design.status, designId, currentRevId]);
 
   const finished = isFinished(draft?.job?.status);
+  const running = Boolean(draft && !finished);
   useEffect(() => {
     // A finished compile moves focus to the result heading (plan §6).
     if (finished && draft && resultRef.current && document.activeElement?.closest(".code-editor") == null) {
@@ -465,7 +466,9 @@ function DesignView({ designId, revId }) {
   };
 
   const compile = async () => {
-    if (busy || source == null) return;
+    // One job at a time: Ctrl+Enter while a compile runs (the editor keeps
+    // focus, read-only) must not start a second draft and orphan the first.
+    if (busy || running || source == null) return;
     if (!currentRevId) {
       announce("Save the origin revision before editing.", true);
       return;
@@ -531,7 +534,6 @@ function DesignView({ designId, revId }) {
   if (design.status === "error") return html`<${ErrorState} error=${design.error} onRetry=${design.reload} />`;
   const d = design.data;
   const title = d.curation?.title || d.title || d.design_id;
-  const running = draft && !finished;
   const canSave = draft?.job?.status === "succeeded" && draft.parent_rev_id === currentRevId;
   const draftFailed = draft?.job?.status === "failed";
   const lineRefs = draftFailed ? findLineReferences(draft.job.error) : [];

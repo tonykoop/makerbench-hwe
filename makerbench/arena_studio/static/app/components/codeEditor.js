@@ -39,7 +39,8 @@ export function CodeEditor({ value, onChange, onSubmit, language, label, editorR
   const onKeyDown = (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       event.preventDefault();
-      onSubmit?.();
+      // A read-only editor (a compile is running) swallows the shortcut.
+      if (!readOnly) onSubmit?.();
     }
   };
 

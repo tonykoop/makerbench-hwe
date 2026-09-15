@@ -168,13 +168,63 @@ def test_workbench_list_renders_the_empty_state(studio_url: str, screenshot_dir:
 
 
 def test_blind_screens_never_link_the_workbench(studio_url: str):
+    """G12 across the whole rendered page: the rail hides the Workbench entry on
+    blind routes (Sol, #815), and nothing in the page links to it. A non-blind
+    screen still lists it in the rail."""
     with sync_playwright() as playwright:
         browser = _launch(playwright, "zero-webgl")
         for screen in ("vote", "morning"):
             session = Session(browser, f"{studio_url}/#/{screen}", viewport={"width": 1440, "height": 900})
             session.page.locator("main h1").wait_for()
-            assert session.page.locator("main a[href*='workbench']").count() == 0
+            session.page.locator("nav.rail a[aria-current=page]").wait_for()
+            assert session.page.locator("a[href*='workbench']").count() == 0, screen
+            assert "Workbench" not in session.page.locator("nav.rail").inner_text()
+            # the fixture run has no votes yet; the only console error is that 404
+            assert all("404" in error for error in session.errors), session.errors
             session.close()
+        session = Session(browser, f"{studio_url}/#/runs", viewport={"width": 1440, "height": 900})
+        session.page.locator("nav.rail a[aria-current=page]").wait_for()
+        assert session.page.locator("nav.rail a[href*='workbench']").count() == 1
+        session.close()
+        browser.close()
+
+
+@needs_sandbox
+def test_running_compile_cannot_start_a_second_draft(studio_url: str):
+    """Sol (#815): Ctrl+Enter while a compile runs must not POST a second
+    draft. The editor keeps focus and is read-only, so the shortcut is
+    swallowed there and the compile callback refuses while running."""
+    with sync_playwright() as playwright:
+        browser = _launch(playwright, "zero-webgl")
+        session = Session(browser, f"{studio_url}/#/launch", viewport={"width": 1440, "height": 1000})
+        page = session.page
+        page.locator("[data-open-master='boxolin']").click()
+        page.locator("[data-open-master-go='boxolin']").wait_for()
+        page.locator("[data-open-master-go='boxolin']").click()
+        page.wait_for_url("**/#/workbench/d-*", timeout=15_000)
+        page.locator("[data-action='save']").wait_for(timeout=120_000)
+        page.locator("[data-action='save']").click()
+        page.locator("[data-action='confirm-save']").click()
+        page.wait_for_url("**/#/workbench/d-*/r-*")
+
+        posts: list[str] = []
+        page.on("request", lambda request: posts.append(request.url) if request.method == "POST" and request.url.endswith("/drafts") else None)
+        editor = page.locator(".code-editor-text")
+        editor.fill("union() { for (i = [0:400]) translate([i * 3, 0, 0]) sphere(10, $fn = 120); }\n")
+        editor.focus()
+        page.keyboard.press("Control+Enter")
+        page.locator("[data-action='cancel']").wait_for(timeout=10_000)
+        assert page.evaluate("() => document.activeElement?.classList.contains('code-editor-text')")
+        for _ in range(3):
+            page.keyboard.press("Control+Enter")
+        page.locator("[data-action='compile']").click(force=True)  # aria-disabled while running; the handler must refuse
+        page.wait_for_timeout(500)
+        assert posts == [posts[0]], posts
+        page.locator("[data-action='cancel']").click()
+        page.wait_for_function("() => (document.querySelector('.job-status p[role=status]')?.textContent || '').startsWith('Cancelled')", timeout=15_000)
+        assert len(posts) == 1
+        assert session.dialogs == [] and session.errors == []
+        session.close()
         browser.close()
 
 

@@ -28,8 +28,8 @@ export const SCREENS = [
   { id: "compare", label: "Compare runs", component: CompareScreen },
   { id: "doe", label: "DoE matrix", component: DoeScreen },
   // The workbench is an author tool: it names entrants, so it is never `blind`
-  // and no blind screen links to it (#788 G12).
-  { id: "workbench", label: "Workbench", component: WorkbenchScreen },
+  // and no blind screen links to it, not even from the rail (#788 G12).
+  { id: "workbench", label: "Workbench", component: WorkbenchScreen, hideOnBlind: true },
 ];
 
 function useRoute() {
@@ -108,7 +108,7 @@ function App() {
       />
       <nav class="rail" aria-label="Studio screens">
         <ul>
-          ${SCREENS.map(
+          ${SCREENS.filter((item) => !(item.hideOnBlind && screen?.blind)).map(
             (item) => html`
               <li key=${item.id}>
                 <a
