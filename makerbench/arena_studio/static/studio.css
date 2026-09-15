@@ -337,6 +337,11 @@ code {
   cursor: pointer;
 }
 
+.button-quiet {
+  background: transparent;
+  color: var(--accent);
+}
+
 
 /* Runs screen. */
 .runs-layout {
