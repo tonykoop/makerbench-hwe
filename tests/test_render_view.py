@@ -86,6 +86,45 @@ def test_zero_byte_image_is_a_failure(tmp_path, monkeypatch):
     assert result.images == ()
 
 
+@pytest.mark.parametrize("name", ["../escape", "a/b", "..", ".hidden", "", "x" * 65, "sp ace"])
+@pytest.mark.parametrize("kind", ["view", "section"])
+def test_unsafe_names_are_refused_before_any_file_is_touched(tmp_path, monkeypatch, name, kind):
+    # Pre-create the traversal target and an intermediate dir so an unchecked
+    # exists()/unlink() on "<out>/view-../escape.png" would really reach it.
+    out_dir = tmp_path / "out"
+    (out_dir / "view-..").mkdir(parents=True)
+    (out_dir / "section-..").mkdir(parents=True)
+    sentinel = out_dir / "escape.png"
+    sentinel.write_bytes(b"outside the image namespace")
+    outside = tmp_path / "escape.png"
+    outside.write_bytes(b"host file")
+    stl = _stl(tmp_path, trimesh.creation.box(extents=[5, 5, 5]))
+    before = sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*"))
+
+    monkeypatch.setattr(scad_sandbox, "sandbox_available", lambda: True)
+    monkeypatch.setattr(scad_sandbox, "build_command",
+                        lambda **kw: pytest.fail("no render may start for an unsafe name"))
+    views = [render_view.ViewSpec(name, (0.0, 0.0, 0.0))] if kind == "view" else []
+    sections = [render_view.SectionSpec(name, (0, 0, 0), (0, 0, 1))] if kind == "section" else []
+
+    result = render_view.render_mesh_views(stl, out_dir, views=views, sections=sections)
+
+    assert result.ok is False and "unsafe view/section name" in result.error
+    assert sentinel.read_bytes() == b"outside the image namespace"
+    assert outside.read_bytes() == b"host file"
+    assert sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*")) == before
+
+
+def test_render_one_refuses_an_output_path_outside_out_dir(tmp_path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    victim = tmp_path / "victim.png"
+    victim.write_bytes(b"keep")
+    with pytest.raises(ValueError, match="outside the output directory"):
+        render_view._render_one(tmp_path, out_dir, "view.scad", "../victim.png", [], SMALL)
+    assert victim.read_bytes() == b"keep"
+
+
 def test_empty_mesh_is_an_error_not_a_render(tmp_path, monkeypatch):
     monkeypatch.setattr(scad_sandbox, "sandbox_available", lambda: True)
     empty = tmp_path / "empty.stl"

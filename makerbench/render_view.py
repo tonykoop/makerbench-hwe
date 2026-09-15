@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 import shutil
 import tempfile
 from dataclasses import asdict, dataclass, field
@@ -55,6 +56,13 @@ COLORSCHEME = "Tomorrow"
 SECTION_FILL = 0.8
 MESH_NAME = "mesh.stl"
 _FOREGROUND_THRESHOLD = 30
+#: View/section names become ``view-<name>.png`` / ``section-<name>.png``: one
+#: path component, starting alphanumeric, so no separator, ``..`` or dotfile.
+_SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+
+def _is_safe_name(name: object) -> bool:
+    return isinstance(name, str) and _SAFE_NAME.fullmatch(name) is not None
 
 
 @dataclass(frozen=True)
@@ -166,7 +174,9 @@ def _matrix_literal(matrix: np.ndarray) -> str:
 
 def _render_one(work_dir: Path, out_dir: Path, scad_name: str, png_name: str,
                 camera_args: Sequence[str], image_size: tuple[int, int]) -> Path:
-    png_path = out_dir / png_name
+    png_path = (out_dir / png_name).resolve()
+    if png_path.parent != Path(out_dir).resolve():
+        raise ValueError(f"{png_name!r}: image path resolves outside the output directory")
     if png_path.exists():
         png_path.unlink()
     cmd = scad_sandbox.build_command(
@@ -217,12 +227,16 @@ def render_mesh_views(
             "render sandbox unavailable: install bubblewrap, openscad and xvfb, "
             "and enable unprivileged user namespaces"
         )
+    # Names become output file names: validate before any filesystem operation.
+    names = [v.name for v in views] + [s.name for s in sections]
+    unsafe = [name for name in names if not _is_safe_name(name)]
+    if unsafe:
+        return RenderViewResult(False, error=f"unsafe view/section name(s): {unsafe!r}")
+    if len(names) != len(set(names)):
+        return RenderViewResult(False, error="view and section names must be unique")
     stl_path = Path(stl_path).resolve(strict=True)
     out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-    names = [v.name for v in views] + [s.name for s in sections]
-    if len(names) != len(set(names)):
-        return RenderViewResult(False, error="view and section names must be unique")
     try:
         mesh = trimesh.load(stl_path.as_posix(), force="mesh")
     except Exception as exc:  # noqa: BLE001 - any parse failure is a candidate defect
