@@ -74,6 +74,7 @@ function RunSummary({ runId }) {
   return html`
     <article class="run-summary">
       <h2>${run.run_id}</h2>
+      <p><a class="button button-link" href=${buildHash("vote", [run.run_id])}>Start blind voting</a></p>
       <dl class="facts">
         <div><dt>Started</dt><dd>${formatWhen(run.created_at)}</dd></div>
         <div><dt>Trials</dt><dd class="measure">${run.trials_count}</dd></div>

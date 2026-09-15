@@ -337,10 +337,6 @@ code {
   cursor: pointer;
 }
 
-.button-quiet {
-  background: transparent;
-  color: var(--accent);
-}
 
 /* Runs screen. */
 .runs-layout {
@@ -498,6 +494,373 @@ code {
     border-left: 0;
     border-top: 1px solid var(--line);
     padding-top: var(--space-4);
+  }
+}
+
+/* Blind voting: the one bold element. Two graphite plates on a shared
+   centerline, keycap hints on every action. */
+.run-fixed {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 2.25rem;
+  font-weight: 600;
+}
+
+.run-fixed a {
+  font-weight: 400;
+}
+
+.button-link {
+  display: inline-block;
+  text-decoration: none;
+  line-height: 2.25rem;
+  padding-block: 0;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 1.5em;
+  padding: 0 0.35em;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--step--1);
+  line-height: 1.5;
+  text-align: center;
+}
+
+.vote-progress {
+  display: grid;
+  gap: var(--space-1);
+  max-width: 28rem;
+  font-size: var(--step--1);
+  color: var(--muted);
+}
+
+.vote-progress progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.stage {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.stage-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-6);
+}
+
+.stage-context {
+  margin: 0;
+  font-weight: 600;
+}
+
+.view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+}
+
+.view-toggle button {
+  min-height: 2.25rem;
+  padding: 0 var(--space-4);
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.view-toggle button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.view-toggle button:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.viewer-note {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--muted);
+}
+
+.plates {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0;
+  border: 1px solid var(--stage-line);
+  background: var(--stage);
+}
+
+.plate {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto 1fr auto;
+  color: var(--stage-ink);
+}
+
+.plate + .plate {
+  border-left: 2px solid var(--stage-line);
+}
+
+.plate-name {
+  padding: var(--space-3) var(--space-4) 0;
+  font-size: var(--step-1);
+  font-weight: 600;
+}
+
+.plate-view {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  max-height: 62vh;
+  width: 100%;
+  display: grid;
+  place-items: center;
+}
+
+.turntable,
+.model-host {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  touch-action: pan-y;
+  cursor: grab;
+}
+
+.turntable:focus-visible {
+  outline-color: var(--stage-ink);
+  outline-offset: -4px;
+}
+
+.plate-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+}
+
+.model-host model-viewer {
+  width: 100%;
+  height: 100%;
+  background: var(--stage);
+}
+
+.plate-empty {
+  margin: 0;
+  padding: var(--space-4);
+}
+
+.frame-progress {
+  position: absolute;
+  left: var(--space-3);
+  bottom: var(--space-3);
+  padding: 1px var(--space-2);
+  border: 1px solid var(--stage-line);
+  border-radius: 2px;
+  background: var(--stage);
+  color: var(--stage-ink);
+  font-size: var(--step--1);
+}
+
+.defects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border: 0;
+  border-top: 1px solid var(--stage-line);
+}
+
+.defects legend {
+  float: left;
+  width: 100%;
+  margin-bottom: var(--space-1);
+  font-size: var(--step--1);
+  color: var(--stage-ink);
+}
+
+.defects label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--step--1);
+  cursor: pointer;
+}
+
+.defects input {
+  accent-color: var(--accent);
+  width: 1rem;
+  height: 1rem;
+}
+
+.plate kbd {
+  border-color: var(--stage-line);
+  background: transparent;
+  color: var(--stage-ink);
+}
+
+.vote-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.vote {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 3rem;
+  padding: 0 var(--space-6);
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font: inherit;
+  font-size: var(--step-1);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.vote kbd {
+  border-color: currentColor;
+  background: transparent;
+  color: inherit;
+}
+
+.vote-draw {
+  background: transparent;
+  color: var(--accent);
+}
+
+/* Busy controls stay focusable (aria-disabled, not disabled) so focus never
+   drops to <body> while a vote saves. */
+.vote[aria-disabled="true"],
+.button-quiet[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.vote-bar-gap {
+  flex: 1;
+}
+
+.button-quiet {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2.25rem;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.vote-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 2.5rem;
+}
+
+.reveal {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-6);
+  border-left: 3px solid var(--brass);
+  background: var(--surface);
+}
+
+.reveal p {
+  margin: 0;
+}
+
+.reveal-sides {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--space-3) var(--space-8);
+  margin: 0;
+}
+
+.reveal-sides dt {
+  font-size: var(--step--1);
+  color: var(--muted);
+}
+
+.reveal-sides dd {
+  margin: 0;
+}
+
+.reveal-model {
+  font-size: var(--step-1);
+  font-weight: 600;
+}
+
+.shortcut-help {
+  max-width: min(32rem, calc(100vw - 2rem));
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--ground);
+  color: var(--ink);
+  padding: var(--space-6);
+}
+
+.shortcut-help::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+
+.shortcut-help h2 {
+  margin-bottom: var(--space-3);
+}
+
+.shortcut-help form {
+  margin-top: var(--space-4);
+}
+
+@media (max-width: 760px) {
+  .plates {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .plate + .plate {
+    border-left: 0;
+    border-top: 2px solid var(--stage-line);
+  }
+
+  .plate-view {
+    max-height: none;
+  }
+
+  .defects label {
+    flex: 1 1 100%;
+  }
+
+  .vote {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+
+  .vote-bar-gap {
+    display: none;
   }
 }
 

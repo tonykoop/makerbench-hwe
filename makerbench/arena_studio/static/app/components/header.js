@@ -7,7 +7,7 @@ function serverStatus(health) {
   return { state: "loading", text: "Checking server…" };
 }
 
-export function StudioHeader({ runs, runId, onSelectRun, voter, onVoterChange }) {
+export function StudioHeader({ runs, blind, runId, onSelectRun, voter, onVoterChange }) {
   const health = useResource("/api/health");
   const status = serverStatus(health);
   const options = runs.status === "ready" ? runs.data.runs : [];
@@ -20,19 +20,28 @@ export function StudioHeader({ runs, runId, onSelectRun, voter, onVoterChange })
     <header class="studio-header">
       <a class="wordmark" href="#/runs">Arena Studio</a>
       <div class="header-controls">
-        <label class="field">
-          <span class="field-label">Run</span>
-          <select
-            value=${runId || ""}
-            disabled=${options.length === 0}
-            onChange=${(event) => onSelectRun(event.currentTarget.value || null)}
-          >
-            <option value="">${placeholder}</option>
-            ${options.map(
-              (run) => html`<option key=${run.run_id} value=${run.run_id}>${run.run_id}</option>`,
-            )}
-          </select>
-        </label>
+        ${blind
+          ? html`
+              <div class="field">
+                <span class="field-label">Run</span>
+                <span class="run-fixed">${runId || "None chosen"} <a href="#/runs">Change</a></span>
+              </div>
+            `
+          : html`
+          <label class="field">
+            <span class="field-label">Run</span>
+            <select
+              value=${runId || ""}
+              disabled=${options.length === 0}
+              onChange=${(event) => onSelectRun(event.currentTarget.value || null)}
+            >
+              <option value="">${placeholder}</option>
+              ${options.map(
+                (run) => html`<option key=${run.run_id} value=${run.run_id}>${run.run_id}</option>`,
+              )}
+            </select>
+          </label>
+            `}
         <label class="field">
           <span class="field-label">Voting as</span>
           <input
