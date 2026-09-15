@@ -67,6 +67,33 @@ def is_valid_task_id(task_id: object) -> bool:
     return isinstance(task_id, str) and _TASK_ID_RE.fullmatch(task_id) is not None
 
 
+def _trial_result_and_sub_scores(trial: object) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
+    result = trial.get("result") if isinstance(trial, Mapping) else None
+    result = result if isinstance(result, Mapping) else {}
+    objective = result.get("objective")
+    sub_scores = objective.get("sub_scores") if isinstance(objective, Mapping) else None
+    return result, sub_scores if isinstance(sub_scores, Mapping) else {}
+
+
+def _trial_compiled(trial: object) -> bool:
+    """A trial compiled when the runner rendered it (#720).
+
+    Real run logs carry no ``grade`` block. ``evaluate_objective_trial`` sets
+    ``result.render_ok`` true only when the candidate compiled, rendered and the
+    objective gate ran; every compile, render or gate failure is an
+    ``auto_fail`` row with ``render_ok: false``. The gate's own ``renders``
+    sub-score is 1.0 whenever the gate runs, so it can't tell these apart.
+    """
+    result, _ = _trial_result_and_sub_scores(trial)
+    return result.get("render_ok") is True
+
+
+def _trial_manifold(trial: object) -> bool:
+    """A compiled trial whose every body is watertight (``sub_scores.watertight``, #720)."""
+    _, sub_scores = _trial_result_and_sub_scores(trial)
+    return _trial_compiled(trial) and sub_scores.get("watertight") == 1.0
+
+
 class ArenaStudioService:
     """Business logic and data provider for MakerBench Arena Studio."""
 
@@ -267,8 +294,8 @@ class ArenaStudioService:
         trials = run_log.get("trials") or []
 
         # Count passes
-        compiled = sum(1 for t in trials if (t.get("grade") or {}).get("compiled"))
-        manifold = sum(1 for t in trials if (t.get("grade") or {}).get("manifold"))
+        compiled = sum(1 for t in trials if _trial_compiled(t))
+        manifold = sum(1 for t in trials if _trial_manifold(t))
 
         summary = self._summarize_run_dir(run_dir)
         summary.update({
@@ -1372,8 +1399,8 @@ class ArenaStudioService:
                 continue
             inst_trials.sort(
                 key=lambda tr: (
-                    not (tr.get("grade") or {}).get("compiled", False),
-                    not (tr.get("grade") or {}).get("manifold", False),
+                    not _trial_compiled(tr),
+                    not _trial_manifold(tr),
                     rank_order.get(tr.get("model_id"), 999),
                     # Two ghost entrants (both unrated) both default to 999 above;
                     # break the tie deterministically instead of relying on
