@@ -20,7 +20,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Callable, Mapping, Optional
 
 from .code_cad_generator import GenerationRequest, Generator
 
@@ -378,10 +378,19 @@ def _run_cli(
     cwd: str,
     stdin_devnull: bool = False,
     env: Optional[Mapping[str, str]] = None,
+    on_launch: Optional[Callable[[], None]] = None,
 ) -> subprocess.CompletedProcess:
+    """Run ``cmd``; ``on_launch`` fires only once the process demonstrably ran.
+
+    ``subprocess.run`` either returns (the process ran and exited, whatever
+    its returncode) or raises ``TimeoutExpired`` (the process ran and was
+    killed). A pre-launch failure (``OSError`` from process creation, e.g.
+    ``FileNotFoundError``/``PermissionError``) never fires ``on_launch``.
+    """
+
     kwargs = {"env": dict(env)} if env is not None else {}
     try:
-        return subprocess.run(
+        result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
@@ -391,12 +400,17 @@ def _run_cli(
             **kwargs,
         )
     except subprocess.TimeoutExpired as exc:
+        if on_launch is not None:
+            on_launch()
         # code_cad_generator._run_one records TimeoutError as status="timeout".
         raise TimeoutError(f"{cmd[0]} timed out after {timeout_s}s") from exc
     except FileNotFoundError as exc:
         raise RuntimeError(
             f"CLI not found: '{cmd[0]}'. Install it and log in, or fix PATH."
         ) from exc
+    if on_launch is not None:
+        on_launch()
+    return result
 
 
 SandboxKey = tuple[str, str, int, str]
@@ -407,7 +421,9 @@ def _sandbox_key(request: GenerationRequest) -> SandboxKey:
 
 
 def _needs_sandbox(request: GenerationRequest) -> bool:
-    return request.context_tier != "blind" and bool(request.workspace_dir)
+    # Every non-blind codex/agy trial is wrapped or refused; a missing
+    # workspace is refused in _run_entrant_cli, never run unwrapped (#785).
+    return request.context_tier != "blind"
 
 
 def _run_entrant_cli(
@@ -423,9 +439,12 @@ def _run_entrant_cli(
     """Run a codex/agy command, inside the #785 outer sandbox on non-blind tiers.
 
     Fails closed: when the sandbox is unavailable or cannot be built the
-    trial is refused (RuntimeError) and nothing runs unwrapped. The per-trial
-    observation is cleared first and set only once the wrapped command has
-    actually been launched, so ``ran_sandboxed`` reports what really happened.
+    trial is refused (RuntimeError) and nothing runs unwrapped. That includes
+    a non-blind request without a valid, existing workspace directory. The
+    per-trial observation is cleared first and set only once the wrapped
+    process has demonstrably launched (it exited, with any returncode, or
+    timed out); a pre-launch ``OSError`` leaves it unset, so ``ran_sandboxed``
+    reports what really happened.
     """
 
     from . import entrant_sandbox
@@ -434,6 +453,11 @@ def _run_entrant_cli(
     observations.pop(key, None)
     if not _needs_sandbox(request):
         return _run_cli(cmd, timeout_s=timeout_s, cwd=trial_cwd, stdin_devnull=stdin_devnull)
+    if not request.workspace_dir or not Path(request.workspace_dir).is_dir():
+        raise RuntimeError(
+            f"refusing to run {provider} unsandboxed on context tier "
+            f"'{request.context_tier}': no valid staged workspace directory (#785)"
+        )
     if not entrant_sandbox.sandbox_available():
         raise RuntimeError(
             f"refusing to run {provider} unsandboxed on context tier "
@@ -442,13 +466,13 @@ def _run_entrant_cli(
     try:
         profile = entrant_sandbox.profile_for_provider(provider, cmd[0])
         with entrant_sandbox.sandboxed(profile, cmd, workspace=Path(trial_cwd)) as wrapped:
-            observations[key] = True
             return _run_cli(
                 wrapped.argv,
                 timeout_s=timeout_s,
                 cwd=trial_cwd,
                 stdin_devnull=stdin_devnull,
                 env=wrapped.env,
+                on_launch=lambda: observations.__setitem__(key, True),
             )
     except entrant_sandbox.SandboxUnavailable as exc:
         observations.pop(key, None)
