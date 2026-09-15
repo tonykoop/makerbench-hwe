@@ -320,7 +320,7 @@ def make_execute_trial(
     context_tier: str = "blind",
     instruments_root: Optional[Path] = None,
     image_paths: Optional[Mapping[str, Path]] = None,
-    backend: str = "openscad",
+    backend: str,
 ) -> TrialExecutor:
     """Wire #422 generation and #423 objective scoring into one trial executor.
 
@@ -335,6 +335,10 @@ def make_execute_trial(
     ``studio`` needs ``instruments_root`` like ``repo`` but stages prior
     outputs and reference images too; an ``image_paths`` entry is optional
     and, when present, is staged as the lead reference image.
+
+    backend is required, with no default: it is written into every trial
+    payload and wins over the run config in the objective scoreline, so a
+    caller that forgot it would silently attribute its trials to OpenSCAD.
     """
 
     def _execute_body(trial: ArenaTrial) -> dict:

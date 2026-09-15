@@ -7,6 +7,7 @@ extra plus Bubblewrap; they skip without them, except that
 
 from __future__ import annotations
 
+import inspect
 import os
 from pathlib import Path
 
@@ -197,3 +198,12 @@ def test_trial_payload_and_gate_run_record_the_build123d_backend(tmp_path, monke
                                                              "status": "scored",
                                                              "result": payload}]})
     assert row["backend"] == "build123d"
+
+
+def test_make_execute_trial_requires_an_explicit_backend():
+    """#799: no ``openscad`` default, so a new call site can't silently misattribute
+    its trials; it fails with TypeError until it passes the backend it compiles with."""
+    backend = inspect.signature(runner.make_execute_trial).parameters["backend"]
+    assert backend.default is inspect.Parameter.empty
+    with pytest.raises(TypeError, match="backend"):
+        runner.make_execute_trial(registry={}, run_dir=Path("."), generators={})

@@ -5,10 +5,12 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from makerbench import nightly_cad
 from makerbench.nightly_cad import (
     BudgetGuard,
     NightlyEntrant,
     NightlyExecutor,
+    NightlyJob,
     _resume_budget,
     nightly_lease,
 )
@@ -261,3 +263,37 @@ def test_paid_dispatch_crash_resumes_same_conversation_without_new_identity(tmp_
     assert first_call[1] is False
     assert second.calls[0] == (first_call[0], True)
     assert result["outcomes"][0]["status"] == "paid-dispatch-uncertain"
+
+
+def test_nightly_build123d_threads_backend_into_trial_payload(tmp_path, monkeypatch):
+    """#799: the production ``_run_arena`` path hands the entrant's backend to
+    ``make_execute_trial``. Each trial payload's backend wins over the run config in
+    the objective scoreline, so a missing argument would file every nightly build123d
+    trial under OpenSCAD."""
+    seen: dict = {}
+
+    def fake_make_execute_trial(**kwargs):
+        seen.update(kwargs)
+        return lambda trial: {}
+
+    def fake_run_orchestration(*, config, run_log_path, execute_trial):
+        seen["config"] = config
+
+    monkeypatch.setattr(nightly_cad.providers, "resolve_generator",
+                        lambda model_id, **kwargs: (lambda request: ""))
+    monkeypatch.setattr(nightly_cad.arena_runner, "make_execute_trial", fake_make_execute_trial)
+    monkeypatch.setattr(nightly_cad, "run_orchestration", fake_run_orchestration)
+    entrant = NightlyEntrant(entrant_id="stub-build123d", kind="arena", model_id="stub-a",
+                             backend="build123d")
+    job = NightlyJob(job_id="b123d-night", instrument_id="sambuca",
+                     reference_image=_image(tmp_path / "reference.png").as_posix(),
+                     entrants=[entrant, entrant])
+    executor = NightlyExecutor(queue_path=tmp_path / "queue.json",
+                               registry_path=_registry(tmp_path / "registry.json"),
+                               output_root=tmp_path / "runs")
+
+    executor._run_arena(job, entrant, tmp_path, registry={})
+
+    assert seen["backend"] == "build123d"
+    assert seen["compiler"] is nightly_cad.arena_runner.compiler_for_backend("build123d")
+    assert seen["config"].backend == "build123d"

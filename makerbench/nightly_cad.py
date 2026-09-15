@@ -550,6 +550,7 @@ class NightlyExecutor:
             run_dir=run_dir,
             generators={entrant.entrant_id: generator},
             compiler=arena_runner.compiler_for_backend(entrant.backend),
+            backend=entrant.backend,
             context_tier=entrant.context_tier,
             instruments_root=self.instruments_root,
             image_paths=(
