@@ -8,6 +8,12 @@ import { html } from "../html.js";
 const FRAME_MS = 120;
 const DRAG_PX_PER_FRAME = 14;
 
+// Announced per side, and the vote bar stays open (plan §3: "Frames 404: per-side
+// 'render unavailable', with voting still allowed"). Flags still work too.
+function RenderUnavailable({ label }) {
+  return html`<p class="plate-empty" role="status">${`Render unavailable for ${label}. You can still vote or flag it.`}</p>`;
+}
+
 function prefersReducedMotion() {
   return globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 }
@@ -17,6 +23,8 @@ export function Turntable({ frames, still, label }) {
   const frameKey = hasFrames ? frames.join("|") : "";
   const [index, setIndex] = useState(0);
   const [loaded, setLoaded] = useState(0);
+  const [failed, setFailed] = useState(0);
+  const [stillFailed, setStillFailed] = useState(false);
   const [playing, setPlaying] = useState(() => !prefersReducedMotion());
   const [held, setHeld] = useState(false);
   const drag = useRef(null);
@@ -24,19 +32,29 @@ export function Turntable({ frames, still, label }) {
   useEffect(() => {
     setIndex(0);
     setLoaded(0);
+    setFailed(0);
     if (!hasFrames) return undefined;
     let count = 0;
+    let failures = 0;
     const images = frames.map((src) => {
       const image = new Image();
-      image.onload = image.onerror = () => {
+      image.onload = () => {
         count += 1;
         setLoaded(count);
+      };
+      image.onerror = () => {
+        count += 1;
+        failures += 1;
+        setLoaded(count);
+        setFailed(failures);
       };
       image.src = src;
       return image;
     });
     return () => images.forEach((image) => (image.onload = image.onerror = null));
   }, [frameKey]);
+
+  useEffect(() => setStillFailed(false), [still]);
 
   useEffect(() => {
     if (!hasFrames || !playing || held) return undefined;
@@ -46,10 +64,12 @@ export function Turntable({ frames, still, label }) {
 
   if (!hasFrames) {
     if (!still) return html`<p class="plate-empty">No render for this candidate.</p>`;
-    return html`<img class="plate-image" src=${still} alt=${`${label}, single render`} />`;
+    if (stillFailed) return html`<${RenderUnavailable} label=${label} />`;
+    return html`<img class="plate-image" src=${still} alt=${`${label}, single render`} onError=${() => setStillFailed(true)} />`;
   }
 
   const count = frames.length;
+  if (failed === count) return html`<${RenderUnavailable} label=${label} />`;
   const step = (delta) => setIndex((i) => (i + delta + count) % count);
 
   const onKeyDown = (event) => {

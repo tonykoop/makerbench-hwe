@@ -238,6 +238,42 @@ def test_vote_stage_reveals_nothing_until_the_vote_is_saved(
         browser.close()
 
 
+def test_missing_render_is_announced_per_side_and_voting_stays_open(
+    studio_url: str, vote_repo: Path, screenshot_dir: Path
+):
+    """Claude UI review #777: a side whose frames and still 404 says so, to sighted and
+    screen-reader users alike, and the blind vote stays available (plan §3)."""
+    with sync_playwright() as playwright:
+        browser = _launch(playwright, "zero-webgl")
+        # First visit stages the pair's blind assets; then remove Candidate A's.
+        staging = Session(browser, f"{studio_url}/#/vote/{RUN_ID}", viewport={"width": 1440, "height": 1000})
+        staging.wait_for_stage()
+        staging.close()
+        blind = vote_repo / "runs" / "code_cad_arena" / RUN_ID / "vote_pages" / "blind"
+        removed = sorted(blind.glob("*-left*"))
+        assert removed, "expected staged left-side assets to remove"
+        for path in removed:
+            path.unlink()
+
+        # A fresh browser context, so nothing comes from the HTTP cache.
+        session = Session(browser, f"{studio_url}/#/vote/{RUN_ID}", viewport={"width": 1440, "height": 1000})
+        page = session.page
+        session.wait_for_stage()
+        plates = page.locator(".plate")
+        plates.nth(0).get_by_role("status").filter(has_text="Render unavailable for Candidate A").wait_for()
+        assert plates.nth(1).get_by_text("Render unavailable").count() == 0
+        assert page.locator(".vote-bar button", has_text="B is better").get_attribute("aria-disabled") != "true"
+        page.screenshot(path=str(screenshot_dir / "f2-vote-render-unavailable.png"), full_page=True)
+
+        page.keyboard.press("b")
+        page.locator(".reveal").wait_for()
+        assert _blind_votes(vote_repo)[-1]["winner"] == "right"
+        # The only console errors are the deliberately removed assets' 404s.
+        assert [error for error in session.errors if "404" not in error] == []
+        session.close()
+        browser.close()
+
+
 def test_keyboard_only_voting_flags_skip_undo_and_help(studio_url: str, vote_repo: Path, screenshot_dir: Path):
     with sync_playwright() as playwright:
         browser = _launch(playwright, "zero-webgl")
