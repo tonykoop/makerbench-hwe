@@ -204,6 +204,15 @@ class TestOpenSCADApply:
         by = extract_parameters(out, "openscad").by_name()
         assert by["variant"].value == 2 and by["tuning"].value == "ADF#B"
 
+    def test_non_ascii_lines_keep_character_spans(self):
+        src = 'label = "\u00e9\U0001F3B5"; x_mm = 1; // \u00b0\ny_mm = 2;\n'
+        model = extract_parameters(src, "openscad")
+        for p in model.parameters:
+            assert src[p.span[0] : p.span[1]] == p.raw
+        assert apply_parameters(src, {"x_mm": 12, "y_mm": 3}, "openscad") == (
+            'label = "\u00e9\U0001F3B5"; x_mm = 12; // \u00b0\ny_mm = 3;\n'
+        )
+
     def test_escapes_strings(self):
         out = apply_parameters(UKULELE_LIKE, {"label": 'say "hi"; x=1'}, "openscad")
         by = extract_parameters(out, "openscad").by_name()
@@ -319,6 +328,35 @@ class TestCadQuery:
         assert model.by_name()["X"].value == 1
         assert not marker.exists()
 
+    @pytest.mark.parametrize(
+        "src, name, raw, new, expected",
+        [
+            # 2-byte char before the target on the same line (Sol's repro)
+            ('LABEL = "\u00e9"; X = 1\n', "X", "1", 12, 'LABEL = "\u00e9"; X = 12\n'),
+            # 4-byte char (emoji) before the target
+            ('TAG = "\U0001F3B5\U0001F3B5"; W = 2.5\n', "W", "2.5", 3.0, 'TAG = "\U0001F3B5\U0001F3B5"; W = 3.0\n'),
+            # the value itself is non-ASCII and is followed by another target
+            ('NAME = "na\u00efve"; N = 7\n', "NAME", '"na\u00efve"', "plain", "NAME = 'plain'; N = 7\n"),
+            # non-ASCII in a trailing comment on an earlier line must not leak
+            ('A = 1  # \u00fcber\nB = 2\n', "B", "2", 3, 'A = 1  # \u00fcber\nB = 3\n'),
+        ],
+    )
+    def test_non_ascii_lines_keep_character_spans(self, src, name, raw, new, expected):
+        model = extract_parameters(src, "cadquery")
+        param = model.by_name()[name]
+        assert param.raw == raw
+        assert src[param.span[0] : param.span[1]] == raw
+        assert apply_parameters(src, {name: new}, "cadquery") == expected
+        # every span in the model slices back to its own raw text
+        for p in model.parameters:
+            assert src[p.span[0] : p.span[1]] == p.raw
+
+    def test_non_ascii_source_round_trips_byte_identically(self):
+        src = 'T = "\u00e9\u00e8\u00ea"; X = 1\nY = [1, 2]  # \u00b0\n'
+        model = extract_parameters(src, "cadquery")
+        values = {p.name: p.value for p in model.parameters if p.editable}
+        assert apply_parameters(src, values, "cadquery") == src
+
     def test_tuple_literal_keeps_its_shape(self):
         out = apply_parameters("SIZE = (1, 2)\nONE = (5,)\n", {"SIZE": [3, 4], "ONE": [6]}, "cadquery")
         assert out == "SIZE = (3, 4)\nONE = (6,)\n"
@@ -329,14 +367,72 @@ def test_unknown_backend_is_rejected():
         extract_parameters("x = 1;", "blender")
 
 
+#: Repos whose master directory is spelled ``CAD/`` in the instrument
+#: checkout. A case-sensitive ``cad/*.scad`` glob silently skipped all eight.
+UPPERCASE_CAD_REPOS = frozenset({
+    "ashiko-drum-workshop", "conga", "djembe", "dundun",
+    "didgeridoo", "flutes", "fujara", "pistalka",
+})
+
+
+class TestFindMasters:
+    def test_finds_cad_and_CAD_case_insensitively_and_sorted(self, tmp_path):
+        lower = tmp_path / "strings" / "ukulele" / "cad"
+        upper = tmp_path / "percussion" / "conga" / "CAD"
+        mixed = tmp_path / "woodwind" / "flutes" / "Cad"
+        for d in (lower, upper, mixed):
+            d.mkdir(parents=True)
+        (lower / "ukulele.scad").write_text("a = 1;\n")
+        (lower / "notes.md").write_text("not a master\n")
+        (upper / "conga.SCAD").write_text("b = 2;\n")
+        (mixed / "flute.scad").write_text("c = 3;\n")
+        (tmp_path / "strings" / "ukulele" / "docs").mkdir()
+        (tmp_path / "strings" / "ukulele" / "docs" / "x.scad").write_text("not under cad\n")
+        (tmp_path / ".git").mkdir()
+        found = cad_params.find_masters(tmp_path)
+        assert found == sorted([lower / "ukulele.scad", upper / "conga.SCAD", mixed / "flute.scad"])
+
+    def test_symlinked_repo_dirs_are_not_followed_and_missing_root_raises(self, tmp_path):
+        real = tmp_path / "elsewhere" / "cad"
+        real.mkdir(parents=True)
+        (real / "m.scad").write_text("x = 1;\n")
+        (tmp_path / "strings").mkdir()
+        (tmp_path / "strings" / "link").symlink_to(tmp_path / "elsewhere", target_is_directory=True)
+        assert cad_params.find_masters(tmp_path) == []
+        with pytest.raises(FileNotFoundError):
+            cad_params.find_masters(tmp_path / "nope")
+
+
 @pytest.mark.skipif(
     not os.environ.get("MAKERBENCH_INSTRUMENTS_ROOT"),
     reason="set MAKERBENCH_INSTRUMENTS_ROOT to sweep the instrument masters",
 )
 def test_every_instrument_master_round_trips_byte_identically():
     root = Path(os.environ["MAKERBENCH_INSTRUMENTS_ROOT"])
-    masters = sorted(root.glob("*/*/cad/*.scad"))
+    masters = cad_params.find_masters(root)
     assert masters, f"no cad/*.scad under {root}"
+    # Independent count: walk every ``<family>/<repo>`` and count ``.scad``
+    # files in any directory spelled ``cad`` in any case. Discovery must
+    # match it exactly, so an omission cannot stay green.
+    independent = 0
+    for family in root.iterdir():
+        if not family.is_dir() or family.name.startswith("."):
+            continue
+        for repo in family.iterdir():
+            if not repo.is_dir() or repo.name.startswith("."):
+                continue
+            for child in repo.iterdir():
+                if child.name.lower() == "cad" and child.is_dir():
+                    independent += sum(
+                        1 for f in child.iterdir() if f.is_file() and f.suffix.lower() == ".scad"
+                    )
+    assert len(masters) == independent, (len(masters), independent)
+    covered_repos = {p.parent.parent.name for p in masters}
+    missing_upper = UPPERCASE_CAD_REPOS - covered_repos
+    assert not missing_upper, f"CAD/ repos not discovered: {sorted(missing_upper)}"
+    expected = os.environ.get("MAKERBENCH_INSTRUMENTS_MASTER_COUNT")
+    if expected:
+        assert len(masters) == int(expected), (len(masters), expected)
     mismatches = []
     total = 0
     for path in masters:

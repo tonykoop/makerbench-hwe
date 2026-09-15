@@ -37,10 +37,12 @@ import ast
 import io
 import json
 import math
+import os
 import re
 import tokenize
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Optional
 
 SCHEMA = "makerbench-cad-params-v1"
@@ -583,8 +585,14 @@ def extract_cadquery(source: str) -> ParameterModel:
     except (tokenize.TokenError, SyntaxError):
         model.limitations.append("parse limitation: comments could not be tokenized")
 
-    def offset(lineno: int, col: int) -> int:
-        return line_starts[lineno - 1] + col
+    def offset(lineno: int, byte_col: int) -> int:
+        # ``ast`` reports ``col_offset``/``end_col_offset`` in UTF-8 *bytes*,
+        # so a non-ASCII character earlier on the line would shift a
+        # character-indexed slice. Translate through the line's bytes.
+        start = line_starts[lineno - 1]
+        end = line_starts[lineno] if lineno < len(line_starts) else len(source)
+        line_bytes = source[start:end].encode("utf-8")
+        return start + len(line_bytes[:byte_col].decode("utf-8"))
 
     def group_and_doc(lineno: int) -> tuple[Optional[str], Optional[str]]:
         group = None
@@ -682,6 +690,45 @@ def _format_python(param: Parameter, value) -> str:
 
 
 # --- public API --------------------------------------------------------------
+
+
+MASTER_DIR_NAME = "cad"
+
+
+def find_masters(instruments_root: Path) -> list[Path]:
+    """Every OpenSCAD master under ``<root>/<family>/<repo>/cad/*.scad``.
+
+    The directory name and the ``.scad`` suffix match **case-insensitively**:
+    eight repos spell the directory ``CAD/``, and a case-sensitive glob would
+    silently skip them. Results are de-duplicated by inode so a
+    case-insensitive filesystem (NTFS under WSL) does not list a file twice,
+    and sorted. Nothing here reads file contents.
+    """
+
+    root = Path(instruments_root)
+    if not root.is_dir():
+        raise FileNotFoundError(f"instruments root is not a directory: {root}")
+    seen: set[tuple[int, int]] = set()
+    found: list[Path] = []
+    for family in sorted(os.scandir(root), key=lambda e: e.name):
+        if not family.is_dir(follow_symlinks=False) or family.name.startswith("."):
+            continue
+        for repo in sorted(os.scandir(family.path), key=lambda e: e.name):
+            if not repo.is_dir(follow_symlinks=False) or repo.name.startswith("."):
+                continue
+            for cad in os.scandir(repo.path):
+                if cad.name.lower() != MASTER_DIR_NAME or not cad.is_dir():
+                    continue
+                for entry in sorted(os.scandir(cad.path), key=lambda e: e.name):
+                    if not entry.is_file() or not entry.name.lower().endswith(".scad"):
+                        continue
+                    st = entry.stat()
+                    key = (st.st_dev, st.st_ino)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    found.append(Path(entry.path))
+    return sorted(found)
 
 
 def extract_parameters(source: str, backend: str) -> ParameterModel:
