@@ -517,7 +517,11 @@ def _revise_draft(studio, model_id: str = "stub", feedback: str = "make the box 
 
 
 class TestRevise:
-    def test_entrants_list_availability_honestly_and_gate_live_ones(self, studio):
+    def test_entrants_list_availability_honestly_and_gate_live_ones(self, studio, monkeypatch):
+        """The listing is probed, never assumed. The more actionable reason wins:
+        a missing binary (or sandbox) is reported before the --allow-live policy.
+        Both branches are pinned deterministically by faking the probes, so the
+        test reads the same on a CI runner without the CLIs and on a dev box."""
         import shutil
 
         from makerbench import entrant_sandbox
@@ -529,13 +533,35 @@ class TestRevise:
         assert rows["stub"] == {**rows["stub"], "live": False, "available": True, "allowed": True, "reason": None, "policy": "not_applicable"}
         for model_id, binary in (("claude-default", "claude"), ("codex-default", "codex"), ("agy-default", "agy")):
             row = rows[model_id]
-            assert row["live"] is True and row["allowed"] is False and "--allow-live" in row["reason"]
+            assert row["live"] is True and row["allowed"] is False and row["reason"]
             installed = shutil.which(binary) is not None
             if not installed:
                 assert row["available"] is False and "not installed" in row["reason"]
-            elif binary != "claude":
-                assert row["available"] == entrant_sandbox.sandbox_available()
+            elif binary != "claude" and not entrant_sandbox.sandbox_available():
+                assert row["available"] is False and "cannot start" in row["reason"]
+            else:
+                assert row["available"] is True and "--allow-live" in row["reason"]
         _assert_no_host_paths(listing, Path("/"))
+
+        # Deterministic: every CLI present and the sandbox up -> available, still gated on --allow-live.
+        monkeypatch.setattr(shutil, "which", lambda name, path=None: f"/fake/bin/{name}")
+        monkeypatch.setattr(entrant_sandbox, "sandbox_available", lambda: True)
+        rows = {row["model_id"]: row for row in studio.get("/api/workbench/entrants").json()["entrants"]}
+        for model_id in ("claude-default", "codex-default", "agy-default"):
+            assert rows[model_id]["available"] is True and rows[model_id]["allowed"] is False
+            assert "--allow-live" in rows[model_id]["reason"]
+        # Deterministic: the sandbox down -> codex/agy cannot run even though installed; claude needs no sandbox.
+        monkeypatch.setattr(entrant_sandbox, "sandbox_available", lambda: False)
+        rows = {row["model_id"]: row for row in studio.get("/api/workbench/entrants").json()["entrants"]}
+        assert rows["claude-default"]["available"] is True
+        for model_id in ("codex-default", "agy-default"):
+            assert rows[model_id]["available"] is False and "cannot start" in rows[model_id]["reason"]
+        # Deterministic: nothing installed -> "not installed" is the reason, before any policy text.
+        monkeypatch.setattr(shutil, "which", lambda name, path=None: None)
+        rows = {row["model_id"]: row for row in studio.get("/api/workbench/entrants").json()["entrants"]}
+        for model_id in ("claude-default", "codex-default", "agy-default"):
+            assert rows[model_id]["available"] is False and rows[model_id]["reason"].startswith("unavailable:") and "not installed" in rows[model_id]["reason"]
+        assert rows["stub"]["available"] is True and rows["stub"]["allowed"] is True
 
     def test_live_entrants_are_refused_without_allow_live_and_nothing_is_created(self, studio, tmp_path, registry, instruments_root, fake_run, monkeypatch):
         launched = _fake_launch(studio.workbench)
