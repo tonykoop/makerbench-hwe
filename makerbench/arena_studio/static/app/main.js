@@ -6,6 +6,7 @@ import { StudioHeader } from "./components/header.js";
 import { useResource } from "./hooks/useResource.js";
 import { loadVoter, normalizeVoter, saveVoter } from "./lib/prefs.js";
 import { buildHash, parseHash } from "./lib/route.js";
+import { DoeScreen } from "./screens/doe.js";
 import { LaunchScreen } from "./screens/launch.js";
 import { AnalyticsScreen } from "./screens/analytics.js";
 import { CompareScreen } from "./screens/compare.js";
@@ -21,6 +22,7 @@ export const SCREENS = [
   { id: "launch", label: "Launch", component: LaunchScreen },
   { id: "analytics", label: "Agreement analytics", component: AnalyticsScreen, takesRun: true },
   { id: "compare", label: "Compare runs", component: CompareScreen },
+  { id: "doe", label: "DoE matrix", component: DoeScreen },
 ];
 
 function useRoute() {

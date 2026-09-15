@@ -41,6 +41,9 @@ RAW_HTML_APIS = re.compile(
     r"\b(innerHTML|outerHTML|insertAdjacentHTML|dangerouslySetInnerHTML|document\.write)\b"
 )
 
+# C0 controls and DEL, except tab, newline and carriage return.
+CONTROL_BYTES = re.compile(rb"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
 
 @pytest.fixture
 def client(tmp_path: Path) -> TestClient:
@@ -123,6 +126,17 @@ def test_vendored_modules_match_their_recorded_hashes():
         digest = hashlib.sha256((VENDOR_DIR / entry["file"]).read_bytes()).hexdigest()
         assert digest == entry["sha256"], entry["file"]
         assert (VENDOR_DIR / entry["license_file"]).is_file()
+
+
+def test_shipped_static_files_contain_no_control_bytes():
+    """Claude UI review #780: two NUL bytes made git and GitHub treat lib/doe.js as binary,
+    so the module was unreviewable on the PR. Nothing Studio ships may contain control
+    bytes other than tab, newline and carriage return."""
+    offenders = []
+    for path in sorted(p for p in STATIC.rglob("*") if p.is_file()):
+        for match in CONTROL_BYTES.finditer(path.read_bytes()):
+            offenders.append(f"{path.relative_to(STATIC)}: byte 0x{match.group()[0]:02x} at offset {match.start()}")
+    assert offenders == []
 
 
 def test_studio_code_never_uses_raw_html_apis():

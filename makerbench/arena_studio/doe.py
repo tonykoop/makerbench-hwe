@@ -54,6 +54,11 @@ class DoeValidationError(ValueError):
 
     The Studio routes answer these with HTTP 400; anything else stays a 500.
     """
+
+
+class DoeQueueExistsError(Exception):
+    """A queue file already exists for this run name; replacing it needs explicit confirmation."""
+
 DEFAULT_TELEMETRY_STORE = "data/sessions.jsonl"
 
 # CLI providers billed under an existing subscription (see
