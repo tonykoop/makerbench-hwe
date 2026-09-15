@@ -11,8 +11,8 @@ alice	b	makerbench-hwe	tonykoop/makerbench-hwe	108	delta-dossier
 bob	b	makerbench-hwe	tonykoop/makerbench-hwe	110	domains
 cindy	b	makerbench-hwe	tonykoop/makerbench-hwe	96	moonshot
 dan	b	makerbench-hwe	tonykoop/makerbench-hwe	97	acoustics-topo
-elsa	b	StudioPipeline-hwe	StudioPipeline/hwe	3	manifest-mbc-emitter
-frank	b	StudioPipeline-hwe	StudioPipeline/hwe	4	packet-exporter
-gina	b	StudioPipeline-hwe	StudioPipeline/hwe	5	run-nav-submit
-henry	b	HWE-Pipeline	tonykoop/HWE-Pipeline	2	beta-vendor-broker
-iris	b	HWE-Pipeline	tonykoop/HWE-Pipeline	3	production-bom
+elsa	b	private-lane-a	private-lane-a	3	manifest-mbc-emitter
+frank	b	private-lane-a	private-lane-a	4	packet-exporter
+gina	b	private-lane-a	private-lane-a	5	run-nav-submit
+henry	b	private-lane-b	private-lane-b	2	beta-vendor-broker
+iris	b	private-lane-b	private-lane-b	3	production-bom

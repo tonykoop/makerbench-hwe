@@ -6,8 +6,8 @@
 # iris (side B) — Round R1 — Logger-SDK
 
 **Persona:** iris — Logger-SDK  ·  **Side:** B  ·  **Runtime:** Codex  ·  **Model:** gpt-5.5  ·  **Partner runtime:** Claude Opus
-**Repo:** tonykoop/makerbench-hwe  ·  **Worktree:** /home/tony/hwe-wt/iris-b  ·  **Branch:** iris/b-r1-logger-sdk  ·  **Issues:** mb#92
-**Output folder (peek artifacts):** /home/tony/hwe-wt/iris-b  ·  **PR:** NOTE: you cannot reach api.github.com — commit + push your branch; the MANAGER opens your PR.
+**Repo:** tonykoop/makerbench-hwe  ·  **Worktree:** <worktree-root>/iris-b  ·  **Branch:** iris/b-r1-logger-sdk  ·  **Issues:** mb#92
+**Output folder (peek artifacts):** <worktree-root>/iris-b  ·  **PR:** NOTE: you cannot reach api.github.com — commit + push your branch; the MANAGER opens your PR.
 
 ## Shared Contract Context Pack (read first — identical for all personas)
 You are one side of a **TwinGrid blind A/B**: a partner agent is solving this SAME lane independently (you on one grid, them on the other). Do not coordinate. Produce the best artifact you can; the manager compares both at Partner Peek and merges the winner.
@@ -46,4 +46,4 @@ Must work standalone (graceful fallback if makerbench.schema absent) so it's pip
 PR `feat: makerbench-logger SDK` — `Refs #92`.
 
 ---
-Begin: cd /home/tony/hwe-wt/iris-b first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.
+Begin: cd <worktree-root>/iris-b first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.

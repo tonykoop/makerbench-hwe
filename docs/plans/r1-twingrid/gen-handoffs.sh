@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-WT="${WT_ROOT:-/home/tony/hwe-wt}"
+WT="${WT_ROOT:?set WT_ROOT to the worktree root (archival output uses WT_ROOT=<worktree-root>)}"
 PROMPT_ROOT="${PROMPT_ROOT:-$WT/_kit}"
 mkdir -p "$HERE/handoffs"
 PRE="$(cat "$HERE/assignment-preamble.txt")"

@@ -6,8 +6,8 @@
 # frank (side A) — Round R1 — Session-Recorder
 
 **Persona:** frank — Session-Recorder  ·  **Side:** A  ·  **Runtime:** Claude  ·  **Model:** Opus  ·  **Partner runtime:** codex gpt-5.5
-**Repo:** StudioPipeline/hwe  ·  **Worktree:** /home/tony/hwe-wt/frank-a  ·  **Branch:** frank/a-r1-session-recorder  ·  **Issues:** sp#2,mb#105
-**Output folder (peek artifacts):** /home/tony/hwe-wt/frank-a  ·  **PR:** You may open your own PR via gh.
+**Repo:** private-lane-a  ·  **Worktree:** <worktree-root>/frank-a  ·  **Branch:** frank/a-r1-session-recorder  ·  **Issues:** private-lane-a#2,mb#105
+**Output folder (peek artifacts):** <worktree-root>/frank-a  ·  **PR:** You may open your own PR via gh.
 
 ## Shared Contract Context Pack (read first — identical for all personas)
 You are one side of a **TwinGrid blind A/B**: a partner agent is solving this SAME lane independently (you on one grid, them on the other). Do not coordinate. Produce the best artifact you can; the manager compares both at Partner Peek and merges the winner.
@@ -31,7 +31,7 @@ If your lane consumes one of these, read that issue body for the schema and **st
 6. **Partner Peek outputs** in your worktree root: the artifact(s), `agent_record.json`, `ready_for_peek.json` (`{"persona","side","status":"ready","branch","primary_artifacts":[...]}`), `skill_findings.md`.
 7. Keep diffs tight; the manager verifies your diff touches only intended files before merge.
 
-## frank — Session-Recorder + video contract (StudioPipeline/hwe · #2 ; drafts mb#105)
+## frank — Session-Recorder + video contract (private-lane-a · #2 ; drafts mb#105)
 ### Why
 Screen/video recording is the #1 differentiator + cheapest anti-gaming signal.
 ### Scope
@@ -45,4 +45,4 @@ Record 10s dummy → MP4 + sidecar w/ correct sha256 + 3 markers.
 PR `feat(recorder): 3-part session recorder + video contract` — `Refs #2`.
 
 ---
-Begin: cd /home/tony/hwe-wt/frank-a first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.
+Begin: cd <worktree-root>/frank-a first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.

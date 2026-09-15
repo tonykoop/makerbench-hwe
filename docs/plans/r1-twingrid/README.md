@@ -1,7 +1,7 @@
 # AI-HWE TwinGrid Sprint — Round R1 (reproducible kit)
 
 Reproducible kit for a **TwinGrid blind A/B** sprint across the AI-HWE workflow-benchmark
-ecosystem (makerbench-hwe Epic #100, StudioPipeline/hwe, tonykoop/HWE-Pipeline). Persisted
+ecosystem (makerbench-hwe Epic #100, private-lane-a, private-lane-b). Persisted
 in-repo so a crash can't lose it and others can reproduce the workflow
 (motivated by mangocatalyst's reproducibility issues: makerbench-hwe#43/#44, claude-skills#193).
 
@@ -10,7 +10,7 @@ in-repo so a crash can't lose it and others can reproduce the workflow
 - `bodies/<persona>.md` — the per-persona assignment body (scope/guardrails/validation/deliverable).
 - `pack.md` — the shared Contract Context Pack injected into every handoff.
 - `assignment-preamble.txt` — the read-only contract preamble (from the tmux-sprint skill).
-- `setup-worktrees.sh` — creates 18 isolated worktrees on persistent disk (`/home/tony/hwe-wt`).
+- `setup-worktrees.sh` — creates 18 isolated worktrees on persistent disk under `$WT_ROOT`.
 - `gen-handoffs.sh` — emits `handoffs/sprint-<persona>-<A|B>.md` + `persona-launch.generated.tsv`.
 - `handoffs/` — generated, ready-to-dispatch contracts (committed for reproducibility).
 
@@ -21,19 +21,26 @@ in-repo so a crash can't lose it and others can reproduce the workflow
 | bob | WorkflowManifest + HII + .mbc | makerbench-hwe | #89,#109 |
 | cindy | Deliverable packet (GD&T+STL+G-code) | makerbench-hwe | #103 |
 | dan | Run navigation (explorer/library) | makerbench-hwe | #104 |
-| elsa | Blender MCP driver | StudioPipeline/hwe | #1 |
-| frank | Session recorder + video contract | StudioPipeline/hwe + makerbench | #2, #105 |
-| gina | evolution-pipeline skill + Alpha engine | HWE-Pipeline | cs#206, mb#112 |
+| elsa | Blender MCP driver | private-lane-a | #1 |
+| frank | Session recorder + video contract | private-lane-a + makerbench | #2, #105 |
+| gina | evolution-pipeline skill + Alpha engine | private-lane-b | cs#206, mb#112 |
 | henry | Docs (reasoning buckets, challenge spec, templates) | makerbench-hwe | #111,#94,#95 |
 | iris | makerbench-logger SDK | makerbench-hwe | #92 |
 
 ## Reproduce
 ```bash
-bash setup-worktrees.sh     # create 18 worktrees (side A=Opus grid, B=gpt-5.5 grid)
-bash gen-handoffs.sh        # (re)generate handoffs + persona-launch manifest
+GH_ROOT=/path/to/checkouts WT_ROOT=/path/to/worktrees bash setup-worktrees.sh  # create 18 worktrees (side A=Opus grid, B=gpt-5.5 grid)
+WT_ROOT=/path/to/worktrees bash gen-handoffs.sh  # (re)generate handoffs + persona-launch manifest
 # then launch two tmux grids (sprint=Opus, twingrid-b=codex gpt-5.5) and dispatch each
 # handoff per the tmux-sprint skill (cancel copy-mode -> send -l text -> C-m -> verify).
+# The committed archival copies were generated with WT_ROOT='<worktree-root>'.
 ```
+
+## Archival redactions
+This public copy uses neutral placeholders instead of host-specific or private details:
+- `private-lane-a`, `private-lane-b` — two private lane repositories (names and issue coordinates withheld).
+- `<worktree-root>`, `<github-root>`, `<maker-skills-root>` — operator-specific filesystem roots.
+`tests/test_twingrid_kit_redaction.py` enforces this and checks the committed handoffs match the generator.
 
 ## Conventions
 - Side A = Claude Opus (session `sprint`); Side B = codex gpt-5.5 (session `twingrid-b`).

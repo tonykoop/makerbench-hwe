@@ -5,15 +5,15 @@
 
 # cindy (gpt-5.5) — Round R3 — tonykoop/makerbench-hwe#82 (quote-bridge)
 
-**Worktree:** /home/tony/hwe-wt/cindy-b-r3 · **Branch:** cindy/b-r3-quote-bridge · **Issue:** tonykoop/makerbench-hwe#82 · **Repo for PR:** makerbench-hwe
+**Worktree:** <worktree-root>/cindy-b-r3 · **Branch:** cindy/b-r3-quote-bridge · **Issue:** tonykoop/makerbench-hwe#82 · **Repo for PR:** makerbench-hwe
 
 ## Task
-Implement **tonykoop/makerbench-hwe#82** (read it: `gh issue view 82 -R tonykoop/makerbench-hwe`). Build on everything merged in R1+R2 (workflow-track schema, .mbc, logger, deliverable packet, run-nav, the StudioPipeline driver/recorder/emitter/exporter, the HWE Alpha/Beta/Production engines).
+Implement **tonykoop/makerbench-hwe#82** (read it: `gh issue view 82 -R tonykoop/makerbench-hwe`). Build on everything merged in R1+R2 (workflow-track schema, .mbc, logger, deliverable packet, run-nav, the private-lane-a driver/recorder/emitter/exporter, the private-lane-b Alpha/Beta/Production engines).
 
 ## Rules
 - Do NOT run qmd (OOM). Ground via rg / git ls-files / reading the issue + code.
 - PLAN FIRST (post a short plan), then implement with tests.
 - COMMIT + PUSH your branch cindy/b-r3-quote-bridge early/often. Manager opens your PR (Refs #82, not Closes).
-- Work only in /home/tony/hwe-wt/cindy-b-r3.
+- Work only in <worktree-root>/cindy-b-r3.
 
-Begin: cd /home/tony/hwe-wt/cindy-b-r3, read the issue, post plan, implement, push.
+Begin: cd <worktree-root>/cindy-b-r3, read the issue, post plan, implement, push.

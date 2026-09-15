@@ -6,8 +6,8 @@
 # elsa (side B) — Round R1 — Blender-Driver
 
 **Persona:** elsa — Blender-Driver  ·  **Side:** B  ·  **Runtime:** Codex  ·  **Model:** gpt-5.5  ·  **Partner runtime:** Claude Opus
-**Repo:** StudioPipeline/hwe  ·  **Worktree:** /home/tony/hwe-wt/elsa-b  ·  **Branch:** elsa/b-r1-blender-driver  ·  **Issues:** sp#1
-**Output folder (peek artifacts):** /home/tony/hwe-wt/elsa-b  ·  **PR:** NOTE: you cannot reach api.github.com — commit + push your branch; the MANAGER opens your PR.
+**Repo:** private-lane-a  ·  **Worktree:** <worktree-root>/elsa-b  ·  **Branch:** elsa/b-r1-blender-driver  ·  **Issues:** private-lane-a#1
+**Output folder (peek artifacts):** <worktree-root>/elsa-b  ·  **PR:** NOTE: you cannot reach api.github.com — commit + push your branch; the MANAGER opens your PR.
 
 ## Shared Contract Context Pack (read first — identical for all personas)
 You are one side of a **TwinGrid blind A/B**: a partner agent is solving this SAME lane independently (you on one grid, them on the other). Do not coordinate. Produce the best artifact you can; the manager compares both at Partner Peek and merges the winner.
@@ -31,7 +31,7 @@ If your lane consumes one of these, read that issue body for the schema and **st
 6. **Partner Peek outputs** in your worktree root: the artifact(s), `agent_record.json`, `ready_for_peek.json` (`{"persona","side","status":"ready","branch","primary_artifacts":[...]}`), `skill_findings.md`.
 7. Keep diffs tight; the manager verifies your diff touches only intended files before merge.
 
-## elsa — Blender-Driver (StudioPipeline/hwe · #1)
+## elsa — Blender-Driver (private-lane-a · #1)
 ### Why
 Runnable core of the agentic-CAD plugin; independent, no upstream dep.
 ### Scope
@@ -47,4 +47,4 @@ Headless smoke writes a watertight STL.
 PR `feat(driver): Blender MCP driver + thread-safe bpy queue` — `Refs #1`.
 
 ---
-Begin: cd /home/tony/hwe-wt/elsa-b first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.
+Begin: cd <worktree-root>/elsa-b first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.

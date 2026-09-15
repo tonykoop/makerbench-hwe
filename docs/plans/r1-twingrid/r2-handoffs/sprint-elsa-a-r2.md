@@ -6,7 +6,7 @@
 # elsa (side a) — Round R2 — tonykoop/makerbench-hwe#120 (opportunity-matrix)
 
 **Persona:** elsa · **Side:** a · **Runtime:** Claude · **Model:** Opus
-**Repo:** tonykoop/makerbench-hwe · **Worktree:** /home/tony/hwe-wt/elsa-a-r2 · **Branch:** elsa/a-r2-opportunity-matrix · **Issue:** tonykoop/makerbench-hwe#120
+**Repo:** tonykoop/makerbench-hwe · **Worktree:** <worktree-root>/elsa-a-r2 · **Branch:** elsa/a-r2-opportunity-matrix · **Issue:** tonykoop/makerbench-hwe#120
 **PR:** You may open your own PR via gh.
 
 ## Your single task
@@ -20,4 +20,4 @@ Implement **tonykoop/makerbench-hwe#120**. Read it first: `gh issue view 120 -R 
 - **Commit + PUSH early and often** to your branch `elsa/a-r2-opportunity-matrix`. PRs use `Refs #120`, not Closes.
 - Phase 2 (later, manager-triggered): you will REVIEW your cross-model partner's PR — a different model's work on a different issue.
 
-Begin: cd /home/tony/hwe-wt/elsa-a-r2, read the issue, post your plan, then implement and push.
+Begin: cd <worktree-root>/elsa-a-r2, read the issue, post your plan, then implement and push.

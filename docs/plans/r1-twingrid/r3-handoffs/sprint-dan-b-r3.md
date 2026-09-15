@@ -5,15 +5,15 @@
 
 # dan (gpt-5.5) — Round R3 — tonykoop/makerbench-hwe#83 (closed-loop-demo)
 
-**Worktree:** /home/tony/hwe-wt/dan-b-r3 · **Branch:** dan/b-r3-closed-loop-demo · **Issue:** tonykoop/makerbench-hwe#83 · **Repo for PR:** makerbench-hwe
+**Worktree:** <worktree-root>/dan-b-r3 · **Branch:** dan/b-r3-closed-loop-demo · **Issue:** tonykoop/makerbench-hwe#83 · **Repo for PR:** makerbench-hwe
 
 ## Task
-Implement **tonykoop/makerbench-hwe#83** (read it: `gh issue view 83 -R tonykoop/makerbench-hwe`). Build on everything merged in R1+R2 (workflow-track schema, .mbc, logger, deliverable packet, run-nav, the StudioPipeline driver/recorder/emitter/exporter, the HWE Alpha/Beta/Production engines).
+Implement **tonykoop/makerbench-hwe#83** (read it: `gh issue view 83 -R tonykoop/makerbench-hwe`). Build on everything merged in R1+R2 (workflow-track schema, .mbc, logger, deliverable packet, run-nav, the private-lane-a driver/recorder/emitter/exporter, the private-lane-b Alpha/Beta/Production engines).
 
 ## Rules
 - Do NOT run qmd (OOM). Ground via rg / git ls-files / reading the issue + code.
 - PLAN FIRST (post a short plan), then implement with tests.
 - COMMIT + PUSH your branch dan/b-r3-closed-loop-demo early/often. Manager opens your PR (Refs #83, not Closes).
-- Work only in /home/tony/hwe-wt/dan-b-r3.
+- Work only in <worktree-root>/dan-b-r3.
 
-Begin: cd /home/tony/hwe-wt/dan-b-r3, read the issue, post plan, implement, push.
+Begin: cd <worktree-root>/dan-b-r3, read the issue, post plan, implement, push.

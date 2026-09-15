@@ -3,17 +3,17 @@
 > descriptions. If the assignment looks wrong, post a comment in this pane and
 > STOP; do not silently redefine the task.
 
-# iris (gpt-5.5) — Round R3 — tonykoop/HWE-Pipeline#6 (hwe-ci)
+# iris (gpt-5.5) — Round R3 — private-lane-b#6 (hwe-ci)
 
-**Worktree:** /home/tony/hwe-wt/iris-b-r3 · **Branch:** iris/b-r3-hwe-ci · **Issue:** tonykoop/HWE-Pipeline#6 · **Repo for PR:** HWE-Pipeline
+**Worktree:** <worktree-root>/iris-b-r3 · **Branch:** iris/b-r3-hwe-ci · **Issue:** private-lane-b#6 · **Repo for PR:** private-lane-b
 
 ## Task
-Implement **tonykoop/HWE-Pipeline#6** (read it: `gh issue view 6 -R tonykoop/HWE-Pipeline`). Build on everything merged in R1+R2 (workflow-track schema, .mbc, logger, deliverable packet, run-nav, the StudioPipeline driver/recorder/emitter/exporter, the HWE Alpha/Beta/Production engines).
+Implement **private-lane-b#6** (read it: `gh issue view 6 -R private-lane-b`). Build on everything merged in R1+R2 (workflow-track schema, .mbc, logger, deliverable packet, run-nav, the private-lane-a driver/recorder/emitter/exporter, the private-lane-b Alpha/Beta/Production engines).
 
 ## Rules
 - Do NOT run qmd (OOM). Ground via rg / git ls-files / reading the issue + code.
 - PLAN FIRST (post a short plan), then implement with tests.
 - COMMIT + PUSH your branch iris/b-r3-hwe-ci early/often. Manager opens your PR (Refs #6, not Closes).
-- Work only in /home/tony/hwe-wt/iris-b-r3.
+- Work only in <worktree-root>/iris-b-r3.
 
-Begin: cd /home/tony/hwe-wt/iris-b-r3, read the issue, post plan, implement, push.
+Begin: cd <worktree-root>/iris-b-r3, read the issue, post plan, implement, push.

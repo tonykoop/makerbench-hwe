@@ -6,7 +6,7 @@
 # bob (side a) — Round R2 — tonykoop/makerbench-hwe#91 (anti-gaming)
 
 **Persona:** bob · **Side:** a · **Runtime:** Claude · **Model:** Opus
-**Repo:** tonykoop/makerbench-hwe · **Worktree:** /home/tony/hwe-wt/bob-a-r2 · **Branch:** bob/a-r2-anti-gaming · **Issue:** tonykoop/makerbench-hwe#91
+**Repo:** tonykoop/makerbench-hwe · **Worktree:** <worktree-root>/bob-a-r2 · **Branch:** bob/a-r2-anti-gaming · **Issue:** tonykoop/makerbench-hwe#91
 **PR:** You may open your own PR via gh.
 
 ## Your single task
@@ -20,4 +20,4 @@ Implement **tonykoop/makerbench-hwe#91**. Read it first: `gh issue view 91 -R to
 - **Commit + PUSH early and often** to your branch `bob/a-r2-anti-gaming`. PRs use `Refs #91`, not Closes.
 - Phase 2 (later, manager-triggered): you will REVIEW your cross-model partner's PR — a different model's work on a different issue.
 
-Begin: cd /home/tony/hwe-wt/bob-a-r2, read the issue, post your plan, then implement and push.
+Begin: cd <worktree-root>/bob-a-r2, read the issue, post your plan, then implement and push.

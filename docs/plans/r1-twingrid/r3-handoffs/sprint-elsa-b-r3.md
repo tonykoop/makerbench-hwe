@@ -5,15 +5,15 @@
 
 # elsa (gpt-5.5) — Round R3 — tonykoop/makerbench-hwe#84 (solidworks-landscape)
 
-**Worktree:** /home/tony/hwe-wt/elsa-b-r3 · **Branch:** elsa/b-r3-solidworks-landscape · **Issue:** tonykoop/makerbench-hwe#84 · **Repo for PR:** makerbench-hwe
+**Worktree:** <worktree-root>/elsa-b-r3 · **Branch:** elsa/b-r3-solidworks-landscape · **Issue:** tonykoop/makerbench-hwe#84 · **Repo for PR:** makerbench-hwe
 
 ## Task
-Implement **tonykoop/makerbench-hwe#84** (read it: `gh issue view 84 -R tonykoop/makerbench-hwe`). Build on everything merged in R1+R2 (workflow-track schema, .mbc, logger, deliverable packet, run-nav, the StudioPipeline driver/recorder/emitter/exporter, the HWE Alpha/Beta/Production engines).
+Implement **tonykoop/makerbench-hwe#84** (read it: `gh issue view 84 -R tonykoop/makerbench-hwe`). Build on everything merged in R1+R2 (workflow-track schema, .mbc, logger, deliverable packet, run-nav, the private-lane-a driver/recorder/emitter/exporter, the private-lane-b Alpha/Beta/Production engines).
 
 ## Rules
 - Do NOT run qmd (OOM). Ground via rg / git ls-files / reading the issue + code.
 - PLAN FIRST (post a short plan), then implement with tests.
 - COMMIT + PUSH your branch elsa/b-r3-solidworks-landscape early/often. Manager opens your PR (Refs #84, not Closes).
-- Work only in /home/tony/hwe-wt/elsa-b-r3.
+- Work only in <worktree-root>/elsa-b-r3.
 
-Begin: cd /home/tony/hwe-wt/elsa-b-r3, read the issue, post plan, implement, push.
+Begin: cd <worktree-root>/elsa-b-r3, read the issue, post plan, implement, push.

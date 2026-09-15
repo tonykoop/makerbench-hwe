@@ -6,8 +6,8 @@
 # alice (side B) — Round R1 — Contracts-Core
 
 **Persona:** alice — Contracts-Core  ·  **Side:** B  ·  **Runtime:** Codex  ·  **Model:** gpt-5.5  ·  **Partner runtime:** Claude Opus
-**Repo:** tonykoop/makerbench-hwe  ·  **Worktree:** /home/tony/hwe-wt/alice-b  ·  **Branch:** alice/b-r1-contracts-core  ·  **Issues:** mb#87,mb#88
-**Output folder (peek artifacts):** /home/tony/hwe-wt/alice-b  ·  **PR:** NOTE: you cannot reach api.github.com — commit + push your branch; the MANAGER opens your PR.
+**Repo:** tonykoop/makerbench-hwe  ·  **Worktree:** <worktree-root>/alice-b  ·  **Branch:** alice/b-r1-contracts-core  ·  **Issues:** mb#87,mb#88
+**Output folder (peek artifacts):** <worktree-root>/alice-b  ·  **PR:** NOTE: you cannot reach api.github.com — commit + push your branch; the MANAGER opens your PR.
 
 ## Shared Contract Context Pack (read first — identical for all personas)
 You are one side of a **TwinGrid blind A/B**: a partner agent is solving this SAME lane independently (you on one grid, them on the other). Do not coordinate. Produce the best artifact you can; the manager compares both at Partner Peek and merges the winner.
@@ -46,4 +46,4 @@ Additive only; do NOT break autonomous scoring or result loading; do NOT modify 
 PR `feat(workflow-track): harness_class + WORKFLOW_TRACK.md` — `Refs #87 Refs #88`.
 
 ---
-Begin: cd /home/tony/hwe-wt/alice-b first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.
+Begin: cd <worktree-root>/alice-b first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.

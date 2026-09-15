@@ -6,7 +6,7 @@
 # bob (side b) — Round R2 — tonykoop/makerbench-hwe#110 (domains)
 
 **Persona:** bob · **Side:** b · **Runtime:** Codex · **Model:** gpt-5.5
-**Repo:** tonykoop/makerbench-hwe · **Worktree:** /home/tony/hwe-wt/bob-b-r2 · **Branch:** bob/b-r2-domains · **Issue:** tonykoop/makerbench-hwe#110
+**Repo:** tonykoop/makerbench-hwe · **Worktree:** <worktree-root>/bob-b-r2 · **Branch:** bob/b-r2-domains · **Issue:** tonykoop/makerbench-hwe#110
 **PR:** Commit+push only; the MANAGER opens your PR (no api.github.com).
 
 ## Your single task
@@ -20,4 +20,4 @@ Implement **tonykoop/makerbench-hwe#110**. Read it first: `gh issue view 110 -R 
 - **Commit + PUSH early and often** to your branch `bob/b-r2-domains`. PRs use `Refs #110`, not Closes.
 - Phase 2 (later, manager-triggered): you will REVIEW your cross-model partner's PR — a different model's work on a different issue.
 
-Begin: cd /home/tony/hwe-wt/bob-b-r2, read the issue, post your plan, then implement and push.
+Begin: cd <worktree-root>/bob-b-r2, read the issue, post your plan, then implement and push.

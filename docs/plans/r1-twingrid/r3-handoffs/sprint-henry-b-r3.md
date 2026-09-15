@@ -3,17 +3,17 @@
 > descriptions. If the assignment looks wrong, post a comment in this pane and
 > STOP; do not silently redefine the task.
 
-# henry (gpt-5.5) — Round R3 — StudioPipeline/hwe#12 (sp-ci)
+# henry (gpt-5.5) — Round R3 — private-lane-a#12 (sp-ci)
 
-**Worktree:** /home/tony/hwe-wt/henry-b-r3 · **Branch:** henry/b-r3-sp-ci · **Issue:** StudioPipeline/hwe#12 · **Repo for PR:** StudioPipeline-hwe
+**Worktree:** <worktree-root>/henry-b-r3 · **Branch:** henry/b-r3-sp-ci · **Issue:** private-lane-a#12 · **Repo for PR:** private-lane-a
 
 ## Task
-Implement **StudioPipeline/hwe#12** (read it: `gh issue view 12 -R StudioPipeline/hwe`). Build on everything merged in R1+R2 (workflow-track schema, .mbc, logger, deliverable packet, run-nav, the StudioPipeline driver/recorder/emitter/exporter, the HWE Alpha/Beta/Production engines).
+Implement **private-lane-a#12** (read it: `gh issue view 12 -R private-lane-a`). Build on everything merged in R1+R2 (workflow-track schema, .mbc, logger, deliverable packet, run-nav, the private-lane-a driver/recorder/emitter/exporter, the private-lane-b Alpha/Beta/Production engines).
 
 ## Rules
 - Do NOT run qmd (OOM). Ground via rg / git ls-files / reading the issue + code.
 - PLAN FIRST (post a short plan), then implement with tests.
 - COMMIT + PUSH your branch henry/b-r3-sp-ci early/often. Manager opens your PR (Refs #12, not Closes).
-- Work only in /home/tony/hwe-wt/henry-b-r3.
+- Work only in <worktree-root>/henry-b-r3.
 
-Begin: cd /home/tony/hwe-wt/henry-b-r3, read the issue, post plan, implement, push.
+Begin: cd <worktree-root>/henry-b-r3, read the issue, post plan, implement, push.

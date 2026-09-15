@@ -6,8 +6,8 @@
 # elsa (side A) — Round R1 — Blender-Driver
 
 **Persona:** elsa — Blender-Driver  ·  **Side:** A  ·  **Runtime:** Claude  ·  **Model:** Opus  ·  **Partner runtime:** codex gpt-5.5
-**Repo:** StudioPipeline/hwe  ·  **Worktree:** /home/tony/hwe-wt/elsa-a  ·  **Branch:** elsa/a-r1-blender-driver  ·  **Issues:** sp#1
-**Output folder (peek artifacts):** /home/tony/hwe-wt/elsa-a  ·  **PR:** You may open your own PR via gh.
+**Repo:** private-lane-a  ·  **Worktree:** <worktree-root>/elsa-a  ·  **Branch:** elsa/a-r1-blender-driver  ·  **Issues:** private-lane-a#1
+**Output folder (peek artifacts):** <worktree-root>/elsa-a  ·  **PR:** You may open your own PR via gh.
 
 ## Shared Contract Context Pack (read first — identical for all personas)
 You are one side of a **TwinGrid blind A/B**: a partner agent is solving this SAME lane independently (you on one grid, them on the other). Do not coordinate. Produce the best artifact you can; the manager compares both at Partner Peek and merges the winner.
@@ -31,7 +31,7 @@ If your lane consumes one of these, read that issue body for the schema and **st
 6. **Partner Peek outputs** in your worktree root: the artifact(s), `agent_record.json`, `ready_for_peek.json` (`{"persona","side","status":"ready","branch","primary_artifacts":[...]}`), `skill_findings.md`.
 7. Keep diffs tight; the manager verifies your diff touches only intended files before merge.
 
-## elsa — Blender-Driver (StudioPipeline/hwe · #1)
+## elsa — Blender-Driver (private-lane-a · #1)
 ### Why
 Runnable core of the agentic-CAD plugin; independent, no upstream dep.
 ### Scope
@@ -47,4 +47,4 @@ Headless smoke writes a watertight STL.
 PR `feat(driver): Blender MCP driver + thread-safe bpy queue` — `Refs #1`.
 
 ---
-Begin: cd /home/tony/hwe-wt/elsa-a first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.
+Begin: cd <worktree-root>/elsa-a first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.

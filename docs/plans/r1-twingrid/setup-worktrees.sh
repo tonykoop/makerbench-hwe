@@ -3,8 +3,8 @@
 # on persistent disk from persona-map.tsv. Side A = Claude Opus grid, B = codex gpt-5.5 grid.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-GH="${GH_ROOT:-/mnt/c/Users/Tony/Documents/GitHub}"
-WT="${WT_ROOT:-/home/tony/hwe-wt}"
+GH="${GH_ROOT:?set GH_ROOT to the directory containing the lane checkouts}"
+WT="${WT_ROOT:?set WT_ROOT to the persistent worktree root}"
 mkdir -p "$WT"
 
 # Preflight the entire grid before creating anything. A retained worktree or

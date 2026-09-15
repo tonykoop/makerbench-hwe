@@ -1,4 +1,4 @@
-## frank — Session-Recorder + video contract (StudioPipeline/hwe · #2 ; drafts mb#105)
+## frank — Session-Recorder + video contract (private-lane-a · #2 ; drafts mb#105)
 ### Why
 Screen/video recording is the #1 differentiator + cheapest anti-gaming signal.
 ### Scope

@@ -6,8 +6,8 @@
 # henry (side A) — Round R1 — Docs
 
 **Persona:** henry — Docs  ·  **Side:** A  ·  **Runtime:** Claude  ·  **Model:** Opus  ·  **Partner runtime:** codex gpt-5.5
-**Repo:** tonykoop/makerbench-hwe  ·  **Worktree:** /home/tony/hwe-wt/henry-a  ·  **Branch:** henry/a-r1-docs  ·  **Issues:** mb#111,mb#94,mb#95
-**Output folder (peek artifacts):** /home/tony/hwe-wt/henry-a  ·  **PR:** You may open your own PR via gh.
+**Repo:** tonykoop/makerbench-hwe  ·  **Worktree:** <worktree-root>/henry-a  ·  **Branch:** henry/a-r1-docs  ·  **Issues:** mb#111,mb#94,mb#95
+**Output folder (peek artifacts):** <worktree-root>/henry-a  ·  **PR:** You may open your own PR via gh.
 
 ## Shared Contract Context Pack (read first — identical for all personas)
 You are one side of a **TwinGrid blind A/B**: a partner agent is solving this SAME lane independently (you on one grid, them on the other). Do not coordinate. Produce the best artifact you can; the manager compares both at Partner Peek and merges the winner.
@@ -46,4 +46,4 @@ Markdown lints; templates valid front-matter.
 PR `docs(workflow-track): reasoning buckets + challenge spec + templates` — `Refs #111 Refs #94 Refs #95`.
 
 ---
-Begin: cd /home/tony/hwe-wt/henry-a first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.
+Begin: cd <worktree-root>/henry-a first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.

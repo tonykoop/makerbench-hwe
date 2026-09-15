@@ -6,7 +6,7 @@
 # gina (side a) — Round R2 — tonykoop/makerbench-hwe#112 (phys-verif-track)
 
 **Persona:** gina · **Side:** a · **Runtime:** Claude · **Model:** Opus
-**Repo:** tonykoop/makerbench-hwe · **Worktree:** /home/tony/hwe-wt/gina-a-r2 · **Branch:** gina/a-r2-phys-verif-track · **Issue:** tonykoop/makerbench-hwe#112
+**Repo:** tonykoop/makerbench-hwe · **Worktree:** <worktree-root>/gina-a-r2 · **Branch:** gina/a-r2-phys-verif-track · **Issue:** tonykoop/makerbench-hwe#112
 **PR:** You may open your own PR via gh.
 
 ## Your single task
@@ -20,4 +20,4 @@ Implement **tonykoop/makerbench-hwe#112**. Read it first: `gh issue view 112 -R 
 - **Commit + PUSH early and often** to your branch `gina/a-r2-phys-verif-track`. PRs use `Refs #112`, not Closes.
 - Phase 2 (later, manager-triggered): you will REVIEW your cross-model partner's PR — a different model's work on a different issue.
 
-Begin: cd /home/tony/hwe-wt/gina-a-r2, read the issue, post your plan, then implement and push.
+Begin: cd <worktree-root>/gina-a-r2, read the issue, post your plan, then implement and push.

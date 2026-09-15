@@ -6,8 +6,8 @@
 # gina (side B) — Round R1 — Evolution-Skill+Alpha
 
 **Persona:** gina — Evolution-Skill+Alpha  ·  **Side:** B  ·  **Runtime:** Codex  ·  **Model:** gpt-5.5  ·  **Partner runtime:** Claude Opus
-**Repo:** tonykoop/HWE-Pipeline  ·  **Worktree:** /home/tony/hwe-wt/gina-b  ·  **Branch:** gina/b-r1-evolution-skill  ·  **Issues:** cs#206,mb#112
-**Output folder (peek artifacts):** /home/tony/hwe-wt/gina-b  ·  **PR:** NOTE: you cannot reach api.github.com — commit + push your branch; the MANAGER opens your PR.
+**Repo:** private-lane-b  ·  **Worktree:** <worktree-root>/gina-b  ·  **Branch:** gina/b-r1-evolution-skill  ·  **Issues:** cs#206,mb#112
+**Output folder (peek artifacts):** <worktree-root>/gina-b  ·  **PR:** NOTE: you cannot reach api.github.com — commit + push your branch; the MANAGER opens your PR.
 
 ## Shared Contract Context Pack (read first — identical for all personas)
 You are one side of a **TwinGrid blind A/B**: a partner agent is solving this SAME lane independently (you on one grid, them on the other). Do not coordinate. Produce the best artifact you can; the manager compares both at Partner Peek and merges the winner.
@@ -31,11 +31,11 @@ If your lane consumes one of these, read that issue body for the schema and **st
 6. **Partner Peek outputs** in your worktree root: the artifact(s), `agent_record.json`, `ready_for_peek.json` (`{"persona","side","status":"ready","branch","primary_artifacts":[...]}`), `skill_findings.md`.
 7. Keep diffs tight; the manager verifies your diff touches only intended files before merge.
 
-## gina — Evolution-Skill + Alpha engine (HWE-Pipeline · realizes claude-skills#206, mb#112)
+## gina — Evolution-Skill + Alpha engine (private-lane-b · realizes claude-skills#206, mb#112)
 ### Why
 The Evolution Pipeline skill (prototype→finished-good PLM/DFM). Must become `maker:evolution-pipeline`. Build the Alpha engine now.
 ### Scope
-1. Scaffold the skill MIRRORING `makerspace` (read `/home/tony/.claude/plugins/cache/tony-koop/maker/1.1.1/skills/makerspace/`): `SKILL.md` (frontmatter name: evolution-pipeline, version 0.1.0, last-updated, description: >-, homepage HWE-Pipeline), `manifest.yaml`, `references/` (dfm-checklist, manufacturing-process-selection, supplier-validation, cost-volume-analysis), `agents/specialists/` (dfm-reviewer, manufacturing-planner, cost-analyst), `scripts/`, `examples/`.
+1. Scaffold the skill MIRRORING `makerspace` (read `<maker-skills-root>/makerspace/`): `SKILL.md` (frontmatter name: evolution-pipeline, version 0.1.0, last-updated, description: >-, homepage private-lane-b), `manifest.yaml`, `references/` (dfm-checklist, manufacturing-process-selection, supplier-validation, cost-volume-analysis), `agents/specialists/` (dfm-reviewer, manufacturing-planner, cost-analyst), `scripts/`, `examples/`.
 2. Build the **Alpha Workspace Compiler** `scripts/alpha_compile.py`: ingest master CAD + a local tool-matrix profile (model on makerspace `assets/templates/shop-equipment-profile.yaml`), downgrade fidelity (reslice to printable shell / flatten to laser-nested panels), emit a fabrication packet. Worked `examples/example-hardware-evolution.md`.
 3. Draft engine issues into `ISSUES.md` (Beta Vendor Broker → mb#82/#81; Production BOM/PLM → mb#112) for the manager to file.
 ### Guardrails
@@ -46,4 +46,4 @@ Do NOT edit the marketplace repo/manifest — the MANAGER vendors the winning sk
 PR `feat: evolution-pipeline skill v0.1.0 + Alpha compiler` — `Refs` claude-skills#206.
 
 ---
-Begin: cd /home/tony/hwe-wt/gina-b first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.
+Begin: cd <worktree-root>/gina-b first, complete Step-0 without qmd, post your plan, WAIT for manager approval, then implement and COMMIT+PUSH early.

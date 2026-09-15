@@ -1,4 +1,4 @@
-## elsa — Blender-Driver (StudioPipeline/hwe · #1)
+## elsa — Blender-Driver (private-lane-a · #1)
 ### Why
 Runnable core of the agentic-CAD plugin; independent, no upstream dep.
 ### Scope
