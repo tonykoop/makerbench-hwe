@@ -47,6 +47,72 @@ def _binds(cmd: list[str]) -> list[tuple[str, str, str]]:
     return out
 
 
+def _bbox(stl_path: Path) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    """Axis-aligned bounds of an ASCII STL, from its ``vertex`` lines."""
+
+    lo = [float("inf")] * 3
+    hi = [float("-inf")] * 3
+    for line in stl_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        parts = line.split()
+        if len(parts) == 4 and parts[0] == "vertex":
+            for axis, value in enumerate(map(float, parts[1:])):
+                lo[axis] = min(lo[axis], value)
+                hi[axis] = max(hi[axis], value)
+    return (lo[0], lo[1], lo[2]), (hi[0], hi[1], hi[2])
+
+
+def _host_mesh_bbox(src: Path, out_dir: Path) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    """Positive control: compile ``src`` with the *host* openscad (no sandbox),
+    which can read host files, and return the mesh bbox. Proves the test's
+    input is valid, so a sandboxed refusal is confinement and nothing else."""
+
+    out_dir.mkdir()
+    stl = out_dir / "host.stl"
+    proc = subprocess.run(
+        [scad_sandbox._openscad(), "-o", stl.as_posix(), src.as_posix()],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert proc.returncode == 0 and stl.is_file(), proc.stderr
+    return _bbox(stl)
+
+
+#: A closed tetrahedron with vertices in [60, 62]^3 (valid ASCII STL).
+TETRAHEDRON_STL = """solid tet
+facet normal 0 0 -1
+outer loop
+vertex 60 60 60
+vertex 62 60 60
+vertex 60 62 60
+endloop
+endfacet
+facet normal 0 -1 0
+outer loop
+vertex 60 60 60
+vertex 60 60 62
+vertex 62 60 60
+endloop
+endfacet
+facet normal -1 0 0
+outer loop
+vertex 60 60 60
+vertex 60 62 60
+vertex 60 60 62
+endloop
+endfacet
+facet normal 1 1 1
+outer loop
+vertex 62 60 60
+vertex 60 60 62
+vertex 60 62 60
+endloop
+endfacet
+endsolid tet
+"""
+
+
 # --- construction (hermetic) -------------------------------------------------
 
 
@@ -259,25 +325,49 @@ class TestRealSandbox:
         assert _facets(artifacts.stl_path) == 12
         assert token not in "\n".join(artifacts.warnings)
 
-    def test_surface_and_import_of_host_files_are_refused(self, tmp_path):
-        token = secrets.token_hex(12)
-        data = tmp_path / "outside" / f"{token}.dat"
-        data.parent.mkdir()
-        data.write_text("1 2\n3 4\n", encoding="utf-8")
-        big = tmp_path / "outside" / "big.stl"
-        big.write_text(
-            "solid big\n" + "facet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 50 0 0\n"
-            "vertex 0 50 0\nendloop\nendfacet\n" * 4 + "endsolid big\n",
-            encoding="utf-8",
-        )
-        src = tmp_path / "a.scad"
+    def test_surface_of_a_host_heightmap_is_refused(self, tmp_path):
+        # A 3x3 heightmap at z=100, translated to [50,50,50]. Loaded, it
+        # pushes the mesh bbox past x=52; refused, the mesh is only cube(5).
+        heightmap = tmp_path / "outside" / "heights.dat"
+        heightmap.parent.mkdir()
+        heightmap.write_text("100 100 100\n100 100 100\n100 100 100\n", encoding="utf-8")
+        src = tmp_path / "src" / "a.scad"
+        src.parent.mkdir()
         src.write_text(
-            f'surface(file="{data.as_posix()}");\nimport("{big.as_posix()}");\ncube(5);\n',
+            f'cube(5);\ntranslate([50, 50, 50]) surface(file="{heightmap.as_posix()}");\n',
             encoding="utf-8",
         )
+        # Positive control: the same source on the host does read the file.
+        host_lo, host_hi = _host_mesh_bbox(src, tmp_path / "host")
+        assert host_hi[0] >= 52.0, f"host control did not load the heightmap: {host_hi}"
+
         artifacts = scad_sandbox.compile_scad_sandboxed(src, tmp_path / "out")
+        lo, hi = _bbox(artifacts.stl_path)
+        assert hi == pytest.approx((5.0, 5.0, 5.0)), f"heightmap geometry leaked in: {hi}"
+        assert lo == pytest.approx((0.0, 0.0, 0.0))
         assert _facets(artifacts.stl_path) == 12
-        assert token not in (tmp_path / "out" / "output.stl").read_text(errors="replace")
+        blob = "\n".join(artifacts.warnings)
+        assert "heights.dat" in blob and "couldn't be opened" in blob, blob
+
+    def test_import_of_a_host_stl_is_refused(self, tmp_path):
+        # A closed tetrahedron at [60..62]^3. Loaded, the bbox reaches 62 and
+        # the facet count rises; refused, the mesh is only cube(5).
+        mesh = tmp_path / "outside" / "tet.stl"
+        mesh.parent.mkdir()
+        mesh.write_text(TETRAHEDRON_STL, encoding="utf-8")
+        src = tmp_path / "src" / "a.scad"
+        src.parent.mkdir()
+        src.write_text(f'cube(5);\nimport("{mesh.as_posix()}");\n', encoding="utf-8")
+        host_lo, host_hi = _host_mesh_bbox(src, tmp_path / "host")
+        assert host_hi[0] >= 62.0, f"host control did not load the STL: {host_hi}"
+
+        artifacts = scad_sandbox.compile_scad_sandboxed(src, tmp_path / "out")
+        lo, hi = _bbox(artifacts.stl_path)
+        assert hi == pytest.approx((5.0, 5.0, 5.0)), f"imported geometry leaked in: {hi}"
+        assert lo == pytest.approx((0.0, 0.0, 0.0))
+        assert _facets(artifacts.stl_path) == 12
+        blob = "\n".join(artifacts.warnings)
+        assert "Can't open import file" in blob and "tet.stl" in blob, blob
 
     def test_candidate_syntax_error_is_a_compile_error(self, tmp_path):
         src = tmp_path / "bad.scad"
