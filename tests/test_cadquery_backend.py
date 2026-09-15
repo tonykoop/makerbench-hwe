@@ -92,6 +92,42 @@ class TestRealCadQueryCompiler:
         assert "mesh_mm3=48000.000" in volume_warning
         assert "relative_delta=0.000000" in volume_warning
 
+    def test_optional_fixture_input_is_readable_but_not_writable(self, tmp_path):
+        seed_script = tmp_path / "seed.py"
+        seed_script.write_text(
+            "import cadquery as cq\nresult = cq.Workplane('XY').box(20, 10, 5)\n",
+            encoding="utf-8",
+        )
+        seed_artifacts = cadquery_backend.compile_cadquery_to_artifacts(
+            seed_script, tmp_path / "seed-out"
+        )
+        inputs = tmp_path / "inputs"
+        inputs.mkdir()
+        seed_step = seed_artifacts.stl_path.with_name("output.step")
+        (inputs / "input.step").write_bytes(seed_step.read_bytes())
+
+        edit_script = tmp_path / "edit.py"
+        edit_script.write_text(
+            """import cadquery as cq
+try:
+    open('/inputs/mutation.txt', 'w', encoding='utf-8').write('no')
+except OSError:
+    pass
+else:
+    raise RuntimeError('fixture input mount was writable')
+result = cq.importers.importStep('/inputs/input.step').translate((5, 0, 0))
+""",
+            encoding="utf-8",
+        )
+        artifacts = cadquery_backend.compile_cadquery_to_artifacts(
+            edit_script,
+            tmp_path / "edit-out",
+            readonly_input_dir=inputs,
+        )
+
+        assert artifacts.stl_path.with_name("output.step").stat().st_size > 0
+        assert not (inputs / "mutation.txt").exists()
+
     def test_brep_metric_failure_is_warning_only(self, tmp_path, monkeypatch):
         script = tmp_path / "metric_failure.py"
         script.write_text(
