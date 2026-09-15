@@ -336,7 +336,7 @@ class TestExecuteTrialEndToEnd:
 
         rows = runner.collect_objective_scoreline(log)
         assert rows == [{
-            "entrant": "codex-gpt-5.6-sol", "objective_pass_rate": 0.0,
+            "entrant": "codex-gpt-5.6-sol", "backend": "openscad", "objective_pass_rate": 0.0,
             "n_objective_trials": 1, "confinement": "unconfined",
         }]
 

@@ -20,6 +20,7 @@ from typing import Callable, Mapping, Optional
 
 from . import acoustic_advisory
 from . import blender_backend
+from . import build123d_backend
 from . import cadquery_backend
 from . import fusion_backend
 from . import geometry
@@ -60,6 +61,7 @@ BACKEND_COMPILERS: Mapping[str, Compiler] = {
     "openscad": compile_scad_to_artifacts,
     "blender": blender_backend.compile_bpy_to_artifacts,
     "cadquery": cadquery_backend.compile_cadquery_to_artifacts,
+    "build123d": build123d_backend.compile_build123d_to_artifacts,
     "solidworks": solidworks_backend.compile_solidworks_to_artifacts,
     "fusion": fusion_backend.compile_fusion_to_artifacts,
 }
@@ -71,6 +73,7 @@ BACKEND_COMPILERS: Mapping[str, Compiler] = {
 SANDBOXED_BACKEND_COMPILERS: Mapping[str, Compiler] = {
     "openscad": scad_sandbox.compile_scad_sandboxed,
     "cadquery": cadquery_backend.compile_cadquery_to_artifacts,
+    "build123d": build123d_backend.compile_build123d_to_artifacts,
 }
 
 
@@ -317,6 +320,7 @@ def make_execute_trial(
     context_tier: str = "blind",
     instruments_root: Optional[Path] = None,
     image_paths: Optional[Mapping[str, Path]] = None,
+    backend: str = "openscad",
 ) -> TrialExecutor:
     """Wire #422 generation and #423 objective scoring into one trial executor.
 
@@ -417,6 +421,9 @@ def make_execute_trial(
             "provenance_path": gen.provenance_path.as_posix(),
         }
         payload["context_tier"] = context_tier
+        # #799: the CAD-backend axis entry that compiled this candidate, so
+        # scorelines can report per backend even for mixed runs.
+        payload["backend"] = backend
         payload["confinement"] = _trial_confinement(trial)
         if staging_manifest is not None:
             payload["staging_manifest"] = staging_manifest
@@ -598,8 +605,9 @@ def collect_objective_scoreline(run_log: Mapping[str, object]) -> list[dict]:
     single-shot trials and are excluded.
     """
 
-    totals: dict[str, list[float]] = {}
-    confinements: dict[str, set[str]] = {}
+    totals: dict[tuple[str, str], list[float]] = {}
+    confinements: dict[tuple[str, str], set[str]] = {}
+    run_backend = str(((run_log.get("config") or {}).get("backend")) or "openscad")
     for entry in run_log.get("trials") or []:
         if is_consensus_row(entry):
             continue
@@ -614,22 +622,28 @@ def collect_objective_scoreline(run_log: Mapping[str, object]) -> list[dict]:
         rate = objective.get("objective_pass_rate")
         if isinstance(rate, bool) or not isinstance(rate, (int, float)):
             rate = 0.0
-        totals.setdefault(model_id, []).append(float(rate))
+        # #799: rows are per (entrant, backend); a trial records its own
+        # backend, else the run config's (older logs: openscad).
+        backend = str(result.get("backend") or (entry.get("meta") or {}).get("backend") or run_backend)
+        row_key = (model_id, backend)
+        totals.setdefault(row_key, []).append(float(rate))
         # Failed trials carry their classification in the orchestrator's
         # per-entry `meta` (result is None), so it survives into the row.
         confinement = result.get("confinement") or (entry.get("meta") or {}).get("confinement")
         if confinement:
-            confinements.setdefault(model_id, set()).add(str(confinement))
+            confinements.setdefault(row_key, set()).add(str(confinement))
 
     rows = []
-    for entrant in sorted(totals):
-        rates = totals[entrant]
+    for row_key in sorted(totals):
+        entrant, backend = row_key
+        rates = totals[row_key]
         row = {
             "entrant": entrant,
+            "backend": backend,
             "objective_pass_rate": round(sum(rates) / len(rates), 6),
             "n_objective_trials": len(rates),
         }
-        seen = confinements.get(entrant)
+        seen = confinements.get(row_key)
         if seen:
             # #785: one unconfined trial taints the whole row (worst case wins),
             # and the site publisher drops unconfined rows.
@@ -639,7 +653,7 @@ def collect_objective_scoreline(run_log: Mapping[str, object]) -> list[dict]:
                 else "not_applicable"
             )
         rows.append(row)
-    rows.sort(key=lambda row: (-row["objective_pass_rate"], row["entrant"]))
+    rows.sort(key=lambda row: (-row["objective_pass_rate"], row["entrant"], row["backend"]))
     return rows
 
 
