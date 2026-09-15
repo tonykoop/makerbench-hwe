@@ -374,6 +374,34 @@ class TestRestart:
             if process.poll() is None:
                 process.kill()
 
+    def test_cancel_survives_a_concurrent_status_poll(self, tmp_path, registry, monkeypatch):
+        """The browser polls status every second. A poll that lands between
+        the kill and the status write must not turn the draft ``interrupted``."""
+
+        service = wb.WorkbenchService(repo_root=tmp_path, registry_path=registry)
+        _fake_launch(service, hang=True)
+        created = service.create_design(origin={"blank": {"backend": "openscad"}})
+        did, jid = created["design"]["design_id"], created["draft"]["draft_id"]
+
+        class _Exits(_FakeProc):
+            def __init__(self):
+                self.killed = False
+
+            def poll(self):
+                return -15 if self.killed else None
+
+        proc = _Exits()
+        service._processes[(did, jid)] = proc  # type: ignore[assignment]
+
+        def kill_then_poll(pid):
+            proc.killed = True
+            # the concurrent poll: the process is gone, what does it conclude?
+            assert service.refresh_draft(did, jid)["job"]["status"] == "cancelled"
+
+        monkeypatch.setattr(wb.WorkbenchService, "_kill_group", staticmethod(kill_then_poll))
+        assert service.cancel(did, jid)["job"]["status"] == "cancelled"
+        assert service.refresh_draft(did, jid)["job"]["status"] == "cancelled"
+
     def test_kill_group_never_signals_our_own_group(self, monkeypatch):
         sent: list = []
         own = os.getpgid(0)
