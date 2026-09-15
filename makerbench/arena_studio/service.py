@@ -36,9 +36,12 @@ from makerbench.code_cad_vote_surface import (
 from makerbench.code_cad_vote_web import QueueItem, VoteQueue
 from makerbench.redaction import run_relative_path
 
+from . import analytics
+
 
 #: One path segment: the same shape launch_competition accepts for run ids.
 _SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
+
 
 
 class ArenaStudioService:
@@ -268,6 +271,37 @@ class ArenaStudioService:
         rows = arena_runner.build_agreement_rows(elo_payload, scoreline, judge_payload)
         summary = build_agreement_summary(rows)
         return summary
+
+    def get_run_leaderboard_with_ci(
+        self, run_dir: Path, *, seed: int = 0, n_resamples: int = 1000
+    ) -> dict[str, Any]:
+        """Elo leaderboard with a bootstrap 95% CI per entrant (#699 D1).
+
+        Delegates the CI math to :mod:`analytics`; ``get_run_leaderboard``
+        above is untouched so the numbers it already publishes never move.
+        NOTE for atlas: once #700's CI is green, `get_run_leaderboard` and
+        `get_run_agreement` are good candidates to route through `analytics`
+        too instead of `cli_arena`'s private helpers directly — not done here
+        to avoid touching code you're actively landing A1-A4 on.
+        """
+        run_log = _load_run_log(run_dir)
+        return analytics.leaderboard_with_ci(run_dir, run_log, seed=seed, n_resamples=n_resamples)
+
+    def get_run_agreement_with_caveats(self, run_dir: Path) -> dict[str, Any]:
+        """Agreement summary with an explicit small-sample (n<8) caveat (#699 D1)."""
+        run_log = _load_run_log(run_dir)
+        elo_payload = _elo_payload_for_run(run_dir, run_log)
+        scoreline = arena_runner.collect_objective_scoreline(run_log)
+        judge_path = run_dir / "votes.judge.jsonl"
+        judge_payload = _judge_payload_for_run(run_dir, run_log) if judge_path.exists() else None
+        rows = arena_runner.build_agreement_rows(elo_payload, scoreline, judge_payload)
+        return analytics.agreement_with_caveats(rows)
+
+    def get_run_agreement_by_family(self, run_dir: Path) -> dict[str, Any]:
+        """Per-instrument-family leaderboard + agreement slices (#699 D1)."""
+        run_log = _load_run_log(run_dir)
+        tasks = self.get_registry_tasks()
+        return analytics.per_family_breakdown(run_dir, run_log, tasks)
 
     def get_registry_tasks(self, family: Optional[str] = None) -> list[dict[str, Any]]:
         """Retrieve instrument definitions from registry."""
