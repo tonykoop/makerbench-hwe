@@ -16,7 +16,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -515,6 +517,57 @@ def ran_sandboxed(generator: object, *, model_id: str, instrument_id: str, seed:
     return bool(observations.get((model_id, instrument_id, int(seed), context_tier)))
 
 
+def _claude_tools_enabled(request: GenerationRequest) -> bool:
+    """#798: tools only for a studio request that opted in and has a real workspace."""
+
+    return (
+        request.context_tier == "studio"
+        and bool(request.entrant_tools)
+        and bool(request.workspace_dir)
+        and Path(request.workspace_dir).is_dir()
+    )
+
+
+def claude_tools_args(request: GenerationRequest, tools_dir: Path, *, backend: str) -> list[str]:
+    """The Claude argv additions for #798 tools: allow-list plus a generated MCP config.
+
+    The MCP server is the only one loaded (``--strict-mcp-config`` stays in
+    ``_CLAUDE_CONFINEMENT_FLAGS``), and its tools are reachable only because
+    they are named in the ``--tools=`` allow-list, next to Read/Glob/Grep. The
+    config and the call ledger live in ``tools_dir``, which is harness-owned
+    and outside the workspace. Both flags use the ``=`` form because
+    ``--tools`` and ``--mcp-config`` are variadic.
+    """
+
+    from .entrant_tools import TOOL_NAMES
+    from .entrant_tools_mcp import SERVER_NAME, mcp_tool_names
+
+    workspace = Path(request.workspace_dir).resolve()
+    tools_dir = Path(tools_dir).resolve()
+    if tools_dir.is_relative_to(workspace):
+        raise RuntimeError("entrant tool config must live outside the workspace")
+    tool_backend = backend if backend in ("openscad", "cadquery") else "openscad"
+    config = {
+        "mcpServers": {
+            SERVER_NAME: {
+                "command": sys.executable,
+                "args": [
+                    "-m", "makerbench.entrant_tools_mcp",
+                    "--workspace", workspace.as_posix(),
+                    "--ledger", (tools_dir / "ledger.jsonl").as_posix(),
+                    "--backend", tool_backend,
+                ],
+                "env": {"PYTHONPATH": Path(__file__).resolve().parent.parent.as_posix()},
+            }
+        }
+    }
+    config_path = tools_dir / "mcp.json"
+    config_path.write_text(json.dumps(config, indent=2, sort_keys=True), encoding="utf-8")
+    allow = ["Read", "Glob", "Grep", *mcp_tool_names()]
+    assert len(allow) == 3 + len(TOOL_NAMES)
+    return [f"--tools={','.join(allow)}", f"--mcp-config={config_path.as_posix()}"]
+
+
 def make_claude_generator(
     model: Optional[str] = None,
     *,
@@ -549,12 +602,37 @@ def make_claude_generator(
         raise ValueError("retry_attempts cannot be negative")
 
     cwd = _isolated_cwd("claude")
+    tool_observations: dict = {}
 
-    def generate(request: GenerationRequest, _retries: Optional[int] = None) -> str:
+    def generate(request: GenerationRequest, _retries: Optional[int] = None, _tools_dir: Optional[str] = None) -> str:
+        key = _sandbox_key(request)
+        owns_tools_dir = False
+        if _tools_dir is None and _claude_tools_enabled(request):
+            # Harness-owned, outside the workspace; spans retries so the call
+            # budget and ledger cover every attempt of this trial.
+            _tools_dir = tempfile.mkdtemp(prefix="makerbench-entrant-tools-")
+            owns_tools_dir = True
+            tool_observations.pop(key, None)
+        try:
+            return _generate(request, _retries, _tools_dir)
+        finally:
+            if owns_tools_dir and _tools_dir is not None:
+                from .entrant_tools import TOOL_NAMES, read_ledger
+
+                tool_observations[key] = {
+                    "enabled": list(TOOL_NAMES),
+                    "transport": "claude-mcp-stdio",
+                    "calls": read_ledger(Path(_tools_dir) / "ledger.jsonl"),
+                }
+                shutil.rmtree(_tools_dir, ignore_errors=True)
+
+    def _generate(request: GenerationRequest, _retries: Optional[int], _tools_dir: Optional[str]) -> str:
         retries_left = retry_attempts if _retries is None else _retries
         cmd = [bin_, "-p", "--output-format", "json", "--max-turns", str(max_turns)]
         if request.context_tier == "blind" or not request.workspace_dir:
             cmd += [_CLAUDE_BLIND_TOOLS]
+        elif _tools_dir is not None:
+            cmd += claude_tools_args(request, Path(_tools_dir), backend=backend)
         else:
             cmd += [_CLAUDE_READ_ONLY_TOOLS]
         cmd += list(_CLAUDE_CONFINEMENT_FLAGS)
@@ -585,12 +663,13 @@ def make_claude_generator(
         if failed:
             if retries_left > 0:
                 time.sleep(retry_sleep_s)
-                return generate(request, retries_left - 1)
+                return _generate(request, retries_left - 1, _tools_dir)
             detail = (result.stderr or result.stdout or "<no output>")[:500]
             raise RuntimeError(f"claude -p failed (rc={result.returncode}): {detail}")
         text = payload.get("result") if payload else result.stdout
         return extract_candidate(text or "", backend)
 
+    generate.tool_observations = tool_observations
     return generate
 
 
