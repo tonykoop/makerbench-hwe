@@ -948,33 +948,6 @@ input[type="range"] {
   list-style: none;
 }
 
-/* Shared panels and actions (the same rules as the Launch screen). */
-
-.panel {
-  margin-top: var(--space-6);
-  padding: var(--space-4) var(--space-6);
-  border: 1px solid var(--line);
-  border-radius: 2px;
-  background: var(--surface);
-}
-
-.panel h2 {
-  margin: 0 0 var(--space-3);
-}
-
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-3);
-  margin-top: var(--space-4);
-}
-
-.button[aria-disabled="true"] {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
 /* Agreement analytics & Compare */
 
 .lede-row {
