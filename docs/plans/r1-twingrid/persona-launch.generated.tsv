@@ -1,0 +1,19 @@
+# persona	runtime	work_dir	team	model	effort	prompt_file
+alice	claude	<worktree-root>/alice-a	sprint-hwe	opus	high	<worktree-root>/_kit/docs/plans/r1-twingrid/handoffs/sprint-alice-A.md
+alice	codex	<worktree-root>/alice-b	sprint-hwe	gpt-5.5	high	<worktree-root>/_kit/docs/plans/r1-twingrid/handoffs/sprint-alice-B.md
+bob	claude	<worktree-root>/bob-a	sprint-hwe	opus	high	<worktree-root>/_kit/docs/plans/r1-twingrid/handoffs/sprint-bob-A.md
+bob	codex	<worktree-root>/bob-b	sprint-hwe	gpt-5.5	high	<worktree-root>/_kit/docs/plans/r1-twingrid/handoffs/sprint-bob-B.md
+cindy	claude	<worktree-root>/cindy-a	sprint-hwe	opus	high	<worktree-root>/_kit/docs/plans/r1-twingrid/handoffs/sprint-cindy-A.md
+cindy	codex	<worktree-root>/cindy-b	sprint-hwe	gpt-5.5	high	<worktree-root>/_kit/docs/plans/r1-twingrid/handoffs/sprint-cindy-B.md
+dan	claude	<worktree-root>/dan-a	sprint-hwe	opus	high	<worktree-root>/_kit/docs/plans/r1-twingrid/handoffs/sprint-dan-A.md
+dan	codex	<worktree-root>/dan-b	sprint-hwe	gpt-5.5	high	<worktree-root>/_kit/docs/plans/r1-twingrid/handoffs/sprint-dan-B.md
+elsa	claude	<worktree-root>/elsa-a	sprint-hwe	opus	high	<worktree-root>/_kit/docs/plans/r1-twingrid/handoffs/sprint-elsa-A.md
+elsa	codex	<worktree-root>/elsa-b	sprint-hwe	gpt-5.5	high	<worktree-root>/_kit/docs/plans/r1-twingrid/handoffs/sprint-elsa-B.md
+frank	claude	<worktree-root>/frank-a	sprint-hwe	opus	high	<worktree-root>/_kit/docs/plans/r1-twingrid/handoffs/sprint-frank-A.md
+frank	codex	<worktree-root>/frank-b	sprint-hwe	gpt-5.5	high	<worktree-root>/_kit/docs/plans/r1-twingrid/handoffs/sprint-frank-B.md
+gina	claude	<worktree-root>/gina-a	sprint-hwe	opus	high	<worktree-root>/_kit/docs/plans/r1-twingrid/handoffs/sprint-gina-A.md
+gina	codex	<worktree-root>/gina-b	sprint-hwe	gpt-5.5	high	<worktree-root>/_kit/docs/plans/r1-twingrid/handoffs/sprint-gina-B.md
+henry	claude	<worktree-root>/henry-a	sprint-hwe	opus	high	<worktree-root>/_kit/docs/plans/r1-twingrid/handoffs/sprint-henry-A.md
+henry	codex	<worktree-root>/henry-b	sprint-hwe	gpt-5.5	high	<worktree-root>/_kit/docs/plans/r1-twingrid/handoffs/sprint-henry-B.md
+iris	claude	<worktree-root>/iris-a	sprint-hwe	opus	high	<worktree-root>/_kit/docs/plans/r1-twingrid/handoffs/sprint-iris-A.md
+iris	codex	<worktree-root>/iris-b	sprint-hwe	gpt-5.5	high	<worktree-root>/_kit/docs/plans/r1-twingrid/handoffs/sprint-iris-B.md
