@@ -563,6 +563,40 @@ class TestRevisions:
         assert [r["rev_id"] for r in store.list_revisions(did)] == [rev["rev_id"]]
         assert store.revision_source(did, rev["rev_id"]) == "cube(1);\n"
 
+    def test_index_append_failure_after_the_write_leaves_no_dangling_row(self, store, monkeypatch):
+        """Sol (#810 review): a failure *after* the row's bytes were written
+        (fsync) must roll the index back too, not only the directory."""
+
+        design = _design(store)
+        did = design["design_id"]
+        r1 = store.save_revision(did, draft_id=_finished_draft(store, did)["draft_id"])
+        draft = _finished_draft(store, did, parent=r1["rev_id"], source="cube(2);\n")
+        index = store.root / did / "index.jsonl"
+        before_bytes = index.read_bytes()
+        before = _snapshot(store.root)
+        real_fsync = os.fsync
+        calls = {"n": 0}
+
+        def boom(fd):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise OSError(5, "Input/output error")
+            return real_fsync(fd)
+
+        monkeypatch.setattr(ws.os, "fsync", boom)
+        with pytest.raises(OSError):
+            store.save_revision(did, draft_id=draft["draft_id"])
+        assert index.read_bytes() == before_bytes, "a dangling index row survived the failure"
+        assert [r["rev_id"] for r in store.list_revisions(did)] == [r1["rev_id"]]
+        assert sorted(p.name for p in (store.root / did / "revisions").iterdir()) == [r1["rev_id"]]
+        # the truncate touches the index's mtime; every byte on disk is unchanged
+        after = _snapshot(store.root)
+        assert set(after) == set(before)
+        assert {k: v[1] for k, v in after.items()} == {k: v[1] for k, v in before.items()}
+        r2 = store.save_revision(did, draft_id=draft["draft_id"])
+        assert [r["rev_id"] for r in store.list_revisions(did)] == [r1["rev_id"], r2["rev_id"]]
+        assert len(index.read_text(encoding="utf-8").splitlines()) == 2
+
     def test_crash_between_rename_and_index_is_reconciled_on_the_next_save(self, store):
         # Simulate a crash after the publish rename: the directory is complete
         # but its index row never landed.

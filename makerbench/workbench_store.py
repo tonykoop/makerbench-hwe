@@ -626,12 +626,20 @@ class WorkbenchStore:
             finally:
                 if staging.exists():
                     shutil.rmtree(staging, ignore_errors=True)
-            # Publication is the index row. If appending it fails, unpublish
-            # the directory again so the next save is an ordinary save.
+            # Publication is the index row. If appending it fails at any point
+            # (before or after the bytes hit the file), unpublish the directory
+            # and cut the index back to its pre-append length, so no dangling
+            # row survives and the next save is an ordinary save.
+            index_length = index_path.stat().st_size if index_path.exists() else 0
             try:
                 self._append_index_row(index_path, payload)
             except BaseException:
                 shutil.rmtree(rev_dir, ignore_errors=True)
+                try:
+                    if index_path.exists():
+                        os.truncate(index_path, index_length)
+                except OSError:
+                    pass
                 raise
         return payload
 
