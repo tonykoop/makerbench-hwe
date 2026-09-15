@@ -158,6 +158,10 @@ def _normalize_gate_result(result: Mapping[str, object]) -> dict:
     if isinstance(advisory, Mapping):
         # #800: labelled advisory checks ride along; they never affect the rate.
         normalized["advisory"] = dict(advisory)
+    checks = result.get("checks")
+    if isinstance(checks, Mapping):
+        # #797: declared/not-declared topology and interface statuses.
+        normalized["checks"] = dict(checks)
     return normalized
 
 
