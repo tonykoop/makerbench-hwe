@@ -620,6 +620,86 @@ def arena_run(
     console.print(table)
 
 
+@arena_app.command("param-probe")
+def arena_param_probe(
+        instruments_root: str = typer.Option(..., "--instruments-root", help="Root of the instrument build repos (<family>/<repo>/cad/*.scad)."),
+        instruments: str = typer.Option(..., help="Comma-separated repo names (e.g. ukulele,kora) or 'all'."),
+        params: Optional[str] = typer.Option(None, help="Comma-separated parameter names to probe; default: every editable parameter, capped by --max-params."),
+        scale: float = typer.Option(1.25, help="Multiplier applied to each numeric parameter (zero becomes 1; booleans flip)."),
+        max_params: int = typer.Option(5, "--max-params", help="Probe at most this many parameters per master (each is one sandboxed compile)."),
+        timeout_s: Optional[int] = typer.Option(None, "--timeout-s", help="Per-compile OpenSCAD budget; sets MAKERBENCH_OPENSCAD_TIMEOUT_S for the sandbox."),
+        work_dir: Optional[str] = typer.Option(None, "--work-dir", help="Where compiles land (default: a temporary directory). Never inside an instrument repo."),
+        out: Optional[str] = typer.Option(None, help="Write the JSON report here.")):
+    """Change one declared parameter of each master, recompile it in the sandbox, and report the measured bbox/volume change."""
+
+    import tempfile
+
+    from . import param_probe, scad_sandbox
+    from .cad_params import find_masters
+
+    root = Path(instruments_root)
+    try:
+        masters = find_masters(root)
+    except FileNotFoundError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1)
+    wanted = _split_csv(instruments)
+    if wanted != ("all",):
+        by_repo = {m.parent.parent.name for m in masters}
+        unknown = sorted(set(wanted) - by_repo)
+        if unknown:
+            console.print("[red]no master for:[/red] " + ", ".join(unknown))
+            raise typer.Exit(code=1)
+        masters = [m for m in masters if m.parent.parent.name in wanted]
+    if not scad_sandbox.sandbox_available():
+        console.print(
+            "[red]the OpenSCAD sandbox cannot start here (needs bwrap, openscad, xvfb-run and "
+            "unprivileged user namespaces); param-probe never compiles on the host.[/red]"
+        )
+        raise typer.Exit(code=1)
+    if timeout_s is not None:
+        if timeout_s <= 0:
+            console.print("[red]--timeout-s must be positive[/red]")
+            raise typer.Exit(code=1)
+        os.environ[scad_sandbox.OPENSCAD_TIMEOUT_ENV] = str(timeout_s)
+    names = list(_split_csv(params)) if params else None
+    base = Path(work_dir) if work_dir else Path(tempfile.mkdtemp(prefix="makerbench-param-probe-"))
+    if base.resolve().is_relative_to(root.resolve()):
+        console.print("[red]--work-dir must not be inside the instruments root[/red]")
+        raise typer.Exit(code=1)
+    report = {"schema": "makerbench-param-probe-v1", "scale": scale, "max_params": max_params, "masters": []}
+    table = Table(title=f"param-probe ×{scale} (sandboxed compile)")
+    for col in ("instrument", "master", "parameter", "old → new", "effect", "size ratio x/y/z", "volume ratio", "s"):
+        table.add_column(col)
+    for master in masters:
+        repo = master.parent.parent.name
+        source = master.read_text(encoding="utf-8", errors="replace")
+        results = param_probe.probe_master(
+            source, backend="openscad", work_dir=base / repo / master.stem,
+            names=names, scale=scale, max_params=max_params,
+        )
+        rows = param_probe.report_rows(results)
+        report["masters"].append({
+            "instrument": repo,
+            "master": master.name,
+            "results": [r.to_dict() for r in results],
+        })
+        for r in rows:
+            ratio = "" if not r["size_ratio"] else "/".join("∞" if v is None else f"{v:.3g}" for v in r["size_ratio"])
+            vol = "" if r["volume_ratio"] is None else f"{r['volume_ratio']:.3g}"
+            table.add_row(repo, master.name, r["name"], f"{r['old']} → {r['new']}", r["effect"], ratio, vol,
+                          "" if r["edited_s"] is None else f"{r['edited_s']:.1f}")
+    console.print(table)
+    counts: dict[str, int] = {}
+    for m in report["masters"]:
+        for r in m["results"]:
+            counts[r["effect"]] = counts.get(r["effect"], 0) + 1
+    console.print("effects: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+    if out:
+        param_probe.dump_report(Path(out), report)
+        console.print(f"report: {out}")
+
+
 @arena_app.command("pairs")
 def arena_pairs(
         run_dir: str = typer.Option(..., "--run-dir"),
