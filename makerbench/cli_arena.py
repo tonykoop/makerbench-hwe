@@ -1319,6 +1319,17 @@ def arena_preflight(
         raise typer.Exit(code=1)
 
 
+@arena_app.command("workbench-job")
+def arena_workbench_job(
+        draft_dir: str = typer.Option(..., "--draft-dir", help="A workbench draft directory (runs/workbench/<design>/drafts/<draft>). Spawned by the Studio; not meant to be run by hand."),
+        registry: str = typer.Option(DEFAULT_REGISTRY, "--registry", help="Arena registry JSON path, for the instrument's objective gates.")):
+    """Compile one design-workbench draft in the sandbox and score it (#788 W3); the Studio's detached job process."""
+
+    from .arena_studio.workbench import run_job
+
+    raise typer.Exit(code=run_job(Path(draft_dir), Path(registry)))
+
+
 @arena_app.command("studio")
 def arena_studio(
         run_dir: Optional[str] = typer.Option(
