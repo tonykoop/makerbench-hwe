@@ -158,6 +158,142 @@ def test_tasks_endpoint(client: TestClient):
     assert data_filtered["tasks"][0]["id"] == "kora"
 
 
+def test_preflight_endpoint_is_redacted_and_read_only(
+    client: TestClient, tmp_path: Path, fake_registry: Path
+):
+    fake_secret = "sk-FAKE-studio-preflight-never-echo"
+    secrets = tmp_path / "nightly.env"
+    secrets.write_text(
+        "\n".join(
+            [
+                "CADAM_USER_ID=fake-user",
+                f"CADAM_ACCESS_TOKEN={fake_secret}",
+                f"SUPABASE_SERVICE_ROLE_KEY={fake_secret}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    queue = tmp_path / "queue.json"
+    queue.write_text(
+        json.dumps({"jobs": [{"job_id": "local-smoke", "status": "queued"}]}),
+        encoding="utf-8",
+    )
+    secrets_before = secrets.read_bytes()
+    queue_before = queue.read_bytes()
+
+    response = client.post(
+        "/api/preflight",
+        json={
+            "secrets": str(secrets),
+            "queue": str(queue),
+            "output_root": str(tmp_path),
+            "repo_root": str(tmp_path),
+            "runner_script": str(fake_registry),
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["verdict"] == "GO"
+    assert {item["status"] for item in payload["secrets"]} == {"PRESENT"}
+    assert fake_secret not in response.text
+    assert secrets.read_bytes() == secrets_before
+    assert queue.read_bytes() == queue_before
+
+
+# Ported from #740 (cedar R2 P4, APPROVE). #740's duplicate /api/preflight implementation
+# is dropped in favor of #724's; these API tests pin the same response contract.
+def test_preflight_endpoint_redacts_secret_values(client: TestClient, tmp_path: Path):
+    """R2 P4: GO/NO-GO + classifications only, never a secret's actual value."""
+    secrets_path = tmp_path / "secrets.env"
+    secrets_path.write_text(
+        "CADAM_USER_ID=super-secret-user-abc123\n"
+        "CADAM_ACCESS_TOKEN=sk-should-never-appear-xyz789\n"
+        "SUPABASE_SERVICE_ROLE_KEY=changeme\n",
+        encoding="utf-8",
+    )
+    queue_path = tmp_path / "nightly-cad-queue.json"
+    queue_path.write_text(
+        json.dumps({"schema": "makerbench-nightly-cad-queue-v1", "jobs": []}), encoding="utf-8"
+    )
+    output_root = tmp_path / "runs"
+    output_root.mkdir()
+
+    res = client.post(
+        "/api/preflight",
+        json={"secrets": str(secrets_path), "queue": str(queue_path), "output_root": str(output_root)},
+    )
+    assert res.status_code == 200
+    data = res.json()
+
+    assert "super-secret-user-abc123" not in res.text
+    assert "sk-should-never-appear-xyz789" not in res.text
+
+    by_key = {item["key"]: item["status"] for item in data["secrets"]}
+    assert by_key["CADAM_USER_ID"] == "PRESENT"
+    assert by_key["CADAM_ACCESS_TOKEN"] == "PRESENT"
+    assert by_key["SUPABASE_SERVICE_ROLE_KEY"] == "PLACEHOLDER"  # "changeme" is a stand-in
+    assert data["verdict"] == "NO-GO"  # placeholder secret -> not GO
+    assert data["lock"]["status"] == "ABSENT"
+    assert data["queue"]["ok"] is True
+    assert isinstance(data["lines"], list) and len(data["lines"]) > 0
+
+
+def test_preflight_endpoint_go_verdict_and_paths(client: TestClient, tmp_path: Path):
+    secrets_path = tmp_path / "secrets.env"
+    secrets_path.write_text(
+        "CADAM_USER_ID=real-user\nCADAM_ACCESS_TOKEN=real-token\nSUPABASE_SERVICE_ROLE_KEY=real-key\n",
+        encoding="utf-8",
+    )
+    queue_path = tmp_path / "nightly-cad-queue.json"
+    queue_path.write_text(
+        json.dumps({"schema": "makerbench-nightly-cad-queue-v1", "jobs": []}), encoding="utf-8"
+    )
+    output_root = tmp_path / "runs"
+    output_root.mkdir()
+    runner_script = tmp_path / "run-nightly-cad-arena.ps1"
+    runner_script.write_text("# stub", encoding="utf-8")
+
+    res = client.post(
+        "/api/preflight",
+        json={
+            "secrets": str(secrets_path),
+            "queue": str(queue_path),
+            "output_root": str(output_root),
+            "runner_script": str(runner_script),
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["ok"] is True
+    assert data["verdict"] == "GO"
+    paths_by_name = {p["name"]: p for p in data["paths"]}
+    assert paths_by_name["runner_script"]["exists"] is True
+    assert paths_by_name["output_root"]["exists"] is True
+
+
+def test_preflight_endpoint_never_mutates_queue_or_secrets(client: TestClient, tmp_path: Path):
+    secrets_path = tmp_path / "secrets.env"
+    secrets_path.write_text("CADAM_USER_ID=x\n", encoding="utf-8")
+    queue_path = tmp_path / "nightly-cad-queue.json"
+    queue_path.write_text(
+        json.dumps({"schema": "makerbench-nightly-cad-queue-v1", "jobs": []}), encoding="utf-8"
+    )
+    output_root = tmp_path / "runs"
+    output_root.mkdir()
+    secrets_before = secrets_path.read_bytes()
+    queue_before = queue_path.read_bytes()
+
+    client.post(
+        "/api/preflight",
+        json={"secrets": str(secrets_path), "queue": str(queue_path), "output_root": str(output_root)},
+    )
+
+    assert secrets_path.read_bytes() == secrets_before
+    assert queue_path.read_bytes() == queue_before
+
+
 def test_runs_discovery(client: TestClient, fake_run: Path):
     response = client.get("/api/runs")
     assert response.status_code == 200
