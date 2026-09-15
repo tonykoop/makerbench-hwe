@@ -80,6 +80,41 @@ def test_fewer_than_three_candidates_is_refused(n):
         consensus.select_consensus_meshes(meshes)
 
 
+@pytest.mark.parametrize("samples", [0, -5])
+def test_nonpositive_sample_count_is_refused_by_the_api(samples):
+    meshes = {name: _box([10, 10, 10]) for name in ("a", "b", "c")}
+    with pytest.raises(consensus.ConsensusError, match="samples must be a positive integer"):
+        consensus.select_consensus_meshes(meshes, samples=samples)
+    with pytest.raises(consensus.ConsensusError, match="samples must be a positive integer"):
+        consensus.sample_points(meshes["a"], samples=samples)
+
+
+def test_empty_point_sets_cannot_manufacture_a_selection():
+    points = {"a": np.empty((0, 3)), "b": np.zeros((4, 3)), "c": np.zeros((4, 3))}
+    with pytest.raises(consensus.ConsensusError, match="no surface sample points"):
+        consensus.select_consensus(points)
+
+
+def test_nonpositive_sample_count_is_refused_by_the_report(tmp_path, monkeypatch):
+    run_dir = _run_dir(tmp_path)
+    monkeypatch.setattr(consensus.measure, "load_mesh",
+                        lambda *a, **k: pytest.fail("no candidate may be read"))
+    with pytest.raises(consensus.ConsensusError, match="samples must be a positive integer"):
+        consensus.build_consensus_report(run_dir, samples=0)
+
+
+@pytest.mark.parametrize("samples", ["0", "-1"])
+def test_cli_refuses_nonpositive_surface_samples(tmp_path, samples):
+    run_dir = _run_dir(tmp_path)
+
+    result = CliRunner().invoke(arena_app, ["consensus", "--run-dir", str(run_dir),
+                                            "--samples", samples])
+
+    assert result.exit_code == 1
+    assert "--samples must be a positive integer" in result.output
+    assert not (run_dir / "consensus.json").exists()
+
+
 def test_invalid_candidate_mesh_is_refused_not_scored():
     broken = _box([10.0, 10.0, 10.0])
     broken = trimesh.Trimesh(vertices=broken.vertices, faces=broken.faces[:-2], process=False)

@@ -54,6 +54,11 @@ class ConsensusError(ValueError):
     """The candidate set cannot be used for consensus selection."""
 
 
+def _require_positive_samples(samples: object) -> None:
+    if isinstance(samples, bool) or not isinstance(samples, int) or samples < 1:
+        raise ConsensusError(f"samples must be a positive integer (got {samples!r})")
+
+
 def consensus_tier_name(n: int) -> str:
     return f"{CONSENSUS_TIER_PREFIX}{int(n)}"
 
@@ -65,6 +70,7 @@ def is_consensus_tier(tier: object) -> bool:
 def sample_points(mesh: trimesh.Trimesh, *, samples: int = DEFAULT_SAMPLES,
                   seed: int = DEFAULT_SEED) -> np.ndarray:
     """Seeded surface samples, translated so the bbox centre is the origin."""
+    _require_positive_samples(samples)
     problem = measure.mesh_problem(mesh)
     if problem:
         raise ConsensusError(problem)
@@ -102,6 +108,9 @@ def select_consensus(points: Mapping[str, np.ndarray]) -> ConsensusSelection:
             f"consensus@N needs at least {MIN_CANDIDATES} candidates for the same task, "
             f"entrant and tier; got {len(ids)}"
         )
+    empty = [cid for cid in ids if np.asarray(points[cid]).reshape(-1, 3).shape[0] == 0]
+    if empty:
+        raise ConsensusError(f"candidates with no surface sample points: {empty}")
     pairwise: dict[str, dict[str, float]] = {cid: {} for cid in ids}
     for i, a in enumerate(ids):
         for b in ids[i + 1:]:
@@ -173,6 +182,7 @@ def build_consensus_report(run_dir: str | Path, *, samples: int = DEFAULT_SAMPLE
     Reads ``run_log.json`` only; it never writes to it. Groups with fewer than
     ``MIN_CANDIDATES`` eligible candidates are listed under ``refused``.
     """
+    _require_positive_samples(samples)
     run_dir = Path(run_dir).resolve(strict=True)
     run_log = json.loads((run_dir / "run_log.json").read_text(encoding="utf-8"))
     groups: dict[tuple[str, str, str], list[Mapping[str, Any]]] = {}

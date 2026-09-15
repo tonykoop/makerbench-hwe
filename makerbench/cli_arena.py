@@ -1018,6 +1018,9 @@ def arena_consensus(
 
     from .code_cad_consensus import SIDECAR_NAME, build_consensus_report
 
+    if samples < 1:
+        console.print(f"[red]--samples must be a positive integer (got {samples})[/red]")
+        raise typer.Exit(code=1)
     run_path = Path(run_dir)
     if not (run_path / "run_log.json").is_file():
         console.print(f"[red]no run log at {run_path / 'run_log.json'}[/red]")
