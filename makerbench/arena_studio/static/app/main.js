@@ -13,6 +13,7 @@ import { CompareScreen } from "./screens/compare.js";
 import { MorningScreen, NightlyScreen } from "./screens/nightly.js";
 import { RunsScreen } from "./screens/runs.js";
 import { VoteScreen } from "./screens/vote.js";
+import { WorkbenchScreen } from "./screens/workbench.js";
 
 // Screens appear in the rail only once they exist. `takesRun` screens keep the
 // header's run choice in their route (#/<screen>/<run_id>).
@@ -26,6 +27,9 @@ export const SCREENS = [
   { id: "analytics", label: "Agreement analytics", component: AnalyticsScreen, takesRun: true },
   { id: "compare", label: "Compare runs", component: CompareScreen },
   { id: "doe", label: "DoE matrix", component: DoeScreen },
+  // The workbench is an author tool: it names entrants, so it is never `blind`
+  // and no blind screen links to it (#788 G12).
+  { id: "workbench", label: "Workbench", component: WorkbenchScreen },
 ];
 
 function useRoute() {

@@ -101,6 +101,7 @@ on, a **Voting as** name (remembered in this browser), and server status.
 | **Agreement analytics** | `#/analytics/<run>` | Human Elo with intervals, how people agree with the objective checks, outliers, export. |
 | **Compare runs** | `#/compare?a=<run>&b=<run>` | Two runs side by side and the entrants rated in both. |
 | **DoE matrix** | `#/doe` | Design an experiment matrix, check its cost against a budget, write a nightly queue. |
+| Workbench | `#/workbench`, `#/workbench/<design>`, `#/workbench/<design>/<rev>` | Edit a candidate's code, compile it in the sandbox, save revisions, compare. Names entrants; not part of the blind flow. |
 
 Every screen has loading, empty and error states. An error always shows the
 server's own message and a **Try again** button; it never shows stale data as if
@@ -290,6 +291,38 @@ candidate counts and cost.
 - **Review blind** opens the same vote stage as Blind voting.
 - **No undo.** Morning review has no undo route, so the stage offers no Undo and
   `U` does nothing.
+
+## Design workbench
+
+The **Workbench** rail entry (`#/workbench`) is the author tool of the Studio
+(#788): open a candidate, edit its code, compile it **in the sandbox**, see the
+preview and objective checks, and save each step as an append-only revision.
+
+- **Open something.** On the Runs screen a run's summary lists its trials
+  under "Open in the workbench"; the notice says it shows the entrant, so vote
+  first if you want to stay blind. On the Launch screen every catalog row has
+  "Open master", which lists the instrument's `cad/*.scad` files when the
+  Studio was started with `--instruments-root`. The list screen's empty state
+  points at both.
+- **Edit and compile.** The Code tab is a plain text editor (native undo, find
+  in page, screen readers; Tab moves focus). Ctrl+Enter or the Compile button
+  starts a job; the log streams live and Cancel stops it. A failed compile
+  shows the compiler's message with "Go to line N" buttons; Try again re-sends.
+- **Preview and checks.** The right column shows the preview image (3D needs
+  WebGL and a GLB; otherwise the image is shown), and the registry gates as a
+  table. An instrument outside the arena registry says "gates not declared"
+  rather than pretending.
+- **Save and compare.** "Save as revision" opens an in-page panel with an
+  optional note and names the parent; the result line says "Saved revision N
+  from M" or "as a branch of M". The Revisions table shows lineage, editor kind
+  and compile status; "Compare" opens a side-by-side panel with previews, a
+  unified source diff (added/removed spelled out, never colour alone),
+  parameter and check deltas.
+- **What it never does.** Revisions are never overwritten or deleted, nothing
+  is written into an instrument repo (export is a later slice), no blind
+  screen links here, and nothing compiles on the host.
+
+Parameters, Revise (model revisions) and Curate tabs arrive in later slices.
 
 ## Security model
 

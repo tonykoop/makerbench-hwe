@@ -167,7 +167,7 @@ def test_launch_screen_renders_cleanly(studio_url: str, screenshot_dir: Path, mo
         ocarina = session.row("ocarina")
         ocarina.wait_for()
         ocarina.locator("input[type=checkbox]").check()
-        ocarina.get_by_role("button").click()
+        ocarina.locator("[data-inspect]").click()
         page.wait_for_function("() => document.querySelector('.reference-image')?.naturalWidth > 0")
         ocarina.locator(".gate", has_text="Approved").wait_for()
 
@@ -206,7 +206,7 @@ def test_gatekeeper_blocks_launch_until_approved_then_the_dry_run_log_streams(
         run_dir = launch_repo / "runs" / "code_cad_arena" / "ui-dry-run"
         assert not run_dir.exists()
 
-        kora.get_by_role("button").click()
+        kora.locator("[data-inspect]").click()
         page.wait_for_function("() => document.querySelector('.reference-image')?.naturalWidth > 0")
         page.locator(".reference-panel").get_by_role("button", name="Approve this image").click()
         kora.locator(".gate", has_text="Approved").wait_for()
@@ -325,7 +325,7 @@ def test_hostile_registry_queue_and_preflight_strings_render_as_inert_text(
         assert HOSTILE_NAME in hostile.inner_text()
         assert HOSTILE_FAMILY in hostile.inner_text()
 
-        hostile.get_by_role("button").click()
+        hostile.locator("[data-inspect]").click()
         command = page.locator(".reference-panel .command")
         command.wait_for()
         assert HOSTILE_FAMILY in command.inner_text()

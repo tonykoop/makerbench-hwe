@@ -535,6 +535,7 @@ code {
 
 .data-table.catalog td:first-child,
 .data-table.catalog td:nth-child(4),
+.data-table.catalog td:nth-child(5),
 .data-table.catalog td:last-child {
   white-space: nowrap;
 }
@@ -1750,4 +1751,165 @@ kbd {
   border-color: var(--danger);
   background: transparent;
   color: var(--danger);
+}
+
+/* --- Design workbench (#788 W4) ------------------------------------------ */
+
+.workbench-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.workbench-layout > *,
+.workbench-design {
+  min-width: 0;
+}
+
+.job-status .command,
+.workbench-design .facts dd {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.workbench-head .facts {
+  margin-top: var(--space-2);
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  font: inherit;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.tab[aria-selected="true"] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+.tab-later {
+  cursor: default;
+}
+
+.code-editor-text {
+  width: 100%;
+  min-height: 14rem;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: var(--step--1);
+  line-height: 1.45;
+  tab-size: 2;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  padding: var(--space-2);
+  resize: vertical;
+}
+
+.code-editor-text:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.code-editor-hint {
+  margin-top: var(--space-1);
+}
+
+.workbench-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  background: var(--stage);
+  border-radius: 0.375rem;
+}
+
+.workbench-preview .view-toggle {
+  margin-bottom: var(--space-2);
+}
+
+.job-status {
+  margin-top: var(--space-3);
+}
+
+.check-note {
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+
+.check-failed,
+.check-error {
+  border-left-color: var(--danger);
+  color: var(--ink);
+}
+
+.lineage {
+  display: inline-block;
+  padding-left: calc(var(--depth, 0) * 1rem);
+}
+
+.actions-cell {
+  white-space: nowrap;
+}
+
+.actions-cell .button {
+  margin-left: var(--space-2);
+}
+
+.save-panel {
+  margin-top: var(--space-3);
+}
+
+.diff {
+  margin: 0;
+  padding: var(--space-2);
+  font-size: var(--step--1);
+  line-height: 1.45;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  white-space: pre;
+}
+
+.diff-row {
+  display: block;
+}
+
+.diff-added {
+  color: var(--ok);
+}
+
+.diff-removed {
+  color: var(--danger);
+}
+
+.diff-hunk {
+  color: var(--muted);
+}
+
+.diff-marker {
+  display: inline-block;
+  width: 1ch;
+}
+
+.workbench-compare-grid {
+  margin-bottom: var(--space-3);
+}
+
+@media (max-width: 760px) {
+  .workbench-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
