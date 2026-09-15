@@ -343,7 +343,13 @@ class WorkbenchService:
     def parameters(self, design_id: str, rev_id: str) -> dict:
         design = self.store.read_design(design_id)
         source = self.store.revision_source(design_id, rev_id)
-        return extract_parameters(source, design["backend"]).to_dict()
+        payload = extract_parameters(source, design["backend"]).to_dict()
+        # W5: the registry envelope is context next to size-like parameters,
+        # never a slider bound (plan Q7). Absent when the instrument is unknown.
+        spec = self._spec(design.get("instrument_id", ""))
+        envelope = spec.get("envelope_mm") if spec else None
+        payload["envelope_mm"] = list(envelope) if isinstance(envelope, (list, tuple)) and len(envelope) == 3 else None
+        return payload
 
     # --- jobs -------------------------------------------------------------
 
