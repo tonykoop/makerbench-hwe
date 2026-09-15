@@ -47,6 +47,13 @@ except ImportError:  # pragma: no cover - telemetry package is optional at impor
 SCHEMA = "makerbench-arena-studio-doe-v1"
 DEFAULT_LEVELS = ("L1", "L2", "L3", "L4")
 DEFAULT_CONTEXT_TIERS = ("blind",)
+
+
+class DoeValidationError(ValueError):
+    """The DoE request itself is invalid (fix the input), not a server failure.
+
+    The Studio routes answer these with HTTP 400; anything else stays a 500.
+    """
 DEFAULT_TELEMETRY_STORE = "data/sessions.jsonl"
 
 # CLI providers billed under an existing subscription (see
@@ -259,7 +266,7 @@ def resolve_max_cost_usd_by_model(
             unresolved.append(model_id)
 
     if unresolved:
-        raise ValueError(
+        raise DoeValidationError(
             "no known cost ceiling for model(s) "
             f"{sorted(unresolved)!r}; pass an explicit positive max_cost_usd "
             "override for each -- an unknown cost must never silently "

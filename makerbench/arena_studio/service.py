@@ -361,7 +361,7 @@ class ArenaStudioService:
         treating an unknown cost as a known $0.00.
         """
         if not _SAFE_RUN_ID_RE.fullmatch(run_id):
-            raise ValueError(
+            raise doe.DoeValidationError(
                 f"run_id must be a safe path segment (letters/digits/_.-, no "
                 f"'/' or leading '.'), got {run_id!r}"
             )

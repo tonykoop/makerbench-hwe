@@ -12,6 +12,7 @@ from typing import Callable, Optional
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
+from . import doe
 from .service import ArenaStudioService
 
 
@@ -83,13 +84,20 @@ def register_delta_routes(
         seeds: Optional[str] = Query(None, description="Comma-separated integer seeds"),
     ):
         try:
+            seed_values = [int(s) for s in _split_csv(seeds)] if seeds else None
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"seeds must be integers, got {seeds!r}")
+        try:
             return service.preview_doe_matrix(
                 _split_csv(instruments) or [],
                 _split_csv(models) or [],
                 levels=_split_csv(levels),
                 context_tiers=_split_csv(context_tiers),
-                seeds=[int(s) for s in _split_csv(seeds)] if seeds else None,
+                seeds=seed_values,
             )
+        except doe.DoeValidationError as e:
+            # Fix-your-input errors (Tony, 2026-09-14): 400, so a client can tell them from a server failure.
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -106,5 +114,7 @@ def register_delta_routes(
                 budget_usd=payload.budget_usd,
                 max_cost_usd_by_model=payload.max_cost_usd_by_model,
             )
+        except doe.DoeValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))

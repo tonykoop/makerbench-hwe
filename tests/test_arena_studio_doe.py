@@ -249,6 +249,55 @@ def test_doe_queue_route(client: TestClient, repo_root_with_reference: Path):
     assert len(jobs) == 1
 
 
+def test_doe_preview_route_answers_400_for_non_integer_seeds(client: TestClient):
+    response = client.get(
+        "/api/doe/preview",
+        params={"instruments": "ocarina", "models": "claude-code-opus-5", "seeds": "0,zero"},
+    )
+    assert response.status_code == 400
+    assert "seeds must be integers" in response.json()["detail"]
+
+
+def test_doe_queue_route_answers_400_for_unknown_cost_model(client: TestClient, repo_root_with_reference: Path):
+    # Tony (2026-09-14): validation errors are the client's to fix, so 400, not 500.
+    response = client.post(
+        "/api/doe/queue",
+        json={"run_id": "doe_unknown_cost_route", "instruments": ["ocarina"], "models": ["openrouter-paid-a"], "levels": ["L1"], "seeds": [0]},
+    )
+    assert response.status_code == 400
+    assert "openrouter-paid-a" in response.json()["detail"]
+    assert not (repo_root_with_reference / "runs" / "code_cad_arena" / "doe_unknown_cost_route" / "doe_queue.json").exists()
+
+
+@pytest.mark.parametrize("bad_run_id", ["../escaped", "a/b", ".."])
+def test_doe_queue_route_answers_400_for_unsafe_run_id(client: TestClient, bad_run_id: str):
+    response = client.post(
+        "/api/doe/queue",
+        json={"run_id": bad_run_id, "instruments": ["ocarina"], "models": ["claude-code-opus-5"], "levels": ["L1"], "seeds": [0]},
+    )
+    assert response.status_code == 400
+    assert "run_id" in response.json()["detail"]
+
+
+def test_doe_routes_keep_500_for_unexpected_server_errors(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("telemetry store unreadable")
+
+    monkeypatch.setattr(ArenaStudioService, "preview_doe_matrix", boom)
+    monkeypatch.setattr(ArenaStudioService, "write_doe_queue", boom)
+    preview = client.get("/api/doe/preview", params={"instruments": "ocarina", "models": "claude-code-opus-5"})
+    queue = client.post(
+        "/api/doe/queue",
+        json={"run_id": "doe_boom", "instruments": ["ocarina"], "models": ["claude-code-opus-5"]},
+    )
+    assert (preview.status_code, queue.status_code) == (500, 500)
+
+
+def test_doe_validation_error_is_still_a_value_error():
+    # Existing callers that catch ValueError keep working.
+    assert issubclass(doe.DoeValidationError, ValueError)
+
+
 @pytest.mark.parametrize("override", [float("nan"), float("inf"), float("-inf")], ids=["nan", "+inf", "-inf"])
 def test_write_doe_queue_refuses_non_finite_ceiling_before_writing(
     fake_registry: Path, repo_root_with_reference: Path, override: float
