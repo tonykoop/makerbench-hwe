@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import subprocess
 from pathlib import Path
@@ -32,6 +33,205 @@ def _request(
 
 def _completed(stdout: str = "", returncode: int = 0, stderr: str = "") -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_entrant_sandbox(monkeypatch):
+    """#785: non-blind codex/agy calls go through the outer sandbox. Keep these
+    command-shape tests hermetic (no real bwrap probe, CLI install or auth
+    file); the real sandbox is exercised in tests/test_entrant_sandbox.py."""
+
+    from makerbench import entrant_sandbox
+
+    monkeypatch.setattr(entrant_sandbox, "sandbox_available", lambda: True)
+    monkeypatch.setattr(entrant_sandbox, "_bwrap", lambda: "/usr/bin/bwrap")
+    monkeypatch.setattr(
+        entrant_sandbox, "profile_for_provider", lambda provider, bin_: entrant_sandbox.generic_profile(provider)
+    )
+
+
+class TestEntrantSandboxIntegration:
+    """#785: codex/agy non-blind trials run wrapped, fail closed, and report it."""
+
+    @pytest.fixture
+    def workspace(self, tmp_path):
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        return ws
+
+    @pytest.mark.parametrize(
+        "factory,model_id",
+        [
+            (lambda: providers.make_codex_generator(retry_sleep_s=0), "codex-gpt-5.6-sol"),
+            (lambda: providers.make_agy_generator(retry_sleep_s=0), "antigravity-gemini-default"),
+        ],
+    )
+    def test_non_blind_trial_is_wrapped_in_bwrap_and_observed(self, factory, model_id, workspace, monkeypatch):
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"], seen["env"] = cmd, kwargs.get("env")
+            return _completed(stdout="```scad\ncube(1);\n```")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        gen = factory()
+        gen(_request(model_id, context_tier="studio", workspace_dir=workspace))
+        assert seen["cmd"][0] == "/usr/bin/bwrap"
+        assert "--unshare-user" in seen["cmd"] and "--unshare-net" not in seen["cmd"]
+        assert set(seen["env"]) == {"PATH", "LANG"}
+        assert providers.ran_sandboxed(
+            gen, model_id=model_id, instrument_id="ocarina", seed=0, context_tier="studio"
+        )
+
+    @pytest.mark.parametrize(
+        "factory,model_id",
+        [
+            (lambda: providers.make_codex_generator(retry_sleep_s=0), "codex-gpt-5.6-sol"),
+            (lambda: providers.make_agy_generator(retry_sleep_s=0), "antigravity-gemini-default"),
+        ],
+    )
+    def test_unavailable_sandbox_refuses_the_trial(self, factory, model_id, workspace, monkeypatch):
+        from makerbench import entrant_sandbox
+
+        monkeypatch.setattr(entrant_sandbox, "sandbox_available", lambda: False)
+        calls = []
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: calls.append(a) or _completed("cube(1);"))
+        gen = factory()
+        with pytest.raises(RuntimeError, match="refusing to run .* unsandboxed"):
+            gen(_request(model_id, context_tier="repo", workspace_dir=workspace))
+        assert calls == []  # nothing ran unwrapped
+        assert not providers.ran_sandboxed(
+            gen, model_id=model_id, instrument_id="ocarina", seed=0, context_tier="repo"
+        )
+
+    def test_wrap_build_failure_refuses_the_trial(self, workspace, monkeypatch):
+        from makerbench import entrant_sandbox
+
+        def broken(provider, bin_):
+            raise entrant_sandbox.SandboxUnavailable("codex auth.json not found")
+
+        monkeypatch.setattr(entrant_sandbox, "profile_for_provider", broken)
+        calls = []
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: calls.append(a) or _completed(""))
+        gen = providers.make_codex_generator(retry_sleep_s=0)
+        with pytest.raises(RuntimeError, match="unsandboxed"):
+            gen(_request("codex-gpt-5.6-sol", context_tier="packet", workspace_dir=workspace))
+        assert calls == []
+        assert not providers.ran_sandboxed(
+            gen, model_id="codex-gpt-5.6-sol", instrument_id="ocarina", seed=0, context_tier="packet"
+        )
+
+    _ENTRANTS = [
+        (lambda: providers.make_codex_generator(retry_sleep_s=0), "codex-gpt-5.6-sol"),
+        (lambda: providers.make_agy_generator(retry_sleep_s=0), "antigravity-gemini-default"),
+    ]
+
+    @pytest.mark.parametrize("factory,model_id", _ENTRANTS)
+    @pytest.mark.parametrize("context_tier", ["packet", "repo", "image", "studio"])
+    @pytest.mark.parametrize("workspace_dir", [None, ""], ids=["missing", "empty"])
+    def test_non_blind_trial_without_workspace_fails_closed(
+        self, factory, model_id, context_tier, workspace_dir, monkeypatch
+    ):
+        # Sol CHANGES blocker 1: a non-blind request with no workspace used to
+        # launch codex/agy directly, with no bwrap.
+        calls = []
+        monkeypatch.setattr(subprocess, "run", lambda cmd, **k: calls.append(cmd) or _completed("cube(1);"))
+        gen = factory()
+        request = dataclasses.replace(_request(model_id, context_tier=context_tier), workspace_dir=workspace_dir)
+        with pytest.raises(RuntimeError, match="refusing to run .* unsandboxed"):
+            gen(request)
+        assert calls == []  # no entrant subprocess launched, wrapped or not
+        assert not providers.ran_sandboxed(
+            gen, model_id=model_id, instrument_id="ocarina", seed=0, context_tier=context_tier
+        )
+
+    @pytest.mark.parametrize("factory,model_id", _ENTRANTS)
+    def test_non_blind_trial_with_nonexistent_workspace_fails_closed(self, factory, model_id, tmp_path, monkeypatch):
+        calls = []
+        monkeypatch.setattr(subprocess, "run", lambda cmd, **k: calls.append(cmd) or _completed("cube(1);"))
+        gen = factory()
+        with pytest.raises(RuntimeError, match="refusing to run .* unsandboxed"):
+            gen(_request(model_id, context_tier="repo", workspace_dir=tmp_path / "does-not-exist"))
+        assert calls == []
+        assert not providers.ran_sandboxed(
+            gen, model_id=model_id, instrument_id="ocarina", seed=0, context_tier="repo"
+        )
+
+    @pytest.mark.parametrize("factory,model_id", _ENTRANTS)
+    @pytest.mark.parametrize(
+        "exc",
+        [OSError(8, "Exec format error"), PermissionError(13, "Permission denied"), FileNotFoundError(2, "bwrap")],
+        ids=["oserror", "permission", "not-found"],
+    )
+    def test_pre_launch_failure_is_not_observed_as_sandboxed(self, factory, model_id, exc, workspace, monkeypatch):
+        # Sol CHANGES blocker 2: process creation failed, so bwrap never ran.
+        def boom(cmd, **kwargs):
+            raise exc
+
+        monkeypatch.setattr(subprocess, "run", boom)
+        gen = factory()
+        with pytest.raises((OSError, RuntimeError)):
+            gen(_request(model_id, context_tier="studio", workspace_dir=workspace))
+        assert not providers.ran_sandboxed(
+            gen, model_id=model_id, instrument_id="ocarina", seed=0, context_tier="studio"
+        )
+
+    @pytest.mark.parametrize("factory,model_id", _ENTRANTS)
+    def test_launched_then_timeout_is_observed_as_sandboxed(self, factory, model_id, workspace, monkeypatch):
+        def slow(cmd, **kwargs):
+            assert cmd[0] == "/usr/bin/bwrap"
+            raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+
+        monkeypatch.setattr(subprocess, "run", slow)
+        gen = factory()
+        with pytest.raises(TimeoutError):
+            gen(_request(model_id, context_tier="studio", workspace_dir=workspace))
+        assert providers.ran_sandboxed(
+            gen, model_id=model_id, instrument_id="ocarina", seed=0, context_tier="studio"
+        )
+
+    @pytest.mark.parametrize("factory,model_id", _ENTRANTS)
+    def test_launched_then_cli_error_is_observed_as_sandboxed(self, factory, model_id, workspace, monkeypatch):
+        calls = []
+
+        def failing(cmd, **kwargs):
+            calls.append(cmd)
+            return _completed(stderr="boom", returncode=1)
+
+        monkeypatch.setattr(subprocess, "run", failing)
+        gen = factory()
+        with pytest.raises(RuntimeError, match=r"rc=1"):
+            gen(_request(model_id, context_tier="studio", workspace_dir=workspace))
+        assert calls and all(c[0] == "/usr/bin/bwrap" for c in calls)
+        assert providers.ran_sandboxed(
+            gen, model_id=model_id, instrument_id="ocarina", seed=0, context_tier="studio"
+        )
+
+    def test_blind_trial_is_not_wrapped(self, monkeypatch):
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"] = cmd
+            return _completed("")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        gen = providers.make_codex_generator(retry_sleep_s=0)
+        gen(_request("codex-gpt-5.6-sol"))
+        assert seen["cmd"][0] == "codex"
+        assert not providers.ran_sandboxed(
+            gen, model_id="codex-gpt-5.6-sol", instrument_id="ocarina", seed=0, context_tier="blind"
+        )
+
+    def test_confinement_is_verified_only_with_sandbox_evidence(self):
+        assert providers.entrant_confinement("codex-gpt-5.6-sol", "studio") == "unconfined"
+        assert providers.entrant_confinement("codex-gpt-5.6-sol", "studio", sandboxed=True) == "verified"
+        assert providers.entrant_confinement("antigravity-gemini-default", "repo", sandboxed=True) == "verified"
+        assert providers.entrant_confinement("gemini-2.5-pro", "repo", sandboxed=True) == "unconfined"
+        assert providers.entrant_confinement("codex-gpt-5.6-sol", "blind", sandboxed=True) == "not_applicable"
+        # A generator that never ran sandboxed (stub, plain callable) never counts.
+        assert not providers.ran_sandboxed(
+            lambda r: "", model_id="codex-x", instrument_id="i", seed=0, context_tier="studio"
+        )
 
 
 class TestExtractScad:
