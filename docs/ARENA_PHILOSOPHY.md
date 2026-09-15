@@ -72,8 +72,14 @@ Letting entrants see more does not relax the evaluation-data rules:
     read-only into the scratch home because the CLI needs it. That token is
     the only host credential inside the sandbox.
   - Offline tests (`tests/test_entrant_sandbox.py`) run the real wrapper
-    around `cat` against sentinels. Live sentinel tests through the codex and
-    agy generators disclosed nothing (2026-09-15, #785).
+    around `cat` against sentinels. In a live test through the codex
+    generator, codex ran `cat` on sentinels under the real `$HOME` and
+    `/mnt/c/...` and got "No such file or directory", while `README.md` in
+    the workspace read fine. A codex studio trial scored with `confinement:
+    verified`. Live agy runs were wrapped and disclosed nothing, but agy's
+    headless mode auto-denied its own file and shell tools before any read.
+    It does this unsandboxed too, so agy studio trials still produce no
+    candidate until its permissions are settled (#785).
 - **Staging stays auditable.** Every workspace carries a
   `.staging_manifest.json` that lists staged, excluded, and size-skipped
   files (over 5 MB) and the reference images offered. It is also recorded
