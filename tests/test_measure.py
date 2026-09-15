@@ -143,6 +143,27 @@ def test_load_bodies_splits_a_merged_stl(tmp_path):
     assert measure.clearance(named, "body_0", "body_1").value == pytest.approx(4.0, abs=1e-5)
 
 
+def test_load_bodies_applies_scene_node_transforms(tmp_path):
+    # Placement lives in the scene graph, not in the geometry's local vertices:
+    # two identical 10 mm cubes, nodes 20 mm apart, so the true gap is 10 mm.
+    cube = trimesh.creation.box(extents=[10, 10, 10])
+    scene = trimesh.Scene()
+    scene.add_geometry(cube, node_name="body", geom_name="cube",
+                       transform=trimesh.transformations.translation_matrix([0, 0, 0]))
+    scene.add_geometry(cube, node_name="lid", geom_name="cube",
+                       transform=trimesh.transformations.translation_matrix([20, 0, 0]))
+    path = tmp_path / "assembly.glb"
+    scene.export(path)
+
+    named = measure.load_bodies(path)
+
+    assert sorted(named) == ["body", "lid"]
+    assert named["lid"].bounds[0] == pytest.approx([15, -5, -5])
+    result = measure.clearance(named, "body", "lid")
+    assert result.ok and result.details["interfering"] is False
+    assert result.value == pytest.approx(10.0, abs=1e-5)
+
+
 def test_sphere_section_area_matches_disc():
     radius = 10.0
     sphere = trimesh.creation.icosphere(subdivisions=5, radius=radius)
@@ -268,6 +289,17 @@ def test_measure_candidate_report_is_json_and_flags_load_errors(tmp_path):
     empty.write_bytes(b"")
     bad = measure.measure_candidate(empty)
     assert bad["ok"] is False and bad["error"]
+
+
+def test_measure_candidate_malformed_section_spec_is_an_error_entry(tmp_path):
+    path = tmp_path / "output.stl"
+    _tube().export(path)
+
+    report = measure.measure_candidate(path, sections=[{"axis": "z", "offst_mm": 1.0}])
+
+    assert report["ok"] is False
+    (section,) = [m for m in report["measurements"] if m["metric"] == "section_area"]
+    assert section["value"] is None and "invalid section spec" in section["error"]
 
 
 def test_step_mesh_matches_the_brep(tmp_path):

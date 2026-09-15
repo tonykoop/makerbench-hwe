@@ -166,11 +166,29 @@ def split_bodies(mesh: trimesh.Trimesh) -> dict[str, trimesh.Trimesh]:
 
 
 def load_bodies(path: str | Path) -> dict[str, trimesh.Trimesh]:
-    """Named bodies from a scene file (its geometry names) or split components."""
+    """Named bodies in world coordinates.
+
+    For a scene file (GLB/3MF/...) with more than one placed instance, each
+    scene-graph node becomes one body named after the node, with the node's
+    world transform applied. Placement often lives in the graph rather than in
+    the geometry's local vertices, and the same geometry may be instanced more
+    than once. Otherwise the merged mesh is split into ``body_<i>`` components.
+    """
     loaded = trimesh.load(Path(path).as_posix())
-    if isinstance(loaded, trimesh.Scene) and len(loaded.geometry) > 1:
-        return {name: loaded.geometry[name] for name in sorted(loaded.geometry)}
-    mesh = loaded.to_mesh() if isinstance(loaded, trimesh.Scene) else loaded
+    if isinstance(loaded, trimesh.Scene):
+        instances = []
+        for node in loaded.graph.nodes_geometry:
+            transform, geometry_name = loaded.graph[node]
+            geometry_mesh = loaded.geometry.get(geometry_name)
+            if isinstance(geometry_mesh, trimesh.Trimesh):
+                placed = geometry_mesh.copy()
+                placed.apply_transform(transform)
+                instances.append((str(node), placed))
+        if len(instances) > 1:
+            return dict(sorted(instances))
+        mesh = instances[0][1] if instances else loaded.to_mesh()
+    else:
+        mesh = loaded
     return split_bodies(mesh)
 
 
@@ -355,11 +373,17 @@ def measure_candidate(
     """
     try:
         mesh = load_mesh(path)
-    except (ValueError, OSError) as exc:
-        error = _fail("load", "", "trimesh/OCP load", str(exc)).to_dict()
-        return {"artifact": Path(path).name, "ok": False, "error": str(exc), "load": error}
+    except Exception as exc:  # noqa: BLE001 - any parser/kernel failure is a load error
+        detail = str(exc) or exc.__class__.__name__
+        error = _fail("load", "", "trimesh/OCP load", detail).to_dict()
+        return {"artifact": Path(path).name, "ok": False, "error": detail, "load": error}
     results = [volume(mesh), bbox(mesh), min_wall_thickness(mesh, samples=wall_samples, seed=seed)]
-    results.extend(section_area(mesh, **dict(spec)) for spec in sections)
+    for spec in sections:
+        try:
+            results.append(section_area(mesh, **dict(spec)))
+        except TypeError as exc:
+            results.append(_fail("section_area", "mm2", "mesh-plane intersection",
+                                 f"invalid section spec {dict(spec)!r}: {exc}"))
     errors = [f"{result.metric}: {result.error}" for result in results if not result.ok]
     return {
         "artifact": Path(path).name,
