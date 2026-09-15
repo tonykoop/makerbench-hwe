@@ -307,6 +307,66 @@ def test_export_winners_confirms_target_paths_before_writing(
         browser.close()
 
 
+def test_export_focus_returns_on_cancel_and_a_failed_export_offers_retry(
+    studio_url: str, analytics_repo: Path, screenshot_dir: Path
+):
+    """Claude UI review #779: keyboard focus never falls to <body> around the export confirm."""
+    # Focus moves in a Preact effect after render, so wait for it rather than read it once.
+    on_export = "() => (document.activeElement?.textContent || '').trim() === 'Export winners…'"
+    in_confirm = "() => document.activeElement?.id === 'export-confirm-title'"
+    with sync_playwright() as playwright:
+        browser = _launch(playwright, "zero-webgl")
+        session = Session(browser, f"{studio_url}/#/analytics/{RUN_A}", viewport={"width": 1440, "height": 1000})
+        page = session.page
+        page.wait_for_function(
+            "() => [...document.querySelectorAll('.export-section button')].some((b) => b.getAttribute('aria-disabled') === 'false')"
+        )
+        page.get_by_role("button", name="Export winners…").focus()
+
+        # Cancel by keyboard: focus goes back to the button that opened the confirm.
+        page.keyboard.press("Enter")
+        confirm = page.locator(".confirm")
+        confirm.wait_for()
+        page.wait_for_function(in_confirm, timeout=5_000)
+        confirm.get_by_role("button", name="Cancel").focus()
+        page.keyboard.press("Enter")
+        confirm.wait_for(state="detached")
+        page.wait_for_function(on_export, timeout=5_000)
+
+        # Escape cancels too, with the same focus rule.
+        page.keyboard.press("Enter")
+        confirm.wait_for()
+        page.wait_for_function(in_confirm, timeout=5_000)
+        page.keyboard.press("Escape")
+        confirm.wait_for(state="detached")
+        page.wait_for_function(on_export, timeout=5_000)
+
+        # A failed export is announced, takes focus, and offers a retry; nothing is written.
+        page.route(
+            "**/export-winners",
+            lambda route: route.fulfill(status=500, content_type="application/json", body=json.dumps({"detail": "disk full"})),
+        )
+        page.keyboard.press("Enter")
+        confirm.get_by_role("button", name="Overwrite 2 files").focus()
+        page.keyboard.press("Enter")
+        error = page.locator(".export-error")
+        error.get_by_text("disk full").wait_for()
+        page.wait_for_function("() => Boolean(document.activeElement?.closest('.export-error'))", timeout=5_000)
+        assert not (analytics_repo / "instruments").exists()
+        page.screenshot(path=str(screenshot_dir / "f4-analytics-export-failed.png"), full_page=True)
+
+        page.unroute("**/export-winners")
+        error.get_by_role("button", name="Try again").focus()
+        page.keyboard.press("Enter")
+        page.get_by_text("Exported 2 winners.").wait_for()
+        page.wait_for_function("() => document.activeElement && document.activeElement !== document.body", timeout=5_000)
+        assert (analytics_repo / "instruments" / "ocarina" / "winner.scad").exists()
+        # The only console error is the browser logging the deliberately failed request.
+        assert [error for error in session.errors if "500" not in error] == []
+        session.close()
+        browser.close()
+
+
 def test_families_filter_and_a_run_without_votes(studio_url: str, screenshot_dir: Path):
     with sync_playwright() as playwright:
         browser = _launch(playwright, "zero-webgl")

@@ -337,12 +337,20 @@ function FamiliesSection({ families }) {
 function ExportSection({ runId, summary }) {
   const [stage, setStage] = useState({ step: "idle" });
   const titleRef = useRef(null);
+  const exportRef = useRef(null);
+  const errorRef = useRef(null);
   const { targets, skipped } = exportTargets(summary.status === "ready" ? runInstruments(summary.data) : []);
   const unavailable = summary.status !== "ready" || targets.length === 0;
 
+  // The confirm, the sending state and the error each replace the control that had
+  // focus, so every step says where keyboard focus goes next (never <body>).
   useEffect(() => {
     if (stage.step === "confirm" || stage.step === "done") titleRef.current?.focus();
-  }, [stage.step]);
+    else if (stage.step === "error") errorRef.current?.focus();
+    else if (stage.step === "idle" && stage.returnFocus) exportRef.current?.focus();
+  }, [stage]);
+
+  const cancel = () => setStage({ step: "idle", returnFocus: true });
 
   const confirm = async () => {
     setStage({ step: "sending" });
@@ -365,6 +373,7 @@ function ExportSection({ runId, summary }) {
         <button
           type="button"
           class="button"
+          ref=${exportRef}
           aria-disabled=${unavailable || stage.step === "sending" ? "true" : "false"}
           onClick=${() => !unavailable && stage.step !== "sending" && setStage({ step: "confirm" })}
         >
@@ -375,7 +384,12 @@ function ExportSection({ runId, summary }) {
         </a>
       </div>
       ${stage.step === "confirm" &&
-      html`<div class="confirm" role="group" aria-labelledby="export-confirm-title">
+      html`<div
+        class="confirm"
+        role="group"
+        aria-labelledby="export-confirm-title"
+        onKeyDown=${(event) => event.key === "Escape" && cancel()}
+      >
         <p id="export-confirm-title" class="state-title" tabindex="-1" ref=${titleRef}>
           Overwrite ${plural(targets.length, "file")} in <code>instruments/</code>?
         </p>
@@ -388,11 +402,14 @@ function ExportSection({ runId, summary }) {
           <button type="button" class="button button-danger" onClick=${confirm}>
             Overwrite ${plural(targets.length, "file")}
           </button>
-          <button type="button" class="button button-quiet" onClick=${() => setStage({ step: "idle" })}>Cancel</button>
+          <button type="button" class="button button-quiet" onClick=${cancel}>Cancel</button>
         </div>
       </div>`}
       ${stage.step === "sending" && html`<${Loading} label="Exporting winners…" />`}
-      ${stage.step === "error" && html`<${ErrorState} error=${stage.error} />`}
+      ${stage.step === "error" &&
+      html`<div class="export-error" tabindex="-1" ref=${errorRef}>
+        <${ErrorState} error=${stage.error} onRetry=${confirm} />
+      </div>`}
       ${stage.step === "done" &&
       html`<div class="export-result">
         <p class="state-title" tabindex="-1" ref=${titleRef} role="status">
