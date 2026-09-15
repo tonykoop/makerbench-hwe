@@ -28,6 +28,9 @@ from makerbench.code_cad_agreement import (
     build_agreement_summary,
     render_markdown_summary,
 )
+# One escaping helper for every section of an exported report: the agreement
+# renderer uses the same function for its entrant cells (sol, #767).
+from makerbench.code_cad_agreement import escape_markdown_cell as _escape_markdown_cell
 from makerbench.code_cad_vote_surface import (
     BlindPair,
     VoteCandidate,
@@ -937,6 +940,11 @@ class ArenaStudioService:
                     not (tr.get("grade") or {}).get("compiled", False),
                     not (tr.get("grade") or {}).get("manifold", False),
                     rank_order.get(tr.get("model_id"), 999),
+                    # Two ghost entrants (both unrated) both default to 999 above;
+                    # break the tie deterministically instead of relying on
+                    # incidental trial-list order (#716).
+                    str(tr.get("model_id") or ""),
+                    str(tr.get("trial_id") or ""),
                 )
             )
             best = inst_trials[0] if inst_trials else None
@@ -975,7 +983,12 @@ class ArenaStudioService:
         }
 
     def export_report(self, run_dir: Path) -> str:
-        """Export a self-contained Markdown report for the run (Story #699)."""
+        """Export a self-contained Markdown report for the run (Story #699).
+
+        Entrant/instrument identifiers are agent-submitted or user-supplied
+        text, not a controlled vocabulary — ``_escape_markdown_cell`` keeps a
+        stray `|` or backtick from corrupting the table it lands in (#716).
+        """
         summary = self.get_run_summary(run_dir)
         agreement = self.get_run_agreement(run_dir)
         leaderboard_data = self.get_run_leaderboard(run_dir)
@@ -983,7 +996,7 @@ class ArenaStudioService:
         unrated = leaderboard_data.get("unrated_entrants") or []
 
         lines = [
-            f"# MakerBench Arena Studio — Report: {run_dir.name}",
+            f"# MakerBench Arena Studio — Report: {_escape_markdown_cell(run_dir.name)}",
             f"Generated at: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%SZ')}",
             "",
             "## Summary",
@@ -997,15 +1010,20 @@ class ArenaStudioService:
             "|------|---------|-----|------|--------|------|",
         ]
         for idx, row in enumerate(rated, 1):
+            entrant = _escape_markdown_cell(row.get("entrant"))
+            # Leaderboard rows key these `rating`/`draws` (see code_cad_arena.EntrantStats),
+            # not `elo`/`ties` -- the previous keys never matched, so every exported
+            # report silently showed a fixed 1500 Elo and 0 ties (#716).
             lines.append(
-                f"| {idx} | `{row.get('entrant')}` | {row.get('elo', 1500):.1f} | {row.get('wins', 0)} | {row.get('losses', 0)} | {row.get('ties', 0)} |"
+                f"| {idx} | `{entrant}` | {row.get('rating', 1500):.1f} | "
+                f"{row.get('wins', 0)} | {row.get('losses', 0)} | {row.get('draws', 0)} |"
             )
 
         if unrated:
             lines.extend([
                 "",
                 "### Unrated Entrants (0 Votes Cast)",
-                ", ".join(f"`{e}`" for e in unrated),
+                ", ".join(f"`{_escape_markdown_cell(e)}`" for e in unrated),
             ])
 
         lines.extend([
