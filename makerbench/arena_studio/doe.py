@@ -58,6 +58,7 @@ class DoeValidationError(ValueError):
 
 class DoeQueueExistsError(Exception):
     """A queue file already exists for this run name; replacing it needs explicit confirmation."""
+
 DEFAULT_TELEMETRY_STORE = "data/sessions.jsonl"
 
 # CLI providers billed under an existing subscription (see

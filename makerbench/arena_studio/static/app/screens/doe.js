@@ -273,9 +273,14 @@ export function DoeScreen() {
   const [write, setWrite] = useState({ status: "idle" });
   const writeRef = useRef(null);
   const replaceRef = useRef(null);
-  // The replace confirm and its dismissal each unmount the focused control.
+  const resultRef = useRef(null);
+  const errorRef = useRef(null);
+  // The replace confirm, its buttons and the sending state each unmount the focused
+  // control, so every outcome says where keyboard focus goes next (never <body>).
   useEffect(() => {
     if (write.status === "exists") replaceRef.current?.focus();
+    else if (write.status === "done" && write.replace) resultRef.current?.focus();
+    else if (write.status === "error" && write.replace) errorRef.current?.focus();
     else if (write.status === "idle" && write.returnFocus) writeRef.current?.focus();
   }, [write]);
 
@@ -300,7 +305,7 @@ export function DoeScreen() {
 
   const send = async (replace) => {
     if (busy || blockers.length) return;
-    setWrite({ status: "sending" });
+    setWrite({ status: "sending", replace });
     try {
       const result = await api("/api/doe/queue", {
         method: "POST",
@@ -316,10 +321,10 @@ export function DoeScreen() {
           replace,
         },
       });
-      setWrite({ status: "done", result });
+      setWrite({ status: "done", result, replace });
     } catch (error) {
       // 409: a queue already exists for this run name. Ask before replacing it.
-      setWrite(error.status === 409 ? { status: "exists", error } : { status: "error", error });
+      setWrite(error.status === 409 ? { status: "exists", error } : { status: "error", error, replace });
     }
   };
   const submit = (event) => {
@@ -458,9 +463,12 @@ export function DoeScreen() {
             <button type="button" class="button button-quiet" onClick=${keepExisting}>Keep the existing queue</button>
           </div>
         </div>`}
-        ${write.status === "error" && html`<${ErrorState} error=${write.error} />`}
+        ${write.status === "error" &&
+        html`<div class="doe-write-error" tabindex="-1" ref=${errorRef}>
+          <${ErrorState} error=${write.error} onRetry=${() => send(Boolean(write.replace))} />
+        </div>`}
         ${write.status === "done" &&
-        html`<div class="export-result doe-result" role="status">
+        html`<div class="export-result doe-result" role="status" tabindex="-1" ref=${resultRef}>
           <p class="state-title">
             Wrote ${plural(write.result.n_jobs || 0, "nightly job")} to <code>${write.result.queue_path}</code>. Nothing
             has run.

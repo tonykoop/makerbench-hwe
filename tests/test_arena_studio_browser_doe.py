@@ -303,13 +303,71 @@ def test_existing_queue_asks_before_it_is_replaced(studio_url: str, doe_repo: Pa
 
         page.keyboard.press("Enter")
         confirm.wait_for()
-        confirm.get_by_role("button", name="Replace the queue").click()
+        page.wait_for_function("() => document.activeElement?.id === 'doe-replace-title'", timeout=5_000)
+        confirm.get_by_role("button", name="Replace the queue").focus()
+        page.keyboard.press("Enter")
         page.locator(".doe-result").wait_for()
+        # Re-review #780: the Replace button unmounts; focus lands on the result, not <body>.
+        page.wait_for_function("() => Boolean(document.activeElement?.closest('.doe-result'))", timeout=5_000)
         _payload, jobs = nightly_cad.load_queue(existing)
         assert existing.read_bytes() != before and len(jobs) == 1
         assert len([url for url in session.requests if url.endswith("/api/doe/queue")]) == 3
         # The browser logs the 409 answers the page turns into a question.
         assert [error for error in session.errors if "409" not in error] == []
+        session.close()
+        browser.close()
+
+
+def test_a_failed_replace_keeps_focus_and_offers_retry(studio_url: str, doe_repo: Path, screenshot_dir: Path):
+    """Re-review #780: when "Replace the queue" fails, the error takes keyboard focus and
+    offers Try again, which re-sends the replace; nothing is written until it succeeds."""
+    run_dir = doe_repo / "runs" / "code_cad_arena" / "doe-ui-replace-fails"
+    run_dir.mkdir(parents=True)
+    existing = run_dir / "doe_queue.json"
+    existing.write_text('{"schema": "existing-queue-sentinel", "jobs": []}', encoding="utf-8")
+    before = existing.read_bytes()
+
+    def fail_replace(route):
+        if '"replace":true' in (route.request.post_data or "").replace(" ", ""):
+            route.fulfill(status=500, content_type="application/json", body=json.dumps({"detail": "disk full"}))
+        else:
+            route.continue_()
+
+    with sync_playwright() as playwright:
+        browser = _launch(playwright, "zero-webgl")
+        session = Session(browser, f"{studio_url}/#/doe", viewport={"width": 1440, "height": 1000})
+        page = session.page
+        page.locator("input[name=instrument][value=ocarina]").wait_for()
+        session.pick("ocarina")
+        page.fill("textarea[name=models]", SUBSCRIPTION)
+        page.fill("input[name=run_id]", "doe-ui-replace-fails")
+        page.wait_for_function(
+            "() => document.querySelector('.doe-write-form button[type=submit]').getAttribute('aria-disabled') === 'false'"
+        )
+        page.route("**/api/doe/queue", fail_replace)
+        _write_button(page).focus()
+        page.keyboard.press("Enter")
+        confirm = page.locator(".doe-replace")
+        confirm.wait_for()
+        page.wait_for_function("() => document.activeElement?.id === 'doe-replace-title'", timeout=5_000)
+        confirm.get_by_role("button", name="Replace the queue").focus()
+        page.keyboard.press("Enter")
+
+        error = page.locator(".doe-write-error")
+        error.get_by_text("disk full").wait_for()
+        page.wait_for_function("() => Boolean(document.activeElement?.closest('.doe-write-error'))", timeout=5_000)
+        assert existing.read_bytes() == before
+        page.screenshot(path=str(screenshot_dir / "f5-doe-replace-failed.png"), full_page=True)
+
+        page.unroute("**/api/doe/queue")
+        error.get_by_role("button", name="Try again").focus()
+        page.keyboard.press("Enter")
+        page.locator(".doe-result").wait_for()
+        page.wait_for_function("() => Boolean(document.activeElement?.closest('.doe-result'))", timeout=5_000)
+        _payload, jobs = nightly_cad.load_queue(existing)
+        assert existing.read_bytes() != before and len(jobs) == 1
+        # The browser logs the handled 409 and the routed 500.
+        assert [error for error in session.errors if "409" not in error and "500" not in error] == []
         session.close()
         browser.close()
 

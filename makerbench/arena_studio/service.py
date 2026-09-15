@@ -384,11 +384,6 @@ class ArenaStudioService:
                 f"run_id must be a safe path segment (letters/digits/_.-, no "
                 f"'/' or leading '.'), got {run_id!r}"
             )
-        queue_rel = f"runs/code_cad_arena/{run_id}/doe_queue.json"
-        if not replace and (self.repo_root / queue_rel).exists():
-            # The nightly runner may already be working through that queue's jobs
-            # (Claude UI review #780): never replace it without an explicit confirm.
-            raise doe.DoeQueueExistsError(f"{queue_rel} already exists; confirm to replace it")
         cells = doe.expand_matrix(
             instruments,
             models,
@@ -410,6 +405,13 @@ class ArenaStudioService:
             budget_usd=budget_usd,
             max_cost_usd_by_model=resolved_max_cost,
         )
+        # Checked after the request validates (unknown cost ceilings, the matrix), so a
+        # bad request answers 400 instead of first asking to replace a queue.
+        queue_rel = f"runs/code_cad_arena/{run_id}/doe_queue.json"
+        if not replace and (self.repo_root / queue_rel).exists():
+            # The nightly runner may already be working through that queue's jobs
+            # (Claude UI review #780): never replace it without an explicit confirm.
+            raise doe.DoeQueueExistsError(f"{queue_rel} already exists; confirm to replace it")
         run_dir = self.repo_root / "runs" / "code_cad_arena" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
         queue_path = run_dir / "doe_queue.json"

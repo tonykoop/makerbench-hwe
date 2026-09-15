@@ -309,6 +309,20 @@ def test_doe_queue_route_refuses_to_replace_an_existing_queue_without_confirmati
     assert jobs[0].budget_usd == 9.0
 
 
+def test_doe_queue_route_validates_before_asking_to_replace(client: TestClient, repo_root_with_reference: Path):
+    # Re-review #780 (non-blocking): an invalid request answers 400 even when the run
+    # name already has a queue, instead of first asking to replace it.
+    run_dir = repo_root_with_reference / "runs" / "code_cad_arena" / "doe_invalid_existing"
+    run_dir.mkdir(parents=True)
+    (run_dir / "doe_queue.json").write_text("{}", encoding="utf-8")
+    response = client.post(
+        "/api/doe/queue",
+        json={"run_id": "doe_invalid_existing", "instruments": ["ocarina"], "models": ["openrouter-paid-a", "openrouter-paid-b"], "levels": ["L1"], "seeds": [0]},
+    )
+    assert response.status_code == 400
+    assert "openrouter-paid-a" in response.json()["detail"]
+
+
 def test_doe_routes_keep_500_for_unexpected_server_errors(client: TestClient, monkeypatch: pytest.MonkeyPatch):
     def boom(*_args, **_kwargs):
         raise RuntimeError("telemetry store unreadable")
