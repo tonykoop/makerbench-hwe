@@ -667,6 +667,37 @@ class TestRevisions:
         for row in rows:
             assert store.revision_dir(did, row["rev_id"]).is_dir()
 
+    def test_update_draft_source_is_for_unfinished_revise_drafts_only(self, store):
+        """W6: a model's answer replaces a revise draft's source and rehashes it,
+        merging provenance; edit drafts and finished drafts are never rewritten."""
+        design = _design(store)
+        did = design["design_id"]
+        r1 = store.save_revision(did, draft_id=_finished_draft(store, did)["draft_id"])
+        base = store.revision_source(did, r1["rev_id"])
+        model = {"kind": "model", "model_id": "stub", "provider": "stub", "confinement": "unconfined", "prompt": "hollow", "max_turns": 40, "reference_images": []}
+        revise = store.create_draft(did, parent_rev_id=r1["rev_id"], source=base, kind="revise", editor=model)
+        updated = store.update_draft_source(did, revise["draft_id"], "cube(3);\n", editor={"confinement": "not_applicable", "reference_images": ["hero.png"]})
+        assert store.draft_source(did, revise["draft_id"]) == "cube(3);\n"
+        assert updated["source_sha256"] == ws._sha256_text("cube(3);\n") and updated["source_sha256"] != revise["source_sha256"]
+        assert updated["editor"]["confinement"] == "not_applicable" and updated["editor"]["reference_images"] == ["hero.png"]
+        assert updated["editor"]["model_id"] == "stub" and updated["editor"]["prompt_sha256"] == revise["editor"]["prompt_sha256"]
+        with pytest.raises(ws.WorkbenchError, match="confinement"):
+            store.update_draft_source(did, revise["draft_id"], "cube(4);\n", editor={"confinement": "totally"})
+        # an edit draft is never rewritten
+        edit = store.create_draft(did, parent_rev_id=r1["rev_id"], source=base, editor={"kind": "human", "voter": "t"})
+        with pytest.raises(ws.Conflict, match="revise"):
+            store.update_draft_source(did, edit["draft_id"], "cube(5);\n")
+        assert store.draft_source(did, edit["draft_id"]) == base
+        # a finished revise draft is fixed
+        store.update_draft_job(did, revise["draft_id"], status="succeeded")
+        with pytest.raises(ws.Conflict, match="finished"):
+            store.update_draft_source(did, revise["draft_id"], "cube(6);\n")
+        assert store.draft_source(did, revise["draft_id"]) == "cube(3);\n"
+        # the store refuses an unknown confinement word everywhere, and accepts the new one
+        with pytest.raises(ws.WorkbenchError):
+            ws.validate_editor({**model, "confinement": "trust-me"})
+        assert ws.validate_editor({**model, "confinement": "not_applicable"})["confinement"] == "not_applicable"
+
     def test_crash_between_rename_and_index_is_reconciled_on_the_next_save(self, store):
         # Simulate a crash after the publish rename: the directory is complete
         # but its index row never landed.

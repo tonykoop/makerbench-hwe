@@ -23,6 +23,7 @@ Model revisions (``revise``) are W6 and are refused here.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -49,6 +50,8 @@ from makerbench.workbench_store import (
     WorkbenchError,
     WorkbenchStore,
     is_valid_id,
+    MAX_FEEDBACK_BYTES,
+    TooLarge,
 )
 
 __all__ = [
@@ -70,6 +73,21 @@ MAX_PARAMS = 500
 #: Export target inside an instrument repo (W7, G14): never ``cad/``.
 EXPORT_SUBDIR = "arena/workbench"
 EXPORT_SCHEMA = "makerbench-workbench-export-v1"
+#: W6: entrants the Revise tab may pick. Live ones are subscription CLIs and
+#: need --allow-live; the stub is deterministic and calls nothing.
+REVISE_ENTRANTS: tuple[dict, ...] = (
+    {"model_id": "claude-default", "provider": "claude", "label": "Claude Code",
+     "policy": "restricted-tools", "note": "read-only tools, confined to the workspace"},
+    {"model_id": "codex-default", "provider": "codex", "label": "Codex",
+     "policy": "verified", "note": "runs inside the entrant sandbox"},
+    {"model_id": "agy-default", "provider": "agy", "label": "Antigravity (agy)",
+     "policy": "verified", "note": "runs inside the entrant sandbox"},
+    {"model_id": "stub", "provider": "stub", "label": "Stub (no model call)",
+     "policy": "not_applicable", "note": "deterministic placeholder design; spends nothing"},
+)
+#: G8: revise requests per server per minute.
+REVISE_PER_MINUTE = 3
+REVISE_SCHEMA = "makerbench-workbench-revise-v1"
 #: ``job.log`` is capped: the tail served to the browser never exceeds this.
 JOB_LOG_CAP_BYTES = 2 * 1024 * 1024
 #: Longest compile stderr the job copies into the log.
@@ -125,8 +143,13 @@ class WorkbenchService:
         max_running_per_design: int = MAX_RUNNING_PER_DESIGN,
         max_running_per_server: int = MAX_RUNNING_PER_SERVER,
         max_queued: int = MAX_QUEUED,
+        allow_live: bool = False,
     ):
         self.repo_root = Path(repo_root).resolve()
+        #: W6/G5: model revisions with a real entrant need the server started
+        #: with --allow-live; the stub never does (it calls nothing).
+        self.allow_live = bool(allow_live)
+        self._revise_times: list[float] = []
         self.registry_path = Path(registry_path).resolve()
         self.instruments_root = Path(instruments_root).resolve() if instruments_root else None
         self.source_root = Path(source_root).resolve() if source_root else Path(__file__).resolve().parents[2]
@@ -351,6 +374,140 @@ class WorkbenchService:
         self._enqueue(design_id, draft["draft_id"])
         return self.refresh_draft(design_id, draft["draft_id"])
 
+    # --- revise with a model (W6, G5) --------------------------------------------
+
+    def entrants(self) -> dict:
+        """The Revise tab's picker: every entrant with its availability, the
+        reason when unavailable, and its confinement policy. Availability is
+        probed now (binary on PATH; codex/agy also need the entrant sandbox),
+        never assumed."""
+
+        import shutil
+
+        from makerbench import entrant_sandbox
+        from makerbench.code_cad_providers import CLI_BINARIES
+
+        rows = []
+        sandbox_ok: Optional[bool] = None
+        for entry in REVISE_ENTRANTS:
+            row = dict(entry)
+            provider = row["provider"]
+            row["live"] = provider != "stub"
+            reason = None
+            if provider == "stub":
+                available = True
+            else:
+                binary = CLI_BINARIES.get(provider, provider)
+                if shutil.which(binary) is None:
+                    available, reason = False, f"unavailable: {binary} is not installed"
+                elif provider in ("codex", "agy"):
+                    if sandbox_ok is None:
+                        sandbox_ok = entrant_sandbox.sandbox_available()
+                    available = bool(sandbox_ok)
+                    reason = None if available else "unavailable: the entrant sandbox (bubblewrap) cannot start; cannot run"
+                else:
+                    available = True
+            row["available"] = available
+            row["reason"] = reason
+            if row["live"] and not self.allow_live:
+                row["allowed"] = False
+                row["reason"] = row["reason"] or "live revisions need the server started with --allow-live"
+            else:
+                row["allowed"] = available
+            rows.append(row)
+        return {"entrants": rows, "allow_live": self.allow_live, "max_turns": 40, "per_minute": REVISE_PER_MINUTE}
+
+    def _revise_entry(self, model_id: object) -> dict:
+        for entry in REVISE_ENTRANTS:
+            if entry["model_id"] == model_id:
+                return dict(entry)
+        raise WorkbenchError(f"unknown entrant {model_id!r}; pick one from /api/workbench/entrants")
+
+    def _check_revise_rate(self) -> None:
+        now = time.monotonic()
+        self._revise_times = [t for t in self._revise_times if now - t < 60.0]
+        if len(self._revise_times) >= REVISE_PER_MINUTE:
+            raise QueueFull(f"at most {REVISE_PER_MINUTE} model revisions per minute; try again shortly")
+        self._revise_times.append(now)
+
+    def start_revise(
+        self,
+        design_id: str,
+        *,
+        parent_rev_id: Optional[str],
+        model_id: str,
+        feedback: str,
+        include_images: bool = True,
+        voter: str = "tony",
+    ) -> dict:
+        """Queue a model revision of ``parent_rev_id``. Nothing runs here: the
+        detached job stages a studio-tier workspace, calls the entrant, records
+        its confinement from launch evidence and compiles the answer. A live
+        entrant is refused (403) unless the server allows live runs."""
+
+        entry = self._revise_entry(model_id)
+        feedback = str(feedback or "")
+        if not feedback.strip():
+            raise WorkbenchError("say what to change: feedback is empty")
+        if len(feedback.encode("utf-8")) > MAX_FEEDBACK_BYTES:
+            raise TooLarge(f"feedback is longer than {MAX_FEEDBACK_BYTES} bytes")
+        design = self.store.read_design(design_id)
+        base = self._parent_source(design_id, parent_rev_id)
+        if entry["provider"] != "stub" and not self.allow_live:
+            raise PermissionError("model revisions with a live entrant need a server started with --allow-live")
+        listing = {row["model_id"]: row for row in self.entrants()["entrants"]}
+        row = listing[entry["model_id"]]
+        if not row["available"]:
+            raise WorkbenchError(row["reason"] or f"{entry['label']} is unavailable")
+        self._check_capacity()
+        self._check_revise_rate()
+        draft = self.store.create_draft(
+            design_id, parent_rev_id=parent_rev_id, source=base,
+            editor={
+                "kind": "model", "model_id": entry["model_id"], "provider": entry["provider"],
+                # No process has run yet: the only honest value. The job
+                # replaces it from launch evidence (G5), never from policy.
+                "confinement": "unconfined",
+                "prompt": feedback, "max_turns": 40, "reference_images": [],
+            },
+            kind="revise",
+        )
+        request = {
+            "schema": REVISE_SCHEMA,
+            "model_id": entry["model_id"],
+            "provider": entry["provider"],
+            "policy": entry["policy"],
+            "feedback": feedback,
+            "include_images": bool(include_images),
+            "voter": voter,
+            "instrument_id": design["instrument_id"],
+            "backend": design["backend"],
+            "max_turns": 40,
+            "requested_at": _now(),
+        }
+        draft_dir = self.store.draft_dir(design_id, draft["draft_id"])
+        (draft_dir / "revise.json").write_text(json.dumps(request, indent=2, sort_keys=True), encoding="utf-8")
+        self._enqueue(design_id, draft["draft_id"])
+        return self.refresh_draft(design_id, draft["draft_id"])
+
+    def compare_draft(self, design_id: str, draft_id: str, against: str) -> dict:
+        """A finished draft against a saved revision: source diff, both
+        objective payloads and the parameter delta (the Revise tab opens this
+        on success, before the draft is saved)."""
+
+        draft = self.refresh_draft(design_id, draft_id)
+        if draft["job"].get("status") not in ("succeeded", "failed"):
+            raise Conflict(f"draft is {draft['job'].get('status')}; compare it once it has finished")
+        payload = self.store.compare_draft(design_id, against, draft_id)
+        design = self.store.read_design(design_id)
+        try:
+            pa = extract_parameters(self.store.revision_source(design_id, against), design["backend"])
+            pb = extract_parameters(self.store.draft_source(design_id, draft_id), design["backend"])
+            payload["parameter_delta"] = changed_values(pa, pb)
+        except (ParameterError, ValueError):
+            payload["parameter_delta"] = {}
+        return payload
+
     def parameters(self, design_id: str, rev_id: str) -> dict:
         design = self.store.read_design(design_id)
         source = self.store.revision_source(design_id, rev_id)
@@ -432,6 +589,8 @@ class WorkbenchService:
             sys.executable, "-m", "makerbench.cli", "arena", "workbench-job",
             "--draft-dir", str(draft_dir), "--registry", str(self.registry_path),
         ]
+        if self.instruments_root is not None:
+            command += ["--instruments-root", str(self.instruments_root)]
         with log_path.open("ab") as handle:
             handle.write(f"=== WORKBENCH JOB START {draft_id} ===\n".encode("utf-8"))
             handle.flush()
@@ -749,11 +908,13 @@ def _log(msg: str) -> None:
     print(msg, flush=True)
 
 
-def run_job(draft_dir: Path, registry_path: Path) -> int:
+def run_job(draft_dir: Path, registry_path: Path, instruments_root: Optional[Path] = None) -> int:
     """Body of ``arena workbench-job``: compile one draft in the sandbox,
     score it, and write ``objective.json``, ``params.json`` and the final
-    ``job`` block. Returns the process exit code (0 succeeded, 1 candidate
-    failed, 2 environment failure)."""
+    ``job`` block. A ``revise`` draft first stages a studio-tier workspace,
+    calls the entrant and records its confinement from launch evidence (W6).
+    Returns the process exit code (0 succeeded, 1 candidate failed, 2
+    environment failure)."""
 
     draft_dir = Path(draft_dir).resolve()
     draft_json = draft_dir / "draft.json"
@@ -769,6 +930,11 @@ def run_job(draft_dir: Path, registry_path: Path) -> int:
     out_dir = draft_dir / "artifacts"
     started = time.monotonic()
     _log(f"backend={backend} draft={draft_id} design={design_id}")
+
+    if draft.get("kind") == "revise":
+        code = _run_revise(store, draft, draft_dir, registry_path, instruments_root, started)
+        if code is not None:
+            return code
 
     # params.json is pure text analysis: always produced.
     try:
@@ -836,6 +1002,149 @@ def run_job(draft_dir: Path, registry_path: Path) -> int:
     }
     (draft_dir / "objective.json").write_text(json.dumps(objective, indent=2, sort_keys=True, default=str), encoding="utf-8")
     return _finish(store, design_id, draft_id, "succeeded", 0, None, started)
+
+
+def _revise_prompt(source: str, feedback: str, backend: str) -> str:
+    """The revision instruction: the current source, the maker's feedback,
+    and the ask to return the whole revised program."""
+
+    fence = "python" if backend == "cadquery" else "openscad"
+    return (
+        "You are revising an existing design in the Arena Studio workbench.\n\n"
+        f"Current source (`{fence}`):\n\n```{fence}\n{source}\n```\n\n"
+        f"Requested change:\n{feedback.strip()}\n\n"
+        "Keep everything that was not asked to change. Return the complete revised program "
+        "as the single fenced code block the format requires."
+    )
+
+
+def _confinement_from_evidence(provider: str, generator: Any, request: Any) -> str:
+    """The store's confinement word, derived only from what the launch
+    proved (G5), never from the entrant's policy: the stub ran no process;
+    claude's generator only ever launches with its read-only, workspace-
+    confined flags, so a returned answer means it ran that way; codex and
+    agy are ``verified`` only when their generator observed the sandboxed
+    launch, else ``unconfined`` (and the answer is discarded)."""
+
+    from makerbench.code_cad_providers import ran_sandboxed
+
+    if provider == "stub":
+        return "not_applicable"
+    if provider == "claude":
+        return "restricted-tools"
+    sandboxed = ran_sandboxed(generator, model_id=request.model_id, instrument_id=request.instrument_id,
+                              seed=request.seed, context_tier=request.context_tier)
+    return "verified" if sandboxed else "unconfined"
+
+
+def _run_revise(store: WorkbenchStore, draft: dict, draft_dir: Path, registry_path: Path,
+                instruments_root: Optional[Path], started: float) -> Optional[int]:
+    """Stage, call the entrant, rewrite the draft source. Returns an exit code
+    when the revision failed (the job ends), else None (the compile follows)."""
+
+    from makerbench.code_cad_context_staging import stage_workspace
+    from makerbench.code_cad_generator import GenerationRequest
+    from makerbench.code_cad_providers import resolve_generator
+
+    design_id, draft_id = draft["design_id"], draft["draft_id"]
+    try:
+        request = json.loads((draft_dir / "revise.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return _finish(store, design_id, draft_id, "failed", 2, f"revise request unreadable: {exc}", started)
+    provider, model_id = str(request.get("provider")), str(request.get("model_id"))
+    backend = draft["backend"]
+    design = store.read_design(design_id)
+    instrument_id = design["instrument_id"]
+    source_path = draft_dir / draft["source_name"]
+    parent_source = source_path.read_text(encoding="utf-8", errors="replace")
+
+    # 1. Stage a studio-tier workspace: the parent source plus the instrument
+    #    repo copy (private/ excluded by the tier). No workspace, no launch.
+    workspace = draft_dir / "workspace"
+    repo_dir: Optional[Path] = None
+    spec: Optional[dict] = None
+    try:
+        registry = load_arena_registry(registry_path)
+        spec = next((dict(s) for s in registry["instruments"] if s.get("id") == instrument_id), None)
+    except (OSError, ValueError):
+        spec = None
+    if instruments_root is not None:
+        repo_path = str((spec or {}).get("repo_path") or "")
+        parts = Path(repo_path).parts
+        if repo_path and not Path(repo_path).is_absolute() and not any(p == ".." or p.lower() == "private" for p in parts):
+            candidate = Path(instruments_root).resolve()
+            ok = True
+            for part in parts:
+                candidate = candidate / part
+                if candidate.is_symlink() or not candidate.is_dir():
+                    ok = False
+                    break
+            if ok and candidate.resolve().is_relative_to(Path(instruments_root).resolve()):
+                repo_dir = candidate.resolve()
+    try:
+        workspace.mkdir(parents=True, exist_ok=True)
+        (workspace / draft["source_name"]).write_text(parent_source, encoding="utf-8")
+        if repo_dir is not None:
+            manifest = stage_workspace(tier="studio", instrument_id=instrument_id, repo_dir=repo_dir, workspace_dir=workspace)
+        else:
+            manifest = {"schema": "makerbench-code-cad-context-staging-v1", "tier": "studio", "instrument_id": instrument_id,
+                        "staged_files": [draft["source_name"]], "excluded_files": [], "reference_images": [],
+                        "note": "no instrument repo staged: the Studio has no --instruments-root or the instrument has no repo_path"}
+            (workspace / ".staging_manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001 - staging failed: nothing launches
+        _log(f"ERROR staging failed: {exc}")
+        return _finish(store, design_id, draft_id, "failed", 2, f"staging failed, nothing was launched: {exc}"[:2000], started)
+    if not (workspace / ".staging_manifest.json").is_file():
+        return _finish(store, design_id, draft_id, "failed", 2, "staging produced no manifest; nothing was launched", started)
+    images = [str(p) for p in (manifest.get("reference_images") or [])] if request.get("include_images", True) else []
+    _log(f"revise: staged studio workspace ({len(manifest.get('staged_files') or [])} files, {len(images)} reference images)")
+
+    # 2. Call the entrant through the arena's own factories (claude with its
+    #    read-only tools; codex/agy through entrant_sandbox; the stub in-process).
+    prompt = _revise_prompt(parent_source, str(request.get("feedback") or ""), backend)
+    gen_request = GenerationRequest(
+        model_id=model_id, instrument_id=instrument_id, seed=0, spec=spec or {},
+        prompt=prompt, prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        context_tier="studio", workspace_dir=str(workspace),
+    )
+    try:
+        generator = resolve_generator(model_id, stub=provider == "stub", backend=backend, timeout_s=int(request.get("timeout_s") or 900))
+    except ValueError as exc:
+        return _finish(store, design_id, draft_id, "failed", 2, f"no generator: {exc}", started)
+    _log(f"revise: calling {model_id} ({provider}); confinement policy {request.get('policy')}, recorded from launch evidence only")
+    t0 = time.monotonic()
+    try:
+        revised = generator(gen_request)
+    except SandboxUnavailable as exc:
+        _log(f"ERROR sandbox_unavailable: {exc}")
+        return _finish(store, design_id, draft_id, "failed", 2, f"sandbox_unavailable: {exc}", started)
+    except TimeoutError as exc:
+        _log(f"ERROR entrant timed out: {exc}")
+        return _finish(store, design_id, draft_id, "failed", 1, f"the entrant timed out: {exc}"[:2000], started)
+    except Exception as exc:  # noqa: BLE001 - a refused/failed launch is a failed draft
+        _log(f"ERROR entrant failed: {exc}")
+        return _finish(store, design_id, draft_id, "failed", 1, f"the entrant failed: {exc}"[:2000], started)
+    confinement = _confinement_from_evidence(provider, generator, gen_request)
+    _log(f"revise: {model_id} returned {len(revised.encode('utf-8'))} bytes in {time.monotonic() - t0:.1f}s; confinement {confinement} (from launch evidence)")
+    if confinement == "unconfined":
+        return _finish(store, design_id, draft_id, "failed", 2, "confinement not verified from the launch evidence; the answer was discarded", started)
+    if not str(revised).strip():
+        return _finish(store, design_id, draft_id, "failed", 1, "the entrant returned an empty program", started)
+
+    # 3. The draft's source becomes the answer; provenance records what ran.
+    try:
+        store.update_draft_source(design_id, draft_id, str(revised), editor={
+            "confinement": confinement, "reference_images": [Path(p).name for p in images][:64],
+        })
+    except (WorkbenchError, Conflict, TooLarge) as exc:
+        return _finish(store, design_id, draft_id, "failed", 1, f"the entrant's answer was refused: {exc}"[:2000], started)
+    evidence = {
+        "schema": REVISE_SCHEMA, "model_id": model_id, "provider": provider, "confinement": confinement,
+        "policy": request.get("policy"), "prompt_sha256": gen_request.prompt_sha256, "staged_files": len(manifest.get("staged_files") or []),
+        "reference_images": [Path(p).name for p in images], "elapsed_s": round(time.monotonic() - t0, 3), "returned_bytes": len(str(revised).encode("utf-8")),
+    }
+    (draft_dir / "revise.evidence.json").write_text(json.dumps(evidence, indent=2, sort_keys=True), encoding="utf-8")
+    return None
 
 
 def _sandbox_evidence(backend: str) -> dict:

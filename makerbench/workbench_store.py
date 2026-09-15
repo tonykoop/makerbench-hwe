@@ -64,6 +64,12 @@ ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 BACKENDS = ("openscad", "cadquery")
 SOURCE_NAMES = {"openscad": "source.scad", "cadquery": "source.py"}
 EDITOR_KINDS = ("human", "model", "parameters")
+#: Model-revision confinement, recorded from launch evidence only (W6, G5):
+#: ``verified`` (codex/agy ran inside the entrant sandbox), ``restricted-tools``
+#: (claude ran with read-only tools confined to the workspace),
+#: ``not_applicable`` (the stub: no process ran) and ``unconfined`` (no
+#: evidence, never saveable).
+CONFINEMENT_VALUES = ("verified", "unconfined", "restricted-tools", "not_applicable")
 ORIGIN_KINDS = ("trial", "master", "blank")
 DRAFT_KINDS = ("edit", "parameters", "revise")
 JOB_STATUSES = ("queued", "running", "succeeded", "failed", "cancelled", "interrupted")
@@ -148,8 +154,8 @@ def validate_editor(editor: Mapping[str, Any]) -> dict:
         out["model_id"] = _check_text(editor.get("model_id"), "editor.model_id")
         out["provider"] = _check_text(editor.get("provider"), "editor.provider")
         confinement = editor.get("confinement")
-        if confinement not in ("verified", "unconfined", "restricted-tools"):
-            raise WorkbenchError("editor.confinement must be verified, unconfined or restricted-tools")
+        if confinement not in CONFINEMENT_VALUES:
+            raise WorkbenchError(f"editor.confinement must be one of {CONFINEMENT_VALUES}")
         out["confinement"] = confinement
         prompt = _check_text(editor.get("prompt"), "editor.prompt", MAX_FEEDBACK_BYTES)
         out["prompt_sha256"] = _sha256_text(prompt) if prompt else editor.get("prompt_sha256")
@@ -458,6 +464,28 @@ class WorkbenchStore:
         """Host path of a draft, for the job runner only."""
 
         return self._draft_dir(design_id, draft_id)
+
+    def update_draft_source(self, design_id: str, draft_id: str, source: str, *, editor: Optional[Mapping[str, Any]] = None) -> dict:
+        """Replace a draft's source (a model revision returned it) and rehash
+        it, merging ``editor`` provenance fields (re-validated). Only a
+        ``revise`` draft that has not finished may be rewritten (W6)."""
+
+        source = _check_source(source)
+        draft_dir = self._draft_dir(design_id, draft_id)
+        path = draft_dir / "draft.json"
+        with file_lock(path):
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if payload.get("kind") != "revise":
+                raise Conflict("only a revise draft's source can be rewritten")
+            if payload["job"].get("status") in FINISHED_STATUSES:
+                raise Conflict("this draft has finished; its source is fixed")
+            merged = dict(payload["editor"])
+            merged.update(dict(editor or {}))
+            payload["editor"] = validate_editor(merged)
+            (draft_dir / payload["source_name"]).write_text(source, encoding="utf-8")
+            payload["source_sha256"] = _sha256_text(source)
+            atomic_write_json(path, payload)
+        return payload
 
     def update_draft_job(self, design_id: str, draft_id: str, **fields: Any) -> dict:
         """Update the mutable job block of a draft (status, pid, times, error)."""
@@ -775,6 +803,23 @@ class WorkbenchStore:
 
         ra, rb = self.read_revision(design_id, a), self.read_revision(design_id, b)
         sa, sb = self.revision_source(design_id, a), self.revision_source(design_id, b)
+        return {
+            "a": ra,
+            "b": rb,
+            "diff": source_diff(sa, sb),
+            "objective_delta": _objective_delta(ra.get("objective"), rb.get("objective")),
+        }
+
+    def compare_draft(self, design_id: str, rev_id: str, draft_id: str) -> dict:
+        """A saved revision (``a``) against an unsaved draft (``b``): the
+        Revise tab's compare-on-success (W6). Same shape as :meth:`compare`;
+        ``b`` carries ``kind: "draft"`` and the draft id so the UI serves the
+        draft's artifacts."""
+
+        ra = self.read_revision(design_id, rev_id)
+        rb = self.read_draft(design_id, draft_id)
+        rb["kind_of_item"] = "draft"
+        sa, sb = self.revision_source(design_id, rev_id), self.draft_source(design_id, draft_id)
         return {
             "a": ra,
             "b": rb,

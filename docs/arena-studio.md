@@ -347,7 +347,21 @@ preview and objective checks, and save each step as an append-only revision.
   the result lists what was written and takes focus. The export never
   touches `cad/` and never runs git: committing stays your decision.
 
-The Revise tab (model revisions) arrives in a later slice.
+- **Revise with a model.** The Revise tab lists the entrants with their
+  availability as the server probes it (binary on `PATH`; codex and agy also
+  need the entrant sandbox) and, for live ones, whether the server was started
+  with `--allow-live`. Choose one, say what should change (up to 8 KiB), and
+  the in-page confirm names what will be called ("This calls Claude Code on
+  your subscription"); the stub entrant runs a deterministic placeholder and
+  calls nothing. The job stages a studio-tier copy of the instrument repo
+  (never `private/`) next to the current source, calls the entrant through the
+  arena's own confined launchers (Claude with read-only tools, codex and agy
+  inside the entrant sandbox), and records the confinement **from the launch
+  evidence only**: an answer without evidence is discarded and the draft
+  fails. On success the Compare panel opens against the parent; "Save as
+  revision" keeps the model, provider and confinement in the revision's
+  provenance. At most three revisions a minute per server. The capped live
+  smoke test stays a separate, Tony-gated step.
 
 ## Security model
 

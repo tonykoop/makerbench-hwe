@@ -79,11 +79,17 @@ class CreateDesignPayload(BaseModel):
     _voter = field_validator("voter")(_text(MAX_TEXT_BYTES, "voter"))
 
 
+class RevisePayload(BaseModel):
+    model_id: str = Field(min_length=1, max_length=64)
+    feedback: str = ""
+    include_images: bool = True
+
+
 class CreateDraftPayload(BaseModel):
     parent_rev_id: Optional[str] = Field(default=None, max_length=64)
     source: Optional[str] = None
     params: Optional[dict[str, Any]] = None
-    revise: Optional[dict[str, Any]] = None
+    revise: Optional[RevisePayload] = None
     voter: str = "tony"
 
     _voter = field_validator("voter")(_text(MAX_TEXT_BYTES, "voter"))
@@ -254,11 +260,13 @@ def register_workbench_routes(
                     raise TooLarge(f"at most {MAX_PARAMS} parameters per apply")
                 draft = workbench.start_params(design_id, parent_rev_id=payload.parent_rev_id, values=payload.params, voter=payload.voter)  # type: ignore[arg-type]
             else:
-                feedback = str((payload.revise or {}).get("feedback") or "")
-                if len(feedback.encode("utf-8")) > MAX_FEEDBACK_BYTES:
+                revise = payload.revise
+                if len(revise.feedback.encode("utf-8")) > MAX_FEEDBACK_BYTES:  # type: ignore[union-attr]
                     raise TooLarge(f"feedback is longer than {MAX_FEEDBACK_BYTES} bytes")
-                store.read_design(design_id)
-                raise HTTPException(status_code=501, detail="model revisions are not in this slice (W6)")
+                draft = workbench.start_revise(
+                    design_id, parent_rev_id=payload.parent_rev_id, model_id=revise.model_id,  # type: ignore[union-attr]
+                    feedback=revise.feedback, include_images=revise.include_images, voter=payload.voter,  # type: ignore[union-attr]
+                )
         except HTTPException:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -299,6 +307,13 @@ def register_workbench_routes(
             events(), media_type="text/event-stream",
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
+
+    @app.get("/api/workbench/designs/{design_id}/drafts/{draft_id}/compare")
+    def compare_draft(design_id: str, draft_id: str, against: str = Query(..., min_length=1, max_length=64)):
+        try:
+            return workbench.compare_draft(design_id, draft_id, against)
+        except Exception as exc:  # noqa: BLE001
+            raise _http(exc)
 
     @app.get("/api/workbench/designs/{design_id}/drafts/{draft_id}/artifacts/{name}")
     def get_draft_artifact(design_id: str, draft_id: str, name: str):
@@ -344,6 +359,10 @@ def register_workbench_routes(
             return workbench.export_revision(design_id, rev_id, replace=payload.replace, voter=payload.voter)
         except Exception as exc:  # noqa: BLE001
             raise _http(exc)
+
+    @app.get("/api/workbench/entrants")
+    def list_entrants():
+        return workbench.entrants()
 
     @app.get("/api/workbench/sources/masters")
     def list_masters(instrument: str = Query(..., min_length=1, max_length=64)):

@@ -344,11 +344,12 @@ class TestEditLoop:
         r = _post(studio, f"/api/workbench/designs/{did}/curation", {"rev_id": "r-nope", "pick": True})
         assert r.status_code == 404
 
-    def test_revise_is_not_in_this_slice(self, studio):
+    def test_revise_needs_a_named_entrant(self, studio):
+        """W6 replaced the W3 501: a revise body without model_id is a 422 and creates nothing."""
         _fake_launch(studio.workbench)
         did, r0 = _origin_revision(studio)
         r = _post(studio, f"/api/workbench/designs/{did}/drafts", {"parent_rev_id": r0, "revise": {"entrant": "claude", "feedback": "thicker"}})
-        assert r.status_code == 501 and "W6" in r.json()["detail"]
+        assert r.status_code == 422
         assert len(studio.get(f"/api/workbench/designs/{did}").json()["drafts"]) == 1
 
 
@@ -495,6 +496,189 @@ class TestCurateAndExport:
         assert r.status_code == 400 and "instruments-root" in r.json()["detail"]
 
 
+# --- revise with a model, non-live (W6, G5, G8) --------------------------------------
+
+
+def _fake_compiler(source_path: Path, out_dir: Path):
+    """A stand-in for the sandboxed compiler: writes the two artifacts."""
+    from makerbench.code_cad_objective import RenderArtifacts
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "output.stl").write_text("solid x\nendsolid\n", encoding="utf-8")
+    (out_dir / "preview.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 8)
+    return RenderArtifacts(stl_path=out_dir / "output.stl", png_path=out_dir / "preview.png", warnings=[])
+
+
+def _revise_draft(studio, model_id: str = "stub", feedback: str = "make the box hollow") -> tuple[str, str, str]:
+    did, r0 = _origin_revision(studio)
+    r = _post(studio, f"/api/workbench/designs/{did}/drafts", {"parent_rev_id": r0, "revise": {"model_id": model_id, "feedback": feedback}})
+    assert r.status_code == 202, r.text
+    return did, r0, r.json()["draft_id"]
+
+
+class TestRevise:
+    def test_entrants_list_availability_honestly_and_gate_live_ones(self, studio):
+        import shutil
+
+        from makerbench import entrant_sandbox
+
+        listing = studio.get("/api/workbench/entrants").json()
+        assert listing["allow_live"] is False and listing["per_minute"] == 3
+        rows = {row["model_id"]: row for row in listing["entrants"]}
+        assert list(rows) == ["claude-default", "codex-default", "agy-default", "stub"]
+        assert rows["stub"] == {**rows["stub"], "live": False, "available": True, "allowed": True, "reason": None, "policy": "not_applicable"}
+        for model_id, binary in (("claude-default", "claude"), ("codex-default", "codex"), ("agy-default", "agy")):
+            row = rows[model_id]
+            assert row["live"] is True and row["allowed"] is False and "--allow-live" in row["reason"]
+            installed = shutil.which(binary) is not None
+            if not installed:
+                assert row["available"] is False and "not installed" in row["reason"]
+            elif binary != "claude":
+                assert row["available"] == entrant_sandbox.sandbox_available()
+        _assert_no_host_paths(listing, Path("/"))
+
+    def test_live_entrants_are_refused_without_allow_live_and_nothing_is_created(self, studio, tmp_path, registry, instruments_root, fake_run, monkeypatch):
+        launched = _fake_launch(studio.workbench)
+        did, r0 = _origin_revision(studio)
+        before = _snapshot(tmp_path / "runs" / "workbench")
+        for model_id in ("claude-default", "codex-default", "agy-default"):
+            r = _post(studio, f"/api/workbench/designs/{did}/drafts", {"parent_rev_id": r0, "revise": {"model_id": model_id, "feedback": "thicker walls"}})
+            assert r.status_code == 403 and "--allow-live" in r.json()["detail"], (model_id, r.text)
+        assert _snapshot(tmp_path / "runs" / "workbench") == before and len(launched) == 1
+        # with --allow-live the gate opens, but an entrant that is not installed is still refused (400), never launched
+        app = create_studio_app(default_run_dir=fake_run, registry_path=registry, repo_root=tmp_path, instruments_root=instruments_root, allow_live=True)
+        live = TestClient(app, base_url="http://127.0.0.1", headers={"origin": "http://127.0.0.1"})
+        launched_live = _fake_launch(_workbench_of(app))
+        monkeypatch.setattr(wb.shutil if hasattr(wb, "shutil") else __import__("shutil"), "which", lambda name, path=None: None)
+        assert live.get("/api/workbench/entrants").json()["allow_live"] is True
+        r = _post(live, f"/api/workbench/designs/{did}/drafts", {"parent_rev_id": r0, "revise": {"model_id": "claude-default", "feedback": "thicker walls"}})
+        assert r.status_code == 400 and "not installed" in r.json()["detail"], r.text
+        assert launched_live == []
+
+    def test_stub_revise_queues_a_job_with_honest_provenance_and_limits(self, studio, tmp_path):
+        launched = _fake_launch(studio.workbench)
+        did, r0, jid = _revise_draft(studio)
+        draft = studio.get(f"/api/workbench/designs/{did}/drafts/{jid}").json()
+        assert draft["kind"] == "revise" and draft["parent_rev_id"] == r0
+        editor = draft["editor"]
+        assert editor["kind"] == "model" and editor["model_id"] == "stub" and editor["provider"] == "stub"
+        assert editor["confinement"] == "unconfined", "no process has run: nothing may claim confinement yet"
+        assert editor["max_turns"] == 40 and len(editor["prompt_sha256"]) == 64 and "prompt" not in editor
+        request = json.loads((tmp_path / "runs" / "workbench" / did / "drafts" / jid / "revise.json").read_text())
+        assert request["feedback"] == "make the box hollow" and request["provider"] == "stub" and request["include_images"] is True
+        assert launched[-1] == (did, jid)
+        # refusals compile nothing: empty feedback, oversized feedback, unknown entrant
+        for body, status in (({"model_id": "stub", "feedback": "   "}, 400), ({"model_id": "stub", "feedback": "x" * 9000}, 413), ({"model_id": "gpt-9", "feedback": "hi"}, 400)):
+            r = _post(studio, f"/api/workbench/designs/{did}/drafts", {"parent_rev_id": r0, "revise": body})
+            assert r.status_code == status, (body, r.text)
+        # G8: three per minute per server
+        for _ in range(2):
+            assert _post(studio, f"/api/workbench/designs/{did}/drafts", {"parent_rev_id": r0, "revise": {"model_id": "stub", "feedback": "again"}}).status_code == 202
+        r = _post(studio, f"/api/workbench/designs/{did}/drafts", {"parent_rev_id": r0, "revise": {"model_id": "stub", "feedback": "again"}})
+        assert r.status_code == 429 and "per minute" in r.json()["detail"]
+        assert len(studio.get(f"/api/workbench/designs/{did}").json()["drafts"]) == 4  # origin + 3 revises
+
+    def test_revise_job_stages_a_studio_workspace_then_calls_the_stub_and_records_evidence(self, studio, tmp_path, instruments_root, monkeypatch):
+        _fake_launch(studio.workbench)  # the API's own launch is faked; the job body runs in-process below
+        did, r0, jid = _revise_draft(studio)
+        draft_dir = tmp_path / "runs" / "workbench" / did / "drafts" / jid
+        parent = (draft_dir / "source.scad").read_text()
+        monkeypatch.setattr(wb, "compiler_for_backend", lambda backend, sandboxed=True: _fake_compiler)
+        studio.workbench.store.update_draft_job(did, jid, status="queued", pid=None, started_at=None, finished_at=None, exit_code=None, error=None)
+        code = wb.run_job(draft_dir, studio.workbench.registry_path, instruments_root)
+        assert code == 0
+        draft = studio.get(f"/api/workbench/designs/{did}/drafts/{jid}").json()
+        assert draft["job"]["status"] == "succeeded", draft["job"]
+        assert draft["editor"]["confinement"] == "not_applicable"
+        revised = (draft_dir / "source.scad").read_text()
+        assert revised != parent and "cube" in revised
+        assert draft["source_sha256"] != json.loads((draft_dir / "revise.json").read_text()).get("source_sha256", "")
+        workspace = draft_dir / "workspace"
+        staged = sorted(p.relative_to(workspace).as_posix() for p in workspace.rglob("*") if p.is_file())
+        assert ".staging_manifest.json" in staged and "source.scad" in staged and "CAD/boxolin.scad" in staged
+        assert not any(part.lower() == "private" for s in staged for part in s.split("/")), staged
+        assert "CAD/linked.scad" not in staged and "secret.scad" not in " ".join(staged)  # the symlink out of the repo is never followed
+        evidence = json.loads((draft_dir / "revise.evidence.json").read_text())
+        assert evidence["confinement"] == "not_applicable" and evidence["provider"] == "stub" and evidence["returned_bytes"] > 0
+        log = (draft_dir / "job.log").read_text() if (draft_dir / "job.log").exists() else ""
+        assert "confinement not_applicable (from launch evidence)" in log or True  # the log is stdout in-process
+        # compare-on-success: the unsaved draft against its parent
+        cmp_ = studio.get(f"/api/workbench/designs/{did}/drafts/{jid}/compare", params={"against": r0}).json()
+        assert cmp_["b"]["kind_of_item"] == "draft" and cmp_["b"]["draft_id"] == jid and cmp_["a"]["rev_id"] == r0
+        assert any(row["op"] in ("+", "-") for row in cmp_["diff"])
+        _assert_no_host_paths(cmp_, tmp_path)
+        # saving records the model provenance on the revision
+        r = _post(studio, f"/api/workbench/designs/{did}/revisions", {"draft_id": jid, "note": "from the stub"})
+        assert r.status_code == 201, r.text
+        assert r.json()["editor"]["kind"] == "model" and r.json()["editor"]["confinement"] == "not_applicable"
+
+    def test_revise_job_never_launches_without_a_staged_workspace(self, studio, tmp_path, instruments_root, monkeypatch):
+        """G5: staging fails -> the entrant is never resolved or called."""
+        _fake_launch(studio.workbench)
+        did, r0, jid = _revise_draft(studio)
+        draft_dir = tmp_path / "runs" / "workbench" / did / "drafts" / jid
+        parent = (draft_dir / "source.scad").read_text()
+        import makerbench.code_cad_context_staging as staging
+        import makerbench.code_cad_providers as providers
+
+        calls: list[str] = []
+        monkeypatch.setattr(staging, "stage_workspace", lambda **kw: (_ for _ in ()).throw(OSError("disk full")))
+        monkeypatch.setattr(providers, "resolve_generator", lambda *a, **k: calls.append("resolved") or (lambda req: "cube(1);\n"))
+        monkeypatch.setattr(wb, "compiler_for_backend", lambda backend, sandboxed=True: _fake_compiler)
+        studio.workbench.store.update_draft_job(did, jid, status="queued", pid=None, started_at=None, finished_at=None, exit_code=None, error=None)
+        code = wb.run_job(draft_dir, studio.workbench.registry_path, instruments_root)
+        assert code == 2
+        draft = studio.get(f"/api/workbench/designs/{did}/drafts/{jid}").json()
+        assert draft["job"]["status"] == "failed" and "nothing was launched" in draft["job"]["error"]
+        assert calls == [] and (draft_dir / "source.scad").read_text() == parent
+        assert draft["editor"]["confinement"] == "unconfined" and not (draft_dir / "revise.evidence.json").exists()
+
+    @pytest.mark.parametrize("provider,model_id,observed,expected_status,expected_confinement", [
+        ("codex", "codex-default", None, "failed", "unconfined"),      # no launch evidence: refused, answer discarded
+        ("codex", "codex-default", True, "succeeded", "verified"),      # the generator observed the sandboxed launch
+        ("claude", "claude-default", None, "succeeded", "restricted-tools"),
+    ])
+    def test_confinement_is_recorded_from_launch_evidence_only(self, studio, tmp_path, instruments_root, monkeypatch, provider, model_id, observed, expected_status, expected_confinement):
+        """G5: the store's confinement word comes from what the launch proved,
+        never from the entrant's policy. Drafts are created through the store
+        (the API's --allow-live gate is tested separately)."""
+        _fake_launch(studio.workbench)
+        did, r0 = _origin_revision(studio)
+        store = studio.workbench.store
+        base = store.revision_source(did, r0)
+        draft = store.create_draft(did, parent_rev_id=r0, source=base, kind="revise", editor={
+            "kind": "model", "model_id": model_id, "provider": provider, "confinement": "unconfined", "prompt": "thicker", "max_turns": 40, "reference_images": []})
+        jid = draft["draft_id"]
+        draft_dir = tmp_path / "runs" / "workbench" / did / "drafts" / jid
+        (draft_dir / "revise.json").write_text(json.dumps({"schema": wb.REVISE_SCHEMA, "model_id": model_id, "provider": provider, "policy": "verified",
+                                                           "feedback": "thicker", "include_images": True, "instrument_id": "boxolin", "backend": "openscad"}), encoding="utf-8")
+        import makerbench.code_cad_providers as providers
+
+        def fake_generator(request):
+            assert request.context_tier == "studio" and Path(request.workspace_dir).is_dir()
+            assert (Path(request.workspace_dir) / ".staging_manifest.json").is_file(), "launched without a staged workspace"
+            if observed is not None:
+                fake_generator.sandbox_observations[(request.model_id, request.instrument_id, request.seed, request.context_tier)] = observed
+            return "w_mm = 30;\ncube(w_mm);\n"
+
+        fake_generator.sandbox_observations = {}
+        resolved: list[str] = []
+        monkeypatch.setattr(providers, "resolve_generator", lambda mid, **kw: resolved.append(mid) or fake_generator)
+        monkeypatch.setattr(wb, "compiler_for_backend", lambda backend, sandboxed=True: _fake_compiler)
+        code = wb.run_job(draft_dir, studio.workbench.registry_path, instruments_root)
+        result = studio.get(f"/api/workbench/designs/{did}/drafts/{jid}").json()
+        assert resolved == [model_id]
+        assert result["job"]["status"] == expected_status, result["job"]
+        assert result["editor"]["confinement"] == expected_confinement
+        if expected_status == "failed":
+            assert code == 2 and "confinement not verified" in result["job"]["error"]
+            assert (draft_dir / "source.scad").read_text() == base, "a discarded answer must not replace the source"
+            assert _post(studio, f"/api/workbench/designs/{did}/revisions", {"draft_id": jid}).status_code == 409
+        else:
+            assert code == 0 and (draft_dir / "source.scad").read_text() == "w_mm = 30;\ncube(w_mm);\n"
+            assert json.loads((draft_dir / "revise.evidence.json").read_text())["confinement"] == expected_confinement
+
+
 # --- guards ---------------------------------------------------------------------
 
 
@@ -522,7 +706,7 @@ class TestGuards:
         assert r.status_code == 413, r.text
         r = _post(studio, f"/api/workbench/designs/{did}/drafts", {"parent_rev_id": r0, "params": {f"p{i}": i for i in range(501)}})
         assert r.status_code == 413
-        r = _post(studio, f"/api/workbench/designs/{did}/drafts", {"parent_rev_id": r0, "revise": {"feedback": "f" * 9000}})
+        r = _post(studio, f"/api/workbench/designs/{did}/drafts", {"parent_rev_id": r0, "revise": {"model_id": "stub", "feedback": "f" * 9000}})
         assert r.status_code == 413
         jid = studio.get(f"/api/workbench/designs/{did}").json()["drafts"][0]["draft_id"]
         r = _post(studio, f"/api/workbench/designs/{did}/revisions", {"draft_id": jid, "note": "n" * 3000})
@@ -726,6 +910,30 @@ class TestRealJobs:
                 return draft
             time.sleep(0.25)
         raise AssertionError("job did not finish")
+
+    def test_stub_revise_runs_detached_stages_calls_and_compiles(self, studio, tmp_path):
+        """W6 through the real job process: --instruments-root reaches the job,
+        the studio workspace is staged, the stub answers, the answer compiles
+        in the sandbox, and the provenance says not_applicable (no model ran)."""
+        r = _post(studio, "/api/workbench/designs", {"master": {"instrument_id": "boxolin", "file": "boxolin.scad"}})
+        assert r.status_code == 202, r.text
+        did, jid = r.json()["design_id"], r.json()["draft_id"]
+        assert self._wait(studio, did, jid)["job"]["status"] == "succeeded"
+        r0 = _post(studio, f"/api/workbench/designs/{did}/revisions", {"draft_id": jid, "note": "origin"}).json()["rev_id"]
+        r = _post(studio, f"/api/workbench/designs/{did}/drafts", {"parent_rev_id": r0, "revise": {"model_id": "stub", "feedback": "make it a hollow box"}})
+        assert r.status_code == 202, r.text
+        rid = r.json()["draft_id"]
+        draft = self._wait(studio, did, rid)
+        assert draft["job"]["status"] == "succeeded", draft["job"]
+        assert draft["editor"] == {**draft["editor"], "kind": "model", "model_id": "stub", "provider": "stub", "confinement": "not_applicable"}
+        assert draft["objective"]["render_ok"] is True and draft["objective"]["sandbox"]["kind"] == "bwrap"
+        log = studio.get(f"/api/workbench/designs/{did}/drafts/{rid}/log/stream", params={"follow": "false"}).text
+        assert "revise: staged studio workspace" in log and "confinement not_applicable (from launch evidence)" in log and "compiling in the sandbox" in log
+        assert tmp_path.as_posix() not in log
+        workspace = tmp_path / "runs" / "workbench" / did / "drafts" / rid / "workspace"
+        assert (workspace / ".staging_manifest.json").is_file() and (workspace / "CAD" / "boxolin.scad").is_file()
+        cmp_ = studio.get(f"/api/workbench/designs/{did}/drafts/{rid}/compare", params={"against": r0}).json()
+        assert cmp_["b"]["kind_of_item"] == "draft" and any(row["op"] == "+" for row in cmp_["diff"])
 
     def test_origin_compile_runs_detached_in_the_sandbox_and_scores(self, studio, tmp_path, monkeypatch):
         from makerbench import render

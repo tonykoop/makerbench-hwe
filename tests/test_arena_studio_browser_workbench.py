@@ -254,7 +254,8 @@ def test_keyboard_only_open_edit_compile_save_compare(studio_url: str, workbench
         _tab_to(page, "() => document.activeElement?.dataset?.action === 'confirm-save'")
         page.keyboard.press("Enter")
         page.wait_for_function("() => (document.querySelector('.workbench-head .panel-status')?.textContent || '').startsWith('Saved revision 1')")
-        assert page.evaluate("() => document.activeElement?.classList.contains('panel-status')")
+        # the status takes focus once the design has reloaded; wait for that, don't race it
+        page.wait_for_function("() => document.activeElement?.classList.contains('panel-status')")
         page.wait_for_url("**/#/workbench/d-*/r-*")
 
         # Edit the source, compile with Ctrl+Enter, watch the log, save as revision 2.
