@@ -21,10 +21,11 @@ export function StudioHeader({ runs, blind, runId, onSelectRun, voter, onVoterCh
       <a class="wordmark" href="#/runs">Arena Studio</a>
       <div class="header-controls">
         ${blind
-          ? html`
+          ? runId &&
+            html`
               <div class="field">
                 <span class="field-label">Run</span>
-                <span class="run-fixed">${runId || "None chosen"} <a href="#/runs">Change</a></span>
+                <span class="run-fixed">${runId} <a href="#/runs">Change</a></span>
               </div>
             `
           : html`

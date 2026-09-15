@@ -10,6 +10,7 @@ import { DoeScreen } from "./screens/doe.js";
 import { LaunchScreen } from "./screens/launch.js";
 import { AnalyticsScreen } from "./screens/analytics.js";
 import { CompareScreen } from "./screens/compare.js";
+import { MorningScreen, NightlyScreen } from "./screens/nightly.js";
 import { RunsScreen } from "./screens/runs.js";
 import { VoteScreen } from "./screens/vote.js";
 
@@ -19,6 +20,8 @@ export const SCREENS = [
   { id: "runs", label: "Runs", component: RunsScreen, takesRun: true },
   // `blind` screens never request anything that names entrants before a vote.
   { id: "vote", label: "Blind voting", component: VoteScreen, takesRun: true, blind: true },
+  { id: "nightly", label: "Nightly cockpit", component: NightlyScreen },
+  { id: "morning", label: "Morning review", component: MorningScreen, blind: true },
   { id: "launch", label: "Launch", component: LaunchScreen },
   { id: "analytics", label: "Agreement analytics", component: AnalyticsScreen, takesRun: true },
   { id: "compare", label: "Compare runs", component: CompareScreen },
