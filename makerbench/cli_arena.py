@@ -1008,6 +1008,46 @@ def arena_compare_tiers(
     console.print(markdown)
 
 
+@arena_app.command("consensus")
+def arena_consensus(
+        run_dir: str = typer.Option(..., "--run-dir", help="Existing arena run directory containing run_log.json."),
+        samples: int = typer.Option(2048, "--samples", help="Seeded surface samples per candidate for Chamfer distance."),
+        seed: int = typer.Option(0, "--seed", help="Surface-sampling seed."),
+        out: Optional[str] = typer.Option(None, "--out", help="Output JSON path (defaults to <run-dir>/consensus.json).")):
+    """Offline consensus@N best-of-N selection over already-scored candidates (#796)."""
+
+    from .code_cad_consensus import SIDECAR_NAME, build_consensus_report
+
+    run_path = Path(run_dir)
+    if not (run_path / "run_log.json").is_file():
+        console.print(f"[red]no run log at {run_path / 'run_log.json'}[/red]")
+        raise typer.Exit(code=1)
+    report = build_consensus_report(run_path, samples=samples, seed=seed)
+    out_path = Path(out) if out else run_path / SIDECAR_NAME
+    if out_path.resolve() == (run_path / "run_log.json").resolve():
+        console.print("[red]--out must not overwrite run_log.json[/red]")
+        raise typer.Exit(code=1)
+    arena_runner.write_json(out_path, report)
+    for row in report["refused"]:
+        console.print(
+            f"[yellow]refused[/yellow] {row['instrument_id']} / {row['model_id']} "
+            f"({row['source_tier']}): {row['reason']}"
+        )
+    for row in report["selections"]:
+        console.print(
+            f"{row['tier']} {row['instrument_id']} / {row['model_id']} ({row['source_tier']}): "
+            f"selected {row['selected_trial_id']} "
+            f"(objective {row['selected_objective_pass_rate']:.3f} vs single-shot mean "
+            f"{row['single_shot_mean_objective_pass_rate']:.3f})"
+        )
+    console.print(f"consensus: {out_path}")
+    if not report["selections"]:
+        console.print(
+            "[red]no group had at least 3 scored candidates for the same task, entrant and tier[/red]"
+        )
+        raise typer.Exit(code=1)
+
+
 @arena_app.command("judge")
 def arena_judge(
         run_dir: str = typer.Option(..., "--run-dir"),
