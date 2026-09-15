@@ -308,6 +308,53 @@ class TestExecuteTrialEndToEnd:
         assert entrant_confinement("openrouter-glm-5.2", "packet") == "not_applicable"
         assert entrant_confinement("cadam-fable-image", "image") == "unconfined"  # fail closed
 
+    def test_failed_nonblind_unconfined_trial_never_reaches_site(self, tmp_path):
+        # #785 / Sol CHANGES on #782: a failed trial has result=None, yet it must
+        # keep its confinement classification all the way to the site guard.
+        import importlib.util
+
+        def broken_generator(request):
+            raise RuntimeError("codex exec failed")
+
+        config = OrchestrationConfig(
+            instrument_ids=("boxolin",), model_ids=("codex-gpt-5.6-sol",), seeds=(0,), reps=1,
+        )
+        execute = runner.make_execute_trial(
+            registry=TINY_REGISTRY,
+            run_dir=tmp_path,
+            generators={"codex-gpt-5.6-sol": broken_generator},
+            compiler=_fake_compiler(tmp_path),
+            context_tier="repo",
+            instruments_root=tmp_path / "instruments",
+        )
+        log = run_orchestration(
+            config=config, run_log_path=tmp_path / "run_log.json", execute_trial=execute,
+        )
+        entry = log["trials"][0]
+        assert entry["status"] == "error" and entry["result"] is None
+        assert entry["meta"] == {"context_tier": "repo", "confinement": "unconfined"}
+
+        rows = runner.collect_objective_scoreline(log)
+        assert rows == [{
+            "entrant": "codex-gpt-5.6-sol", "objective_pass_rate": 0.0,
+            "n_objective_trials": 1, "confinement": "unconfined",
+        }]
+
+        root = Path(__file__).resolve().parents[1]
+        spec = importlib.util.spec_from_file_location("mb_site_build_data_785", root / "site" / "build_data.py")
+        build_data = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(build_data)
+        round_dir = tmp_path / "runs" / "code_cad_arena" / "round2"
+        round_dir.mkdir(parents=True)
+        verified = {"entrant": "claude-code-sonnet", "objective_pass_rate": 0.5,
+                    "n_objective_trials": 1, "confinement": "verified"}
+        (round_dir / "objective_scoreline.json").write_text(
+            json.dumps({"schema": "makerbench-code-cad-objective-scoreline-v1", "rows": rows + [verified]}),
+            encoding="utf-8",
+        )
+        page = build_data.build_arena_page(tmp_path / "runs")
+        assert [r["entrant"] for r in page["rounds"][0]["scoreline"]] == ["claude-code-sonnet"]
+
     def test_missing_generator_raises_in_executor(self, tmp_path):
         execute = runner.make_execute_trial(
             registry=TINY_REGISTRY, run_dir=tmp_path, generators={}

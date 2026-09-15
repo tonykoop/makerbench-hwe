@@ -304,7 +304,7 @@ def make_execute_trial(
     and, when present, is staged as the lead reference image.
     """
 
-    def execute(trial: ArenaTrial) -> dict:
+    def _execute_body(trial: ArenaTrial) -> dict:
         generator = generators.get(trial.model_id)
         if generator is None:
             raise RuntimeError(f"no generator configured for entrant {trial.model_id}")
@@ -394,6 +394,28 @@ def make_execute_trial(
         if staging_manifest is not None:
             payload["staging_manifest"] = staging_manifest
         return payload
+
+    def execute(trial: ArenaTrial) -> dict:
+        from .code_cad_providers import entrant_confinement
+
+        meta = {
+            "context_tier": context_tier,
+            "confinement": entrant_confinement(trial.model_id, context_tier),
+        }
+        try:
+            return _execute_body(trial)
+        except Exception as exc:
+            # #785: a failed trial has no result payload, but it must keep its
+            # tier and confinement classification. Otherwise an error-only
+            # unconfined entrant yields an unmarked scoreline row that the
+            # site's publication guard would accept.
+            try:
+                exc.trial_meta = meta
+            except AttributeError:
+                wrapped = RuntimeError(str(exc) or exc.__class__.__name__)
+                wrapped.trial_meta = meta
+                raise wrapped from exc
+            raise
 
     return execute
 
@@ -534,8 +556,11 @@ def collect_objective_scoreline(run_log: Mapping[str, object]) -> list[dict]:
         if isinstance(rate, bool) or not isinstance(rate, (int, float)):
             rate = 0.0
         totals.setdefault(model_id, []).append(float(rate))
-        if result.get("confinement"):
-            confinements.setdefault(model_id, set()).add(str(result["confinement"]))
+        # Failed trials carry their classification in the orchestrator's
+        # per-entry `meta` (result is None), so it survives into the row.
+        confinement = result.get("confinement") or (entry.get("meta") or {}).get("confinement")
+        if confinement:
+            confinements.setdefault(model_id, set()).add(str(confinement))
 
     rows = []
     for entrant in sorted(totals):
