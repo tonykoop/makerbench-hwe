@@ -104,6 +104,7 @@ class ArenaStudioService:
         repo_root: Optional[Path] = None,
         allow_live: bool = False,
         extra_run_roots: Optional[Sequence[Path]] = None,
+        instruments_root: Optional[Path] = None,
     ):
         self.default_run_dir = default_run_dir.resolve() if default_run_dir else None
         self.registry_path = registry_path.resolve()
@@ -118,6 +119,17 @@ class ArenaStudioService:
         self._active_jobs: dict[str, dict[str, Any]] = {}
         self._processes: dict[str, subprocess.Popen] = {}
         self._rediscover_jobs()
+        # #788 W3: the design workbench keeps its own state under
+        # runs/workbench/ and never touches an arena run directory.
+        from .workbench import WorkbenchService
+
+        self.instruments_root = Path(instruments_root).resolve() if instruments_root else None
+        self.workbench = WorkbenchService(
+            repo_root=self.repo_root,
+            registry_path=self.registry_path,
+            instruments_root=self.instruments_root,
+            source_root=self.source_root,
+        )
 
     def _rediscover_jobs(self) -> None:
         """Recover Studio-owned jobs without trusting paths from persisted JSON."""
@@ -220,12 +232,18 @@ class ArenaStudioService:
             search_roots.insert(0, self.default_run_dir.parent)
 
         visited_paths: set[str] = set()
+        # #788 G12: workbench revisions are not arena trials. Whatever roots
+        # are searched, nothing under runs/workbench/ is ever a run, even if
+        # a file called run_log.json is planted there.
+        workbench_root = (self.repo_root / "runs" / "workbench").resolve()
 
         for root in search_roots:
             if not root.exists():
                 continue
             for log_file in root.rglob("run_log.json"):
                 run_path = log_file.parent.resolve()
+                if run_path == workbench_root or run_path.is_relative_to(workbench_root):
+                    continue
                 path_str = str(run_path)
                 if path_str in visited_paths:
                     continue
