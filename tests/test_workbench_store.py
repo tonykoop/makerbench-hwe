@@ -1,0 +1,355 @@
+"""Append-only workbench revision store (#788 W2): containment, immutability,
+content-addressed ids, concurrency, curation and retention."""
+
+from __future__ import annotations
+
+import json
+import os
+import threading
+import time
+from pathlib import Path
+
+import pytest
+
+from makerbench import workbench_store as ws
+from makerbench.workbench_store import (
+    Conflict,
+    NotFound,
+    TooLarge,
+    WorkbenchError,
+    WorkbenchStore,
+    source_diff,
+)
+
+HUMAN = {"kind": "human", "voter": "tony"}
+ORIGIN = {"kind": "master", "instrument_id": "ukulele", "repo_rel_path": "strings/ukulele", "file": "ukulele.scad"}
+
+
+@pytest.fixture
+def store(tmp_path: Path) -> WorkbenchStore:
+    return WorkbenchStore(tmp_path / "runs" / "workbench")
+
+
+def _design(store: WorkbenchStore, **kw) -> dict:
+    return store.create_design(instrument_id="ukulele", backend="openscad", title="Uke", origin=ORIGIN, **kw)
+
+
+def _finished_draft(store, design_id, *, parent=None, source="cube(1);\n", status="succeeded", editor=HUMAN, objective=None):
+    draft = store.create_draft(design_id, parent_rev_id=parent, source=source, editor=editor)
+    ddir = store.draft_dir(design_id, draft["draft_id"])
+    if objective is not None:
+        (ddir / "objective.json").write_text(json.dumps(objective), encoding="utf-8")
+    (ddir / "artifacts").mkdir()
+    (ddir / "artifacts" / "output.stl").write_text("solid x\nendsolid\n", encoding="utf-8")
+    (ddir / "job.log").write_text("compiled\n", encoding="utf-8")
+    store.update_draft_job(design_id, draft["draft_id"], status=status, exit_code=0 if status == "succeeded" else 1)
+    return draft
+
+
+def _snapshot(root: Path) -> dict[str, tuple[int, bytes]]:
+    return {p.relative_to(root).as_posix(): (p.stat().st_mtime_ns, p.read_bytes()) for p in root.rglob("*") if p.is_file()}
+
+
+# --- ids and containment -----------------------------------------------------
+
+
+class TestContainment:
+    @pytest.mark.parametrize("bad", ["..", "a/b", "A", "x.y", "", "-x", "a" * 65, "d é", "..x"])
+    def test_id_rule(self, bad):
+        assert not ws.is_valid_id(bad)
+
+    def test_id_rule_accepts_workbench_ids(self):
+        assert ws.is_valid_id("d-ukulele-a1b2c3") and ws.is_valid_id("r-0123456789abcdef") and ws.is_valid_id("j-abc")
+
+    def test_unknown_ids_are_not_found_and_read_nothing(self, store):
+        for bad in ("..", "../..", "a/b", "%2e%2e", "D", "x.json"):
+            with pytest.raises(NotFound):
+                store.read_design(bad)
+            with pytest.raises(NotFound):
+                store.contained(bad)
+
+    def test_parts_cannot_climb(self, store):
+        design = _design(store)
+        for part in ("..", "../x", "a/b", "a\\b", ".", ""):
+            with pytest.raises(NotFound):
+                store.contained(design["design_id"], part)
+
+    def test_symlinked_design_dir_is_refused(self, store, tmp_path):
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "design.json").write_text(json.dumps({"design_id": "d-evil"}), encoding="utf-8")
+        store.root.mkdir(parents=True, exist_ok=True)
+        os.symlink(outside, store.root / "d-evil")
+        with pytest.raises(NotFound):
+            store.read_design("d-evil")
+        assert all(row["design_id"] != "d-evil" for row in store.list_designs())
+
+    def test_symlinked_artifact_is_refused(self, store, tmp_path):
+        design = _design(store)
+        draft = _finished_draft(store, design["design_id"])
+        secret = tmp_path / "secret.txt"
+        secret.write_text("s", encoding="utf-8")
+        ddir = store.draft_dir(design["design_id"], draft["draft_id"])
+        os.symlink(secret, ddir / "artifacts" / "leak.txt")
+        with pytest.raises(NotFound):
+            store.artifact_path(design["design_id"], "drafts", draft["draft_id"], "leak.txt")
+        for name in ("../draft.json", "..", "a/b", ""):
+            with pytest.raises(NotFound):
+                store.artifact_path(design["design_id"], "drafts", draft["draft_id"], name)
+        assert store.artifact_path(design["design_id"], "drafts", draft["draft_id"], "output.stl").name == "output.stl"
+
+    def test_dicts_carry_no_host_paths(self, store, tmp_path):
+        design = _design(store)
+        draft = _finished_draft(store, design["design_id"])
+        rev = store.save_revision(design["design_id"], draft_id=draft["draft_id"])
+        blob = json.dumps([store.get_design(design["design_id"]), store.read_revision(design["design_id"], rev["rev_id"]), store.list_designs()])
+        assert tmp_path.as_posix() not in blob
+
+
+# --- designs and drafts --------------------------------------------------------
+
+
+class TestDesignsAndDrafts:
+    def test_create_and_list(self, store):
+        design = _design(store)
+        assert design["design_id"].startswith("d-ukulele-")
+        assert (store.root / design["design_id"] / "design.json").is_file()
+        rows = store.list_designs()
+        assert [r["design_id"] for r in rows] == [design["design_id"]]
+        assert rows[0]["revision_count"] == 0 and rows[0]["pick"] is None
+
+    def test_validation(self, store):
+        with pytest.raises(WorkbenchError, match="backend"):
+            store.create_design(instrument_id="x", backend="blender", title="t", origin=ORIGIN)
+        with pytest.raises(WorkbenchError, match="instrument_id"):
+            store.create_design(instrument_id="../x", backend="openscad", title="t", origin=ORIGIN)
+        with pytest.raises(WorkbenchError, match="origin.kind"):
+            store.create_design(instrument_id="x", backend="openscad", title="t", origin={"kind": "url"})
+        with pytest.raises(TooLarge):
+            store.create_design(instrument_id="x", backend="openscad", title="t" * 3000, origin=ORIGIN)
+
+    def test_draft_writes_source_by_backend(self, store):
+        design = _design(store)
+        draft = store.create_draft(design["design_id"], parent_rev_id=None, source="cube(2);\n", editor=HUMAN)
+        assert draft["source_name"] == "source.scad" and draft["job"]["status"] == "queued"
+        assert store.draft_source(design["design_id"], draft["draft_id"]) == "cube(2);\n"
+        cq = store.create_design(instrument_id="drum", backend="cadquery", title="d", origin={"kind": "blank"})
+        d2 = store.create_draft(cq["design_id"], parent_rev_id=None, source="X = 1\n", editor=HUMAN)
+        assert d2["source_name"] == "source.py"
+
+    def test_source_limits(self, store):
+        design = _design(store)
+        with pytest.raises(TooLarge):
+            store.create_draft(design["design_id"], parent_rev_id=None, source="x" * (ws.MAX_SOURCE_BYTES + 1), editor=HUMAN)
+        with pytest.raises(WorkbenchError, match="NUL"):
+            store.create_draft(design["design_id"], parent_rev_id=None, source="a\x00b", editor=HUMAN)
+        assert store.list_drafts(design["design_id"]) == []
+
+    def test_editor_validation(self, store):
+        design = _design(store)
+        with pytest.raises(WorkbenchError, match="editor.kind"):
+            store.create_draft(design["design_id"], parent_rev_id=None, source="x", editor={"kind": "robot"})
+        with pytest.raises(WorkbenchError, match="confinement"):
+            store.create_draft(design["design_id"], parent_rev_id=None, source="x", editor={"kind": "model", "model_id": "m", "provider": "p", "confinement": "maybe"})
+        model = {"kind": "model", "model_id": "claude-x", "provider": "claude", "confinement": "restricted-tools", "prompt": "thicken the walls", "max_turns": 40}
+        draft = store.create_draft(design["design_id"], parent_rev_id=None, source="x", editor=model)
+        assert draft["editor"]["prompt_sha256"] and "prompt" not in draft["editor"]
+        params = {"kind": "parameters", "changed": {"wall_mm": (3, 4)}}
+        d2 = store.create_draft(design["design_id"], parent_rev_id=None, source="y", editor=params)
+        assert d2["editor"]["changed"] == {"wall_mm": [3, 4]}
+
+    def test_parent_must_exist_and_is_required_once_revisions_exist(self, store):
+        design = _design(store)
+        with pytest.raises(NotFound):
+            store.create_draft(design["design_id"], parent_rev_id="r-nope", source="x", editor=HUMAN)
+        draft = _finished_draft(store, design["design_id"])
+        store.save_revision(design["design_id"], draft_id=draft["draft_id"])
+        with pytest.raises(Conflict, match="parent_rev_id"):
+            store.create_draft(design["design_id"], parent_rev_id=None, source="x", editor=HUMAN)
+
+    def test_update_job_validates_and_locks(self, store):
+        design = _design(store)
+        draft = store.create_draft(design["design_id"], parent_rev_id=None, source="x", editor=HUMAN)
+        out = store.update_draft_job(design["design_id"], draft["draft_id"], status="running", pid=123)
+        assert out["job"]["status"] == "running" and out["job"]["pid"] == 123
+        with pytest.raises(WorkbenchError, match="status"):
+            store.update_draft_job(design["design_id"], draft["draft_id"], status="done")
+        with pytest.raises(WorkbenchError, match="unknown job field"):
+            store.update_draft_job(design["design_id"], draft["draft_id"], owner="me")
+
+
+# --- revisions ------------------------------------------------------------------
+
+
+class TestRevisions:
+    def test_save_is_content_addressed_and_immutable(self, store):
+        design = _design(store)
+        did = design["design_id"]
+        draft = _finished_draft(store, did, objective={"render_ok": True, "artifacts": {"warnings": ["w1"]}, "sandbox": {"kind": "bwrap"}})
+        rev = store.save_revision(did, draft_id=draft["draft_id"], note="origin")
+        assert rev["rev_id"].startswith("r-") and len(rev["rev_id"]) == 18
+        assert rev["seq"] == 1 and rev["parent_rev_id"] is None and rev["origin"] == design["origin"]
+        assert rev["compile"] == {"status": "succeeded", "render_ok": True, "warnings": ["w1"], "sandbox": {"kind": "bwrap"}}
+        rdir = store.revision_dir(did, rev["rev_id"])
+        assert sorted(p.name for p in rdir.iterdir()) == ["artifacts", "job.log", "objective.json", "revision.json", "source.scad"]
+        assert store.revision_source(did, rev["rev_id"]) == "cube(1);\n"
+        assert store.read_revision(did, rev["rev_id"])["artifacts"] == ["output.stl"]
+        # deterministic id
+        assert rev["rev_id"] == WorkbenchStore.revision_id(design_id=did, parent_rev_id=None, source_sha256=draft["source_sha256"], editor=draft["editor"])
+
+        # saving the identical draft again is a conflict that changes no bytes
+        before = _snapshot(store.root)
+        with pytest.raises(Conflict, match="already saved"):
+            store.save_revision(did, draft_id=draft["draft_id"])
+        assert _snapshot(store.root) == before
+        assert len(store.list_revisions(did)) == 1
+
+    def test_same_bytes_different_editor_kind_is_a_new_revision(self, store):
+        design = _design(store)
+        did = design["design_id"]
+        a = _finished_draft(store, did)
+        r1 = store.save_revision(did, draft_id=a["draft_id"])
+        b = _finished_draft(store, did, parent=r1["rev_id"], editor={"kind": "parameters", "changed": {}})
+        r2 = store.save_revision(did, draft_id=b["draft_id"])
+        assert r2["rev_id"] != r1["rev_id"] and r2["seq"] == 2 and r2["parent_rev_id"] == r1["rev_id"]
+
+    def test_siblings_from_one_parent_both_land(self, store):
+        design = _design(store)
+        did = design["design_id"]
+        r0 = store.save_revision(did, draft_id=_finished_draft(store, did)["draft_id"])
+        a = _finished_draft(store, did, parent=r0["rev_id"], source="cube(2);\n")
+        b = _finished_draft(store, did, parent=r0["rev_id"], source="cube(3);\n")
+        ra = store.save_revision(did, draft_id=a["draft_id"])
+        rb = store.save_revision(did, draft_id=b["draft_id"])
+        rows = store.list_revisions(did)
+        assert [r["seq"] for r in rows] == [1, 2, 3]
+        assert {ra["parent_rev_id"], rb["parent_rev_id"]} == {r0["rev_id"]}
+        assert ra["rev_id"] != rb["rev_id"]
+
+    def test_unfinished_or_failed_drafts(self, store):
+        design = _design(store)
+        did = design["design_id"]
+        running = store.create_draft(did, parent_rev_id=None, source="x", editor=HUMAN)
+        with pytest.raises(Conflict, match="queued"):
+            store.save_revision(did, draft_id=running["draft_id"])
+        failed = _finished_draft(store, did, status="failed")
+        with pytest.raises(Conflict, match="only a succeeded"):
+            store.save_revision(did, draft_id=failed["draft_id"])
+        rev = store.save_revision(did, draft_id=failed["draft_id"], allow_failed=True)
+        assert rev["compile"]["status"] == "failed"
+
+    def test_note_limit(self, store):
+        design = _design(store)
+        draft = _finished_draft(store, design["design_id"])
+        with pytest.raises(TooLarge):
+            store.save_revision(design["design_id"], draft_id=draft["draft_id"], note="n" * 3000)
+
+    def test_twenty_concurrent_savers_keep_every_index_line(self, store):
+        design = _design(store)
+        did = design["design_id"]
+        r0 = store.save_revision(did, draft_id=_finished_draft(store, did)["draft_id"])
+        drafts = [_finished_draft(store, did, parent=r0["rev_id"], source=f"cube({i + 2});\n") for i in range(20)]
+        errors: list[BaseException] = []
+        start = threading.Barrier(20)
+
+        def worker(draft_id: str) -> None:
+            try:
+                start.wait(5)
+                store.save_revision(did, draft_id=draft_id)
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker, args=(d["draft_id"],)) for d in drafts]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+        assert errors == []
+        rows = store.list_revisions(did)
+        assert sorted(r["seq"] for r in rows) == list(range(1, 22))
+        assert len({r["rev_id"] for r in rows}) == 21
+        assert len((store.root / did / "index.jsonl").read_text().splitlines()) == 21
+
+    def test_revision_json_is_never_rewritten(self, store):
+        design = _design(store)
+        did = design["design_id"]
+        rev = store.save_revision(did, draft_id=_finished_draft(store, did)["draft_id"])
+        path = store.revision_dir(did, rev["rev_id"]) / "revision.json"
+        before = (path.stat().st_mtime_ns, path.read_bytes())
+        store.add_curation(did, rev_id=rev["rev_id"], pick=True, title="Best")
+        store.read_revision(did, rev["rev_id"])
+        store.compare(did, rev["rev_id"], rev["rev_id"])
+        assert (path.stat().st_mtime_ns, path.read_bytes()) == before
+        assert not hasattr(store, "update_revision") and not hasattr(store, "delete_revision")
+
+    def test_reads_write_nothing(self, store):
+        design = _design(store)
+        did = design["design_id"]
+        rev = store.save_revision(did, draft_id=_finished_draft(store, did)["draft_id"])
+        before = _snapshot(store.root)
+        store.list_designs()
+        store.get_design(did)
+        store.read_revision(did, rev["rev_id"])
+        store.revision_source(did, rev["rev_id"])
+        store.list_revisions(did)
+        store.curation_state(did)
+        store.compare(did, rev["rev_id"], rev["rev_id"])
+        assert _snapshot(store.root) == before
+
+    def test_compare_diff_and_objective_delta(self, store):
+        design = _design(store)
+        did = design["design_id"]
+        obj_a = {"objective": {"pass_rate": 0.5, "checks": {"min_wall": {"passed": False}, "manifold": {"passed": True}}}}
+        obj_b = {"objective": {"pass_rate": 1.0, "checks": {"min_wall": {"passed": True}, "manifold": {"passed": True}}}}
+        ra = store.save_revision(did, draft_id=_finished_draft(store, did, source="a = 1;\ncube(a);\n", objective=obj_a)["draft_id"])
+        rb = store.save_revision(did, draft_id=_finished_draft(store, did, parent=ra["rev_id"], source="a = 2;\ncube(a);\n", objective=obj_b)["draft_id"])
+        cmp = store.compare(did, ra["rev_id"], rb["rev_id"])
+        ops = [(r["op"], r["text"]) for r in cmp["diff"]]
+        assert ("-", "a = 1;") in ops and ("+", "a = 2;") in ops and (" ", "cube(a);") in ops
+        assert cmp["objective_delta"] == {"pass_rate": [0.5, 1.0], "flipped": {"min_wall": [False, True]}}
+
+    def test_source_diff_rows_are_plain_text(self):
+        rows = source_diff("x\n<b>y</b>\n", "x\n<i>z</i>\n")
+        assert rows[0]["op"] == "@"
+        assert any(r["op"] == "-" and r["text"] == "<b>y</b>" for r in rows)
+
+
+# --- curation and retention ---------------------------------------------------
+
+
+class TestCurationAndRetention:
+    def test_curation_is_append_only_and_last_wins(self, store):
+        design = _design(store)
+        did = design["design_id"]
+        rev = store.save_revision(did, draft_id=_finished_draft(store, did)["draft_id"])
+        with pytest.raises(NotFound):
+            store.add_curation(did, rev_id="r-missing", pick=True)
+        store.add_curation(did, rev_id=rev["rev_id"], pick=True, title="Concert uke", voter="tony")
+        store.add_curation(did, note="needs thicker top")
+        assert store.curation_state(did) == {"pick": rev["rev_id"], "title": "Concert uke", "note": "needs thicker top", "updated_at": store.curation_history(did)[-1]["created_at"]}
+        store.add_curation(did, rev_id=rev["rev_id"], pick=False)
+        assert store.curation_state(did)["pick"] is None
+        assert len(store.curation_history(did)) == 3
+        assert store.list_designs()[0]["title"] == "Concert uke"
+        with pytest.raises(TooLarge):
+            store.add_curation(did, note="n" * 3000)
+
+    def test_expire_drafts_keeps_running_and_fresh(self, store):
+        design = _design(store)
+        did = design["design_id"]
+        old_done = _finished_draft(store, did)
+        old_running = store.create_draft(did, parent_rev_id=None, source="x", editor=HUMAN)
+        store.update_draft_job(did, old_running["draft_id"], status="running")
+        fresh_done = _finished_draft(store, did, source="cube(9);\n")
+        for d in (old_done, old_running):
+            p = store.draft_dir(did, d["draft_id"]) / "draft.json"
+            payload = json.loads(p.read_text())
+            payload["created_at"] = "2020-01-01T00:00:00+00:00"
+            p.write_text(json.dumps(payload))
+        removed = store.expire_drafts(now=time.time())
+        assert removed == [f"{did}/{old_done['draft_id']}"]
+        ids = {d["draft_id"] for d in store.list_drafts(did)}
+        assert ids == {old_running["draft_id"], fresh_done["draft_id"]}
+        # with no grace period the fresh finished draft goes too; running never does
+        assert store.expire_drafts(ttl_s=0, now=time.time() + 10) == [f"{did}/{fresh_done['draft_id']}"]
+        assert {d["draft_id"] for d in store.list_drafts(did)} == {old_running["draft_id"]}
