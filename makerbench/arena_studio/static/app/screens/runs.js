@@ -1,4 +1,7 @@
+import { useRef, useState } from "preact/hooks";
+
 import { html } from "../html.js";
+import { api } from "../lib/api.js";
 import { useResource } from "../hooks/useResource.js";
 import { Empty, ErrorState, Loading } from "../components/states.js";
 import { formatWhen, UNKNOWN_GRADE_COUNT } from "../lib/format.js";
@@ -61,6 +64,57 @@ function TagList({ items, empty }) {
   return html`<ul class="tag-list">${items.map((item) => html`<li key=${item}>${item}</li>`)}</ul>`;
 }
 
+// #788 W4: open a trial's candidate in the design workbench. The list names
+// entrants, exactly as the run summary already does; the notice says so.
+function OpenInWorkbench({ runId, trials }) {
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState({ text: "", error: false });
+  const statusRef = useRef(null);
+  const list = (trials || []).filter((trial) => trial.trial_id);
+  if (list.length === 0) return null;
+  const open = async (trialId) => {
+    if (busy) return;
+    setBusy(trialId);
+    setMessage({ text: "", error: false });
+    try {
+      const created = await api("/api/workbench/designs", {
+        method: "POST",
+        body: { trial: { run_id: runId, trial_id: trialId } },
+      });
+      window.location.hash = buildHash("workbench", [created.design_id]);
+    } catch (error) {
+      setMessage({ text: error.message, error: true });
+      statusRef.current?.focus();
+    } finally {
+      setBusy("");
+    }
+  };
+  return html`
+    <section class="open-in-workbench" aria-labelledby="open-workbench-title">
+      <h3 id="open-workbench-title">Open in the workbench</h3>
+      <p class="hint" role="note">This shows the entrant. Vote first if you want to stay blind.</p>
+      <ul class="tag-list trial-list">
+        ${list.map(
+          (trial) => html`
+            <li key=${trial.trial_id}>
+              <button
+                type="button"
+                class="button button-quiet"
+                data-open-trial=${trial.trial_id}
+                aria-disabled=${busy ? "true" : "false"}
+                onClick=${() => open(trial.trial_id)}
+              >
+                Open ${trial.trial_id}
+              </button>
+            </li>
+          `,
+        )}
+      </ul>
+      <p class=${`panel-status${message.error ? " is-error" : ""}`} role="status" tabindex="-1" ref=${statusRef}>${message.text}</p>
+    </section>
+  `;
+}
+
 function RunSummary({ runId }) {
   const summary = useResource(`/api/runs/${encodeURIComponent(runId)}/summary`);
   if (summary.status === "loading" || summary.status === "idle") {
@@ -98,6 +152,7 @@ function RunSummary({ runId }) {
         <li><a href=${buildHash("analytics", [run.run_id])}>Agreement analytics</a></li>
         <li><a href=${buildHash("compare", [], { a: run.run_id })}>Compare with another run</a></li>
       </ul>
+      <${OpenInWorkbench} runId=${run.run_id} trials=${run.trials} />
     </article>
   `;
 }

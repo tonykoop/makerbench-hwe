@@ -16,6 +16,7 @@ import {
   SECRET_STATUS_TEXT,
 } from "../lib/launch.js";
 import { useResource } from "../hooks/useResource.js";
+import { buildHash } from "../lib/route.js";
 import { Empty, ErrorState, Loading } from "../components/states.js";
 
 const enc = encodeURIComponent;
@@ -64,6 +65,56 @@ function useJobs() {
   return { ...state, refresh };
 }
 
+// #788 W4: open one of an instrument's master files in the design workbench.
+// Files are listed only when someone asks (the Studio may lack --instruments-root).
+function OpenMaster({ taskId, name }) {
+  const [state, setState] = useState({ status: "idle", files: [], error: null, file: "" });
+  const statusRef = useRef(null);
+  const load = async () => {
+    setState((prev) => ({ ...prev, status: "loading", error: null }));
+    try {
+      const data = await api(`/api/workbench/sources/masters?instrument=${enc(taskId)}`);
+      const files = data.files || [];
+      setState({ status: "ready", files, error: null, file: files[0] || "" });
+    } catch (error) {
+      setState({ status: "error", files: [], error, file: "" });
+      statusRef.current?.focus();
+    }
+  };
+  const open = async () => {
+    if (!state.file) return;
+    setState((prev) => ({ ...prev, status: "opening", error: null }));
+    try {
+      const created = await api("/api/workbench/designs", {
+        method: "POST",
+        body: { master: { instrument_id: taskId, file: state.file } },
+      });
+      window.location.hash = buildHash("workbench", [created.design_id]);
+    } catch (error) {
+      setState((prev) => ({ ...prev, status: "error", error }));
+      statusRef.current?.focus();
+    }
+  };
+  if (state.status === "idle") {
+    return html`<button type="button" class="button button-quiet" data-open-master=${taskId} aria-label=${`Open a master of ${name} in the workbench`} onClick=${load}>Open master</button>`;
+  }
+  if (state.status === "loading") return html`<span class="hint" role="status">Listing masters…</span>`;
+  return html`
+    <span class="open-master">
+      ${state.files.length > 0 &&
+      html`<label class="field open-master-field">
+        <span class="visually-hidden">Master file of ${name}</span>
+        <select name=${`master-${taskId}`} value=${state.file} onChange=${(event) => setState((prev) => ({ ...prev, file: event.currentTarget.value }))}>
+          ${state.files.map((file) => html`<option key=${file} value=${file}>${file}</option>`)}
+        </select>
+      </label>
+      <button type="button" class="button button-quiet" data-open-master-go=${taskId} aria-disabled=${state.status === "opening" ? "true" : "false"} onClick=${open}>Open in workbench</button>`}
+      ${state.status === "ready" && state.files.length === 0 && html`<span class="hint">No master files</span>`}
+      <span class=${`panel-status${state.error ? " is-error" : ""}`} role="status" tabindex="-1" ref=${statusRef}>${state.error ? state.error.message : ""}</span>
+    </span>
+  `;
+}
+
 function ReferenceStatus({ reference }) {
   const { kind, label } = describeReference(reference);
   return html`<span class="gate" data-kind=${kind}>${label}</span>`;
@@ -107,6 +158,7 @@ function Catalog({ tasks, family, onFamily, selected, onToggle, references, insp
             <th scope="col">Family</th>
             <th scope="col">Reference image</th>
             <th scope="col"><span class="visually-hidden">Inspect</span></th>
+            <th scope="col">Workbench</th>
           </tr>
         </thead>
         <tbody>
@@ -139,6 +191,7 @@ function Catalog({ tasks, family, onFamily, selected, onToggle, references, insp
                     Inspect
                   </button>
                 </td>
+                <td><${OpenMaster} taskId=${task.id} name=${name} /></td>
               </tr>
             `;
           })}

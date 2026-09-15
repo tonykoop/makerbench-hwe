@@ -69,6 +69,7 @@ RAIL = [
     ("analytics", "Agreement analytics", True),
     ("compare", "Compare runs", False),
     ("doe", "DoE matrix", False),
+    ("workbench", "Workbench", False),
 ]
 WEBGL_MODES = {
     "webgl": [],
