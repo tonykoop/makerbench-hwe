@@ -3,6 +3,7 @@ content-addressed ids, concurrency, curation and retention."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import threading
@@ -47,7 +48,14 @@ def _finished_draft(store, design_id, *, parent=None, source="cube(1);\n", statu
 
 
 def _snapshot(root: Path) -> dict[str, tuple[int, bytes]]:
-    return {p.relative_to(root).as_posix(): (p.stat().st_mtime_ns, p.read_bytes()) for p in root.rglob("*") if p.is_file()}
+    """Every file's mtime and bytes, except the zero-byte ``*.lock`` files
+    that ``run_log_io.file_lock`` creates on first use (not store content)."""
+
+    return {
+        p.relative_to(root).as_posix(): (p.stat().st_mtime_ns, p.read_bytes())
+        for p in root.rglob("*")
+        if p.is_file() and p.suffix != ".lock"
+    }
 
 
 # --- ids and containment -----------------------------------------------------
@@ -97,6 +105,63 @@ class TestContainment:
             with pytest.raises(NotFound):
                 store.artifact_path(design["design_id"], "drafts", draft["draft_id"], name)
         assert store.artifact_path(design["design_id"], "drafts", draft["draft_id"], "output.stl").name == "output.stl"
+
+    def test_symlinked_draft_dir_is_not_listed_read_expired_or_saved(self, store, tmp_path):
+        design = _design(store)
+        did = design["design_id"]
+        real = _finished_draft(store, did)
+        outside = tmp_path / "outside-draft"
+        outside.mkdir()
+        leaked = {"schema": ws.DRAFT_SCHEMA, "draft_id": "j-leak", "design_id": did, "backend": "openscad",
+                  "kind": "edit", "parent_rev_id": None, "source_name": "source.scad",
+                  "source_sha256": "0" * 64, "editor": HUMAN, "created_at": "2000-01-01T00:00:00+00:00",
+                  "job": {"status": "succeeded", "pid": None, "started_at": None, "finished_at": None, "exit_code": 0, "error": None}}
+        (outside / "draft.json").write_text(json.dumps(leaked), encoding="utf-8")
+        (outside / "source.scad").write_text("cube(9);\n", encoding="utf-8")
+        os.symlink(outside, store.root / did / "drafts" / "j-leak")
+        # a symlink to another draft *inside* the root is refused too
+        os.symlink(store.root / did / "drafts" / real["draft_id"], store.root / did / "drafts" / "j-alias")
+        listed = [d["draft_id"] for d in store.list_drafts(did)]
+        assert listed == [real["draft_id"]]
+        assert [d["draft_id"] for d in store.get_design(did)["drafts"]] == [real["draft_id"]]
+        for alias in ("j-leak", "j-alias"):
+            with pytest.raises(NotFound):
+                store.read_draft(did, alias)
+            with pytest.raises(NotFound):
+                store.draft_source(did, alias)
+            with pytest.raises(NotFound):
+                store.save_revision(did, draft_id=alias)
+        # retention never follows the link: the outside files survive
+        removed = store.expire_drafts(ttl_s=0, now=time.time() + 10)
+        assert removed == [f"{did}/{real['draft_id']}"]
+        assert (outside / "draft.json").is_file() and (outside / "source.scad").is_file()
+
+    def test_symlinked_artifacts_directory_is_ignored(self, store, tmp_path):
+        design = _design(store)
+        did = design["design_id"]
+        draft = store.create_draft(did, parent_rev_id=None, source="cube(1);\n", editor=HUMAN)
+        ddir = store.draft_dir(did, draft["draft_id"])
+        outside = tmp_path / "outside-artifacts"
+        outside.mkdir()
+        (outside / "secret.stl").write_text("s", encoding="utf-8")
+        os.symlink(outside, ddir / "artifacts")
+        store.update_draft_job(did, draft["draft_id"], status="succeeded", exit_code=0)
+        assert store.read_draft(did, draft["draft_id"])["artifacts"] == []
+        with pytest.raises(NotFound):
+            store.artifact_path(did, "drafts", draft["draft_id"], "secret.stl")
+        rev = store.save_revision(did, draft_id=draft["draft_id"])
+        assert store.read_revision(did, rev["rev_id"])["artifacts"] == []
+        assert not (store.revision_dir(did, rev["rev_id"]) / "artifacts").exists()
+
+    def test_symlinked_revision_dir_is_refused(self, store, tmp_path):
+        design = _design(store)
+        did = design["design_id"]
+        rev = store.save_revision(did, draft_id=_finished_draft(store, did)["draft_id"])
+        os.symlink(store.revision_dir(did, rev["rev_id"]), store.root / did / "revisions" / "r-alias")
+        with pytest.raises(NotFound):
+            store.read_revision(did, "r-alias")
+        with pytest.raises(NotFound):
+            store.create_draft(did, parent_rev_id="r-alias", source="cube(2);\n", editor=HUMAN)
 
     def test_dicts_carry_no_host_paths(self, store, tmp_path):
         design = _design(store)
@@ -179,6 +244,87 @@ class TestDesignsAndDrafts:
 
 
 # --- revisions ------------------------------------------------------------------
+
+
+class TestValidateBeforeMutate:
+    """Sol's review: an invalid input must not leave orphan directories."""
+
+    @pytest.mark.parametrize(
+        "kwargs, exc",
+        [
+            ({"editor": {"kind": "bad"}}, WorkbenchError),
+            ({"editor": {"kind": "model", "model_id": "m", "provider": "p", "confinement": "verified", "prompt": "p" * 9000}}, TooLarge),
+            ({"editor": {"kind": "model", "model_id": "m", "provider": "p", "confinement": "nope"}}, WorkbenchError),
+            ({"editor": "not-an-object"}, WorkbenchError),
+            ({"kind": "bogus"}, WorkbenchError),
+            ({"source": "x" * (ws.MAX_SOURCE_BYTES + 1)}, TooLarge),
+            ({"source": "cube(1);\x00"}, WorkbenchError),
+            ({"source": 42}, WorkbenchError),
+            ({"parent_rev_id": "r-doesnotexist"}, NotFound),
+            ({"parent_rev_id": "../x"}, NotFound),
+        ],
+    )
+    def test_rejected_draft_writes_nothing(self, store, kwargs, exc):
+        design = _design(store)
+        did = design["design_id"]
+        before = _snapshot(store.root)
+        args = {"parent_rev_id": None, "source": "cube(1);\n", "editor": HUMAN, **kwargs}
+        with pytest.raises(exc):
+            store.create_draft(did, **args)
+        assert _snapshot(store.root) == before
+        assert list((store.root / did / "drafts").iterdir()) == []
+
+    def test_draft_without_parent_once_revisions_exist_writes_nothing(self, store):
+        design = _design(store)
+        did = design["design_id"]
+        store.save_revision(did, draft_id=_finished_draft(store, did)["draft_id"])
+        before = _snapshot(store.root)
+        with pytest.raises(Conflict):
+            store.create_draft(did, parent_rev_id=None, source="cube(2);\n", editor=HUMAN)
+        assert _snapshot(store.root) == before
+
+    @pytest.mark.parametrize(
+        "kwargs, exc",
+        [
+            ({"origin": {"kind": "nope"}}, WorkbenchError),
+            ({"origin": "text"}, WorkbenchError),
+            ({"origin": {"kind": "master", "file": "f" * 3000}}, TooLarge),
+            ({"instrument_id": "Bad Id"}, WorkbenchError),
+            ({"backend": "blender"}, WorkbenchError),
+            ({"title": "t" * 3000}, TooLarge),
+            ({"title": 7}, WorkbenchError),
+        ],
+    )
+    def test_rejected_design_writes_nothing(self, store, kwargs, exc):
+        _design(store)  # the root exists and holds one design
+        before = _snapshot(store.root)
+        names = sorted(p.name for p in store.root.iterdir())
+        args = {"instrument_id": "ukulele", "backend": "openscad", "title": "Uke", "origin": ORIGIN, **kwargs}
+        with pytest.raises(exc):
+            store.create_design(**args)
+        assert _snapshot(store.root) == before
+        assert sorted(p.name for p in store.root.iterdir()) == names
+
+    def test_longest_instrument_id_keeps_the_random_suffix(self, store):
+        instrument = "a" * 64
+        assert ws.is_valid_id(instrument)
+        ids = set()
+        for _ in range(5):
+            design = store.create_design(instrument_id=instrument, backend="openscad", title="", origin=ORIGIN)
+            ids.add(design["design_id"])
+            assert ws.is_valid_id(design["design_id"]) and len(design["design_id"]) <= 64
+            assert design["design_id"].startswith("d-" + "a" * 55 + "-")
+            assert len(design["design_id"].rsplit("-", 1)[1]) == 6
+        assert len(ids) == 5
+        assert len(store.list_designs()) == 5
+
+    def test_design_id_collision_is_retried(self, store, monkeypatch):
+        first = _design(store)
+        calls = iter([first["design_id"], "d-ukulele-fresh1"])
+        monkeypatch.setattr(WorkbenchStore, "new_design_id", staticmethod(lambda instrument_id: next(calls)))
+        second = _design(store)
+        assert second["design_id"] == "d-ukulele-fresh1"
+        assert len(store.list_designs()) == 2
 
 
 class TestRevisions:
@@ -269,6 +415,92 @@ class TestRevisions:
         assert sorted(r["seq"] for r in rows) == list(range(1, 22))
         assert len({r["rev_id"] for r in rows}) == 21
         assert len((store.root / did / "index.jsonl").read_text().splitlines()) == 21
+
+    def test_tampered_draft_source_is_refused_and_writes_nothing(self, store):
+        design = _design(store)
+        did = design["design_id"]
+        draft = _finished_draft(store, did, source="cube(1);\n")
+        ddir = store.draft_dir(did, draft["draft_id"])
+        (ddir / "source.scad").write_text("cube(999);\n", encoding="utf-8")
+        before = _snapshot(store.root)
+        with pytest.raises(Conflict, match="source changed"):
+            store.save_revision(did, draft_id=draft["draft_id"])
+        assert _snapshot(store.root) == before
+        assert store.list_revisions(did) == []
+        assert list((store.root / did / "revisions").iterdir()) == []
+
+    def test_revision_hash_matches_the_stored_bytes(self, store):
+        design = _design(store)
+        did = design["design_id"]
+        rev = store.save_revision(did, draft_id=_finished_draft(store, did, source="cube(7);\n")["draft_id"])
+        stored = (store.revision_dir(did, rev["rev_id"]) / "source.scad").read_bytes()
+        assert rev["source_sha256"] == hashlib.sha256(stored).hexdigest()
+        assert store.list_revisions(did)[0]["source_sha256"] == rev["source_sha256"]
+
+    def test_tampered_draft_editor_is_refused(self, store):
+        design = _design(store)
+        did = design["design_id"]
+        draft = _finished_draft(store, did)
+        path = store.draft_dir(did, draft["draft_id"]) / "draft.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["editor"] = {"kind": "model", "confinement": "totally"}
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        before = _snapshot(store.root)
+        with pytest.raises(WorkbenchError):
+            store.save_revision(did, draft_id=draft["draft_id"])
+        assert _snapshot(store.root) == before
+
+    @pytest.mark.parametrize("failing", ["copytree", "copyfile"])
+    def test_injected_failure_leaves_nothing_and_retry_succeeds(self, store, monkeypatch, failing):
+        design = _design(store)
+        did = design["design_id"]
+        draft = _finished_draft(store, did, objective={"render_ok": True})
+        before = _snapshot(store.root)
+        real = getattr(ws.shutil, failing)
+        calls = {"n": 0}
+
+        def boom(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise OSError(28, "No space left on device")
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(ws.shutil, failing, boom)
+        with pytest.raises(OSError):
+            store.save_revision(did, draft_id=draft["draft_id"])
+        assert _snapshot(store.root) == before, "a failed save left bytes behind"
+        assert list((store.root / did / "revisions").iterdir()) == []
+        assert store.list_revisions(did) == []
+        rev = store.save_revision(did, draft_id=draft["draft_id"])
+        assert store.list_revisions(did)[0]["rev_id"] == rev["rev_id"]
+        assert store.revision_source(did, rev["rev_id"]) == "cube(1);\n"
+        assert store.read_revision(did, rev["rev_id"])["artifacts"] == ["output.stl"]
+
+    def test_failed_publish_rename_leaves_nothing(self, store, monkeypatch):
+        design = _design(store)
+        did = design["design_id"]
+        draft = _finished_draft(store, did)
+        before = _snapshot(store.root)
+        real_rename = Path.rename
+
+        def boom(self, target):
+            if ".staging-" in self.name:
+                raise OSError(5, "Input/output error")
+            return real_rename(self, target)
+
+        monkeypatch.setattr(Path, "rename", boom)
+        with pytest.raises(WorkbenchError, match="could not publish"):
+            store.save_revision(did, draft_id=draft["draft_id"])
+        assert _snapshot(store.root) == before
+        monkeypatch.setattr(Path, "rename", real_rename)
+        rev = store.save_revision(did, draft_id=draft["draft_id"])
+        assert store.list_revisions(did)[0]["rev_id"] == rev["rev_id"]
+
+    def test_no_staging_directory_survives_a_successful_save(self, store):
+        design = _design(store)
+        did = design["design_id"]
+        rev = store.save_revision(did, draft_id=_finished_draft(store, did)["draft_id"])
+        assert sorted(p.name for p in (store.root / did / "revisions").iterdir()) == [rev["rev_id"]]
 
     def test_revision_json_is_never_rewritten(self, store):
         design = _design(store)

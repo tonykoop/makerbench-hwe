@@ -16,9 +16,12 @@ arena run directory::
       drafts/<draft_id>/
         source.*, draft.json, job.log, objective.json, artifacts/
 
-**Revisions are immutable.** A revision directory is created with
-``mkdir(exist_ok=False)``; an existing ``rev_id`` is a :class:`Conflict` and
-no byte changes. Revision ids are content-addressed
+**Revisions are immutable.** A revision is staged completely in a
+contained scratch directory and published with one ``rename``; an existing
+``rev_id`` is a :class:`Conflict` and no byte changes, and a failure before
+publication leaves nothing behind (a retry is not a spurious conflict). The
+source hash in the provenance is computed from the bytes being saved, under
+the index lock, never copied from the draft's mutable metadata. Revision ids are content-addressed
 (``r-`` + 16 hex of sha256 over the design, parent, source hash and editor),
 so saving the same draft twice is a conflict, not a duplicate, and a sibling
 from the same parent gets its own id. ``seq`` is assigned under the index
@@ -197,9 +200,31 @@ class WorkbenchStore:
                 raise NotFound("unknown path")
         candidate = self.root.joinpath(design_id, *parts)
         resolved = candidate.resolve()
-        if not resolved.is_relative_to(self.root):
+        # ``root`` is already resolved and no part can climb, so the only way
+        # the resolved path differs from the candidate is a symlink somewhere
+        # in the chain. Symlinks are refused outright, even ones that would
+        # land elsewhere *inside* the root (another design's files).
+        if resolved != candidate or not resolved.is_relative_to(self.root):
             raise NotFound("unknown path")
         return resolved
+
+    def _contained_children(self, parent: Path, marker: str) -> list[tuple[str, Path]]:
+        """Immediate subdirectories of ``parent`` that carry ``marker`` and pass
+        containment: a valid id, not a symlink, resolving to exactly
+        ``parent/<name>``. Anything else is skipped, never followed."""
+
+        if not parent.is_dir() or parent.is_symlink():
+            return []
+        out = []
+        for entry in sorted(parent.iterdir(), key=lambda e: e.name):
+            if not is_valid_id(entry.name) or entry.is_symlink() or not entry.is_dir():
+                continue
+            if entry.resolve() != parent / entry.name:
+                continue
+            if (entry / marker).is_symlink() or not (entry / marker).is_file():
+                continue
+            out.append((entry.name, entry))
+        return out
 
     def _rel(self, path: Path) -> str:
         return path.resolve().relative_to(self.root).as_posix()
@@ -245,9 +270,20 @@ class WorkbenchStore:
         if backend not in BACKENDS:
             raise WorkbenchError(f"backend must be one of {BACKENDS}")
         title = _check_text(title, "title") or instrument_id
-        design_id = f"d-{instrument_id}-{secrets.token_hex(3)}"[:64]
-        design_dir = self.contained(design_id)
-        design_dir.mkdir(parents=True, exist_ok=False)
+        origin = validate_origin(origin)
+        # Everything fallible is validated above; nothing on disk changes
+        # before this line.
+        self.root.mkdir(parents=True, exist_ok=True)
+        for _attempt in range(8):
+            design_id = self.new_design_id(instrument_id)
+            design_dir = self.contained(design_id)
+            try:
+                design_dir.mkdir(parents=False, exist_ok=False)
+            except FileExistsError:
+                continue
+            break
+        else:  # pragma: no cover - 8 collisions of 24 random bits
+            raise WorkbenchError("could not allocate a design id")
         (design_dir / "revisions").mkdir()
         (design_dir / "drafts").mkdir()
         payload = {
@@ -256,11 +292,21 @@ class WorkbenchStore:
             "instrument_id": instrument_id,
             "backend": backend,
             "title": title,
-            "origin": validate_origin(origin),
+            "origin": origin,
             "created_at": _now(),
         }
         atomic_write_json(design_dir / "design.json", payload)
         return payload
+
+    @staticmethod
+    def new_design_id(instrument_id: str) -> str:
+        """``d-<instrument>-<6 hex>`` within the 64-character id rule. A long
+        instrument id is shortened, never the random suffix, so two designs
+        of the longest valid instrument still get distinct ids."""
+
+        suffix = secrets.token_hex(3)
+        budget = 64 - len("d-") - len("-") - len(suffix)
+        return f"d-{instrument_id[:budget]}-{suffix}"
 
     def read_design(self, design_id: str) -> dict:
         design_dir = self._design_dir(design_id)
@@ -270,14 +316,9 @@ class WorkbenchStore:
         rows = []
         if not self.root.is_dir():
             return rows
-        for design_json in sorted(self.root.glob("*/design.json")):
-            design_id = design_json.parent.name
-            if not is_valid_id(design_id):
-                continue
+        for design_id, design_dir in self._contained_children(self.root, "design.json"):
             try:
-                # A symlinked design dir resolves outside the root: skip it.
-                self.contained(design_id, "design.json")
-                design = json.loads(design_json.read_text(encoding="utf-8"))
+                design = json.loads((design_dir / "design.json").read_text(encoding="utf-8"))
                 revisions = self.list_revisions(design_id)
                 curation = self.curation_state(design_id)
             except (OSError, json.JSONDecodeError, NotFound):
@@ -319,10 +360,13 @@ class WorkbenchStore:
         source = _check_source(source)
         if kind not in DRAFT_KINDS:
             raise WorkbenchError(f"draft kind must be one of {DRAFT_KINDS}")
+        editor = validate_editor(editor)
         if parent_rev_id is not None:
             self._revision_dir(design_id, parent_rev_id)
         elif self.list_revisions(design_id):
             raise Conflict("this design already has revisions; name a parent_rev_id")
+        # Everything fallible is validated above; nothing on disk changes
+        # before this line.
         draft_id = f"j-{secrets.token_hex(6)}"
         draft_dir = self.contained(design_id, "drafts", draft_id)
         draft_dir.mkdir(parents=True, exist_ok=False)
@@ -337,7 +381,7 @@ class WorkbenchStore:
             "parent_rev_id": parent_rev_id,
             "source_name": source_name,
             "source_sha256": _sha256_text(source),
-            "editor": validate_editor(editor),
+            "editor": editor,
             "created_at": _now(),
             "job": {
                 "status": "queued",
@@ -366,9 +410,9 @@ class WorkbenchStore:
     def list_drafts(self, design_id: str) -> list[dict]:
         design_dir = self._design_dir(design_id)
         rows = []
-        for draft_json in sorted((design_dir / "drafts").glob("*/draft.json")):
+        for _draft_id, draft_dir in self._contained_children(design_dir / "drafts", "draft.json"):
             try:
-                rows.append(json.loads(draft_json.read_text(encoding="utf-8")))
+                rows.append(json.loads((draft_dir / "draft.json").read_text(encoding="utf-8")))
             except (OSError, json.JSONDecodeError):
                 continue
         rows.sort(key=lambda r: r.get("created_at") or "")
@@ -411,21 +455,19 @@ class WorkbenchStore:
         removed = []
         if not self.root.is_dir():
             return removed
-        for draft_json in self.root.glob("*/drafts/*/draft.json"):
-            try:
-                payload = json.loads(draft_json.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if payload.get("job", {}).get("status") not in FINISHED_STATUSES:
-                continue
-            created = datetime.fromisoformat(payload["created_at"]).timestamp()
-            if now - created < ttl_s:
-                continue
-            draft_dir = draft_json.parent
-            if not draft_dir.resolve().is_relative_to(self.root):
-                continue
-            shutil.rmtree(draft_dir, ignore_errors=True)
-            removed.append(f"{payload['design_id']}/{payload['draft_id']}")
+        for _design_id, design_dir in self._contained_children(self.root, "design.json"):
+            for _draft_id, draft_dir in self._contained_children(design_dir / "drafts", "draft.json"):
+                try:
+                    payload = json.loads((draft_dir / "draft.json").read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if payload.get("job", {}).get("status") not in FINISHED_STATUSES:
+                    continue
+                created = datetime.fromisoformat(payload["created_at"]).timestamp()
+                if now - created < ttl_s:
+                    continue
+                shutil.rmtree(draft_dir, ignore_errors=True)
+                removed.append(f"{payload['design_id']}/{payload['draft_id']}")
         return removed
 
     # --- revisions --------------------------------------------------------
@@ -470,60 +512,88 @@ class WorkbenchStore:
         if status != "succeeded" and not allow_failed:
             raise Conflict(f"draft {status}; only a succeeded draft can be saved")
         parent = draft.get("parent_rev_id")
-        rev_id = self.revision_id(
-            design_id=design_id,
-            parent_rev_id=parent,
-            source_sha256=draft["source_sha256"],
-            editor=draft["editor"],
-        )
-        rev_dir = self.contained(design_id, "revisions", rev_id)
+        source_name = draft["source_name"]
+        editor = validate_editor(draft["editor"])
+        revisions_dir = self.contained(design_id, "revisions")
         index_path = self.contained(design_id, "index.jsonl")
         with file_lock(index_path):
             if parent is not None and not self._revision_dir(design_id, parent):
                 raise NotFound("unknown parent revision")
+            # Provenance comes from the bytes being saved, hashed under the
+            # lock, never from the draft's mutable metadata. A draft whose
+            # source changed after it was created (or compiled) is refused.
+            source_bytes = (draft_dir / source_name).read_bytes()
+            source_sha256 = hashlib.sha256(source_bytes).hexdigest()
+            if source_sha256 != draft.get("source_sha256"):
+                raise Conflict("draft source changed since the draft was created; compile it again")
+            rev_id = self.revision_id(
+                design_id=design_id,
+                parent_rev_id=parent,
+                source_sha256=source_sha256,
+                editor=editor,
+            )
+            rev_dir = self.contained(design_id, "revisions", rev_id)
+            if rev_dir.exists():
+                raise Conflict(f"already saved as {rev_id}")
+            seq = max((int(r.get("seq") or 0) for r in self.list_revisions(design_id)), default=0) + 1
+            # Stage the whole revision in a contained scratch directory whose
+            # name can never be a revision id (ids have no dots), then publish
+            # it with one rename. Any failure before the rename removes the
+            # staging directory, so a retry is not a spurious Conflict.
+            staging = revisions_dir / f".staging-{rev_id}-{secrets.token_hex(4)}"
             try:
-                rev_dir.mkdir(parents=False, exist_ok=False)
-            except FileExistsError:
-                raise Conflict(f"already saved as {rev_id}") from None
-            seq = len(self.list_revisions(design_id)) + 1
-            source_name = draft["source_name"]
-            shutil.copyfile(draft_dir / source_name, rev_dir / source_name)
-            objective_src = draft_dir / "objective.json"
-            compile_summary: dict[str, Any] = {"status": status}
-            if objective_src.is_file():
-                shutil.copyfile(objective_src, rev_dir / "objective.json")
+                staging.mkdir(parents=False, exist_ok=False)
+                (staging / source_name).write_bytes(source_bytes)
+                objective_src = draft_dir / "objective.json"
+                compile_summary: dict[str, Any] = {"status": status}
+                if objective_src.is_file():
+                    shutil.copyfile(objective_src, staging / "objective.json")
+                    try:
+                        objective = json.loads(objective_src.read_text(encoding="utf-8"))
+                        compile_summary["render_ok"] = bool(objective.get("render_ok"))
+                        compile_summary["warnings"] = list(
+                            (objective.get("artifacts") or {}).get("warnings") or []
+                        )[:50]
+                        compile_summary["sandbox"] = objective.get("sandbox")
+                    except (OSError, json.JSONDecodeError):
+                        pass
+                artifacts_src = draft_dir / "artifacts"
+                if artifacts_src.is_dir() and not artifacts_src.is_symlink():
+                    shutil.copytree(artifacts_src, staging / "artifacts", symlinks=False)
+                if (draft_dir / "job.log").is_file():
+                    shutil.copyfile(draft_dir / "job.log", staging / "job.log")
+                payload = {
+                    "schema": REVISION_SCHEMA,
+                    "rev_id": rev_id,
+                    "design_id": design_id,
+                    "seq": seq,
+                    "parent_rev_id": parent,
+                    "backend": design["backend"],
+                    "source_name": source_name,
+                    "source_sha256": source_sha256,
+                    "editor": editor,
+                    "draft_kind": draft["kind"],
+                    "from_draft_id": draft_id,
+                    "note": note,
+                    "origin": design["origin"] if parent is None else None,
+                    "compile": compile_summary,
+                    "created_at": _now(),
+                }
+                atomic_write_json(staging / "revision.json", payload)
+                # The staged copy must hash to what the provenance claims.
+                if hashlib.sha256((staging / source_name).read_bytes()).hexdigest() != source_sha256:
+                    raise WorkbenchError("staged source does not match its recorded hash")
                 try:
-                    objective = json.loads(objective_src.read_text(encoding="utf-8"))
-                    compile_summary["render_ok"] = bool(objective.get("render_ok"))
-                    compile_summary["warnings"] = list(
-                        (objective.get("artifacts") or {}).get("warnings") or []
-                    )[:50]
-                    compile_summary["sandbox"] = objective.get("sandbox")
-                except (OSError, json.JSONDecodeError):
-                    pass
-            artifacts_src = draft_dir / "artifacts"
-            if artifacts_src.is_dir():
-                shutil.copytree(artifacts_src, rev_dir / "artifacts")
-            if (draft_dir / "job.log").is_file():
-                shutil.copyfile(draft_dir / "job.log", rev_dir / "job.log")
-            payload = {
-                "schema": REVISION_SCHEMA,
-                "rev_id": rev_id,
-                "design_id": design_id,
-                "seq": seq,
-                "parent_rev_id": parent,
-                "backend": design["backend"],
-                "source_name": source_name,
-                "source_sha256": draft["source_sha256"],
-                "editor": draft["editor"],
-                "draft_kind": draft["kind"],
-                "from_draft_id": draft_id,
-                "note": note,
-                "origin": design["origin"] if parent is None else None,
-                "compile": compile_summary,
-                "created_at": _now(),
-            }
-            atomic_write_json(rev_dir / "revision.json", payload)
+                    staging.rename(rev_dir)
+                except FileExistsError:
+                    raise Conflict(f"already saved as {rev_id}") from None
+                except OSError as exc:
+                    if rev_dir.exists():
+                        raise Conflict(f"already saved as {rev_id}") from None
+                    raise WorkbenchError(f"could not publish revision: {exc.strerror}") from exc
+            finally:
+                if staging.exists():
+                    shutil.rmtree(staging, ignore_errors=True)
             index_row = {
                 k: payload[k]
                 for k in ("rev_id", "seq", "parent_rev_id", "source_sha256", "created_at", "note")
@@ -584,17 +654,21 @@ class WorkbenchStore:
             raise NotFound("unknown path")
         if not isinstance(name, str) or not name or "/" in name or "\\" in name or name in (".", ".."):
             raise NotFound("unknown artifact")
-        path = (base / "artifacts" / name).resolve()
-        if not path.is_relative_to(base / "artifacts") or not path.is_file():
+        artifacts = base / "artifacts"
+        candidate = artifacts / name
+        if artifacts.is_symlink() or candidate.is_symlink():
+            raise NotFound("unknown artifact")
+        path = candidate.resolve()
+        if path != candidate or not path.is_relative_to(artifacts) or not path.is_file():
             raise NotFound("unknown artifact")
         return path
 
     @staticmethod
     def _artifact_names(item_dir: Path) -> list[str]:
         artifacts = item_dir / "artifacts"
-        if not artifacts.is_dir():
+        if artifacts.is_symlink() or not artifacts.is_dir():
             return []
-        return sorted(p.name for p in artifacts.iterdir() if p.is_file())
+        return sorted(p.name for p in artifacts.iterdir() if p.is_file() and not p.is_symlink())
 
     def compare(self, design_id: str, a: str, b: str) -> dict:
         """Source diff plus both provenance and objective payloads."""

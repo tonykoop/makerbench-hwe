@@ -24,10 +24,23 @@ runs/workbench/<design_id>/
 
 ## Rules
 
-- **Revisions are append-only.** A revision directory is created exclusively;
-  `revision.json` is written once and there is no update or delete method.
-  Saving a draft whose revision already exists is a `Conflict` that changes
-  no bytes.
+- **Revisions are append-only.** A revision is staged completely in a
+  contained scratch directory (`revisions/.staging-*`, a name no id can take)
+  and published with one `rename`; `revision.json` is written once and there
+  is no update or delete method. Saving a draft whose revision already exists
+  is a `Conflict` that changes no bytes, and a failure before publication
+  removes the staging directory, so a retry is a normal save, never a
+  spurious conflict.
+- **Provenance comes from the bytes saved.** The source hash in
+  `revision.json` is computed from the draft's source file under the index
+  lock, and the staged copy is hashed again before publication. A draft whose
+  source changed after it was created is refused (`Conflict`); a draft whose
+  `editor` block no longer validates is refused too.
+- **Nothing is written before validation.** `create_design` and
+  `create_draft` validate every input (ids, backend, title, origin, source,
+  editor, parent) before creating a directory, so a rejected call leaves no
+  orphan. Design ids are `d-<instrument>-<6 hex>`; a long instrument id is
+  shortened to fit the 64-character rule, the random suffix never is.
 - **Ids are content-addressed.** `rev_id = "r-" + sha256(design, parent,
   source hash, editor kind, prompt hash, changed values)[:16]`, so the same
   draft cannot be saved twice and a sibling from the same parent gets its own
@@ -45,8 +58,11 @@ runs/workbench/<design_id>/
   drafts older than 24 hours are removed by `expire_drafts`; running ones
   never are.
 - **Containment.** Every id must match `[a-z0-9][a-z0-9_-]{0,63}`, every
-  path is resolved and must stay under the root, so `..` and symlinks cannot
-  reach outside. The store's dicts carry no host-absolute paths.
+  path is resolved and must stay under the root, and any symlink in the
+  chain is refused outright, even one pointing elsewhere inside the root.
+  Listings (`list_designs`, `list_drafts`, `expire_drafts`, artifact names)
+  walk directory entries through the same rule and never follow a link. The
+  store's dicts carry no host-absolute paths.
 - **Size caps.** Source 256 KiB, titles and notes 2 KiB, prompts and job
   errors 8 KiB. Over the cap raises `TooLarge` and writes nothing.
 
