@@ -209,29 +209,35 @@ def test_normalized_objective_keeps_checks(tmp_path):
     assert normalized["checks"]["topology"] == {"status": "not declared"}
 
 
-def test_existing_registry_scorelines_are_byte_identical_without_new_fields(tmp_path, monkeypatch):
-    """Every shipped registry spec, scored with and without the new gate code path,
-    produces the same scoreline bytes, because no shipped spec declares the fields."""
+#: Scoreline over every shipped registry spec for the flute fixture, generated on
+#: main at b47b89e, which has no topology code at all. It is a baseline that does
+#: not run this feature's integration path. Regenerate it only when the registry
+#: or the base gate changes, never to absorb a change made by the topology
+#: feature.
+PRE_FEATURE_SCORELINE = Path(__file__).parent / "fixtures" / "topology_undeclared_registry_scoreline.json"
+
+
+def test_existing_registry_scorelines_match_the_pre_feature_baseline(tmp_path):
+    """Every shipped spec (none declare topology/interfaces), scored by the current
+    gate, gives exactly the scoreline bytes main produced before this feature.
+
+    The comparison is against a pinned pre-feature fixture, not against a
+    monkeypatched run of this code, so a sub-score or rate change anywhere in the
+    runner integration, including after ``declared_checks()``, fails here.
+    """
 
     registry = runner.load_arena_registry(Path("tasks/code_cad_arena/registry.json"))
-    specs = registry["instruments"] if isinstance(registry, dict) else list(registry)
+    specs = registry["instruments"]
     assert specs and not any("topology" in s or "interfaces" in s for s in specs)
 
     mesh = _flute()
+    trials = []
+    for index, spec in enumerate(specs):
+        sub = tmp_path / f"{index}"
+        sub.mkdir()
+        objective = _normalize_gate_result(_gate_result(sub, mesh, dict(spec)))
+        trials.append({"trial_id": f"t{index}", "model_id": f"model-{index % 3}",
+                       "status": "scored", "result": {"objective": objective}})
+    rows = runner.collect_objective_scoreline({"trials": trials})
 
-    def scoreline_bytes() -> bytes:
-        trials = []
-        for index, spec in enumerate(specs):
-            sub = tmp_path / f"{index}"
-            sub.mkdir(exist_ok=True)
-            objective = _normalize_gate_result(_gate_result(sub, mesh, dict(spec)))
-            trials.append({"trial_id": f"t{index}", "model_id": f"model-{index % 3}",
-                           "status": "scored", "result": {"objective": objective}})
-        rows = runner.collect_objective_scoreline({"trials": trials})
-        return json.dumps(rows, indent=2, sort_keys=True).encode()
-
-    with_new_code = scoreline_bytes()
-    monkeypatch.setattr(topology, "declared_checks", lambda mesh, spec: ({}, {}))
-    without_new_code = scoreline_bytes()
-
-    assert with_new_code == without_new_code
+    assert json.dumps(rows, indent=2, sort_keys=True) + "\n" == PRE_FEATURE_SCORELINE.read_text()
