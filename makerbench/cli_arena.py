@@ -8,6 +8,7 @@ gitignored run directory (``runs/code_cad_arena/<run_id>/`` by convention).
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -1142,3 +1143,56 @@ def arena_preflight(
         console.print(line, markup=False, highlight=False)
     if not report.ok:
         raise typer.Exit(code=1)
+
+
+@arena_app.command("studio")
+def arena_studio(
+        run_dir: Optional[str] = typer.Option(
+            None, "--run-dir", help="Initial run directory to load in Arena Studio."),
+        host: str = typer.Option("127.0.0.1", "--host", help="Bind host."),
+        allow_remote: bool = typer.Option(
+            False,
+            "--allow-remote",
+            help="Allow binding Arena Studio to a non-loopback interface.",
+        ),
+        allow_live: bool = typer.Option(
+            False,
+            "--allow-live",
+            help="Allow explicit live arena launches from Studio (may invoke provider CLIs).",
+        ),
+        port: int = typer.Option(8080, "--port", help="Bind port."),
+        registry: str = typer.Option(DEFAULT_REGISTRY, "--registry", help="Arena registry JSON path.")):
+    """Launch the MakerBench Arena Studio web interface (Issue #696)."""
+
+    is_loopback = host == "localhost"
+    if not is_loopback:
+        try:
+            is_loopback = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            is_loopback = False
+        if not is_loopback and not allow_remote:
+            console.print(
+                "[red]Refusing a non-loopback Arena Studio host without --allow-remote.[/red]"
+            )
+            raise typer.Exit(code=2)
+
+    try:
+        import uvicorn
+    except ImportError:
+        console.print("[red]uvicorn is required to run Arena Studio: pip install uvicorn[/red]")
+        raise typer.Exit(code=1)
+
+    from .arena_studio import create_studio_app
+    from .arena_studio.app import LOOPBACK_HOSTS
+
+    run_path = Path(run_dir) if run_dir else None
+    app = create_studio_app(
+        default_run_dir=run_path,
+        registry_path=Path(registry),
+        allow_live=allow_live,
+        # A loopback bind keeps the DNS-rebinding guard even with --allow-remote;
+        # a deliberate remote bind accepts any Host header.
+        allowed_hosts=LOOPBACK_HOSTS if is_loopback else ("*",),
+    )
+    console.print(f"[bold green]MakerBench Arena Studio running at http://{host}:{port}/[/bold green]")
+    uvicorn.run(app, host=host, port=port)
