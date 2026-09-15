@@ -209,6 +209,7 @@ class TestExecuteTrialEndToEnd:
         )
         generators = {mid: make_stub_generator() for mid in config.model_ids}
         execute = runner.make_execute_trial(
+            backend="openscad",
             registry=TINY_REGISTRY,
             run_dir=tmp_path,
             generators=generators,
@@ -238,6 +239,7 @@ class TestExecuteTrialEndToEnd:
             max_attempts=2,
         )
         execute = runner.make_execute_trial(
+            backend="openscad",
             registry=TINY_REGISTRY,
             run_dir=tmp_path,
             generators={"stub-a": broken_generator},
@@ -268,6 +270,7 @@ class TestExecuteTrialEndToEnd:
             instrument_ids=("boxolin",), model_ids=("stub-a",), seeds=(0,), reps=1,
         )
         execute = runner.make_execute_trial(
+            backend="openscad",
             registry=TINY_REGISTRY,
             run_dir=tmp_path,
             generators={"stub-a": make_stub_generator()},
@@ -320,6 +323,7 @@ class TestExecuteTrialEndToEnd:
             instrument_ids=("boxolin",), model_ids=("codex-gpt-5.6-sol",), seeds=(0,), reps=1,
         )
         execute = runner.make_execute_trial(
+            backend="openscad",
             registry=TINY_REGISTRY,
             run_dir=tmp_path,
             generators={"codex-gpt-5.6-sol": broken_generator},
@@ -336,7 +340,7 @@ class TestExecuteTrialEndToEnd:
 
         rows = runner.collect_objective_scoreline(log)
         assert rows == [{
-            "entrant": "codex-gpt-5.6-sol", "objective_pass_rate": 0.0,
+            "entrant": "codex-gpt-5.6-sol", "backend": "openscad", "objective_pass_rate": 0.0,
             "n_objective_trials": 1, "confinement": "unconfined",
         }]
 
@@ -389,6 +393,7 @@ class TestExecuteTrialEndToEnd:
             instrument_ids=("boxolin",), model_ids=("codex-gpt-5.6-sol",), seeds=(0,), reps=1,
         )
         execute = runner.make_execute_trial(
+            backend="openscad",
             registry=registry,
             run_dir=tmp_path / "run",
             generators={"codex-gpt-5.6-sol": self._sandboxed_generator(fail=True, sandboxed=sandboxed)},
@@ -407,6 +412,7 @@ class TestExecuteTrialEndToEnd:
             instrument_ids=("boxolin",), model_ids=("codex-gpt-5.6-sol", "codex-unwrapped"), seeds=(0,), reps=1,
         )
         execute = runner.make_execute_trial(
+            backend="openscad",
             registry=registry,
             run_dir=tmp_path / "run",
             generators={
@@ -426,6 +432,7 @@ class TestExecuteTrialEndToEnd:
 
     def test_missing_generator_raises_in_executor(self, tmp_path):
         execute = runner.make_execute_trial(
+            backend="openscad",
             registry=TINY_REGISTRY, run_dir=tmp_path, generators={}
         )
         from makerbench.code_cad_orchestrator import ArenaTrial
@@ -463,6 +470,7 @@ class TestContextTierExecution:
     def test_blind_tier_default_stages_no_workspace(self, tmp_path):
         registry = self._registry_with_repo_path()
         execute = runner.make_execute_trial(
+            backend="openscad",
             registry=registry, run_dir=tmp_path,
             generators={"stub-a": make_stub_generator()},
             compiler=_fake_compiler(tmp_path),
@@ -488,6 +496,7 @@ class TestContextTierExecution:
             return "cube(2);\n"
 
         execute = runner.make_execute_trial(
+            backend="openscad",
             registry=registry, run_dir=tmp_path,
             generators={"stub-a": capturing_generator},
             compiler=_fake_compiler(tmp_path),
@@ -516,6 +525,7 @@ class TestContextTierExecution:
     def test_non_blind_tier_without_instruments_root_raises(self, tmp_path):
         registry = self._registry_with_repo_path()
         execute = runner.make_execute_trial(
+            backend="openscad",
             registry=registry, run_dir=tmp_path,
             generators={"stub-a": make_stub_generator()},
             compiler=_fake_compiler(tmp_path),
@@ -532,6 +542,7 @@ class TestContextTierExecution:
 
     def test_non_blind_tier_without_repo_path_raises(self, tmp_path):
         execute = runner.make_execute_trial(
+            backend="openscad",
             registry=TINY_REGISTRY, run_dir=tmp_path,
             generators={"stub-a": make_stub_generator()},
             compiler=_fake_compiler(tmp_path),
@@ -557,6 +568,7 @@ class TestContextTierExecution:
             return "cube(3);\n"
 
         execute = runner.make_execute_trial(
+            backend="openscad",
             registry=TINY_REGISTRY, run_dir=tmp_path,
             generators={"stub-a": capturing_generator},
             compiler=_fake_compiler(tmp_path),
@@ -582,6 +594,7 @@ class TestContextTierExecution:
 
     def test_image_tier_without_image_paths_entry_raises(self, tmp_path):
         execute = runner.make_execute_trial(
+            backend="openscad",
             registry=TINY_REGISTRY, run_dir=tmp_path,
             generators={"stub-a": make_stub_generator()},
             compiler=_fake_compiler(tmp_path),
@@ -609,6 +622,7 @@ class TestContextTierExecution:
             return "cube(2);\n"
 
         execute = runner.make_execute_trial(
+            backend="openscad",
             registry=registry, run_dir=tmp_path,
             generators={"stub-a": capturing_generator},
             compiler=_fake_compiler(tmp_path),
@@ -637,6 +651,7 @@ class TestContextTierExecution:
         registry = self._registry_with_repo_path()
         instruments_root = self._fake_instruments_root(tmp_path)
         execute = runner.make_execute_trial(
+            backend="openscad",
             registry=registry, run_dir=tmp_path,
             generators={"stub-a": make_stub_generator()},
             compiler=_fake_compiler(tmp_path),
@@ -1051,6 +1066,7 @@ class TestIngestCandidate:
             instrument_ids=("boxolin",), model_ids=("stub-a",), seeds=(0,), reps=1,
         )
         execute = runner.make_execute_trial(
+            backend="openscad",
             registry=TINY_REGISTRY, run_dir=tmp_path,
             generators={"stub-a": make_stub_generator()},
             compiler=_fake_compiler(tmp_path),
