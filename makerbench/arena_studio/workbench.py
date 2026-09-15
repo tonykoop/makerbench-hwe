@@ -449,6 +449,14 @@ class WorkbenchService:
                 updates = {"status": "interrupted", "finished_at": _now(),
                            "error": "job process is gone without a result"}
         if updates:
+            # Re-read before writing: a cancel (or the job's own final write)
+            # may have landed since this refresh read the job block, and a
+            # finished status is never overwritten with ``interrupted``.
+            latest = self.store.read_draft(design_id, draft_id)["job"]
+            if latest.get("status") in FINISHED_STATUSES:
+                job = latest
+                updates = {}
+        if updates:
             self.store.update_draft_job(design_id, draft_id, **updates)
             draft = self.store.read_draft(design_id, draft_id)
         else:
@@ -465,6 +473,10 @@ class WorkbenchService:
         if key in self._queue:
             self._queue.remove(key)
         pid = draft["job"].get("pid")
+        # Record the cancellation *before* the kill and before the process
+        # handle goes away: a concurrent status poll that sees the process
+        # gone must find a finished status, not derive ``interrupted``.
+        self.store.update_draft_job(design_id, draft_id, status="cancelled", finished_at=_now(), error="cancelled")
         process = self._processes.pop(key, None)
         if process is not None and process.poll() is None:
             self._kill_group(process.pid)
@@ -474,7 +486,6 @@ class WorkbenchService:
                 pass
         elif isinstance(pid, int) and _pid_is_workbench_job(pid, self.store.draft_dir(design_id, draft_id)):
             self._kill_group(pid)
-        self.store.update_draft_job(design_id, draft_id, status="cancelled", finished_at=_now(), error="cancelled")
         self._pump()
         return self.refresh_draft(design_id, draft_id)
 

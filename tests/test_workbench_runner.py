@@ -402,6 +402,30 @@ class TestRestart:
         assert service.cancel(did, jid)["job"]["status"] == "cancelled"
         assert service.refresh_draft(did, jid)["job"]["status"] == "cancelled"
 
+    def test_refresh_never_overwrites_a_finished_status_with_interrupted(self, tmp_path, registry, monkeypatch):
+        """The other interleaving: the poll read `running`, then cancel wrote
+        `cancelled` and dropped the process handle, then the poll saw a dead pid."""
+
+        service = wb.WorkbenchService(repo_root=tmp_path, registry_path=registry)
+        _fake_launch(service, hang=True)
+        created = service.create_design(origin={"blank": {"backend": "openscad"}})
+        did, jid = created["design"]["design_id"], created["draft"]["draft_id"]
+        service._processes.pop((did, jid))  # the handle is gone, as after cancel's pop
+        real_read = service.store.read_draft
+        calls = {"n": 0}
+
+        def racy_read(design_id, draft_id):
+            calls["n"] += 1
+            payload = real_read(design_id, draft_id)
+            if calls["n"] == 1:
+                # first read: still running; then cancel lands
+                service.store.update_draft_job(design_id, draft_id, status="cancelled", finished_at=wb._now(), error="cancelled")
+            return payload
+
+        monkeypatch.setattr(service.store, "read_draft", racy_read)
+        assert service.refresh_draft(did, jid)["job"]["status"] == "cancelled"
+        assert real_read(did, jid)["job"]["status"] == "cancelled"
+
     def test_kill_group_never_signals_our_own_group(self, monkeypatch):
         sent: list = []
         own = os.getpgid(0)
