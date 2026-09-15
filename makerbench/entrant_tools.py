@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from . import cadquery_backend, measure, render, render_view, scad_sandbox
+from .redaction import redact_host_paths
 
 TOOL_NAMES: tuple[str, ...] = ("measure", "render_view")
 TOOLS_TIER = "studio"
@@ -107,22 +108,36 @@ class ToolSession:
                 self.calls_used += 1
                 self.wall_used_s += float(call.get("wall_s") or 0.0)
 
-    def call(self, name: str, arguments: Mapping[str, Any] | None) -> dict[str, Any]:
-        """Run one tool call; always returns a JSON-able result, never raises."""
-        args = dict(arguments or {})
+    def call(self, name: object, arguments: object) -> dict[str, Any]:
+        """Run one tool call; always returns a JSON-able result, never raises.
+
+        Entrant-controlled strings never reach the ledger verbatim: an unknown
+        tool name or a refused path is recorded only as a sha256, a path is
+        recorded as text only once it has resolved inside the workspace, and
+        host paths are redacted from error messages.
+        """
+        is_mapping = isinstance(arguments, Mapping)
+        args = dict(arguments) if is_mapping else {}
+        tool = name if isinstance(name, str) and name in TOOL_NAMES else None
+        raw_path = args.get("path")
+        hashed_args = {k: v for k, v in args.items() if k != "source"} if is_mapping else arguments
         record: dict[str, Any] = {
             "seq": len(read_ledger(self.ledger)) + 1,
-            "tool": name,
-            "args_sha256": _sha256(_canonical({k: v for k, v in args.items() if k != "source"})),
+            "tool": tool,
+            "tool_sha256": None if tool else _sha256(_canonical(name)),
+            "args_sha256": _sha256(_canonical(hashed_args)),
             "source_sha256": None,
-            "path": args.get("path") if isinstance(args.get("path"), str) else None,
+            "path": None,
+            "path_sha256": None if raw_path is None else _sha256(_canonical(raw_path)),
             "counted": False,
         }
         images: list[dict[str, str]] = []
         start = time.monotonic()
         try:
-            if name not in TOOL_NAMES:
-                raise ToolError(f"unknown tool {name!r}; available: {list(TOOL_NAMES)}")
+            if tool is None:
+                raise ToolError(f"unknown tool; available: {list(TOOL_NAMES)}")
+            if arguments is not None and not is_mapping:
+                raise ToolError("arguments must be an object")
             if self.calls_used >= self.max_calls or self.wall_used_s >= self.max_wall_s:
                 raise ToolError(
                     f"budget exhausted ({self.calls_used}/{self.max_calls} calls, "
@@ -130,19 +145,20 @@ class ToolSession:
                 )
             record["counted"] = True
             self.calls_used += 1
-            payload, images, source_sha = self._run(name, args)
+            payload, images, source_sha = self._run(tool, args, record)
             record["source_sha256"] = source_sha
             result = {"ok": bool(payload.get("ok")), "result": payload}
         except (ToolError, render.CompileError) as exc:
-            result = {"ok": False, "error": str(exc)}
+            result = {"ok": False, "error": redact_host_paths(str(exc))}
         except RuntimeError as exc:  # SandboxUnavailable and CadQuery environment failures
-            result = {"ok": False, "error": f"sandbox unavailable: {exc}"}
+            result = {"ok": False, "error": redact_host_paths(f"sandbox unavailable: {exc}")}
         wall = time.monotonic() - start
         if record["counted"]:
             self.wall_used_s += wall
+        error = result.get("error") or (result.get("result") or {}).get("error")
         record.update(
             ok=result["ok"],
-            error=result.get("error") or (result.get("result") or {}).get("error"),
+            error=redact_host_paths(error) if isinstance(error, str) else error,
             result_sha256=_sha256(_canonical(result)),
             image_sha256=[image["sha256"] for image in images],
             wall_s=round(wall, 3),
@@ -152,7 +168,8 @@ class ToolSession:
             stream.write(json.dumps(record, sort_keys=True) + "\n")
         return {**result, "images": images}
 
-    def _run(self, name: str, args: dict[str, Any]) -> tuple[dict, list[dict[str, str]], str]:
+    def _run(self, name: str, args: dict[str, Any],
+             record: dict[str, Any]) -> tuple[dict, list[dict[str, str]], str]:
         source, path = args.get("source"), args.get("path")
         if (source is None) == (path is None):
             raise ToolError("pass exactly one of 'source' or 'path'")
@@ -161,6 +178,7 @@ class ToolSession:
             stl: Path | None = None
             if path is not None:
                 file = resolve_workspace_file(self.workspace, path)
+                record["path"] = file.relative_to(self.workspace).as_posix()
                 data = file.read_bytes()
                 source_sha = _sha256(data)
                 if file.suffix.lower() in MESH_SUFFIXES:

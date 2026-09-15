@@ -18,7 +18,7 @@ import trimesh
 from makerbench import code_cad_arena_runner as runner
 from makerbench import code_cad_generator as gen
 from makerbench import code_cad_providers as providers
-from makerbench import entrant_tools, entrant_tools_mcp, scad_sandbox
+from makerbench import entrant_tools, entrant_tools_mcp, redaction, scad_sandbox
 
 REQUIRE_SANDBOX = os.environ.get("MAKERBENCH_REQUIRE_SANDBOX") == "1"
 _AVAILABLE = scad_sandbox.sandbox_available()
@@ -210,6 +210,137 @@ def test_mcp_server_lists_exactly_the_two_tools_and_routes_calls(layout):
     assert responses[3]["error"]["code"] == -32601
 
 
+def _serve(session, requests):
+    lines = "\n".join(json.dumps(r) for r in requests) + "\n"
+    stdout = io.StringIO()
+    entrant_tools_mcp.serve(session, io.StringIO(lines), stdout)
+    return [json.loads(line) for line in stdout.getvalue().splitlines()]
+
+
+@pytest.mark.parametrize("arguments", [5, "prior.stl", ["prior.stl"], True])
+def test_non_object_arguments_are_a_ledgered_tool_error_not_an_exception(layout, arguments):
+    workspace, harness, _ = layout
+    out = _session(workspace, harness).call("measure", arguments)
+
+    assert out["ok"] is False and out["error"] == "arguments must be an object"
+    [call] = entrant_tools.read_ledger(harness / "ledger.jsonl")
+    assert call["counted"] is False and call["tool"] == "measure" and call["path"] is None
+
+
+def test_mcp_server_keeps_answering_after_malformed_params_and_arguments(layout):
+    workspace, harness, _ = layout
+    responses = _serve(_session(workspace, harness), [
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+         "params": {"name": "measure", "arguments": 5}},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": "measure"},
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": ["measure", {}]},
+        7,
+        {"jsonrpc": "2.0", "id": 4, "method": "ping"},
+    ])
+
+    assert [r["id"] for r in responses] == [1, 2, 3, None, 4]
+    assert responses[0]["result"]["isError"] is True
+    assert "arguments must be an object" in responses[0]["result"]["content"][0]["text"]
+    assert responses[1]["error"]["code"] == responses[2]["error"]["code"] == -32602
+    assert responses[3]["error"]["code"] == -32600
+    assert responses[4]["result"] == {}
+    assert len(entrant_tools.read_ledger(harness / "ledger.jsonl")) == 1
+
+
+def test_mcp_server_survives_an_unexpected_handler_exception(layout, monkeypatch):
+    workspace, harness, _ = layout
+    real_handle = entrant_tools_mcp.handle
+
+    def flaky(session, message):
+        if message.get("id") == 1:
+            raise KeyError("unexpected")
+        return real_handle(session, message)
+
+    monkeypatch.setattr(entrant_tools_mcp, "handle", flaky)
+    responses = _serve(_session(workspace, harness), [
+        {"jsonrpc": "2.0", "id": 1, "method": "ping"},
+        {"jsonrpc": "2.0", "id": 2, "method": "ping"},
+    ])
+
+    assert responses[0] == {"jsonrpc": "2.0", "id": 1,
+                            "error": {"code": -32603, "message": "internal error"}}
+    assert responses[1] == {"jsonrpc": "2.0", "id": 2, "result": {}}
+
+
+PROBE = "entrant-probe-5c1d"
+
+
+def _hostile_paths(secret):
+    return [secret.as_posix(), f"/home/{PROBE}/secret.scad", f"../../home/{PROBE}/b.scad",
+            f"/tmp/{PROBE}/../etc/passwd", f"C:/Users/{PROBE}/c.scad", "../host-secret.scad"]
+
+
+def test_refused_paths_and_unknown_tool_names_never_reach_the_ledger(layout):
+    workspace, harness, secret = layout
+    session = _session(workspace, harness)
+    hostile = _hostile_paths(secret)
+    for raw in hostile:
+        assert session.call("measure", {"path": raw})["ok"] is False
+    session.call(f"/home/{PROBE}/tool", {"path": "prior.stl"})
+    session.call("measure", {"path": "prior.stl"})
+
+    raw_ledger = (harness / "ledger.jsonl").read_text()
+    assert PROBE not in raw_ledger and "host-secret" not in raw_ledger
+    assert secret.as_posix() not in raw_ledger
+    assert redaction.find_host_paths(raw_ledger) == []
+    calls = entrant_tools.read_ledger(harness / "ledger.jsonl")
+    assert all(c["path"] is None and c["path_sha256"] for c in calls[:len(hostile)])
+    assert calls[-2]["tool"] is None and calls[-2]["tool_sha256"] and calls[-2]["path"] is None
+    assert calls[-1]["path"] == "prior.stl" and calls[-1]["ok"] is True
+
+
+def test_validated_path_is_recorded_and_host_paths_are_redacted_from_errors(layout, monkeypatch):
+    workspace, harness, _ = layout
+
+    def failing_compile(source, backend, tmp):
+        raise entrant_tools.render.CompileError(f"openscad failed on {tmp}/candidate.scad")
+
+    monkeypatch.setattr(entrant_tools.ToolSession, "_compile", staticmethod(failing_compile))
+    out = _session(workspace, harness).call("measure", {"path": "prior.scad"})
+
+    assert out["ok"] is False and redaction.find_host_paths(out["error"]) == []
+    [call] = entrant_tools.read_ledger(harness / "ledger.jsonl")
+    assert call["path"] == "prior.scad" and call["counted"] is True
+    assert "openscad failed" in call["error"] and redaction.find_host_paths(call["error"]) == []
+
+
+def test_host_paths_in_a_tool_payload_error_are_redacted_in_the_ledger(layout, monkeypatch):
+    workspace, harness, _ = layout
+
+    def failing_measure(stl, sections):
+        return {"ok": False, "error": f"cannot load mesh {stl}", "measurements": []}
+
+    monkeypatch.setattr(entrant_tools.measure, "measure_candidate", failing_measure)
+    out = _session(workspace, harness).call("measure", {"path": "prior.stl"})
+
+    assert out["ok"] is False
+    [call] = entrant_tools.read_ledger(harness / "ledger.jsonl")
+    assert call["error"].startswith("cannot load mesh")
+    assert redaction.find_host_paths(call["error"]) == []
+
+
+def test_refused_paths_leave_no_host_path_in_trial_provenance(monkeypatch, layout):
+    _, _, secret = layout
+    calls = [("measure", {"path": raw}) for raw in _hostile_paths(secret)]
+    calls += [(f"/home/{PROBE}/tool", {}), ("render_view", 5), ("measure", {"path": "prior.stl"})]
+
+    _, provenance = _capture_claude(monkeypatch, layout, "studio", calls=calls)
+
+    block = json.dumps(provenance["tools"])
+    assert PROBE not in block and secret.as_posix() not in block
+    assert redaction.find_host_paths(block) == []
+    recorded = provenance["tools"]["calls"]
+    assert [c["path"] for c in recorded] == [None] * (len(calls) - 1) + ["prior.stl"]
+    # A refused path still spends a counted call (probing isn't free); an unknown tool or
+    # non-object arguments are refused before the budget is touched.
+    assert provenance["tools"]["calls_used"] == len(_hostile_paths(secret)) + 1
+
+
 # --- Claude wiring --------------------------------------------------------------------------
 
 
@@ -220,7 +351,8 @@ def _request(tier, workspace, tools=entrant_tools.TOOL_NAMES):
                                  entrant_tools=tuple(tools))
 
 
-def _capture_claude(monkeypatch, layout, tier, tools=entrant_tools.TOOL_NAMES, *, tool_calls=0):
+def _capture_claude(monkeypatch, layout, tier, tools=entrant_tools.TOOL_NAMES, *, tool_calls=0,
+                    calls=None):
     workspace, harness, _ = layout
     seen: dict = {}
 
@@ -232,8 +364,8 @@ def _capture_claude(monkeypatch, layout, tier, tools=entrant_tools.TOOL_NAMES, *
             server = seen["config"]["mcpServers"]["makerbench"]["args"]
             ledger = Path(server[server.index("--ledger") + 1])
             session = entrant_tools.ToolSession(workspace=workspace, ledger=ledger)
-            for _ in range(tool_calls):
-                session.call("measure", {"path": "prior.stl"})
+            for name, arguments in calls or [("measure", {"path": "prior.stl"})] * tool_calls:
+                session.call(name, arguments)
         payload = {"result": "```scad\ncube(1);\n```", "is_error": False}
         return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), "")
 
