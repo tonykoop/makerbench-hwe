@@ -129,6 +129,7 @@ class ArenaStudioService:
             registry_path=self.registry_path,
             instruments_root=self.instruments_root,
             source_root=self.source_root,
+            allow_live=self.allow_live,
         )
 
     def _rediscover_jobs(self) -> None:

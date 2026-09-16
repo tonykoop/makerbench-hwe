@@ -33,6 +33,7 @@ import {
   unitText,
 } from "../lib/params.js";
 import { curationChanges, curationRows, exportSummary, pickText, writtenText } from "../lib/curate.js";
+import { FEEDBACK_LIMIT, canStart, confirmText, entrantOptionText, modelProvenanceText } from "../lib/revise.js";
 import { useResource } from "../hooks/useResource.js";
 import { CodeEditor } from "../components/codeEditor.js";
 import { ModelViewer } from "../components/modelViewer.js";
@@ -320,8 +321,12 @@ function RevisionTree({ designId, revisions, current, compareWith, onCompare }) 
   `;
 }
 
-function ComparePanel({ designId, a, b, onClose }) {
-  const compare = useResource(`${base(designId)}/compare?a=${enc(a)}&b=${enc(b)}`);
+function ComparePanel({ designId, a, b, bKind = "revisions", onClose }) {
+  const compare = useResource(
+    bKind === "drafts"
+      ? `${base(designId)}/drafts/${enc(b)}/compare?against=${enc(a)}`
+      : `${base(designId)}/compare?a=${enc(a)}&b=${enc(b)}`,
+  );
   const titleRef = useRef(null);
   useEffect(() => titleRef.current?.focus(), []);
   let body;
@@ -339,10 +344,11 @@ function ComparePanel({ designId, a, b, onClose }) {
           <${Preview} designId=${designId} kind="revisions" itemId=${a} artifacts=${data.a.artifacts} label=${`Preview of revision ${data.a.seq}`} />
           <p class="hint">${editorKindText(data.a.editor?.kind)}, ${formatWhen(data.a.created_at)}</p>
         </section>
-        <section class="panel" aria-label=${`Revision ${data.b.seq}`}>
-          <h3>Revision ${data.b.seq}</h3>
-          <${Preview} designId=${designId} kind="revisions" itemId=${b} artifacts=${data.b.artifacts} label=${`Preview of revision ${data.b.seq}`} />
+        <section class="panel" aria-label=${bKind === "drafts" ? "Unsaved draft" : `Revision ${data.b.seq}`}>
+          <h3>${bKind === "drafts" ? "Unsaved draft" : `Revision ${data.b.seq}`}</h3>
+          <${Preview} designId=${designId} kind=${bKind} itemId=${b} artifacts=${data.b.artifacts} label=${bKind === "drafts" ? "Preview of the unsaved draft" : `Preview of revision ${data.b.seq}`} />
           <p class="hint">${editorKindText(data.b.editor?.kind)}, ${formatWhen(data.b.created_at)}</p>
+          ${data.b.editor?.kind === "model" && html`<p class="hint" data-provenance="model">${modelProvenanceText(data.b.editor)}</p>`}
         </section>
       </div>
       <h3>Source</h3>
@@ -357,7 +363,7 @@ function ComparePanel({ designId, a, b, onClose }) {
       ${params.length
         ? html`<div class="table-scroll"><table class="data-table parameter-delta">
             <caption class="visually-hidden">Parameter changes</caption>
-            <thead><tr><th scope="col">Parameter</th><th scope="col">Revision ${data.a.seq}</th><th scope="col">Revision ${data.b.seq}</th></tr></thead>
+            <thead><tr><th scope="col">Parameter</th><th scope="col">Revision ${data.a.seq}</th><th scope="col">${bKind === "drafts" ? "Unsaved draft" : `Revision ${data.b.seq}`}</th></tr></thead>
             <tbody>
               ${params.map(([name, [before, after]]) => html`<tr key=${name}><th scope="row">${name}</th><td>${formatValue(before)}</td><td>${formatValue(after)}</td></tr>`)}
             </tbody>
@@ -387,7 +393,7 @@ function ComparePanel({ designId, a, b, onClose }) {
 const TABS = [
   { id: "code", label: "Code" },
   { id: "parameters", label: "Parameters" },
-  { id: "revise", label: "Revise", later: true },
+  { id: "revise", label: "Revise" },
   { id: "curate", label: "Curate" },
 ];
 
@@ -625,6 +631,95 @@ function ParametersTab({ designId, revId, running, onApply, busy }) {
   `;
 }
 
+// --- revise tab (#788 W6, non-live) --------------------------------------------------
+
+// Entrant picker fed by /api/workbench/entrants (availability probed by the
+// server, never assumed), feedback, an in-page confirm that names what will
+// be called, then the same job flow as a compile. On success the parent is
+// compared against the unsaved draft; Save records the model provenance.
+function ReviseTab({ designId, revId, running, busy, onStart }) {
+  const entrants = useResource("/api/workbench/entrants");
+  const [modelId, setModelId] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [includeImages, setIncludeImages] = useState(true);
+  const [confirming, setConfirming] = useState(false);
+  const [refusal, setRefusal] = useState("");
+  const confirmRef = useRef(null);
+  const startRef = useRef(null);
+  const refusalRef = useRef(null);
+
+  const rows = entrants.status === "ready" ? entrants.data.entrants || [] : [];
+  useEffect(() => {
+    if (!modelId && rows.length) setModelId((rows.find((r) => r.allowed) || rows[0]).model_id);
+  }, [entrants.status]);
+  const entrant = rows.find((r) => r.model_id === modelId) || null;
+  const gate = canStart({ entrant, feedback, revId, running });
+
+  const start = () => {
+    if (!gate.ok) {
+      setRefusal(gate.reason);
+      setTimeout(() => refusalRef.current?.focus(), 0);
+      return;
+    }
+    setRefusal("");
+    setConfirming(true);
+    setTimeout(() => confirmRef.current?.focus(), 0);
+  };
+  const cancelConfirm = () => {
+    setConfirming(false);
+    setTimeout(() => startRef.current?.focus(), 0);
+  };
+  const confirm = async () => {
+    setConfirming(false);
+    const ok = await onStart({ model_id: modelId, feedback, include_images: includeImages });
+    if (!ok) setTimeout(() => startRef.current?.focus(), 0);
+  };
+
+  if (entrants.status === "loading" || entrants.status === "idle") return html`<${Loading} label="Listing entrants…" />`;
+  if (entrants.status === "error") return html`<${ErrorState} error=${entrants.error} onRetry=${entrants.reload} />`;
+  const allowLive = Boolean(entrants.data.allow_live);
+  return html`
+    <div class="revise-tab">
+      <p class="hint">
+        A model revises the current revision inside a staged copy of the instrument repo (studio tier).
+        Confinement is recorded from the launch itself, never assumed.
+        ${!allowLive && html` <span class="revise-live-note">Live entrants are off: the server must be started with <code>--allow-live</code>.</span>`}
+      </p>
+      <label class="field">
+        <span class="field-label">Entrant</span>
+        <select name="entrant" data-revise="entrant" value=${modelId} disabled=${Boolean(running)} onChange=${(event) => setModelId(event.currentTarget.value)}>
+          ${rows.map((row) => html`<option key=${row.model_id} value=${row.model_id} disabled=${!row.allowed}>${entrantOptionText(row)}</option>`)}
+        </select>
+      </label>
+      ${entrant && html`<p class="hint" role="status" data-revise="entrant-state">${entrant.allowed ? entrant.note : entrant.reason}</p>`}
+      <label class="field">
+        <span class="field-label">What should change? (up to 8 KiB)</span>
+        <textarea name="feedback" data-revise="feedback" rows="5" maxlength=${FEEDBACK_LIMIT} readonly=${running ? true : undefined} value=${feedback} onInput=${(event) => setFeedback(event.currentTarget.value)}></textarea>
+      </label>
+      <label class="field field-check">
+        <input type="checkbox" name="include_images" data-revise="images" checked=${includeImages} disabled=${Boolean(running)} onChange=${(event) => setIncludeImages(event.currentTarget.checked)} />
+        <span>Include the repo's reference images in the prompt</span>
+      </label>
+      <p class="hint">Up to 40 turns per revision, at most ${entrants.data.per_minute || 3} revisions a minute; Cancel stops a running one.</p>
+      <div class="actions">
+        <button type="button" class="button" data-action="revise-start" ref=${startRef} aria-disabled=${busy || running ? "true" : "false"} onClick=${start}>
+          Revise with ${entrant ? entrant.label : "an entrant"}…
+        </button>
+      </div>
+      <p class=${`panel-status${refusal ? " is-error" : ""}`} role="status" tabindex="-1" ref=${refusalRef}>${refusal}</p>
+      ${confirming &&
+      html`<section class="panel confirm revise-confirm" aria-labelledby="revise-confirm-title">
+        <h5 id="revise-confirm-title" tabindex="-1" ref=${confirmRef}>${entrant?.live ? "Call this model?" : "Run the stub?"}</h5>
+        <p class="hint" role="status">${confirmText(entrant)}</p>
+        <div class="actions">
+          <button type="button" class="button" data-action="revise-confirm" onClick=${confirm}>${entrant?.live ? "Call it" : "Run it"}</button>
+          <button type="button" class="button button-quiet" data-action="revise-cancel" onClick=${cancelConfirm}>Cancel</button>
+        </div>
+      </section>`}
+    </div>
+  `;
+}
+
 // --- curate tab (#788 W7) ------------------------------------------------------------
 
 // Pick, title and note go to the append-only curation log; the history is
@@ -824,6 +919,7 @@ function DesignView({ designId, revId }) {
   const [savePanel, setSavePanel] = useState(false);
   const [status, setStatus] = useState({ text: "", error: false });
   const [compareWith, setCompareWith] = useState(null);
+  const [draftCompare, setDraftCompare] = useState(null);
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState("code");
   const [curationState, setCurationState] = useState(null);
@@ -915,6 +1011,33 @@ function DesignView({ designId, revId }) {
       setBusy(false);
     }
   };
+
+  // Revise tab (W6): the draft's job stages, calls the entrant and compiles.
+  // Returns true when the job was queued so the tab keeps or restores focus.
+  const startRevise = async (revise) => {
+    if (busy || running || !currentRevId) return false;
+    setBusy(true);
+    try {
+      const result = await api(`${base(designId)}/drafts`, { method: "POST", body: { parent_rev_id: currentRevId, revise } });
+      setDraftCompare(null);
+      setDraftId(result.draft_id);
+      setStatus({ text: "", error: false });
+      return true;
+    } catch (err) {
+      announce(err.message, true);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // A successful model revision opens Compare against its parent (plan §6).
+  useEffect(() => {
+    if (finished && draft?.kind === "revise" && draft.job?.status === "succeeded" && draft.parent_rev_id) {
+      setCompareWith(null);
+      setDraftCompare({ a: draft.parent_rev_id, b: draft.draft_id });
+    }
+  }, [finished, draft?.draft_id]);
 
   const cancel = async () => {
     if (!draftId) return;
@@ -1009,6 +1132,10 @@ function DesignView({ designId, revId }) {
             ${tab === "parameters" &&
             html`<${ParametersTab} key=${currentRevId || "none"} designId=${designId} revId=${currentRevId} running=${Boolean(running)} busy=${busy} onApply=${applyParams} />`}
           </div>
+          <div role="tabpanel" id="panel-revise" aria-labelledby="tab-revise" hidden=${tab !== "revise"}>
+            ${tab === "revise" &&
+            html`<${ReviseTab} key=${currentRevId || "none"} designId=${designId} revId=${currentRevId} running=${Boolean(running)} busy=${busy} onStart=${startRevise} />`}
+          </div>
           <div role="tabpanel" id="panel-curate" aria-labelledby="tab-curate" hidden=${tab !== "curate"}>
             ${tab === "curate" &&
             html`<${CurateTab} key=${currentRevId || "none"} designId=${designId} revId=${currentRevId} revisions=${revisions} onSaved=${setCurationState} />`}
@@ -1038,6 +1165,8 @@ function DesignView({ designId, revId }) {
                 ${draft.queue_position ? ` (position ${draft.queue_position} in the queue)` : ""}
                 ${draft.job?.status === "succeeded" && draft.parent_rev_id === currentRevId ? " — unsaved draft" : ""}
               </p>
+              ${draft.kind === "revise" && draft.editor?.kind === "model" && finished &&
+              html`<p class="hint" data-provenance="model">${modelProvenanceText(draft.editor)}</p>`}
               ${draftFailed &&
               html`<div class="state state-error" role="alert">
                 <p class="state-title">The compile failed.</p>
@@ -1072,6 +1201,8 @@ function DesignView({ designId, revId }) {
       </section>
       ${compareWith && currentRevId &&
       html`<${ComparePanel} key=${`${currentRevId}:${compareWith}`} designId=${designId} a=${compareWith} b=${currentRevId} onClose=${() => { setCompareWith(null); document.querySelector(`[data-compare="${CSS.escape(compareWith)}"]`)?.focus(); }} />`}
+      ${draftCompare && !compareWith &&
+      html`<${ComparePanel} key=${`draft:${draftCompare.b}`} designId=${designId} a=${draftCompare.a} b=${draftCompare.b} bKind="drafts" onClose=${() => { setDraftCompare(null); (document.querySelector("[data-action='save']") || document.querySelector("[data-action='revise-start']") || resultRef.current)?.focus(); }} />`}
     </article>
   `;
 }

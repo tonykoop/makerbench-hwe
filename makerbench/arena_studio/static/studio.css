@@ -2108,3 +2108,32 @@ kbd {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
+
+/* --- Revise tab (#788 W6) ------------------------------------------------ */
+
+.revise-tab {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.revise-tab select,
+.revise-tab textarea {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: var(--space-1) var(--space-2);
+}
+
+.revise-live-note {
+  display: block;
+  margin-top: var(--space-1);
+}
+
+.revise-confirm h5 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--step-0);
+}
