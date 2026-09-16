@@ -298,6 +298,37 @@ The **Workbench** rail entry (`#/workbench`) is the author tool of the Studio
 (#788): open a candidate, edit its code, compile it **in the sandbox**, see the
 preview and objective checks, and save each step as an append-only revision.
 
+### A first session
+
+1. **Start the Studio with an instruments root** so masters can be opened and
+   exports have a target: `makerbench arena studio --instruments-root
+   <path to the instrument repos>`. Add `--allow-live` only when you intend to
+   call a real model from the Revise tab.
+2. **Open something.** From a run's summary on Runs, "Open in the workbench"
+   next to a trial (it names the entrant, so vote first); or from a catalog
+   row on Launch, "Open master". The origin compiles on its own; when it has,
+   "Save as revision" makes it revision 1.
+3. **Edit, compile, save.** Change the code, press Ctrl+Enter (or Compile),
+   watch the log, then save revision 2. Every save names its parent, so a
+   later edit of an older revision becomes a branch.
+4. **Parameters** for the same edit without touching code: change a value,
+   read the Changes summary, "Apply and compile", save.
+5. **Revise with a model** when you want a second opinion: pick an entrant
+   (the stub runs a placeholder for free), say what should change, confirm,
+   and read the Compare panel that opens on success before saving.
+6. **Compare** any two revisions from the Revisions table.
+7. **Curate and export.** Pick the revision you would keep, give it a title
+   and a note, then "Export this revision…", read the target paths, confirm.
+   The files land under `arena/workbench/` in the instrument repo; commit
+   them yourself when you are happy.
+
+The `studio-screens` CI artifact holds a screenshot of every state above
+in both themes (`w9-workbench-<state>-{light,dark}.png`: `list-empty`,
+`design-origin`, `code-result`, `parameters`, `revise`, `revise-confirm`,
+`curate`, `export-confirm`, `export-done`, `compare`, `compile-failed`,
+`list`, `phone`), and the evening journey adds `f7-e2e-12-workbench-editor`,
+`13-workbench-compare` and `14-workbench-export`.
+
 - **Open something.** On the Runs screen a run's summary lists its trials
   under "Open in the workbench"; the notice says it shows the entrant, so vote
   first if you want to stay blind. On the Launch screen every catalog row has
@@ -402,6 +433,13 @@ ARENA_STUDIO_REQUIRE_BROWSER=1 python -m pytest -q tests/test_arena_studio_brows
 - **Screenshots.** `ARENA_STUDIO_SCREENSHOTS=<dir>` keeps them.
 - **Full flow.** `tests/test_arena_studio_browser_e2e.py` walks every screen in one
   session, with and without WebGL, and adds a dark-theme screenshot of each screen.
+  Its last leg opens a trial in the workbench, edits, compiles, saves, compares and
+  exports, so it needs the OpenSCAD sandbox (`MAKERBENCH_REQUIRE_SANDBOX=1` in CI;
+  locally the leg is skipped with a printed note when bubblewrap is missing).
+- **Workbench.** `tests/test_arena_studio_browser_workbench*.py` cover the
+  editor, parameters, revise (stub only) and curate/export flows keyboard-only,
+  and `tests/test_arena_studio_browser_workbench_states.py` takes the
+  screenshot set of every workbench state in both themes.
 - **Why the require flag.** `ARENA_STUDIO_REQUIRE_BROWSER=1` turns a missing
   Playwright or Chromium into a failure instead of a skip.
 - **CI.** The non-required, path-filtered `studio-browser` GitHub Actions job runs

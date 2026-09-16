@@ -46,9 +46,18 @@ trimesh = pytest.importorskip("trimesh")
 
 from PIL import Image, ImageDraw  # noqa: E402 - after the optional-dependency guards
 
-from makerbench import cli_arena  # noqa: E402 - after the optional-dependency guards
+from makerbench import cli_arena, scad_sandbox  # noqa: E402 - after the optional-dependency guards
 from makerbench.arena_studio import create_studio_app  # noqa: E402 - after the optional-dependency guards
 from makerbench.arena_studio.service import ArenaStudioService  # noqa: E402 - after the optional-dependency guards
+
+# #788 W9: the journey's workbench leg compiles in the real OpenSCAD sandbox.
+# Without a sandbox that leg is skipped with a note; CI sets
+# MAKERBENCH_REQUIRE_SANDBOX=1 so a missing sandbox fails instead.
+REQUIRE_SANDBOX = os.environ.get("MAKERBENCH_REQUIRE_SANDBOX") == "1"
+_SANDBOX = scad_sandbox.sandbox_available()
+if REQUIRE_SANDBOX and not _SANDBOX:  # pragma: no cover - CI guard
+    pytest.fail("MAKERBENCH_REQUIRE_SANDBOX=1 but the OpenSCAD sandbox cannot start", pytrace=False)
+OCARINA_CUBE = "w_mm = 12;\ncube(w_mm);\n"
 
 RUN_ID = "e2e-round"
 RUN_B = "e2e-round-b"
@@ -116,6 +125,10 @@ def _votable_run(run_dir: Path, instrument: str, identity: tuple[str, str, str, 
         Image.new("RGB", (320, 320), color).save(png)
         stl = artifacts / f"{trial_id}.stl"
         trimesh.creation.box(extents=(10, 10, 10)).export(stl)
+        # The candidate source the workbench opens (W9): a real, compilable program.
+        gen = run_dir / "gen" / trial_id
+        gen.mkdir(parents=True)
+        (gen / "candidate.scad").write_text(f"size = {10 if pass_rate == 1.0 else 8};\ncube(size);\n", encoding="utf-8")
         trials.append(
             {
                 "trial_id": trial_id,
@@ -126,6 +139,7 @@ def _votable_run(run_dir: Path, instrument: str, identity: tuple[str, str, str, 
                 "status": "completed",
                 "result": {
                     "render_ok": True,
+                    "gen": {"scad_path": str(gen / "candidate.scad")},
                     "artifacts": {"png_path": str(png), "stl_path": str(stl)},
                     "objective": {"objective_pass_rate": pass_rate, "passed": pass_rate == 1.0},
                 },
@@ -173,7 +187,7 @@ def studio_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
                 "schema": "makerbench-code-cad-arena-registry-v1",
                 "instruments": [
                     {"id": "ocarina", "display_name": "Ocarina", "family": "woodwind", "task_kind": "single_part_vessel",
-                     "envelope_mm": [140, 90, 70]},
+                     "envelope_mm": [140, 90, 70], "repo_path": "woodwind/ocarina"},
                     {"id": "kora", "display_name": "Kora", "family": "strings", "task_kind": "harp_lute",
                      "envelope_mm": [1200, 350, 250]},
                 ],
@@ -185,6 +199,12 @@ def studio_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         image = tmp_path / "tasks" / task_id / "reference.png"
         image.parent.mkdir(parents=True)
         Image.new("RGB", (480, 320), color).save(image)
+    # The ocarina's build repo (W9): a master to open and an export target; private/ must never leak.
+    ocarina_repo = tmp_path / "instruments" / "woodwind" / "ocarina"
+    (ocarina_repo / "cad").mkdir(parents=True)
+    (ocarina_repo / "cad" / "ocarina.scad").write_text(OCARINA_CUBE, encoding="utf-8")
+    (ocarina_repo / "private").mkdir()
+    (ocarina_repo / "private" / "oracle.json").write_text('{"secret": true}\n', encoding="utf-8")
     # ocarina's reference is approved; kora's is not, so DoE predicts kora as skipped.
     ArenaStudioService(registry_path=registry, repo_root=tmp_path).set_task_approval("ocarina", True)
 
@@ -224,7 +244,10 @@ def studio_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture
 def studio_url(studio_repo: Path):
-    app = create_studio_app(registry_path=studio_repo / "registry.json", repo_root=studio_repo)
+    app = create_studio_app(
+        registry_path=studio_repo / "registry.json", repo_root=studio_repo,
+        instruments_root=studio_repo / "instruments",
+    )
     port = _free_port()
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
@@ -477,7 +500,64 @@ def test_full_evening_journey_through_every_screen(
         assert len(_jsonl(studio_repo / "runs" / "morning_run" / "votes.blind.jsonl")) == 1
         shot("10-morning-revealed")
 
-        # 9. Back on Runs: the fixtures are listed, and the dry run launched from the UI is
+        # 9. Workbench (#788 W9): open the winning trial's candidate, edit, compile in
+        # the sandbox, save, compare, then export it into the instrument repo. It names
+        # the entrant, which is fine now: the blind vote above is already saved.
+        ocarina_repo = studio_repo / "instruments" / "woodwind" / "ocarina"
+        if _SANDBOX:
+            session.go("Runs")
+            page.get_by_role("link", name=RUN_ID, exact=True).click()
+            page.locator("[data-open-trial='t-1']").wait_for()
+            page.locator("[data-open-trial='t-1']").focus()
+            page.keyboard.press("Enter")
+            page.wait_for_url("**/#/workbench/d-*", timeout=15_000)
+            page.wait_for_function("(title) => document.title === title", arg="Workbench: Arena Studio")
+            page.locator("[data-action='save']").wait_for(timeout=120_000)
+            page.locator("[data-action='save']").click()
+            page.locator("[data-action='confirm-save']").click()
+            page.wait_for_url("**/#/workbench/d-*/r-*")
+            design_id, rev1 = page.url.split("#/workbench/")[1].split("/")
+            editor = page.locator(".code-editor-text")
+            editor.focus()
+            page.keyboard.press("Control+End")
+            page.keyboard.type("\ntranslate([20, 0, 0]) cube(4);\n")
+            shot("12-workbench-editor")
+            page.keyboard.press("Control+Enter")
+            page.locator("[data-action='cancel']").wait_for(timeout=10_000)
+            page.locator("[data-action='save']").wait_for(timeout=120_000)
+            page.locator("[data-action='save']").click()
+            page.locator("[data-action='confirm-save']").click()
+            page.wait_for_function("() => (document.querySelector('.workbench-head .panel-status')?.textContent || '').startsWith('Saved revision 2 from 1')")
+            page.locator(f"[data-compare='{rev1}']").click()
+            page.wait_for_function("() => document.activeElement?.id === 'compare-title'")
+            page.locator("pre.diff").wait_for()
+            assert "translate([20, 0, 0]) cube(4);" in page.locator("pre.diff").inner_text()
+            shot("13-workbench-compare")
+            page.get_by_role("button", name="Close").click()
+            page.locator("#tab-curate").click()
+            page.locator("[data-action='export']").wait_for()
+            page.locator("[data-action='export']").click()
+            page.wait_for_function("() => document.activeElement?.id === 'export-confirm-title'")
+            page.locator("[data-action='confirm-export']").click()
+            page.wait_for_function("() => document.activeElement?.classList.contains('export-result')")
+            assert "Commit it in the instrument repo when you're ready." in page.locator(".export-result").inner_text()
+            shot("14-workbench-export")
+            rev2 = page.url.split("#/workbench/")[1].split("/")[1]
+            exported = ocarina_repo / "arena" / "workbench" / design_id / rev2
+            assert sorted(p.name for p in exported.iterdir()) == ["README.md", "ocarina-workbench-r2.png", "ocarina-workbench-r2.scad", "ocarina-workbench-r2.stl", "provenance.json"]
+            assert "translate([20, 0, 0]) cube(4);" in (exported / "ocarina-workbench-r2.scad").read_text(encoding="utf-8")
+            assert "NOT a measured master" in (exported / "README.md").read_text(encoding="utf-8")
+        else:  # pragma: no cover - local runs without bubblewrap
+            print("workbench leg skipped: the OpenSCAD sandbox is unavailable here (CI requires it)")
+        # Whatever happened above, the instrument repo's masters and private tree are untouched,
+        # and the arena run directory gained nothing (the workbench copies, never writes back).
+        assert (ocarina_repo / "cad" / "ocarina.scad").read_text(encoding="utf-8") == OCARINA_CUBE
+        assert sorted(p.name for p in (ocarina_repo / "cad").iterdir()) == ["ocarina.scad"]
+        assert sorted(p.name for p in (ocarina_repo / "private").iterdir()) == ["oracle.json"]
+        run_entries = {p.name for p in (studio_repo / "runs" / "code_cad_arena" / RUN_ID).iterdir() if not p.name.endswith(".lock")}
+        assert run_entries - {"vote_pages", "votes.blind.jsonl", "votes.revealed.jsonl"} == {"artifacts", "gen", "run_log.json"}, run_entries
+
+        # 10. Back on Runs: the fixtures are listed, and the dry run launched from the UI is
         # listed exactly when it wrote run_log.json (discovery's rule). A stub dry run only
         # writes one where it can compile; the CI browser runner has no OpenSCAD.
         session.go("Runs")
@@ -503,6 +583,15 @@ def test_full_evening_journey_through_every_screen(
         assert [path for _method, path in writes if path.endswith("/api/competitions/launch")] == ["/api/competitions/launch"]
         assert not [path for _method, path in writes if path.endswith(("/api/doe/queue", "/approve", "/export-winners"))]
         assert len([path for _method, path in writes if path.endswith("/vote")]) == 2, writes
+        workbench_writes = [path for _method, path in writes if "/api/workbench/" in path]
+        others = [path for _method, path in writes if "/api/workbench/" not in path and not path.endswith(("/vote", "/api/competitions/launch"))]
+        assert others == [], others
+        if _SANDBOX:
+            # one design, two drafts (the origin compiles on its own; one edit), two saves, one export
+            assert len([p for p in workbench_writes if p.endswith("/api/workbench/designs")]) == 1
+            assert len([p for p in workbench_writes if p.endswith("/drafts")]) == 1, workbench_writes
+            assert len([p for p in workbench_writes if p.endswith("/revisions")]) == 2
+            assert len([p for p in workbench_writes if p.endswith("/export")]) == 1
         session.close()
         browser.close()
 
