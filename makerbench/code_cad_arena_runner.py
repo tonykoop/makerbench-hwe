@@ -327,6 +327,7 @@ def make_execute_trial(
     instruments_root: Optional[Path] = None,
     image_paths: Optional[Mapping[str, Path]] = None,
     backend: str,
+    entrant_tools: bool = False,
 ) -> TrialExecutor:
     """Wire #422 generation and #423 objective scoring into one trial executor.
 
@@ -345,7 +346,16 @@ def make_execute_trial(
     backend is required, with no default: it is written into every trial
     payload and wins over the run config in the objective scoreline, so a
     caller that forgot it would silently attribute its trials to OpenSCAD.
+
+    ``entrant_tools`` (#798) offers studio-tier entrants the read-only
+    measure/render tools; it is refused on every other tier.
     """
+
+    from .entrant_tools import tools_for_tier
+
+    if entrant_tools and context_tier != "studio":
+        raise ValueError("entrant_tools is only available on the studio context tier (#798)")
+    offered_tools = tools_for_tier(context_tier, entrant_tools)
 
     def _execute_body(trial: ArenaTrial) -> dict:
         generator = generators.get(trial.model_id)
@@ -408,6 +418,7 @@ def make_execute_trial(
             out_dir=gen_dir,
             context_tier=context_tier,
             workspace_dir=workspace_dir,
+            entrant_tools=offered_tools,
         )
         gen = results[0]
         if gen.status != "ok" or gen.scad_path is None:

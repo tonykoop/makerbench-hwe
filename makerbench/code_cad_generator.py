@@ -41,6 +41,9 @@ class GenerationRequest:
     prompt_sha256: str
     context_tier: str = "blind"
     workspace_dir: Optional[str] = None
+    # #798: read-only measure/render tools for this request; empty unless the
+    # run opted in on the studio tier (see makerbench.entrant_tools).
+    entrant_tools: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -118,6 +121,7 @@ def run_generation_batch(
     out_dir: Path,
     context_tier: str = "blind",
     workspace_dir: Optional[Path] = None,
+    entrant_tools: tuple[str, ...] = (),
 ) -> list[GenerationResult]:
     """Generate OpenSCAD attempts for N models under the same spec and seed.
 
@@ -148,6 +152,7 @@ def run_generation_batch(
             prompt_sha256=prompt_sha,
             context_tier=context_tier,
             workspace_dir=str(workspace_dir) if workspace_dir is not None else None,
+            entrant_tools=tuple(entrant_tools),
         )
         results.append(_run_one(request, generator, out_dir))
     return results
@@ -180,6 +185,7 @@ def _run_one(request: GenerationRequest, generator: Generator, out_dir: Path) ->
         scad_written = None
 
     provenance = _provenance(request, status, raw_path, scad_written, error)
+    provenance["tools"] = _tools_record(request, generator)
     provenance_path.write_text(
         json.dumps(provenance, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -217,6 +223,28 @@ def _provenance(
         "context_tier": request.context_tier,
         "workspace_dir": request.workspace_dir,
     }
+
+
+def _tools_record(request: GenerationRequest, generator: Generator) -> dict:
+    """The #798 ``tools`` provenance block: what was offered and every call made.
+
+    A generator that offers tools exposes ``tool_observations`` keyed like
+    ``sandbox_observations``. Tools requested but not wired for a provider are
+    recorded as ``transport: none`` with a reason, never silently dropped.
+    """
+
+    from .entrant_tools import tools_provenance
+
+    if not request.entrant_tools:
+        return tools_provenance((), transport="none")
+    observations = getattr(generator, "tool_observations", None)
+    key = (request.model_id, request.instrument_id, int(request.seed), request.context_tier)
+    observed = observations.get(key) if isinstance(observations, dict) else None
+    if not observed:
+        return tools_provenance((), transport="none",
+                                reason="entrant tools are not wired for this provider")
+    return tools_provenance(observed["enabled"], transport=observed["transport"],
+                            calls=observed["calls"])
 
 
 def _spec_id(spec: Mapping[str, object], fallback: Optional[str] = None) -> str:
