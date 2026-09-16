@@ -336,7 +336,18 @@ preview and objective checks, and save each step as an append-only revision.
   revision's values. Files pulled in by `include`/`use` are not scanned, and
   the tab says so.
 
-Revise (model revisions) and Curate tabs arrive in later slices.
+- **Curate and export.** The Curate tab records the catalog pick, a title
+  and a note in an append-only log (the history is shown as stored; nothing
+  is rewritten) and the design list shows the pick. "Export this revision…"
+  first lists the exact target paths, always
+  `<repo_path>/arena/workbench/<design>/<revision>/` inside the instrument
+  repo: the source, mesh, preview image (and GLB when one exists), a
+  `provenance.json` and a README that says the model is generated, not a
+  measured master. An existing target asks "Replace" or "Keep" in the page;
+  the result lists what was written and takes focus. The export never
+  touches `cad/` and never runs git: committing stays your decision.
+
+The Revise tab (model revisions) arrives in a later slice.
 
 ## Security model
 

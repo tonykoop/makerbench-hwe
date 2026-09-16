@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -66,6 +67,9 @@ MAX_RUNNING_PER_SERVER = 2
 MAX_QUEUED = 8
 #: Parameter values one apply may carry (G7).
 MAX_PARAMS = 500
+#: Export target inside an instrument repo (W7, G14): never ``cad/``.
+EXPORT_SUBDIR = "arena/workbench"
+EXPORT_SCHEMA = "makerbench-workbench-export-v1"
 #: ``job.log`` is capped: the tail served to the browser never exceeds this.
 JOB_LOG_CAP_BYTES = 2 * 1024 * 1024
 #: Longest compile stderr the job copies into the log.
@@ -153,12 +157,12 @@ class WorkbenchService:
 
     # --- origins ----------------------------------------------------------
 
-    def _master_cad_dir(self, instrument_id: str) -> Path:
-        """``<instruments_root>/<repo_path>/cad`` (any case) for a registry
-        instrument, contained and never through ``private``."""
+    def _repo_dir(self, instrument_id: str, *, what: str = "masters") -> tuple[Path, str]:
+        """``<instruments_root>/<repo_path>`` for a registry instrument, contained
+        and never through ``private`` or a symlink: (resolved dir, repo_path)."""
 
         if self.instruments_root is None:
-            raise WorkbenchError("the Studio was started without --instruments-root; masters are unavailable")
+            raise WorkbenchError(f"the Studio was started without --instruments-root; {what} are unavailable")
         if not is_valid_id(instrument_id):
             raise NotFound("unknown instrument")
         spec = self._spec(instrument_id)
@@ -184,6 +188,13 @@ class WorkbenchService:
             raise NotFound("instrument repo is not under the instruments root")
         if any(p.lower() == "private" for p in repo_dir.relative_to(self.instruments_root).parts):
             raise NotFound("unknown instrument")
+        return repo_dir, Path(*parts).as_posix()
+
+    def _master_cad_dir(self, instrument_id: str) -> Path:
+        """``<instruments_root>/<repo_path>/cad`` (any case) for a registry
+        instrument, contained and never through ``private``."""
+
+        repo_dir, _repo_path = self._repo_dir(instrument_id)
         for entry in os.scandir(repo_dir):
             if entry.name.lower() == "cad" and entry.is_dir() and not entry.is_symlink():
                 cad_dir = Path(entry.path).resolve()
@@ -606,6 +617,129 @@ class WorkbenchService:
     def save_revision(self, design_id: str, *, draft_id: str, note: str = "") -> dict:
         self.refresh_draft(design_id, draft_id)
         return self.store.save_revision(design_id, draft_id=draft_id, note=note)
+
+    # --- export (W7, G14) ------------------------------------------------------
+
+    def _export_target(self, design_id: str, rev_id: str) -> tuple[Path, str, dict, dict]:
+        """(target dir, published target path, design, revision) for an export.
+        The target is always ``<repo_path>/arena/workbench/<design>/<rev>/``:
+        never ``cad/``, never outside the instrument repo."""
+
+        design = self.store.read_design(design_id)
+        revision = self.store.read_revision(design_id, rev_id)
+        repo_dir, repo_path = self._repo_dir(design["instrument_id"], what="exports")
+        # Walk from the repo down to the target one component at a time and
+        # refuse a symlink at any level (`arena`, `workbench`, the design, the
+        # revision): `Path.is_symlink()` only inspects the last component, so
+        # a symlinked `arena/` -> `cad/` would otherwise pass unnoticed
+        # (Sonnet, #820). The ids passed the store's id rule, so the target
+        # cannot leave the repo; the resolve check is belt and braces.
+        target = repo_dir
+        for part in (*Path(EXPORT_SUBDIR).parts, design_id, rev_id):
+            target = target / part
+            if target.is_symlink():
+                raise Conflict(f"export target has a symlink at {part!r}; refusing to write through it")
+        if not target.resolve().is_relative_to(repo_dir):  # pragma: no cover - ids are validated above
+            raise NotFound("export target is not inside the instrument repo")
+        published = f"{repo_path}/{EXPORT_SUBDIR}/{design_id}/{rev_id}"
+        return target, published, design, revision
+
+    def _export_files(self, design: dict, revision: dict, rev_dir: Path) -> list[tuple[str, Optional[Path]]]:
+        """(name, source path or None for generated text) in write order."""
+
+        instrument = design["instrument_id"]
+        seq = int(revision.get("seq") or 0)
+        stem = f"{instrument}-workbench-r{seq}"
+        suffix = ".py" if design.get("backend") == "cadquery" else ".scad"
+        files: list[tuple[str, Optional[Path]]] = [(f"{stem}{suffix}", rev_dir / revision["source_name"])]
+        artifacts = rev_dir / "artifacts"
+        for name, ext in (("output.stl", ".stl"), ("preview.png", ".png"), ("model.glb", ".glb")):
+            candidate = artifacts / name
+            if candidate.is_file() and not candidate.is_symlink():
+                files.append((f"{stem}{ext}", candidate))
+        files.append(("provenance.json", None))
+        files.append(("README.md", None))
+        return files
+
+    def export_preview(self, design_id: str, rev_id: str) -> dict:
+        """The paths an export would write, and whether the target exists.
+        Reads only."""
+
+        target, published, design, revision = self._export_target(design_id, rev_id)
+        rev_dir = self.store.revision_dir(design_id, rev_id)
+        names = [name for name, _src in self._export_files(design, revision, rev_dir)]
+        existing = sorted(p.name for p in target.iterdir() if p.is_file()) if target.is_dir() else []
+        return {
+            "design_id": design_id,
+            "rev_id": rev_id,
+            "target": published,
+            "files": [{"name": name, "path": f"{published}/{name}", "exists": name in existing} for name in names],
+            "exists": bool(existing),
+            "existing": existing,
+        }
+
+    def export_revision(self, design_id: str, rev_id: str, *, replace: bool = False, voter: str = "tony") -> dict:
+        """Copy a revision's source and artifacts into the instrument repo
+        under ``arena/workbench/<design>/<rev>/`` with provenance and a README
+        that says it is generated. An existing target is a Conflict unless
+        ``replace`` is set, and then only that directory's files are replaced.
+        Never touches ``cad/``, never runs git; committing stays a human step."""
+
+        target, published, design, revision = self._export_target(design_id, rev_id)
+        rev_dir = self.store.revision_dir(design_id, rev_id)
+        files = self._export_files(design, revision, rev_dir)
+        existing = sorted(p.name for p in target.iterdir() if p.is_file()) if target.is_dir() else []
+        if existing and not replace:
+            raise Conflict(f"export target already exists: {published} (confirm Replace to overwrite)")
+        if target.is_dir():
+            for entry in os.scandir(target):
+                if entry.is_symlink() or not entry.is_file():
+                    raise Conflict("export target holds something that is not a plain file; refusing to replace it")
+        target.mkdir(parents=True, exist_ok=True)
+        if existing:
+            for name in existing:
+                (target / name).unlink()
+        curation = self.store.curation_state(design_id)
+        provenance = {
+            "schema": EXPORT_SCHEMA,
+            "design_id": design_id,
+            "rev_id": rev_id,
+            "seq": revision.get("seq"),
+            "parent_rev_id": revision.get("parent_rev_id"),
+            "instrument_id": design["instrument_id"],
+            "backend": design.get("backend"),
+            "origin": design.get("origin"),
+            "editor": revision.get("editor"),
+            "compile": revision.get("compile"),
+            "objective": revision.get("objective"),
+            "source_sha256": revision.get("source_sha256"),
+            "note": revision.get("note"),
+            "curation": {"pick": curation.get("pick") == rev_id, "title": curation.get("title"), "note": curation.get("note")},
+            "exported_by": voter,
+            "exported_at": _now(),
+            "generated": True,
+        }
+        title = curation.get("title") or design.get("title") or design_id
+        readme = (
+            f"# Workbench revision {revision.get('seq')}: {title}\n\n"
+            "**Generated model** from the Arena Studio design workbench (#788). "
+            f"Instrument `{design['instrument_id']}`, design `{design_id}`, revision `{rev_id}`"
+            f" (parent `{revision.get('parent_rev_id') or 'origin'}`, editor `{(revision.get('editor') or {}).get('kind', 'unknown')}`).\n\n"
+            "This is an AI-assisted arena artifact, NOT a measured master or a validated build packet. "
+            "See `provenance.json` for the full record. Nothing under `cad/` was changed by this export, "
+            "and nothing was committed: commit it in the instrument repo when you're ready.\n"
+        )
+        written = []
+        for name, src in files:
+            dest = target / name
+            if src is not None:
+                shutil.copyfile(src, dest)
+            elif name == "provenance.json":
+                dest.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            else:
+                dest.write_text(readme, encoding="utf-8")
+            written.append(f"{published}/{name}")
+        return {"design_id": design_id, "rev_id": rev_id, "target": published, "written": written, "replaced": existing}
 
 
 # --- the job subcommand -------------------------------------------------------
