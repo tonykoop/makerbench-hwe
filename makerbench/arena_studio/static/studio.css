@@ -1913,3 +1913,127 @@ kbd {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* --- Parameters tab (#788 W5) ------------------------------------------- */
+
+.param-groups {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.param-group > h4 {
+  margin: 0 0 var(--space-2);
+}
+
+.param-list {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.param-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  align-items: start;
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+}
+
+.param-row[data-changed="true"] {
+  border-color: var(--accent);
+}
+
+.param-row[data-editable="false"] {
+  background: var(--surface-muted, transparent);
+}
+
+.param-name {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.param-unit {
+  font-size: var(--step--1);
+  color: var(--muted);
+}
+
+.param-doc,
+.param-state,
+.param-range,
+.param-envelope,
+.param-expr {
+  grid-column: 1 / -1;
+  font-size: var(--step--1);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.param-expr {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  color: var(--ink);
+}
+
+.param-input {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.param-vector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.param-vector input {
+  width: 5.5rem;
+}
+
+.param-row input[type="number"],
+.param-row input[type="text"],
+.param-row select {
+  min-height: 2.25rem;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  color: var(--ink);
+  background: var(--surface);
+  font: inherit;
+  width: 100%;
+  min-width: 0;
+}
+
+.param-row input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.param-error {
+  grid-column: 1 / -1;
+  color: var(--danger);
+  font-size: var(--step--1);
+}
+
+.param-changes {
+  margin-top: var(--space-3);
+}
+
+.param-changes ul {
+  margin: var(--space-1) 0 0;
+  padding-left: 1.25rem;
+}
+
+.param-limitations {
+  margin: var(--space-2) 0 0;
+  padding-left: 1.25rem;
+  color: var(--muted);
+  font-size: var(--step--1);
+}
+
+@media (max-width: 760px) {
+  .param-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

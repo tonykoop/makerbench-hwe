@@ -20,6 +20,18 @@ import {
   revisionTree,
   saveTargetText,
 } from "../lib/workbench.js";
+import {
+  applyBody,
+  changedParams,
+  envelopeHint,
+  formatValue,
+  groupParameters,
+  modelSummary,
+  parseInput,
+  rangeText,
+  stateText,
+  unitText,
+} from "../lib/params.js";
 import { useResource } from "../hooks/useResource.js";
 import { CodeEditor } from "../components/codeEditor.js";
 import { ModelViewer } from "../components/modelViewer.js";
@@ -342,13 +354,13 @@ function ComparePanel({ designId, a, b, onClose }) {
       </div>
       <h3>Parameters</h3>
       ${params.length
-        ? html`<table class="data-table">
+        ? html`<div class="table-scroll"><table class="data-table parameter-delta">
             <caption class="visually-hidden">Parameter changes</caption>
             <thead><tr><th scope="col">Parameter</th><th scope="col">Revision ${data.a.seq}</th><th scope="col">Revision ${data.b.seq}</th></tr></thead>
             <tbody>
-              ${params.map(([name, [before, after]]) => html`<tr key=${name}><th scope="row">${name}</th><td>${String(before)}</td><td>${String(after)}</td></tr>`)}
+              ${params.map(([name, [before, after]]) => html`<tr key=${name}><th scope="row">${name}</th><td>${formatValue(before)}</td><td>${formatValue(after)}</td></tr>`)}
             </tbody>
-          </table>`
+          </table></div>`
         : html`<p class="hint">No declared parameter changed.</p>`}
       <h3>Checks</h3>
       <p class="hint">
@@ -366,6 +378,249 @@ function ComparePanel({ designId, a, b, onClose }) {
       </div>
       ${body}
     </section>
+  `;
+}
+
+// --- tabs ------------------------------------------------------------------------------
+
+const TABS = [
+  { id: "code", label: "Code" },
+  { id: "parameters", label: "Parameters" },
+  { id: "revise", label: "Revise", later: true },
+  { id: "curate", label: "Curate", later: true },
+];
+
+// A WAI-ARIA tab list with automatic activation: arrow keys move between the
+// live tabs and select them; Home/End jump. Later-slice tabs stay in the list
+// as disabled markers so the layout does not shift when they arrive.
+function Tabs({ selected, onSelect }) {
+  const live = TABS.filter((tab) => !tab.later);
+  const onKeyDown = (event) => {
+    const index = live.findIndex((tab) => tab.id === selected);
+    let next = null;
+    if (event.key === "ArrowRight") next = live[(index + 1) % live.length];
+    else if (event.key === "ArrowLeft") next = live[(index - 1 + live.length) % live.length];
+    else if (event.key === "Home") next = live[0];
+    else if (event.key === "End") next = live[live.length - 1];
+    if (!next) return;
+    event.preventDefault();
+    onSelect(next.id);
+    setTimeout(() => document.getElementById(`tab-${next.id}`)?.focus(), 0);
+  };
+  return html`
+    <div class="tabs" role="tablist" aria-label="Design tabs" onKeyDown=${onKeyDown}>
+      ${TABS.map((tab) =>
+        tab.later
+          ? html`<span key=${tab.id} class="tab tab-later" role="tab" aria-selected="false" aria-disabled="true" title="Arrives in a later slice">${tab.label}</span>`
+          : html`<button
+              key=${tab.id}
+              type="button"
+              role="tab"
+              id=${`tab-${tab.id}`}
+              class="tab"
+              aria-selected=${selected === tab.id ? "true" : "false"}
+              aria-controls=${`panel-${tab.id}`}
+              tabindex=${selected === tab.id ? 0 : -1}
+              onClick=${() => onSelect(tab.id)}
+            >
+              ${tab.label}
+            </button>`,
+      )}
+    </div>
+  `;
+}
+
+// --- parameters tab (#788 W5) -------------------------------------------------------
+
+function ParameterField({ param, id, raw, error, onInput, disabled }) {
+  const describedBy = [`${id}-state`, error ? `${id}-error` : null].filter(Boolean).join(" ");
+  let control;
+  if (param.kind === "bool") {
+    control = html`<input type="checkbox" id=${id} name=${param.name} data-param=${param.name} checked=${raw === true} disabled=${disabled} onChange=${(event) => onInput(event.currentTarget.checked)} aria-describedby=${describedBy} />`;
+  } else if (param.kind === "string" && param.options) {
+    control = html`<select id=${id} name=${param.name} data-param=${param.name} value=${raw} disabled=${disabled} onChange=${(event) => onInput(event.currentTarget.value)} aria-describedby=${describedBy}>
+      ${param.options.map((option) => html`<option key=${String(option)} value=${String(option)}>${String(option)}</option>`)}
+    </select>`;
+  } else if (param.kind === "string") {
+    control = html`<input type="text" id=${id} name=${param.name} data-param=${param.name} value=${raw} maxlength="1000" readonly=${disabled} onInput=${(event) => onInput(event.currentTarget.value)} aria-invalid=${error ? "true" : undefined} aria-describedby=${describedBy} />`;
+  } else if (param.kind === "vector") {
+    const items = Array.isArray(raw) ? raw : [];
+    control = html`<div class="param-vector" role="group" aria-labelledby=${`${id}-label`}>
+      ${items.map(
+        (item, index) => html`<input
+          key=${index}
+          type="number"
+          step="any"
+          id=${index === 0 ? id : `${id}-${index}`}
+          name=${`${param.name}[${index}]`}
+          data-param=${index === 0 ? param.name : undefined}
+          aria-label=${`${param.name} item ${index + 1}`}
+          value=${item}
+          readonly=${disabled}
+          onInput=${(event) => onInput(items.map((v, i) => (i === index ? event.currentTarget.value : v)))}
+          aria-invalid=${error ? "true" : undefined}
+          aria-describedby=${describedBy}
+        />`,
+      )}
+    </div>`;
+  } else {
+    const range = param.range || {};
+    control = html`<input
+      type="number"
+      id=${id}
+      name=${param.name}
+      data-param=${param.name}
+      value=${raw}
+      step=${range.step != null ? range.step : "any"}
+      min=${range.min}
+      max=${range.max}
+      readonly=${disabled}
+      onInput=${(event) => onInput(event.currentTarget.value)}
+      aria-invalid=${error ? "true" : undefined}
+      aria-describedby=${describedBy}
+    />`;
+  }
+  return html`
+    <div class="param-input">
+      ${control}
+    </div>
+  `;
+}
+
+function ParameterRow({ param, index, raw, error, changed, onInput, disabled, envelope }) {
+  const id = `param-${index}-${param.name.replace(/[^A-Za-z0-9_-]/g, "_")}`;
+  const state = stateText(param);
+  const range = rangeText(param);
+  const hint = envelopeHint(param, envelope);
+  return html`
+    <li class="param-row" data-param-row=${param.name} data-editable=${param.editable ? "true" : "false"} data-changed=${changed ? "true" : "false"}>
+      <div>
+        <label class="param-name" id=${`${id}-label`} for=${param.editable ? id : undefined}>${param.name}</label>
+        ${" "}<span class="param-unit">${unitText(param)}</span>
+        ${changed && html` <span class="gate" data-kind="review">changed</span>`}
+      </div>
+      ${param.editable
+        ? html`<${ParameterField} param=${param} id=${id} raw=${raw} error=${error} onInput=${onInput} disabled=${disabled} />`
+        : html`<div class="param-input"><code class="param-expr">${param.raw}</code></div>`}
+      ${param.doc && html`<p class="param-doc">${param.doc}</p>`}
+      ${range && html`<p class="param-range">Declared: ${range}</p>`}
+      ${hint && html`<p class="param-envelope">${hint}</p>`}
+      <p class="param-state" id=${`${id}-state`}>${state || (param.editable ? "editable" : param.state)}</p>
+      ${error && html`<p class="param-error" id=${`${id}-error`} role="alert">${error}</p>`}
+    </li>
+  `;
+}
+
+// Raw (typed) values start from the revision's literals; parsed values are
+// derived from them on every change so the Changes summary and the refusals
+// are always current.
+function rawFromParam(param) {
+  if (param.kind === "bool") return param.value === true;
+  if (param.kind === "vector") return (param.value || []).map((v) => String(v));
+  return formatValue(param.value);
+}
+
+function ParametersTab({ designId, revId, running, onApply, busy }) {
+  const model = useResource(revId ? `${base(designId)}/revisions/${enc(revId)}/parameters` : null);
+  const [raws, setRaws] = useState({});
+  const [refusal, setRefusal] = useState("");
+  const changesRef = useRef(null);
+
+  useEffect(() => {
+    setRaws({});
+    setRefusal("");
+  }, [revId]);
+
+  if (!revId) return html`<p class="hint">Save the origin revision first; parameters are read from a saved revision.</p>`;
+  if (model.status === "loading" || model.status === "idle") return html`<${Loading} label="Reading the parameters…" />`;
+  if (model.status === "error") return html`<${ErrorState} error=${model.error} onRetry=${model.reload} />`;
+  const data = model.data;
+  const params = data.parameters || [];
+  const groups = groupParameters(data);
+
+  const parsed = {};
+  const errors = {};
+  for (const param of params) {
+    if (!param.editable || !(param.name in raws)) continue;
+    const result = parseInput(param, raws[param.name]);
+    if (result.ok) parsed[param.name] = result.value;
+    else errors[param.name] = result.error;
+  }
+  const changes = changedParams(data, parsed);
+  const errorCount = Object.keys(errors).length;
+  const dirty = Object.keys(raws).length > 0;
+
+  const reset = () => {
+    setRaws({});
+    setRefusal("");
+    changesRef.current?.focus();
+  };
+  const apply = () => {
+    if (busy || running) return;
+    if (errorCount) {
+      const first = params.find((p) => errors[p.name]);
+      setRefusal(`${errorCount === 1 ? "One value is" : `${errorCount} values are`} refused; fix ${first.name} first.`);
+      document.querySelector(`[data-param="${CSS.escape(first.name)}"]`)?.focus();
+      return;
+    }
+    if (!changes.length) {
+      setRefusal("No parameter changed; nothing to compile.");
+      changesRef.current?.focus();
+      return;
+    }
+    setRefusal("");
+    onApply(applyBody(data, parsed));
+  };
+
+  return html`
+    <div class="parameters-tab">
+      <p class="hint" role="status">${modelSummary(data)}</p>
+      ${(data.limitations || []).length > 0 &&
+      html`<ul class="param-limitations" aria-label="Parse limitations">
+        ${data.limitations.map((text) => html`<li key=${text}>${text}</li>`)}
+      </ul>`}
+      ${params.length > 0 &&
+      html`<div class="param-groups">
+        ${groups.map(
+          (group) => html`
+            <section class="param-group" key=${group.name} aria-label=${group.name}>
+              <h4>${group.name}</h4>
+              <ul class="param-list">
+                ${group.params.map(
+                  (param, index) => html`<${ParameterRow}
+                    key=${`${param.name}:${index}`}
+                    index=${`${group.name}-${index}`.replace(/[^A-Za-z0-9_-]/g, "_")}
+                    param=${param}
+                    raw=${param.name in raws ? raws[param.name] : rawFromParam(param)}
+                    error=${errors[param.name]}
+                    changed=${changes.some((c) => c.name === param.name)}
+                    disabled=${Boolean(running)}
+                    envelope=${data.envelope_mm}
+                    onInput=${(value) => setRaws((prev) => ({ ...prev, [param.name]: value }))}
+                  />`,
+                )}
+              </ul>
+            </section>
+          `,
+        )}
+      </div>`}
+      ${params.length > 0 &&
+      html`<section class="param-changes" aria-labelledby="param-changes-title">
+        <h4 id="param-changes-title" tabindex="-1" ref=${changesRef}>Changes</h4>
+        ${changes.length
+          ? html`<ul>
+              ${changes.map((c) => html`<li key=${c.name}><code>${c.name}</code>: ${formatValue(c.before)} → ${formatValue(c.after)}</li>`)}
+            </ul>`
+          : html`<p class="hint">No changes yet.</p>`}
+        <p class=${`panel-status${refusal ? " is-error" : ""}`} role="status">${refusal}</p>
+        <div class="actions">
+          <button type="button" class="button" data-action="apply-params" aria-disabled=${busy || running || !dirty ? "true" : "false"} onClick=${apply}>
+            Apply and compile
+          </button>
+          <button type="button" class="button button-quiet" data-action="reset-params" aria-disabled=${dirty ? "false" : "true"} onClick=${reset}>Reset</button>
+        </div>
+      </section>`}
+    </div>
   `;
 }
 
@@ -413,6 +668,7 @@ function DesignView({ designId, revId }) {
   const [status, setStatus] = useState({ text: "", error: false });
   const [compareWith, setCompareWith] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useState("code");
   const editorRef = useRef(null);
   const statusRef = useRef(null);
   const resultRef = useRef(null);
@@ -479,6 +735,22 @@ function DesignView({ designId, revId }) {
       setDraftId(result.draft_id);
       setStatus({ text: "", error: false });
       editorRef.current?.focus();
+    } catch (err) {
+      announce(err.message, true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Parameters tab (W5): the draft is created from the parent's source with
+  // the changed literals rewritten; the job then runs like any compile.
+  const applyParams = async (params) => {
+    if (busy || !currentRevId) return;
+    setBusy(true);
+    try {
+      const result = await api(`${base(designId)}/drafts`, { method: "POST", body: { parent_rev_id: currentRevId, params } });
+      setDraftId(result.draft_id);
+      setStatus({ text: "", error: false });
     } catch (err) {
       announce(err.message, true);
     } finally {
@@ -554,14 +826,9 @@ function DesignView({ designId, revId }) {
         <p class=${`panel-status${status.error ? " is-error" : ""}`} role="status" tabindex="-1" ref=${statusRef}>${status.text}</p>
       </header>
       <div class="workbench-layout">
-        <section class="panel workbench-code" aria-label="Code">
-          <div class="tabs" role="tablist" aria-label="Design tabs">
-            <button type="button" role="tab" aria-selected="true" class="tab" id="tab-code">Code</button>
-            <span class="tab tab-later" role="tab" aria-selected="false" aria-disabled="true" title="Arrives in a later slice">Parameters</span>
-            <span class="tab tab-later" role="tab" aria-selected="false" aria-disabled="true" title="Arrives in a later slice">Revise</span>
-            <span class="tab tab-later" role="tab" aria-selected="false" aria-disabled="true" title="Arrives in a later slice">Curate</span>
-          </div>
-          <div role="tabpanel" aria-labelledby="tab-code">
+        <section class="panel workbench-code" aria-label="Editors">
+          <${Tabs} selected=${tab} onSelect=${setTab} />
+          <div role="tabpanel" id="panel-code" aria-labelledby="tab-code" hidden=${tab !== "code"}>
             ${sourceError && html`<${ErrorState} error=${sourceError} />`}
             ${source == null && !sourceError && html`<${Loading} label="Loading the source…" />`}
             ${source != null &&
@@ -578,6 +845,14 @@ function DesignView({ designId, revId }) {
               <button type="button" class="button" data-action="compile" aria-disabled=${busy || running || source == null ? "true" : "false"} onClick=${compile}>
                 Compile
               </button>
+            </div>
+          </div>
+          <div role="tabpanel" id="panel-parameters" aria-labelledby="tab-parameters" hidden=${tab !== "parameters"}>
+            ${tab === "parameters" &&
+            html`<${ParametersTab} key=${currentRevId || "none"} designId=${designId} revId=${currentRevId} running=${Boolean(running)} busy=${busy} onApply=${applyParams} />`}
+          </div>
+          <div class="workbench-job">
+            <div class="actions">
               ${running && html`<button type="button" class="button button-quiet" data-action="cancel" onClick=${cancel}>Cancel</button>`}
               ${canSave && html`<button type="button" class="button" data-action="save" onClick=${openSave}>Save as revision</button>`}
             </div>

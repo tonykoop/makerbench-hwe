@@ -298,6 +298,8 @@ class TestEditLoop:
         did, r0 = _origin_revision(studio)
         params = studio.get(f"/api/workbench/designs/{did}/revisions/{r0}/parameters").json()
         assert [p["name"] for p in params["parameters"]] == ["size_mm"]
+        # W5: the registry envelope rides along as context for the tab (plan Q7)
+        assert params["envelope_mm"] == [100, 100, 100]
         r = _post(studio, f"/api/workbench/designs/{did}/drafts", {"parent_rev_id": r0, "params": {"size_mm": 25}})
         assert r.status_code == 202, r.text
         draft = r.json()["draft"]

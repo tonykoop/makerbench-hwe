@@ -322,7 +322,21 @@ preview and objective checks, and save each step as an append-only revision.
   is written into an instrument repo (export is a later slice), no blind
   screen links here, and nothing compiles on the host.
 
-Parameters, Revise (model revisions) and Curate tabs arrive in later slices.
+- **Parameters.** The Parameters tab (arrow keys move between tabs) lists the
+  revision's top-level literal assignments grouped by Customizer group, each
+  with its unit (from a `_mm`-style suffix or a `unit:` comment, otherwise
+  "unit unknown"), its doc line and an honest state: "range not declared",
+  "derived, edit it in the code" (shown with the expression, read-only) or
+  "assigned more than once". A declared `// [min:max]` range becomes the
+  field's bounds; without one the field is a plain number, and the registry
+  envelope is shown as context only. Changed fields are marked and listed
+  under Changes; an out-of-range or non-finite value is refused inline and
+  "Apply and compile" focuses it. Apply rewrites only those literals in the
+  parent's source and compiles the result as a draft; Reset restores the
+  revision's values. Files pulled in by `include`/`use` are not scanned, and
+  the tab says so.
+
+Revise (model revisions) and Curate tabs arrive in later slices.
 
 ## Security model
 
