@@ -12,7 +12,7 @@ Contract, enforced here and pinned by ``tests/test_entrant_tools.py``:
   resolved (symlinks followed) and must stay inside the workspace. Absolute
   paths, traversal and symlink escapes are refused before anything is read.
 * **No host execution.** Source is compiled only by the sandboxed compilers:
-  OpenSCAD through ``scad_sandbox``, CadQuery through the Bubblewrap backend.
+  OpenSCAD through ``scad_sandbox``, CadQuery/build123d through Bubblewrap.
   If the sandbox is unavailable, the call returns an error; there is no fallback.
 * **Writes only to a per-call temp dir.** The workspace is never written, and
   the temp dir is removed after the call. The one other file touched is the
@@ -35,12 +35,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from . import cadquery_backend, measure, render, render_view, scad_sandbox
+from . import build123d_backend, cadquery_backend, measure, render, render_view, scad_sandbox
 from .redaction import redact_host_paths
 
 TOOL_NAMES: tuple[str, ...] = ("measure", "render_view")
 TOOLS_TIER = "studio"
-BACKENDS = ("openscad", "cadquery")
+BACKENDS = ("openscad", "cadquery", "build123d")
 DEFAULT_MAX_CALLS = 12
 DEFAULT_MAX_WALL_S = 180.0
 MAX_SOURCE_BYTES = 256_000
@@ -127,6 +127,7 @@ class ToolSession:
             "tool_sha256": None if tool else _sha256(_canonical(name)),
             "args_sha256": _sha256(_canonical(hashed_args)),
             "source_sha256": None,
+            "backend": None,
             "path": None,
             "path_sha256": None if raw_path is None else _sha256(_canonical(raw_path)),
             "counted": False,
@@ -188,6 +189,7 @@ class ToolSession:
                     backend = SOURCE_SUFFIXES.get(file.suffix.lower())
                     if backend is None:
                         raise ToolError("path must be a .scad, .py or .stl file")
+                    record["backend"] = backend
                     stl = self._compile(data.decode("utf-8", errors="replace"), backend, tmp)
             else:
                 if not isinstance(source, str) or not source.strip():
@@ -199,6 +201,7 @@ class ToolSession:
                 backend = args.get("backend", self.backend)
                 if backend not in BACKENDS:
                     raise ToolError(f"backend must be one of {BACKENDS}")
+                record["backend"] = backend
                 stl = self._compile(source, backend, tmp)
             if name == "measure":
                 report = measure.measure_candidate(stl, sections=_measure_sections(args))
@@ -221,9 +224,15 @@ class ToolSession:
             src = tmp / "candidate.scad"
             src.write_text(source, encoding="utf-8")
             return Path(scad_sandbox.compile_scad_sandboxed(src, work).stl_path)
+        if backend == "build123d":
+            compiler = build123d_backend.compile_build123d_to_artifacts
+        elif backend == "cadquery":
+            compiler = cadquery_backend.compile_cadquery_to_artifacts
+        else:
+            raise ToolError(f"backend must be one of {BACKENDS}")
         src = tmp / "candidate.py"
         src.write_text(source, encoding="utf-8")
-        return Path(cadquery_backend.compile_cadquery_to_artifacts(src, work).stl_path)
+        return Path(compiler(src, work).stl_path)
 
 
 def _section_list(args: Mapping[str, Any]) -> list[Mapping[str, Any]]:
