@@ -135,6 +135,15 @@ def test_vendored_modules_match_their_recorded_hashes():
         assert (VENDOR_DIR / entry["license_file"]).is_file()
 
 
+def test_wireframe_bridge_is_pinned_to_the_verified_model_viewer_bundle():
+    # The bridge uses private scene-graph symbols. Any vendor update must repeat
+    # the real material/draw-mode browser proof before updating this pin.
+    bundle = REPO_ROOT / "makerbench" / "assets" / "model-viewer.min.js"
+    assert hashlib.sha256(bundle.read_bytes()).hexdigest() == (
+        "8923739c8c1b4a02dd9c8cf66da5c2a448235cb5e49e439dd7bbba944ba4fbe1"
+    )
+
+
 def test_shipped_static_files_contain_no_control_bytes():
     """Claude UI review #780: two NUL bytes made git and GitHub treat lib/doe.js as binary,
     so the module was unreviewable on the PR. Nothing Studio ships may contain control

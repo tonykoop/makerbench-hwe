@@ -16,7 +16,7 @@ const SIDES = [
   { side: "right", name: "Candidate B", key: "B" },
 ];
 
-function Plate({ side, name, candidate, viewMode, onViewerFailure, flags, onToggleFlag }) {
+function Plate({ side, name, pairId, candidate, viewMode, onViewerFailure, wireframe, onViewerReady, flags, onToggleFlag }) {
   const flagged = flags[side] || [];
   return html`
     <figure class="plate" aria-label=${name}>
@@ -24,9 +24,12 @@ function Plate({ side, name, candidate, viewMode, onViewerFailure, flags, onTogg
       <div class="plate-view">
         ${viewMode === "3d"
           ? html`<${ModelViewer}
+              key=${pairId}
               src=${candidate.model3d_path}
               label=${`${name}, 3D model`}
               onFailure=${onViewerFailure}
+              wireframe=${wireframe}
+              onReady=${(ready) => onViewerReady(side, ready)}
             />`
           : html`<${Turntable} frames=${candidate.frames} still=${candidate.render_path} label=${name} />`}
       </div>
@@ -105,6 +108,10 @@ export function VoteStage({
   const webgl = useMemo(() => webgl2Available(), []);
   const [viewMode, setViewMode] = useState("turntable");
   const [viewerNotice, setViewerNotice] = useState("");
+  const [wireframe, setWireframe] = useState(false);
+  const [viewerReady, setViewerReady] = useState({ left: false, right: false });
+  const turntableRef = useRef(null);
+  const wireframeRef = useRef(null);
   const helpRef = useRef(null);
   const firstVoteRef = useRef(null);
 
@@ -117,18 +124,29 @@ export function VoteStage({
   const can3d = webgl && has3d && !viewerNotice;
 
   useEffect(() => {
-    if (viewMode === "3d" && !has3d) setViewMode("turntable");
+    setWireframe(false);
+    setViewerReady({ left: false, right: false });
+    setViewMode("turntable");
   }, [pair.pair_id]);
 
-  const fallBack = () => {
+  const showTurntable = () => {
+    if (document.activeElement === wireframeRef.current) turntableRef.current?.focus();
+    setWireframe(false);
     setViewMode("turntable");
+    setViewerReady({ left: false, right: false });
+  };
+
+  const fallBack = () => {
+    showTurntable();
     setViewerNotice("3D orbit stopped working in this browser, so the turntable is back.");
   };
 
   const toggleView = () => {
-    if (viewMode === "3d") setViewMode("turntable");
+    if (viewMode === "3d") showTurntable();
     else if (can3d) setViewMode("3d");
   };
+
+  const onViewerReady = (side, ready) => setViewerReady((current) => ({ ...current, [side]: ready }));
 
   const toggle = (side, flag) => onFlagsChange(toggleFlag(flags, side, flag));
 
@@ -170,8 +188,9 @@ export function VoteStage({
         <div class="view-toggle" role="group" aria-label="Viewer">
           <button
             type="button"
+            ref=${turntableRef}
             aria-pressed=${viewMode === "turntable" ? "true" : "false"}
-            onClick=${() => setViewMode("turntable")}
+            onClick=${showTurntable}
           >
             Turntable
           </button>
@@ -185,6 +204,14 @@ export function VoteStage({
           >
             3D orbit
           </button>
+          ${viewMode === "3d" && can3d && viewerReady.left && viewerReady.right
+            ? html`<button
+                type="button"
+                ref=${wireframeRef}
+                aria-pressed=${wireframe ? "true" : "false"}
+                onClick=${() => setWireframe((current) => !current)}
+              >Wireframe</button>`
+            : null}
         </div>
         <p id="viewer-note" class="viewer-note" role="status">${viewerNote}</p>
       </div>
@@ -194,11 +221,14 @@ export function VoteStage({
           ({ side, name }) => html`
             <${Plate}
               key=${side}
+              pairId=${pair.pair_id}
               side=${side}
               name=${name}
               candidate=${pair[side]}
               viewMode=${viewMode}
               onViewerFailure=${fallBack}
+              wireframe=${wireframe}
+              onViewerReady=${onViewerReady}
               flags=${flags}
               onToggleFlag=${toggle}
             />
