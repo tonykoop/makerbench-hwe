@@ -5,6 +5,17 @@ without a source is marked **unknown**. Source repo paths are relative to
 `instruments/strings/sambuca/` (the private-ish instrument repo, read-only here);
 `arena.json` = `site/data/arena.json`; registry = `tasks/code_cad_arena/registry.json`.*
 
+## In plain English
+
+The British Museum shows a modern reconstruction of a 4,600-year-old boat-shaped
+harp from the Royal Cemetery at Ur. We gave one photo of it, plus the museum
+card's dimensions, to an AI CAD assistant, and got back an editable 3D model of a
+13-string boat harp in about two minutes. It gets the size and general shape
+right but misses details (the curved neck, gold collar, lapis inlay), and an
+automatic manufacturability check flagged walls far too thin to build. So it is a
+useful first draft, not a finished design, and one run is not enough to say
+which AI tool is best.
+
 ## 60-second version
 
 A 2015 museum-gallery photo of a reconstructed Sumerian boat-shaped harp went in;
@@ -111,6 +122,13 @@ Three statements exist and they do not fully agree:
    We did **not** locate the specific page for this image.
 3. **The museum object itself**: BM image licences and any gallery-photography
    rules were not readable (403). **Unknown.**
+
+**Is a LinkedIn post about a job search "non-commercial"?** **Unclear.** A personal
+post is not a sale, but it promotes the poster's professional standing and may
+lead to paid work, and there is no authoritative reading in our sources. If the
+NC-SA terms were the operative ones, we would have to treat it as possibly
+commercial, and share-alike would also apply. We are not offering a legal
+conclusion. This is why the fallback below is the default.
 
 **Verdict:** the photo *probably* may be reused with credit under Hitchcock's
 stated terms, but we cannot show that this file is covered, and if the repo's
