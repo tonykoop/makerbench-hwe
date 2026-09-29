@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 627" width="1200" height="627" role="img" aria-labelledby="t d">
+  <title id="t">MakerBench ecosystem, public pieces</title>
+  <desc id="d">Instrument repos and CAD connectors feed the Code-CAD Arena. The arena and the benchmark live in one public repository, which publishes to the MakerBench site and mirrors its leaderboard to a Hugging Face Space.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#4a5560"/></marker>
+    <style>
+      text{font-family:'Noto Sans','DejaVu Sans',Arial,sans-serif;fill:#1d252c}
+      .h{font-size:18px;font-weight:700}
+      .b{font-size:14px;fill:#3b4650}
+      .l{font-size:13px;font-style:italic;fill:#4a5560}
+      .k{font-size:12px;font-weight:700;letter-spacing:1.2px;fill:#6b7782}
+      .box{fill:#fff;stroke:#c9d1d8;stroke-width:1.5}
+      .arr{stroke:#4a5560;stroke-width:2;fill:none;marker-end:url(#a)}
+    </style>
+  </defs>
+  <rect width="1200" height="627" fill="#f5f6f4"/>
+  <text x="40" y="52" class="h" style="font-size:28px">MakerBench ecosystem</text>
+  <text x="40" y="78" class="b">Public pieces only</text>
+
+  <text x="40" y="128" class="k">INPUTS</text>
+  <text x="330" y="128" class="k">PUBLIC REPO</text>
+  <text x="880" y="128" class="k">PUBLIC SURFACES</text>
+
+  <!-- inputs -->
+  <rect class="box" x="40" y="145" width="240" height="130" rx="10" style="stroke:#2f7f79;stroke-width:2.5"/>
+  <text x="58" y="177" class="h">Instrument library</text>
+  <text x="58" y="203" class="b">76 public instrument repos:</text>
+  <text x="58" y="223" class="b">design notes, CAD, BOM</text>
+  <text x="58" y="243" class="b">and cut lists per instrument</text>
+
+  <rect class="box" x="40" y="335" width="240" height="150" rx="10" style="stroke:#2f7f79;stroke-width:2.5"/>
+  <text x="58" y="367" class="h">CAD connectors</text>
+  <text x="58" y="393" class="b">OpenSCAD, compiled in a</text>
+  <text x="58" y="413" class="b">sandbox; SolidWorks and</text>
+  <text x="58" y="433" class="b">Fusion via job-dir backends</text>
+  <text x="58" y="461" class="l">(Windows watchers: unvalidated)</text>
+
+  <!-- repo container -->
+  <rect x="330" y="145" width="470" height="340" rx="14" fill="#eaf3f2" stroke="#2f7f79" stroke-width="2.5"/>
+  <text x="352" y="176" class="h">makerbench-hwe</text>
+  <rect class="box" x="352" y="192" width="426" height="118" rx="10"/>
+  <text x="372" y="222" class="h">Code-CAD Arena</text>
+  <text x="372" y="248" class="b">Setups build the same instrument brief;</text>
+  <text x="372" y="268" class="b">outputs are scored by a mesh gate and</text>
+  <text x="372" y="288" class="b">compared in A/B rounds</text>
+  <rect class="box" x="352" y="326" width="426" height="136" rx="10"/>
+  <text x="372" y="356" class="h">Benchmark</text>
+  <text x="372" y="382" class="b">49 task families with public graders,</text>
+  <text x="372" y="402" class="b">and result rows kept as metadata and</text>
+  <text x="372" y="422" class="b">grades under results/</text>
+
+  <!-- outputs -->
+  <rect class="box" x="880" y="145" width="280" height="130" rx="10" style="stroke:#c2571a;stroke-width:2.5"/>
+  <text x="898" y="177" class="h">MakerBench site</text>
+  <text x="898" y="203" class="b">Leaderboard, task families, arena</text>
+  <text x="898" y="223" class="b">findings and blog, built from</text>
+  <text x="898" y="243" class="b">results/ by GitHub Pages</text>
+
+  <rect class="box" x="880" y="335" width="280" height="150" rx="10" style="stroke:#c2571a;stroke-width:2.5"/>
+  <text x="898" y="367" class="h">Hugging Face Space</text>
+  <text x="898" y="393" class="b">Gradio dashboard mirroring the</text>
+  <text x="898" y="413" class="b">public leaderboard. A viewer,</text>
+  <text x="898" y="433" class="b">not the grading engine</text>
+
+  <!-- arrows -->
+  <path class="arr" d="M280 210 L350 235"/>
+  <text x="284" y="266" class="l">instrument</text>
+  <text x="284" y="282" class="l">briefs</text>
+  <path class="arr" d="M280 400 C315 400 315 300 350 275"/>
+  <path class="arr" d="M800 215 L878 210"/>
+  <text x="803" y="196" class="l">publishes</text>
+  <path class="arr" d="M800 420 L878 410"/>
+  <text x="803" y="450" class="l">mirrors</text>
+
+  <text x="40" y="592" class="b">Counts from the project tracker export. Public pieces only.</text>
+</svg>
