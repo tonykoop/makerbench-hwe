@@ -5,6 +5,7 @@ import { api } from "../lib/api.js";
 import { plural } from "../lib/format.js";
 import { costBadge, describeReference, parseModelList } from "../lib/launch.js";
 import {
+  BACKENDS,
   budgetView,
   ceilingsPayload,
   CONTEXT_TIERS,
@@ -109,7 +110,10 @@ function ChoiceChips({ legend, name, options, selected, onToggle }) {
 
 function ModelEstimates({ cells }) {
   const byModel = new Map();
-  for (const cell of cells) if (!byModel.has(cell.model_id)) byModel.set(cell.model_id, cell.estimate || {});
+  for (const cell of cells) {
+    const label = `${cell.model_id} / ${cell.backend || "openscad"}`;
+    if (!byModel.has(label)) byModel.set(label, cell.estimate || {});
+  }
   return html`
     <div class="table-scroll">
       <table class="data-table model-estimates">
@@ -238,6 +242,11 @@ function PreviewPanel({ query, preview, stale, budget, onBudget, skips }) {
               </dd>`}
         </div>
       </dl>
+      ${cells.some((cell) => cell.availability?.status !== "available") && html`
+        <div role="status"><h3>Backend readiness</h3><ul>
+          ${[...new Map(cells.filter((c) => c.availability?.status !== "available").map((c) => [c.backend, c])).values()].map(
+            (cell) => html`<li key=${cell.backend}><strong>${cell.backend}</strong>: ${cell.availability?.reason}</li>`)}
+        </ul></div>`}
       <h3>Entrants</h3>
       <${ModelEstimates} cells=${cells} />
       <h3>Budget what-if</h3>
@@ -265,6 +274,8 @@ export function DoeScreen() {
   const [instruments, setInstruments] = useState([]);
   const [modelsText, setModelsText] = useState("");
   const [levels, setLevels] = useState([...LEVELS]);
+  const [driverText, setDriverText] = useState("gpt-5.6-sol");
+  const [backends, setBackends] = useState(["openscad"]);
   const [tiers, setTiers] = useState(["blind"]);
   const [seedsText, setSeedsText] = useState("0");
   const [runId, setRunId] = useState("");
@@ -286,7 +297,8 @@ export function DoeScreen() {
 
   const models = parseModelList(modelsText);
   const { seeds, invalid: invalidSeeds } = parseSeeds(seedsText);
-  const matrix = { instruments, models, levels, tiers, seeds };
+  const driver_models = backends.some((backend) => backend.endsWith("-live")) ? parseModelList(driverText) : [];
+  const matrix = { instruments, models, levels, tiers, seeds, backends, driver_models };
   const query = invalidSeeds.length ? null : previewQuery(matrix);
   const settledQuery = useDebounced(query, 350);
   const preview = useResource(settledQuery ? `/api/doe/preview?${settledQuery}` : null);
@@ -294,7 +306,7 @@ export function DoeScreen() {
   const previewState = !query ? "none" : stale || preview.status !== "ready" ? (preview.status === "error" && !stale ? "error" : "loading") : "ready";
   const cells = previewState === "ready" ? preview.data.cells || [] : [];
   const unknownModels = unknownCostModels(cells);
-  const skips = predictedSkips(instruments, references, models.length * levels.length);
+  const skips = predictedSkips(instruments, references, models.length * levels.length * backends.length);
   const blockers = doeBlockers({ matrix, invalidSeeds, runId, budget, preview: previewState, unknownModels, ceilings });
   const busy = write.status === "sending";
 
@@ -315,6 +327,8 @@ export function DoeScreen() {
           models,
           levels,
           context_tiers: tiers,
+          backends,
+          driver_models: driver_models.length ? driver_models : undefined,
           seeds,
           budget_usd: Number(budget),
           max_cost_usd_by_model: ceilingsPayload(unknownModels, ceilings),
@@ -337,7 +351,7 @@ export function DoeScreen() {
     <div class="screen screen-doe">
       <h1 tabindex="-1">DoE matrix</h1>
       <p class="lede">
-        Design a nightly experiment: instruments × entrants × levels × context tiers × seeds. See what it costs, then write
+        Design a nightly experiment: instruments × entrants × backends × levels × context tiers × seeds. See what it costs, then write
         the queue. Nothing runs from this page.
       </p>
       <div class="doe-layout">
@@ -371,6 +385,18 @@ export function DoeScreen() {
             selected=${tiers}
             onToggle=${(tier) => setTiers((prev) => toggleIn(prev, tier))}
           />
+          <${ChoiceChips}
+            legend="Backends / bridges"
+            name="backend"
+            options=${BACKENDS.map((id) => ({ id, label: id }))}
+            selected=${backends}
+            onToggle=${(id) => setBackends((prev) => toggleIn(prev, id))}
+          />
+          ${backends.some((backend) => backend.endsWith("-live")) && html`
+            <label class="field"><span class="field-label">Live driver models</span>
+              <input name="driver_models" value=${driverText} onInput=${(event) => setDriverText(event.currentTarget.value)} />
+              <span class="field-note">Codex driver ids, separated by commas. These replace entrant ids for live backends.</span>
+            </label>`}
           <label class="field">
             <span class="field-label">Seeds</span>
             <input

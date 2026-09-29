@@ -414,3 +414,89 @@ def test_write_doe_queue_rejects_path_traversal_run_id(
     # Nothing escaped the intended runs/code_cad_arena directory.
     assert not (repo_root_with_reference.parent / "escaped").exists()
     assert not Path("/tmp/escaped").exists()
+
+
+def test_default_backend_cell_ids_are_golden():
+    assert doe.expand_matrix(["ocarina"], ["model-a"], levels=["L1"])[0]["cell_id"] == "dd6a9f06265a35d4"
+    assert doe.expand_matrix(["kora"], ["codex-gpt-5.6"], levels=["L2"],
+                             context_tiers=["image"], seeds=[1],
+                             backends=["openscad"])[0]["cell_id"] == "bd5289265aeb32cf"
+
+
+def test_backend_axis_cross_product_and_live_drivers():
+    cells = doe.expand_matrix(["ocarina"], ["model-a"], levels=["L1"],
+                              backends=["openscad", "fusion", "fusion-live"],
+                              driver_models=["gpt-5.6-sol", "gpt-6-sol"])
+    assert len(cells) == 4
+    assert len({c["cell_id"] for c in cells}) == 4
+    live = [c for c in cells if c["backend"] == "fusion-live"]
+    assert {c["model_id"] for c in live} == {"gpt-5.6-sol", "gpt-6-sol"}
+    assert all(c["driver_model"] == c["model_id"] for c in live)
+
+
+def test_mixed_backend_queue_roundtrip_and_live_kind(tmp_path):
+    ref = tmp_path / "ref.png"
+    ref.write_bytes(b"fake-png")
+    cells = doe.expand_matrix(["ocarina"], ["model-a"], levels=["L1"],
+                              backends=["openscad", "solidworks", "fusion-live"],
+                              driver_models=["gpt-5.6-sol"])
+    payload, jobs = doe.build_nightly_queue(cells, reference_images={"ocarina": str(ref)})
+    assert len(jobs) == 1
+    assert {e.backend for e in jobs[0].entrants} == {"openscad", "solidworks", "fusion-live"}
+    assert len({e.entrant_id for e in jobs[0].entrants}) == 3
+    live = next(e for e in jobs[0].entrants if e.backend == "fusion-live")
+    assert live.kind == "live" and live.model_id == "gpt-5.6-sol"
+    jobs[0].validate()
+    path = tmp_path / "queue.json"
+    doe.write_queue_file(path, payload, jobs)
+    assert nightly_cad.load_queue(path)[1] == jobs
+
+
+def test_unavailable_backend_remains_visible_in_preview(monkeypatch):
+    monkeypatch.setattr(doe.os, "name", "posix")
+    original = Path.is_dir
+    monkeypatch.setattr(Path, "is_dir", lambda p: False if str(p) == "/mnt/c" else original(p))
+    cells = doe.annotate_matrix_with_estimates(doe.expand_matrix(
+        ["ocarina"], ["claude-code-opus-5"], levels=["L1"], backends=["solidworks"]))
+    assert len(cells) == 1
+    assert cells[0]["availability"]["status"] == "unavailable"
+    assert doe.matrix_summary(cells)["n_unavailable_cells"] == 1
+
+
+def test_backend_specific_duration_does_not_borrow_openscad_history(tmp_path):
+    store = tmp_path / "sessions.jsonl"
+    store.write_text(json.dumps({"session_id": "s1", "agent_id": "claude-code-opus-5",
+                                 "duration_seconds": 123, "telemetry": {}}) + "\n")
+    cells = doe.expand_matrix(["ocarina"], ["claude-code-opus-5"], levels=["L1"],
+                              backends=["openscad", "fusion"])
+    annotated = doe.annotate_matrix_with_estimates(cells, telemetry_store=str(store))
+    assert annotated[0]["estimate"]["duration_s"] == 123
+    assert annotated[1]["estimate"]["duration_s"] is None
+    assert doe.matrix_summary(annotated)["backends"] == ["fusion", "openscad"]
+
+
+def test_preview_route_accepts_backends_and_rejects_unknown(client):
+    params = {"instruments": "ocarina", "models": "claude-code-opus-5", "levels": "L1",
+              "backends": "openscad,fusion-live", "driver_models": "gpt-5.6-sol"}
+    response = client.get("/api/doe/preview", params=params)
+    assert response.status_code == 200
+    assert response.json()["summary"]["n_cells"] == 2
+    assert client.get("/api/doe/preview", params={**params, "backends": "unknown"}).status_code == 400
+
+
+def test_queue_route_preserves_selected_backend(client, repo_root_with_reference):
+    client.post("/api/tasks/ocarina/approve?approved=true")
+    response = client.post("/api/doe/queue", json={
+        "run_id": "backend_queue", "instruments": ["ocarina"],
+        "models": ["claude-code-opus-5"], "levels": ["L1"],
+        "backends": ["openscad", "fusion-live"], "driver_models": ["gpt-5.6-sol"]})
+    assert response.status_code == 200
+    _, jobs = nightly_cad.load_queue(repo_root_with_reference / response.json()["queue_path"])
+    assert [(e.backend, e.kind) for e in jobs[0].entrants] == [("openscad", "arena"), ("fusion-live", "live")]
+
+
+def test_empty_backend_axis_and_live_studio_refused():
+    with pytest.raises(doe.DoeValidationError):
+        doe.expand_matrix(["ocarina"], ["model-a"], backends=[])
+    with pytest.raises(doe.DoeValidationError, match="studio"):
+        doe.expand_matrix(["ocarina"], ["model-a"], backends=["fusion-live"], context_tiers=["studio"])
