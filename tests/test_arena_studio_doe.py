@@ -499,4 +499,97 @@ def test_empty_backend_axis_and_live_studio_refused():
     with pytest.raises(doe.DoeValidationError):
         doe.expand_matrix(["ocarina"], ["model-a"], backends=[])
     with pytest.raises(doe.DoeValidationError, match="studio"):
-        doe.expand_matrix(["ocarina"], ["model-a"], backends=["fusion-live"], context_tiers=["studio"])
+        doe.expand_matrix(["ocarina"], ["model-a"], backends=["fusion-live"], driver_models=["gpt-5.6-sol"], context_tiers=["studio"])
+
+
+
+@pytest.mark.parametrize("backends,drivers,message", [
+    (["fusion-live"], None, "require explicit driver_models"),
+    (["solidworks-live"], None, "require explicit driver_models"),
+    (["openscad"], ["gpt-5.6-sol"], "only apply to live backends"),
+])
+def test_driver_axis_is_explicit_and_applicable(backends, drivers, message):
+    with pytest.raises(doe.DoeValidationError, match=message):
+        doe.expand_matrix(["ocarina"], ["claude-code-opus-5"],
+                          backends=backends, driver_models=drivers)
+
+
+@pytest.mark.parametrize("backends,drivers", [(["fusion-live"], None), (["openscad"], ["gpt-5.6-sol"])])
+def test_driver_axis_validation_routes_fail_before_writing(client, repo_root_with_reference, backends, drivers):
+    params = {"instruments": "ocarina", "models": "claude-code-opus-5", "backends": ",".join(backends)}
+    if drivers is not None:
+        params["driver_models"] = ",".join(drivers)
+    assert client.get("/api/doe/preview", params=params).status_code == 400
+    response = client.post("/api/doe/queue", json={
+        "run_id": "invalid_driver", "instruments": ["ocarina"], "models": ["claude-code-opus-5"],
+        "backends": backends, "driver_models": drivers})
+    assert response.status_code == 400
+    assert not (repo_root_with_reference / "runs" / "code_cad_arena" / "invalid_driver").exists()
+
+
+def _windows_mount(monkeypatch, present):
+    original = Path.is_dir
+    monkeypatch.setattr(Path, "is_dir", lambda p: present if str(p) == "/mnt/c" else original(p))
+    monkeypatch.setattr(doe.os, "name", "posix")
+
+
+@pytest.mark.parametrize("present,status", [(False, "unavailable"), (True, "requires_preflight")])
+def test_queue_payload_keeps_windows_backend_warnings(tmp_path, monkeypatch, present, status):
+    _windows_mount(monkeypatch, present)
+    ref = tmp_path / "ref.png"
+    ref.write_bytes(b"fake-png")
+    cells = doe.expand_matrix(["ocarina"], ["model-a", "model-b"], levels=["L1"], backends=["solidworks"])
+    payload, jobs = doe.build_nightly_queue(cells, reference_images={"ocarina": str(ref)})
+    assert len(jobs) == 1 and len(jobs[0].entrants) == 2
+    assert payload["backend_warnings"] == [{"backend": "solidworks", **doe.backend_availability("solidworks")}]
+    assert payload["backend_warnings"][0]["status"] == status
+    assert all(e.backend == "solidworks" for e in jobs[0].entrants)
+
+
+@pytest.mark.parametrize("present,status", [(False, "unavailable"), (True, "requires_preflight")])
+def test_queue_route_returns_and_persists_backend_warnings(client, repo_root_with_reference, monkeypatch, present, status):
+    _windows_mount(monkeypatch, present)
+    client.post("/api/tasks/ocarina/approve?approved=true")
+    response = client.post("/api/doe/queue", json={
+        "run_id": "warning_queue", "instruments": ["ocarina"],
+        "models": ["claude-code-opus-5", "codex-gpt-5.6"], "levels": ["L1"], "backends": ["fusion"]})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["backend_warnings"] == [{"backend": "fusion", **doe.backend_availability("fusion")}]
+    assert data["backend_warnings"][0]["status"] == status
+    payload, jobs = nightly_cad.load_queue(repo_root_with_reference / data["queue_path"])
+    assert payload["backend_warnings"] == data["backend_warnings"]
+    assert len(jobs[0].entrants) == 2
+
+
+@pytest.mark.parametrize("backend", ["cadquery", "build123d"])
+def test_installed_cad_runtime_requires_sandbox_preflight(monkeypatch, backend):
+    monkeypatch.setattr(doe.importlib.util, "find_spec", lambda _name: object())
+    monkeypatch.setattr(doe.shutil, "which", lambda name: "/usr/bin/" + name)
+    cells = doe.annotate_matrix_with_estimates(doe.expand_matrix(
+        ["ocarina"], ["model-a", "model-b"], levels=["L1"], backends=[backend]))
+    assert all(c["availability"]["status"] == "requires_preflight" for c in cells)
+    assert doe.matrix_summary(cells)["n_preflight_cells"] == 2
+
+
+def test_backend_availability_is_memoized_per_backend(monkeypatch, tmp_path):
+    calls = []
+    def availability(backend):
+        calls.append(backend)
+        return {"status": "requires_preflight", "reason": "test"}
+    monkeypatch.setattr(doe, "backend_availability", availability)
+    cells = doe.expand_matrix(["ocarina"], ["model-a", "model-b"], backends=["solidworks", "fusion"])
+    doe.annotate_matrix_with_estimates(cells)
+    assert calls == ["solidworks", "fusion"]
+    calls.clear()
+    ref = tmp_path / "ref.png"
+    ref.write_bytes(b"fake-png")
+    doe.build_nightly_queue(cells, reference_images={"ocarina": str(ref)})
+    assert calls == ["fusion", "solidworks"]
+
+
+def test_python_and_javascript_backend_vocabularies_match():
+    import re
+    source = (Path(__file__).parents[1] / "makerbench" / "arena_studio" / "static" / "app" / "lib" / "doe.js").read_text()
+    values = re.search(r"export const BACKENDS = (\[.*?\]);", source).group(1)
+    assert json.loads(values) == list(doe.BACKENDS)

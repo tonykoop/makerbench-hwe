@@ -153,6 +153,11 @@ def expand_matrix(
     for backend in backends:
         if backend not in BACKENDS:
             raise DoeValidationError(f"unsupported backend: {backend}")
+    has_live = any(backend in LIVE_BACKENDS for backend in backends)
+    if has_live and drivers is None:
+        raise DoeValidationError("live backends require explicit driver_models")
+    if drivers is not None and not has_live:
+        raise DoeValidationError("driver_models only apply to live backends")
     seen: set[str] = set()
     cells: list[dict] = []
     for instrument_id, model_id, level, context_tier, seed, backend in itertools.product(
@@ -160,7 +165,7 @@ def expand_matrix(
     ):
         if backend in LIVE_BACKENDS and context_tier == "studio":
             raise DoeValidationError("live backends do not support studio context")
-        for driver in (drivers or (model_id,)) if backend in LIVE_BACKENDS else (None,):
+        for driver in drivers if backend in LIVE_BACKENDS else (None,):
             effective_model = driver if driver is not None else model_id
             cell_id = _cell_id(
                 instrument_id, effective_model, level, context_tier, seed, backend, driver
@@ -268,6 +273,7 @@ def annotate_matrix_with_estimates(
     """Attach a time/cost estimate to each cell, memoized per model and backend."""
 
     cache: dict[tuple[str, str], dict] = {}
+    availability: dict[str, dict] = {}
     annotated = []
     for cell in cells:
         model_id = cell["model_id"]
@@ -277,9 +283,9 @@ def annotate_matrix_with_estimates(
             cache[key] = estimate_model_cost_and_time(
                 model_id, telemetry_store=telemetry_store, backend=backend
             )
-        annotated.append(
-            {**cell, "estimate": cache[key], "availability": backend_availability(backend)}
-        )
+        if backend not in availability:
+            availability[backend] = backend_availability(backend)
+        annotated.append({**cell, "estimate": cache[key], "availability": availability[backend]})
     return annotated
 
 
@@ -447,14 +453,18 @@ def build_nightly_queue(
         job.validate()
         jobs.append(job)
 
+    backend_status = {
+        backend: backend_availability(backend)
+        for backend in sorted({c.get("backend", "openscad") for c in cells})
+    }
     payload = {
         "schema": nightly_cad.SCHEMA,
         "generated_by": SCHEMA,
         "skipped": skipped,
         "backend_warnings": [
-            {"backend": backend, **backend_availability(backend)}
-            for backend in sorted({c.get("backend", "openscad") for c in cells})
-            if backend_availability(backend)["status"] != "available"
+            {"backend": backend, **status}
+            for backend, status in backend_status.items()
+            if status["status"] != "available"
         ],
     }
     return payload, jobs
