@@ -123,17 +123,18 @@ Three statements exist and they do not fully agree:
 3. **The museum object itself**: BM image licences and any gallery-photography
    rules were not readable (403). **Unknown.**
 
-**Is a LinkedIn post about a job search "non-commercial"?** **Unclear.** A personal
-post is not a sale, but it promotes the poster's professional standing and may
-lead to paid work, and there is no authoritative reading in our sources. If the
+**Does a LinkedIn post showcasing the technology count as "non-commercial"?**
+**Unclear.** The post is not a sale, but it promotes a project and its tooling
+publicly, and there is no authoritative reading of that in our sources. If the
 NC-SA terms were the operative ones, we would have to treat it as possibly
 commercial, and share-alike would also apply. We are not offering a legal
-conclusion. This is why the fallback below is the default.
+conclusion. This is why the fallback below is the default, and it stays the
+default **unless Tony explicitly clears the photo**.
 
 **Verdict:** the photo *probably* may be reused with credit under Hitchcock's
 stated terms, but we cannot show that this file is covered, and if the repo's
-NC-SA claim is the operative one, a LinkedIn post that supports a job search is
-arguably not "non-commercial" and would need share-alike. **Recommendation
+NC-SA claim is the operative one, a public promotional LinkedIn post may not count as
+"non-commercial" and would need share-alike. **Recommendation
 (fallback, in order):**
 1. Post **only our own renders**; describe the museum object in words and link to
    the [BM record](https://www.britishmuseum.org/collection/object/W_1928-1010-1-b).
@@ -228,7 +229,7 @@ measured master"; keep the "what it missed" callouts — they are the credibilit
 >
 > Objective check: 5 of 6 gates pass. Wall thickness fails by a mile.
 >
-> What I take from it: AI is a great first-draft partner for parametric CAD. The last mile — proportion, curvature, wall thickness, manufacturability — is still an engineer's job.
+> What I take from it: AI is a great first-draft partner for parametric CAD. The last mile — proportion, curvature, wall thickness, manufacturability — still needs an engineer.
 >
 > Render below; link to the museum record in the comments.
 >
@@ -246,7 +247,7 @@ measured master"; keep the "what it missed" callouts — they are the credibilit
 >
 > Across MakerBench Arena rounds, human preference and the objective gate rank models almost independently (mean Spearman ρ ≈ 0.07 over rounds 6–10). That's the point of measuring both.
 >
-> Caveats: single run, generated model not a measured master, and I don't claim this is the best pipeline for the job.
+> Caveats: single run, generated model not a measured master, and I don't claim this is the best pipeline for this task.
 >
 > #AI #CAD #Benchmarks #MakerBench
 
