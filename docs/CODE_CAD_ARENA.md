@@ -63,6 +63,117 @@ Each round is `O(M)` and emits at most `floor(M / 2)` pairs. More rounds can be
 scheduled as votes arrive, keeping the arena focused on informative near-neighbor
 comparisons without quadratic blowup.
 
+## Entrant axes and controlled matchups
+
+An entrant combines a model and its CLI harness, a CAD backend or bridge, and a
+context tier. A DoE cell also records the instrument, level label and seed.
+Choose dispatch identifiers rather than display names:
+
+| Axis | Values and meaning |
+| --- | --- |
+| Model / harness (`models`) | IDs such as `claude-code-opus-5.5` and `codex-gpt-5.6` select both a model and its provider CLI. There is no independent harness selector. |
+| Backend / bridge (`backends`) | `openscad`, `cadquery`, `build123d`, `blender`, `solidworks`, `fusion`, `solidworks-live`, `fusion-live`. |
+| Live driver (`driver_models`) | Explicit Codex driver IDs, such as `gpt-5.6-sol`, required for either `*-live` backend. These replace the nominal model ID for live dispatch. |
+| Context (`context_tiers`) | Studio DoE offers `blind` and `image`; the broader `arena run` context tiers are described below. |
+| Level (`levels`) | L1–L4 are cell identity labels. Selecting a level does not change the objective grader or its thresholds. |
+| Instrument / seed (`instruments`, `seeds`) | Registry instrument IDs and integer seeds identify the task and repetition. |
+
+The default backend is `openscad`; its existing DoE cell IDs remain unchanged.
+Other backends and live drivers distinguish cells. The queue reuses the existing
+`NightlyEntrant.backend`, `kind` and `model_id` fields: live backends have
+`kind=live` and the selected driver as `model_id`; other backends have `kind=arena`.
+An omitted live driver is an error, and supplying drivers without a live backend
+is also an error. Live backends do not support `studio` context.
+
+A **single-axis matchup** chooses one axis and at least two distinct values,
+holding every other applicable axis to one value. For example, hold the model,
+instrument, level, context and seed constant while comparing SolidWorks with
+Fusion. Requests varying more than one axis are refused unless explicitly marked
+`--factorial`. A factorial experiment records all varied axes; its comparison
+must be interpreted with those differences in mind.
+
+The preview records `varied_axis`, `values`, `varied_axes`, `factorial` and `held`.
+Studio keeps this metadata in the written queue; the nightly runner carries it
+into the run log, objective scoreline and job result. A live model comparison
+varies `driver_models`, since the live runner does not consume the nominal
+`models` value. Keep one nominal model when both compared bridges are live.
+
+### Preview three canonical matchups
+
+Run these from the repository root after installing MakerBench. `arena matchup`
+prints a JSON preview and does not launch models, bridges or jobs. Each example
+holds L1, blind context and seed 0 by default:
+
+```bash
+# Same model and task, different CAD backends.
+python -m makerbench.cli arena matchup \
+  --vary backend --values solidworks,fusion \
+  --instruments ocarina --models codex-gpt-5.6
+
+# Model / harness comparison, with OpenSCAD held constant.
+python -m makerbench.cli arena matchup \
+  --vary model --values claude-code-opus-5.5,codex-gpt-5.6 \
+  --instruments ocarina --models codex-gpt-5.6
+
+# Existing Fusion-based Luthier Bridge versus SolidWorks MCP.
+python -m makerbench.cli arena matchup \
+  --vary bridge --values fusion-live,solidworks-live \
+  --driver-models gpt-5.6-sol \
+  --instruments ocarina --models codex-gpt-5.6
+```
+
+`bridge` is an alias for the backend axis. The existing Luthier Bridge uses
+`fusion-live`; SolidWorks MCP uses `solidworks-live` (see the
+[Round 1 bridge setup](CODE_CAD_ARENA_ROUND1.md)). These previews describe the
+requested comparison, not successful execution or connector readiness.
+
+### Availability, estimates and queues
+
+Studio previews annotate every cell with local availability hints. An executable
+found locally is `available`; a missing tool or optional runtime is `unavailable`.
+A Windows mount or installed CAD runtime can still require execution-time checks:
+`requires_preflight` means app, bridge, authentication or sandbox readiness has
+not been established. The preview does not start a subprocess, contact a
+connector or authenticate a provider. Unavailable cells remain in the preview
+and written queue, whose `backend_warnings` preserves the readiness reasons.
+
+Known subscription CLI marginal cost is $0. Other cost and time estimates use
+matching model/backend telemetry, or remain explicitly unknown. Historical data
+from one backend is not borrowed for another. Unknown cost needs a positive
+per-trial ceiling before Studio writes the queue; a cost estimate or preview is
+not permission to launch a paid run.
+
+Writing a queue does not execute it. Jobs group cells by instrument, seed and
+context tier and require an approved on-disk reference image and at least two
+entrants. A matchup varying only instrument, seed or context can therefore have
+one entrant per job and appear in the queue's explicit skip list. To obtain an
+A/B job, compare models, backends, drivers or levels within one group.
+
+### Copyable zero-token stub scoreline
+
+With OpenSCAD installed and an X display (`xvfb-run` supplies one on Linux), this
+previews two stub identities and then scores the same held OpenSCAD/blind setup.
+Use a fresh run directory when repeating it:
+
+```bash
+python -m makerbench.cli arena matchup \
+  --vary model --values stub-a,stub-b \
+  --instruments ocarina --models stub-a \
+  --out /tmp/makerbench-matchup-preview.json
+
+xvfb-run -a python -m makerbench.cli arena run --stub \
+  --run-dir /tmp/makerbench-matchup-smoke \
+  --instruments ocarina --models stub-a,stub-b \
+  --backend openscad --context-tier blind \
+  --seeds 0 --reps 1 --max-attempts 1 --rate-limit-s 0
+```
+
+The first command writes a preview; the second independently runs the specified
+stub trials. `arena run` does not consume the preview JSON or add matchup metadata
+from it. It writes its run log and objective scoreline beneath the `/tmp` run
+directory without model calls. This checks scoring plumbing; it does not measure
+model quality, exercise the Windows bridges or create human Elo votes.
+
 ## Context tiers (#600, #609)
 
 Every round through Round 4 ran entrants fully blind: one fixed prompt
@@ -131,11 +242,10 @@ wired for openrouter yet (no vision-capable chat-completions path here) and
 fails loudly rather than silently scoring an unconditioned trial as
 image-conditioned.
 
-Running the same entrant once per tier is the intended comparison — how much
-grounding is worth — since context tier is a run-level setting, not an
-extra axis in the trial-id/matrix (kept that way deliberately so this change
-carries zero risk to any run already in flight under the existing trial-id
-format).
+Running the same entrant once per tier compares how much grounding is worth.
+For `arena run`, context tier remains a run-level setting. Studio DoE and matchup
+previews expand it as a cell axis and group nightly jobs by instrument, seed and
+context tier; this preserves the existing `arena run` trial-id format.
 
 ## Sandboxed compile (opt-in, #788 Q11)
 

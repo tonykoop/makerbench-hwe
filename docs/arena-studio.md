@@ -252,21 +252,79 @@ side by side, and the entrants rated in both.
 
 ## DoE matrix
 
-- **Design.**
-  - Pick instruments, entrants, levels L1–L4, context tiers (blind, image) and seeds.
-  - The preview updates shortly after you stop editing: cell count, nightly jobs,
-    known cost and known time. With no timing history it says so rather than
-    showing "0 s".
-- **Budget what-if.** Set a per-job budget with the field or the slider. Each job
-  reads **within**, **over**, or **unknown cost**. Unknown-cost jobs are never
-  counted as affordable, however large the budget.
-- **Unknown-cost entrants need a ceiling.** Any entrant without cost history needs
-  a positive USD-per-trial ceiling before the queue can be written. Zero is refused,
-  because the nightly budget guard treats `0` as "no cap".
-- **Skips.** Instruments without an approved reference image are listed before you
-  write; the server's actual skip list is shown after.
+Open `#/doe` to preview an experiment and write its nightly queue. Previewing is
+read-only; writing the queue starts no jobs.
+
+- **Design.** Pick instruments, entrant model IDs, backends or bridges, levels
+  L1–L4, context tiers (`blind`, `image`) and integer seeds. Model IDs such as
+  `claude-code-opus-5.5` and `codex-gpt-5.6` also select their CLI harness; there
+  is no separate harness control. Levels label cells without changing graders.
+- **Backends.** Choose `openscad` (default), `cadquery`, `build123d`, `blender`,
+  `solidworks`, `fusion`, `solidworks-live` or `fusion-live`. OpenSCAD keeps its
+  existing cell IDs. For a live backend, explicitly choose **Live driver models**
+  (Codex IDs such as `gpt-5.6-sol`); these replace the nominal entrant IDs for
+  live dispatch. Missing drivers are refused; drivers have no role in non-live
+  cells. The Studio field offers a starting driver value that you can change.
+- **Experiment mode.** Use **Full matrix** for the cross product. Choose **Vary
+  one axis**, select the axis, then choose at least two distinct values for it
+  and one for every other applicable axis. Changing the selected axis holds the
+  other controls to their first value. Multiple varied axes are refused unless
+  you check **Allow a factorial experiment**. Live model comparisons vary the
+  driver axis, because the live runner ignores nominal model IDs.
+- **Preview.** It shows cell count, nightly jobs, known cost and known time,
+  plus the varied axis and held values for a matchup. With no matching timing
+  history it says so. Estimates use the model and backend together, rather than
+  borrowing timing or cost from another backend.
+- **Backend readiness.** Missing tools remain visible as `unavailable`.
+  `requires_preflight` means local hints cannot establish Windows app/bridge,
+  authentication or sandbox readiness. Even `available` only reports a local
+  executable. Preview performs no connector calls or runtime probes. These
+  cells are retained, and `backend_warnings` is saved with the queue.
+- **Budget what-if.** Set a per-job budget with the field or slider. Each job
+  reads **within**, **over**, or **unknown cost**. Subscription CLI marginal cost
+  is known $0; missing cost history stays unknown and is never counted as
+  affordable. Unknown-cost entrants need a positive USD-per-trial ceiling before
+  the queue can be written; zero would disable the nightly budget cap.
+- **Skips.** Jobs group by instrument, seed and context tier, with at least two
+  entrants and an approved on-disk reference image. Missing approval or images,
+  and groups with fewer than two entrants, appear in the explicit skip list.
+  Varying only instrument, context or seed can create such single-entrant groups.
 - **Write the nightly queue.** This writes only
-  `runs/code_cad_arena/<run>/doe_queue.json`. Nothing runs.
+  `runs/code_cad_arena/<run>/doe_queue.json`. Nothing runs. The queue records
+  `varied_axis`, `values`, `varied_axes`, `factorial` and `held`; a later nightly
+  execution carries the matchup metadata into its run log, scoreline and result.
+
+Three useful controlled comparisons are SolidWorks versus Fusion with one model
+held fixed; Opus 5.5 versus Codex with OpenSCAD held fixed; and the existing
+Fusion-based Luthier Bridge (`fusion-live`) versus SolidWorks MCP
+(`solidworks-live`) with one explicit Codex driver held fixed. See
+[CLI matchup previews](CODE_CAD_ARENA.md#preview-three-canonical-matchups) for
+copyable commands. A requested comparison is not proof that either bridge can
+run on this machine.
+
+### Try a stub run without model calls
+
+From the repository root with MakerBench, OpenSCAD and xvfb installed, use a fresh
+`/tmp` run directory:
+
+```bash
+xvfb-run -a python -m makerbench.cli arena run --stub \
+  --run-dir /tmp/makerbench-studio-stub \
+  --instruments ocarina --models stub-a,stub-b \
+  --backend openscad --context-tier blind \
+  --seeds 0 --reps 1 --max-attempts 1 --rate-limit-s 0
+```
+
+It compiles and scores two stub trials, writes the objective scoreline and run
+log in that directory, and spends no model tokens. Inspect the run in Studio:
+
+```bash
+python -m makerbench.cli arena studio --run-dir /tmp/makerbench-studio-stub
+```
+
+The stub scoreline checks the scoring path; it is not model-quality or bridge
+runtime evidence. For a JSON matchup preview followed by the matching stub run,
+see the [two-command recipe](CODE_CAD_ARENA.md#copyable-zero-token-stub-scoreline).
 
 ## Nightly cockpit and Morning review
 
