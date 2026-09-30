@@ -770,41 +770,82 @@ def make_gemini_generator(
     return generate
 
 
+# agy's headless ``--print`` mode cannot prompt for a tool permission, so when the model
+# decides to run a shell command the CLI auto-denies it and the turn ends with no text (exit
+# 0, empty stdout, a "jetski: no output produced" note on stderr). In a 4-instrument probe of
+# the frontier entrant (#926) 2 of 4 blind briefs hit it (a RunCommand at step 4 and step 36);
+# with this note appended 3 of 3 completed. It is an instruction, not a permission change: no
+# --dangerously-skip-permissions, no allow-rule, no ~/.gemini edit. Blind tier only: the
+# non-blind tiers already run under the read-only allow list and a staged workspace.
+AGY_NO_TOOLS_NOTE = (
+    "\n\nDo not run any commands and do not use any tools (no shell, no file access). "
+    "You cannot execute or test code here. Answer directly with the single fenced code block."
+)
+
+
+def _agy_denied_tool(result: subprocess.CompletedProcess) -> bool:
+    """True for the silent headless denial: exit 0 and no text on stdout."""
+
+    return result.returncode == 0 and not (result.stdout or "").strip()
+
+
 def make_agy_generator(
+    model: Optional[str] = None,
     *,
     timeout_s: int = 900,
     print_timeout: str = "15m",
     bin_: str = "agy",
     retry_sleep_s: float = 3.0,
     backend: str = "openscad",
+    empty_retries: int = 2,
 ) -> Generator:
-    """Headless ``agy --print <prompt> --print-timeout 15m`` generator.
+    """Headless ``agy --print <prompt> --print-timeout 15m [--model M]`` generator.
 
     The prompt must immediately follow ``--print``; other flags come after it.
-    Non-blind trials run inside the #785 outer Bubblewrap sandbox with a
-    scratch ``$HOME`` (so ``run_command`` starts there, not in the real home).
+    ``model`` (e.g. ``gemini-3.8-flash-high``, the part of an ``antigravity-*`` entrant id
+    after the prefix) is passed as ``--model``; without it agy uses its own default model,
+    which is not what the entrant id names (#926). Blind prompts carry
+    :data:`AGY_NO_TOOLS_NOTE`, and a silent tool-denial (exit 0, empty stdout) is retried up
+    to ``empty_retries`` more times before it is reported with agy's stderr reason.
+    Non-blind trials run inside the #785 outer Bubblewrap sandbox with a scratch ``$HOME``
+    (so ``run_command`` starts there, not in the real home).
     """
 
     cwd = _isolated_cwd("agy")
     observations: dict = {}
 
     def generate(request: GenerationRequest, _retries: int = 1) -> str:
-        cmd = [bin_, "--print", arena_prompt(request, backend), "--print-timeout", print_timeout]
-        result = _run_entrant_cli(
-            "agy", cmd, request=request, trial_cwd=_trial_cwd(request, cwd),
-            timeout_s=timeout_s, observations=observations,
-        )
-        if result.returncode != 0:
-            if _retries > 0:
+        prompt = arena_prompt(request, backend)
+        if request.context_tier == "blind":
+            prompt += AGY_NO_TOOLS_NOTE
+        cmd = [bin_, "--print", prompt, "--print-timeout", print_timeout]
+        if model:
+            cmd += ["--model", model]
+        denied_attempts = 0
+        while True:
+            result = _run_entrant_cli(
+                "agy", cmd, request=request, trial_cwd=_trial_cwd(request, cwd),
+                timeout_s=timeout_s, observations=observations,
+            )
+            if result.returncode != 0:
+                if _retries > 0:
+                    time.sleep(retry_sleep_s)
+                    return generate(request, _retries - 1)
+                detail = (result.stderr or result.stdout or "<no output>")[:500]
+                raise RuntimeError(f"agy failed (rc={result.returncode}): {detail}")
+            if _agy_denied_tool(result) and denied_attempts < empty_retries:
+                # A fresh call: the model's tool use is not deterministic, so the same brief
+                # usually succeeds on the next try (#926).
+                denied_attempts += 1
                 time.sleep(retry_sleep_s)
-                return generate(request, _retries - 1)
-            detail = (result.stderr or result.stdout or "<no output>")[:500]
-            raise RuntimeError(f"agy failed (rc={result.returncode}): {detail}")
-        if not (result.stdout or "").strip() and (result.stderr or "").strip():
-            # agy exits 0 with empty stdout when headless mode auto-denies a
-            # tool (e.g. an un-allowlisted shell command); the reason is only on
-            # stderr. Surface it instead of a bare "empty output" error.
-            raise RuntimeError(f"agy produced no output (rc=0): {result.stderr.strip()[:500]}")
+                continue
+            break
+        if not (result.stdout or "").strip():
+            reason = (result.stderr or "").strip()[:500] or "empty stdout and empty stderr"
+            # agy exits 0 with empty stdout when headless mode auto-denies a tool (e.g. an
+            # un-allowlisted shell command); the reason is only on stderr. Surface it instead
+            # of a bare "empty output" error.
+            raise RuntimeError(f"agy produced no output (rc=0, {denied_attempts + 1} attempts): {reason}")
         return extract_candidate(result.stdout, backend)
 
     generate.sandbox_observations = observations
@@ -1112,7 +1153,11 @@ def resolve_generator(
     if provider == "gemini":
         return make_gemini_generator(model, backend=backend, **timeout_kwargs)
     if provider == "agy":
-        return make_agy_generator(backend=backend, **timeout_kwargs)
+        # The CLI model is passed only when the model map names one explicitly. The name
+        # derived from an ``antigravity-*`` id is not guaranteed to be a model agy lists
+        # (``agy models``), so deriving it would change existing entrants' behaviour (#926).
+        agy_model = str(overrides["model"]) if overrides.get("model") else None
+        return make_agy_generator(agy_model, backend=backend, **timeout_kwargs)
     if provider == "openrouter":
         return make_openrouter_generator(model, backend=backend, **timeout_kwargs)
     raise ValueError(f"unknown provider '{provider}' for model id '{model_id}'")
