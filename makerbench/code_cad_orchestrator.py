@@ -160,6 +160,7 @@ def run_orchestration(
             sleep_fn(wait_s)
         entry["rate_limit_wait_s"] = round(wait_s, 6)
         entry["attempts"] = int(entry.get("attempts", 0)) + 1
+        started = time.monotonic()
         try:
             result = dict(execute_trial(trial))
             entry["status"] = str(result.get("status") or "ok")
@@ -175,6 +176,10 @@ def run_orchestration(
             meta = getattr(exc, "trial_meta", None)
             if isinstance(meta, dict):
                 entry["meta"] = dict(meta)
+        finally:
+            # Observed latest-attempt execution time, excluding rate-limit wait.
+            # Old rows stay unknown; do not infer their timing from file dates.
+            entry["wall_time_s"] = round(time.monotonic() - started, 6)
         last_provider_call[trial.provider] = clock_fn()
         merged = _merge_and_write(run_log_path, config, managed_rows())
 

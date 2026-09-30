@@ -11,8 +11,9 @@ network call. It only previews a matrix and, optionally, writes a queue
 file to disk for a human (or the nightly runner) to pick up later.
 
 Level/context-tier note: ``nightly_cad``'s ``NightlyJob``/``NightlyEntrant``
-schema (#647) has no ``level`` field, and extending that shared schema is
-out of this lane's scope. One DoE cell's ``level`` is folded into
+schema (#647) already has ``backend`` and ``kind`` fields, which are reused.
+Live cells use the existing ``model_id`` as their driver model. No new nightly
+schema fields are added. The schema has no ``level`` field. One DoE cell's ``level`` is folded into
 ``entrant_id`` as ``"<model_id>::<level>"`` instead — ``NightlyEntrant.model_id``
 stays the real, dispatchable model id, and ``entrant_id`` (already a
 free-form dedup/display key in that schema) carries the level so a queue
@@ -30,13 +31,17 @@ explicitly unknown.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import itertools
+import os
 import math
+import shutil
 from pathlib import Path
 from typing import Callable, Iterable, Mapping, Optional
 
 from .. import code_cad_providers as providers
 from .. import nightly_cad
+from ..schema import matchup_metadata
 
 try:
     from telemetry.store import read_all as _read_telemetry_sessions
@@ -47,6 +52,43 @@ except ImportError:  # pragma: no cover - telemetry package is optional at impor
 SCHEMA = "makerbench-arena-studio-doe-v1"
 DEFAULT_LEVELS = ("L1", "L2", "L3", "L4")
 DEFAULT_CONTEXT_TIERS = ("blind",)
+DEFAULT_BACKENDS = ("openscad",)
+BACKENDS = (
+    "openscad",
+    "cadquery",
+    "build123d",
+    "blender",
+    "solidworks",
+    "fusion",
+    "solidworks-live",
+    "fusion-live",
+)
+LIVE_BACKENDS = ("solidworks-live", "fusion-live")
+
+
+def backend_availability(backend: str) -> dict:
+    """Read-only local hints; never probe a connector or create a jobs directory.
+
+    A Windows mount or installed wheel cannot prove a watcher, authenticated
+    connector, or sandbox works. Such lanes require execution-time preflight.
+    """
+    if backend not in BACKENDS:
+        raise DoeValidationError(f"unsupported backend: {backend}")
+    if backend in LIVE_BACKENDS and not shutil.which("codex"):
+        return {"status": "unavailable", "reason": "Codex live driver not installed"}
+    if backend.startswith(("solidworks", "fusion")):
+        if os.name != "nt" and not Path("/mnt/c").is_dir():
+            return {"status": "unavailable", "reason": "Windows bridge unavailable"}
+        return {"status": "requires_preflight", "reason": "Windows app/bridge readiness unverified"}
+    if backend in ("cadquery", "build123d"):
+        if importlib.util.find_spec(backend) is None:
+            return {"status": "unavailable", "reason": f"{backend} runtime not installed"}
+        if not shutil.which("bwrap") or not shutil.which("openscad"):
+            return {"status": "unavailable", "reason": "bwrap and OpenSCAD required"}
+        return {"status": "requires_preflight", "reason": "Sandbox readiness unverified"}
+    if not shutil.which(backend):
+        return {"status": "unavailable", "reason": f"{backend} executable not installed"}
+    return {"status": "available", "reason": "Local executable found"}
 
 
 class DoeValidationError(ValueError):
@@ -59,6 +101,7 @@ class DoeValidationError(ValueError):
 class DoeQueueExistsError(Exception):
     """A queue file already exists for this run name; replacing it needs explicit confirmation."""
 
+
 DEFAULT_TELEMETRY_STORE = "data/sessions.jsonl"
 
 # CLI providers billed under an existing subscription (see
@@ -68,8 +111,18 @@ DEFAULT_TELEMETRY_STORE = "data/sessions.jsonl"
 _SUBSCRIPTION_PROVIDERS = {"claude", "codex", "gemini", "agy", "stub"}
 
 
-def _cell_id(instrument_id: str, model_id: str, level: str, context_tier: str, seed: int) -> str:
+def _cell_id(
+    instrument_id: str,
+    model_id: str,
+    level: str,
+    context_tier: str,
+    seed: int,
+    backend: str = "openscad",
+    driver_model: Optional[str] = None,
+) -> str:
     raw = f"{instrument_id}|{model_id}|{level}|{context_tier}|{seed}"
+    if backend != "openscad" or driver_model is not None:
+        raw += f"|{backend}|{driver_model or ''}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -80,33 +133,176 @@ def expand_matrix(
     levels: Iterable[str] = DEFAULT_LEVELS,
     context_tiers: Iterable[str] = DEFAULT_CONTEXT_TIERS,
     seeds: Iterable[int] = (0,),
+    backends: Iterable[str] = DEFAULT_BACKENDS,
+    driver_models: Optional[Iterable[str]] = None,
 ) -> list[dict]:
-    """Deduplicated instrument x model x level x context-tier x seed cells.
+    """Deduplicated cells including backend and, for live lanes, driver model.
 
-    Deduplicates on the full 5-tuple, so calling this twice with overlapping
-    dimension sets (e.g. widening ``seeds``) never doubles an existing cell.
+    The legacy hash input is unchanged for OpenSCAD. Live model_id holds the
+    driver consumed by NightlyExecutor._run_live; explicit driver_models replace
+    nominal models for live cells, never multiply identical live entrants.
     """
 
+    instruments, models, levels, context_tiers, seeds, backends = (
+        tuple(axis) for axis in (instruments, models, levels, context_tiers, seeds, backends)
+    )
+    drivers = tuple(driver_models) if driver_models is not None else None
+    if not all((instruments, models, levels, context_tiers, seeds, backends)):
+        raise DoeValidationError("matrix axes must be nonempty")
+    if drivers is not None and not drivers:
+        raise DoeValidationError("driver_models must be nonempty when supplied")
+    for backend in backends:
+        if backend not in BACKENDS:
+            raise DoeValidationError(f"unsupported backend: {backend}")
+    has_live = any(backend in LIVE_BACKENDS for backend in backends)
+    if has_live and drivers is None:
+        raise DoeValidationError("live backends require explicit driver_models")
+    if drivers is not None and not has_live:
+        raise DoeValidationError("driver_models only apply to live backends")
     seen: set[str] = set()
     cells: list[dict] = []
-    for instrument_id, model_id, level, context_tier, seed in itertools.product(
-        instruments, models, levels, context_tiers, seeds
+    for instrument_id, model_id, level, context_tier, seed, backend in itertools.product(
+        instruments, models, levels, context_tiers, seeds, backends
     ):
-        cell_id = _cell_id(instrument_id, model_id, level, context_tier, seed)
-        if cell_id in seen:
-            continue
-        seen.add(cell_id)
-        cells.append(
-            {
-                "cell_id": cell_id,
-                "instrument_id": instrument_id,
-                "model_id": model_id,
-                "level": level,
-                "context_tier": context_tier,
-                "seed": seed,
-            }
-        )
+        if backend in LIVE_BACKENDS and context_tier == "studio":
+            raise DoeValidationError("live backends do not support studio context")
+        for driver in drivers if backend in LIVE_BACKENDS else (None,):
+            effective_model = driver if driver is not None else model_id
+            cell_id = _cell_id(
+                instrument_id, effective_model, level, context_tier, seed, backend, driver
+            )
+            if cell_id in seen:
+                continue
+            seen.add(cell_id)
+            cells.append(
+                {
+                    "cell_id": cell_id,
+                    "instrument_id": instrument_id,
+                    "model_id": effective_model,
+                    "level": level,
+                    "context_tier": context_tier,
+                    "seed": seed,
+                    "backend": backend,
+                    "driver_model": driver,
+                }
+            )
     return cells
+
+
+MATCHUP_AXES = (
+    "instruments",
+    "models",
+    "levels",
+    "context_tiers",
+    "seeds",
+    "backends",
+    "driver_models",
+)
+_AXIS_ALIASES = {
+    "instrument": "instruments",
+    "model": "models",
+    "level": "levels",
+    "context": "context_tiers",
+    "context_tier": "context_tiers",
+    "seed": "seeds",
+    "backend": "backends",
+    "bridge": "backends",
+    "driver_model": "driver_models",
+}
+
+
+def build_matchup(
+    varied_axis: str,
+    values: Iterable,
+    *,
+    instruments: Iterable[str],
+    models: Iterable[str],
+    levels: Iterable[str] = ("L1",),
+    context_tiers: Iterable[str] = DEFAULT_CONTEXT_TIERS,
+    seeds: Iterable[int] = (0,),
+    backends: Iterable[str] = DEFAULT_BACKENDS,
+    driver_models: Optional[Iterable[str]] = None,
+    factorial: bool = False,
+) -> dict:
+    """Preview a controlled matchup, rejecting accidental multi-axis experiments.
+
+    Values are dispatch identifiers, never inferred from display labels.
+    Live matchups vary driver_models, not nominal models which the live runner
+    does not consume. Metadata is retained alongside cells and in queue files.
+    """
+    axis = _AXIS_ALIASES.get(varied_axis, varied_axis)
+    if axis not in MATCHUP_AXES:
+        raise DoeValidationError(f"unsupported varied_axis: {varied_axis}")
+    dimensions = {
+        "instruments": list(instruments),
+        "models": list(models),
+        "levels": list(levels),
+        "context_tiers": list(context_tiers),
+        "seeds": list(seeds),
+        "backends": list(backends),
+        "driver_models": list(driver_models) if driver_models is not None else [],
+    }
+    selected = list(dict.fromkeys(values))
+    if axis == "seeds":
+        try:
+            if any(isinstance(value, (bool, float)) for value in selected):
+                raise ValueError("seeds must be integers")
+            selected = list(dict.fromkeys(int(value) for value in selected))
+        except (ValueError, TypeError):
+            raise DoeValidationError("seeds must be integers") from None
+    elif any(not isinstance(value, str) or not value.strip() for value in selected):
+        raise DoeValidationError("axis values must be nonempty strings")
+    if len(selected) < 2:
+        raise DoeValidationError("a matchup needs at least two distinct axis values")
+    # Conflicting values for the chosen axis must not disappear behind --values.
+    original = list(dict.fromkeys(dimensions[axis]))
+    if len(original) > 1 and set(original) != set(selected):
+        raise DoeValidationError("selected values conflict with the varied axis")
+    dimensions[axis] = selected
+    dimensions = {name: list(dict.fromkeys(items)) for name, items in dimensions.items()}
+    if not all(dimensions[name] for name in MATCHUP_AXES if name != "driver_models"):
+        raise DoeValidationError("held axes must be nonempty")
+    live = any(backend in LIVE_BACKENDS for backend in dimensions["backends"])
+    if axis == "driver_models" and not all(b in LIVE_BACKENDS for b in dimensions["backends"]):
+        raise DoeValidationError("driver_models matchups require live backends")
+    if live and axis == "models":
+        raise DoeValidationError("live matchups vary driver_models, not nominal models")
+    if dimensions["driver_models"] and not live:
+        raise DoeValidationError("driver_models only apply to live backends")
+    if live and not dimensions["driver_models"]:
+        raise DoeValidationError("live backends require explicit driver_models")
+    if (
+        live
+        and any(b not in LIVE_BACKENDS for b in dimensions["backends"])
+        and len(dimensions["models"]) == len(dimensions["driver_models"]) == 1
+        and dimensions["models"] != dimensions["driver_models"]
+    ):
+        raise DoeValidationError(
+            "mixed live/code-CAD backends must hold the same effective model; "
+            "the held driver model must equal the held nominal model"
+        )
+    varied = [name for name, items in dimensions.items() if len(items) > 1]
+    if len(varied) > 1 and not factorial:
+        raise DoeValidationError(f"matchups vary one axis; varying {varied!r} requires factorial")
+    if (
+        live
+        and len(dimensions["models"]) > 1
+        and all(b in LIVE_BACKENDS for b in dimensions["backends"])
+    ):
+        raise DoeValidationError("nominal models are unused by live backends; hold one model")
+    cells = expand_matrix(**{**dimensions, "driver_models": dimensions["driver_models"] or None})
+    held = {name: items[0] for name, items in dimensions.items() if len(items) == 1}
+    result = {
+        "schema": SCHEMA,
+        "varied_axis": axis,
+        "values": selected,
+        "varied_axes": varied,
+        "factorial": factorial,
+        "held": held,
+        "cells": cells,
+    }
+    result.update(matchup_metadata(result))
+    return result
 
 
 def _model_provider(model_id: str) -> Optional[str]:
@@ -130,25 +326,34 @@ def _session_cost(session) -> Optional[float]:
     # under its free-form telemetry dict without assuming it is there.
     telemetry = getattr(session, "telemetry", None) or {}
     value = telemetry.get("cost_usd")
-    return float(value) if isinstance(value, (int, float)) else None
+    return float(value) if (
+        isinstance(value, (int, float)) and not isinstance(value, bool)
+        and math.isfinite(value) and value >= 0
+    ) else None
 
 
-def _historical_duration(model_id: str, telemetry_store: str) -> dict:
+def _historical_duration(model_id: str, telemetry_store: str, backend: str = "openscad") -> dict:
     matching = [
-        s for s in _load_sessions(telemetry_store) if getattr(s, "agent_id", None) == model_id
+        s
+        for s in _load_sessions(telemetry_store)
+        if getattr(s, "agent_id", None) == model_id
+        and (getattr(s, "telemetry", None) or {}).get("backend", "openscad") == backend
     ]
-    if not matching:
+    durations = [s.duration_seconds for s in matching
+                 if math.isfinite(s.duration_seconds) and s.duration_seconds >= 0]
+    if not durations:
         return {"duration_s": None, "n_duration_samples": 0}
-    avg = sum(s.duration_seconds for s in matching) / len(matching)
-    return {"duration_s": round(avg, 1), "n_duration_samples": len(matching)}
+    avg = sum(durations) / len(durations)
+    return {"duration_s": round(avg, 1), "n_duration_samples": len(durations)}
 
 
-def _historical_cost(model_id: str, telemetry_store: str) -> dict:
+def _historical_cost(model_id: str, telemetry_store: str, backend: str = "openscad") -> dict:
     sessions = _load_sessions(telemetry_store)
     costed = [
         (s, _session_cost(s))
         for s in sessions
         if getattr(s, "agent_id", None) == model_id
+        and (getattr(s, "telemetry", None) or {}).get("backend", "openscad") == backend
     ]
     costs = [cost for _s, cost in costed if cost is not None]
     if not costs:
@@ -161,7 +366,7 @@ def _historical_cost(model_id: str, telemetry_store: str) -> dict:
 
 
 def estimate_model_cost_and_time(
-    model_id: str, *, telemetry_store: str = DEFAULT_TELEMETRY_STORE
+    model_id: str, *, telemetry_store: str = DEFAULT_TELEMETRY_STORE, backend: str = "openscad"
 ) -> dict:
     """Historical time/cost estimate for one model (#640 post-mortem telemetry).
 
@@ -172,30 +377,37 @@ def estimate_model_cost_and_time(
     """
 
     provider = _model_provider(model_id)
-    if provider in _SUBSCRIPTION_PROVIDERS:
+    if provider in _SUBSCRIPTION_PROVIDERS or backend in LIVE_BACKENDS:
         cost_result = {
             "cost_usd": 0.0,
             "cost_source": "subscription_zero_marginal",
             "n_cost_samples": 0,
         }
     else:
-        cost_result = _historical_cost(model_id, telemetry_store)
+        cost_result = _historical_cost(model_id, telemetry_store, backend)
 
-    return {**cost_result, **_historical_duration(model_id, telemetry_store)}
+    return {**cost_result, **_historical_duration(model_id, telemetry_store, backend)}
 
 
 def annotate_matrix_with_estimates(
     cells: list[dict], *, telemetry_store: str = DEFAULT_TELEMETRY_STORE
 ) -> list[dict]:
-    """Attach a time/cost estimate to each cell, memoized per model id."""
+    """Attach a time/cost estimate to each cell, memoized per model and backend."""
 
-    cache: dict[str, dict] = {}
+    cache: dict[tuple[str, str], dict] = {}
+    availability: dict[str, dict] = {}
     annotated = []
     for cell in cells:
         model_id = cell["model_id"]
-        if model_id not in cache:
-            cache[model_id] = estimate_model_cost_and_time(model_id, telemetry_store=telemetry_store)
-        annotated.append({**cell, "estimate": cache[model_id]})
+        backend = cell.get("backend", "openscad")
+        key = (model_id, backend)
+        if key not in cache:
+            cache[key] = estimate_model_cost_and_time(
+                model_id, telemetry_store=telemetry_store, backend=backend
+            )
+        if backend not in availability:
+            availability[backend] = backend_availability(backend)
+        annotated.append({**cell, "estimate": cache[key], "availability": availability[backend]})
     return annotated
 
 
@@ -222,6 +434,16 @@ def matrix_summary(annotated_cells: list[dict]) -> dict:
 
     return {
         "n_cells": len(annotated_cells),
+        "backends": sorted({c.get("backend", "openscad") for c in annotated_cells}),
+        "driver_models": sorted(
+            {c["driver_model"] for c in annotated_cells if c.get("driver_model")}
+        ),
+        "n_unavailable_cells": sum(
+            c.get("availability", {}).get("status") == "unavailable" for c in annotated_cells
+        ),
+        "n_preflight_cells": sum(
+            c.get("availability", {}).get("status") == "requires_preflight" for c in annotated_cells
+        ),
         "known_cost_usd": round(known_cost_total, 6),
         "has_unknown_cost_cells": has_unknown_cost,
         "known_time_s": round(known_time_total, 1),
@@ -301,6 +523,8 @@ def build_nightly_queue(
     max_cost_usd_by_model = max_cost_usd_by_model or {}
     groups: dict[tuple[str, int, str], list[dict]] = {}
     for cell in cells:
+        if cell.get("backend", "openscad") not in BACKENDS:
+            raise DoeValidationError(f"unsupported backend: {cell['backend']}")
         key = (cell["instrument_id"], cell["seed"], cell["context_tier"])
         groups.setdefault(key, []).append(cell)
 
@@ -308,7 +532,9 @@ def build_nightly_queue(
     skipped: list[dict] = []
     for (instrument_id, seed, context_tier), group_cells in groups.items():
         if is_approved is not None and not is_approved(instrument_id):
-            skipped.append({"instrument_id": instrument_id, "reason": "reference_image_not_approved"})
+            skipped.append(
+                {"instrument_id": instrument_id, "reason": "reference_image_not_approved"}
+            )
             continue
 
         reference_image = reference_images.get(instrument_id)
@@ -318,10 +544,17 @@ def build_nightly_queue(
 
         entrants = [
             nightly_cad.NightlyEntrant(
-                entrant_id=f"{cell['model_id']}::{cell['level']}",
-                kind="arena",
+                entrant_id=(
+                    f"{cell['model_id']}::{cell['level']}"
+                    + (
+                        f"::{cell['backend']}"
+                        if cell.get("backend", "openscad") != "openscad"
+                        else ""
+                    )
+                ),
+                kind="live" if cell.get("backend") in LIVE_BACKENDS else "arena",
                 model_id=cell["model_id"],
-                backend="openscad",
+                backend=cell.get("backend", "openscad"),
                 context_tier=context_tier,
                 max_cost_usd=max_cost_usd_by_model.get(cell["model_id"], 0.0),
             )
@@ -342,15 +575,26 @@ def build_nightly_queue(
         job.validate()
         jobs.append(job)
 
+    backend_status = {
+        backend: backend_availability(backend)
+        for backend in sorted({c.get("backend", "openscad") for c in cells})
+    }
     payload = {
         "schema": nightly_cad.SCHEMA,
         "generated_by": SCHEMA,
         "skipped": skipped,
+        "backend_warnings": [
+            {"backend": backend, **status}
+            for backend, status in backend_status.items()
+            if status["status"] != "available"
+        ],
     }
     return payload, jobs
 
 
-def write_queue_file(path: Path, payload: Mapping[str, object], jobs: list["nightly_cad.NightlyJob"]) -> None:
+def write_queue_file(
+    path: Path, payload: Mapping[str, object], jobs: list["nightly_cad.NightlyJob"]
+) -> None:
     """Write the queue file via ``nightly_cad``'s own atomic writer (#647).
 
     This never dispatches or executes a job — it only writes the file that a

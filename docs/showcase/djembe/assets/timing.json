@@ -1,0 +1,7 @@
+{
+  "scope": "one `arena run` process, seed 0, one trial, fresh run directory: start-up, generation, compile, render, gate",
+  "method": "date +%s.%N before and after the command; difference computed with bc",
+  "elapsed_s": 108.253107421,
+  "date": "2026-09-30",
+  "note": "Raw start/end epoch stamps were not retained; only the computed difference was. Single sample."
+}

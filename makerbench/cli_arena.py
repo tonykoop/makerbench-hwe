@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 import os
 from pathlib import Path
 from typing import Optional
@@ -332,6 +333,92 @@ def _voted_pair_keys(run_dir: Path, voter_id: str) -> set[tuple[str, str]]:
         else:
             keys.add(key)
     return keys
+
+
+@arena_app.command("estimate")
+def arena_estimate(
+    models: str = typer.Option(..., "--models", help="Comma-separated entrant IDs; estimates only."),
+    trials: int = typer.Option(1, "--trials", min=1, help="Planned cells per model."),
+    telemetry_store: str = typer.Option("data/sessions.jsonl", "--telemetry-store"),
+    backend: str = typer.Option("openscad", "--backend"),
+    budget_usd: Optional[float] = typer.Option(None, "--budget-usd", min=0,
+                                              help="Compare projection with a budget; never executes a run."),
+):
+    """Project per-model cost/time from telemetry. Paid execution remains Tony-gated."""
+    from .arena_studio import doe
+
+    model_ids = list(dict.fromkeys(_split_csv(models)))
+    if not model_ids:
+        raise typer.BadParameter("at least one model is required")
+    if backend not in doe.BACKENDS:
+        raise typer.BadParameter(f"unsupported backend: {backend}")
+    if budget_usd is not None and not math.isfinite(budget_usd):
+        raise typer.BadParameter("budget must be finite")
+    rows = []
+    try:
+        for model in model_ids:
+            estimate = doe.estimate_model_cost_and_time(
+                model, telemetry_store=telemetry_store, backend=backend
+            )
+            cost = estimate["cost_usd"]
+            duration = estimate["duration_s"]
+            rows.append({
+                "model_id": model, "backend": backend, **estimate,
+                "projected_cost_usd": round(cost * trials, 6) if cost is not None else None,
+                "projected_duration_s": round(duration * trials, 1) if duration is not None else None,
+            })
+        unknown_cost = [r["model_id"] for r in rows if r["projected_cost_usd"] is None]
+        unknown_time = [r["model_id"] for r in rows if r["projected_duration_s"] is None]
+        known_cost = round(sum(r["projected_cost_usd"] or 0 for r in rows), 6)
+        total_cost = None if unknown_cost else known_cost
+        total_time = None if unknown_time else round(sum(r["projected_duration_s"] for r in rows), 1)
+        report = {
+            "schema": "makerbench-arena-estimate-v1", "execution": "estimate_only",
+            "trials_per_model": trials, "models": rows,
+            "projected_total_usd": total_cost, "known_projected_cost_usd": known_cost,
+            "projected_serial_duration_s": total_time,
+            "unknown_cost_models": unknown_cost, "unknown_duration_models": unknown_time,
+            "budget_usd": budget_usd,
+            "within_budget": (total_cost <= budget_usd) if total_cost is not None and budget_usd is not None else None,
+        }
+        output = json.dumps(report, indent=2, allow_nan=False)
+    except (ValueError, OverflowError) as exc:
+        raise typer.BadParameter(f"invalid telemetry or projection: {exc}") from None
+    typer.echo(output)
+
+
+@arena_app.command("matchup")
+def arena_matchup(
+    varied_axis: str = typer.Option(..., "--vary", help="Axis to vary: backend/bridge, model, level, context, seed, instrument or driver_model."),
+    values: str = typer.Option(..., "--values", help="At least two comma-separated dispatch identifiers."),
+    instruments: str = typer.Option(..., help="Held instrument ids; one unless factorial."),
+    models: str = typer.Option(..., help="Held entrant ids; one unless factorial."),
+    levels: str = typer.Option("L1", help="Held level labels."),
+    context_tiers: str = typer.Option("blind", "--context-tiers"),
+    seeds: str = typer.Option("0"),
+    backends: str = typer.Option("openscad", "--backends"),
+    driver_models: Optional[str] = typer.Option(None, "--driver-models"),
+    factorial: bool = typer.Option(False, "--factorial", help="Explicitly allow multiple varying axes."),
+    out: Optional[str] = typer.Option(None, "--out", help="Optional JSON preview file; no run is dispatched."),
+):
+    """Preview a matchup that varies one axis, with estimates and held values."""
+    from .arena_studio import doe
+
+    try:
+        result = doe.build_matchup(
+            varied_axis, _split_csv(values), instruments=_split_csv(instruments),
+            models=_split_csv(models), levels=_split_csv(levels),
+            context_tiers=_split_csv(context_tiers), seeds=[int(s) for s in _split_csv(seeds)],
+            backends=_split_csv(backends), driver_models=_split_csv(driver_models) if driver_models is not None else None,
+            factorial=factorial,
+        )
+        result["cells"] = doe.annotate_matrix_with_estimates(result["cells"])
+        result["summary"] = doe.matrix_summary(result["cells"])
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from None
+    if out:
+        atomic_write_json(Path(out), result)
+    typer.echo(json.dumps(result, indent=2))
 
 
 @arena_app.command("run")

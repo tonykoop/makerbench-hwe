@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import math
 import os
 import re
 import shutil
@@ -44,6 +45,7 @@ from makerbench.code_cad_vote_web import QueueItem, VoteQueue
 from makerbench.nightly_cad import _resume_budget, load_queue
 from makerbench.nightly_preflight import audit_lock
 from makerbench.redaction import run_relative_path
+from makerbench.schema import MatchupMetadata
 
 from . import analytics
 from . import doe
@@ -279,7 +281,7 @@ class ArenaStudioService:
                 created_at = data.get("started_at") or data.get("created_at")
                 cfg = data.get("config") or {}
                 models = cfg.get("model_ids") or []
-                instruments = cfg.get("instruments") or []
+                instruments = cfg.get("instruments") or cfg.get("instrument_ids") or []
                 trials_count = len(data.get("trials") or [])
             except Exception:
                 pass
@@ -323,7 +325,68 @@ class ArenaStudioService:
             "manifold_count": manifold,
             "trials": trials,
         })
+        if cfg.get("matchup"):
+            summary["matchup"] = MatchupMetadata.model_validate(cfg["matchup"]).model_dump(mode="json")
+            summary["matchup_trials"] = self._matchup_trials(run_dir, trials)
         return summary
+
+    def matchup_render_path(self, run_dir: Path, trial_id: str) -> Optional[Path]:
+        """Resolve one recorded PNG inside the selected run; never accept a filename."""
+        run_dir = run_dir.resolve()
+        log = _load_run_log(run_dir)
+        if not log.get("config", {}).get("matchup"):
+            return None
+        matches = [row for row in log.get("trials") or [] if row.get("trial_id") == trial_id]
+        if len(matches) != 1:
+            return None
+        result = matches[0].get("result") or {}
+        raw = (result.get("artifacts") or {}).get("png_path")
+        if not isinstance(raw, str):
+            return None
+        path = Path(raw)
+        if not path.is_absolute():
+            repository_path = self.repo_root / path
+            # Production can record a repository-relative run prefix, while
+            # imported logs can record a path relative to the selected run.
+            # Recognize the qualified form before resolving symlinks so an
+            # escaping target cannot fall back to a different in-run file.
+            if (repository_path.is_relative_to(run_dir)
+                    or repository_path.resolve().is_relative_to(run_dir)):
+                path = repository_path
+            else:
+                path = run_dir / path
+        path = path.resolve()
+        if not path.is_relative_to(run_dir) or path.suffix.lower() != ".png" or not path.is_file():
+            return None
+        with path.open("rb") as handle:
+            if handle.read(8) != b"\x89PNG\r\n\x1a\n":
+                return None
+        return path
+
+    def _matchup_trials(self, run_dir: Path, trials: list) -> list[dict]:
+        def observed(value, ceiling=None):
+            return value if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                             and math.isfinite(value) and value >= 0
+                             and (ceiling is None or value <= ceiling)) else None
+
+        rows = []
+        for trial in trials:
+            result = trial.get("result") or {}
+            objective = result.get("objective") or {}
+            gates = objective.get("sub_scores") or {}
+            rows.append({
+                "trial_id": trial.get("trial_id"), "entrant": trial.get("model_id"),
+                "instrument_id": trial.get("instrument_id"), "seed": trial.get("seed"), "rep": trial.get("rep"),
+                "status": trial.get("status") or "pending", "backend": result.get("backend"),
+                "wall_time_s": observed(trial.get("wall_time_s")),
+                "objective_pass_rate": observed(objective.get("objective_pass_rate"), 1),
+                "gates": {key: observed(gates.get(key), 1) for key in (
+                    "renders", "watertight", "nonzero_volume", "body_count", "fits_envelope", "min_wall",
+                    *[key for key in ("topology", "interfaces") if key in gates])},
+                "render_url": f"/api/runs/{quote(run_dir.name, safe='')}/matchup-render/{quote(str(trial.get('trial_id')), safe='')}"
+                if self.matchup_render_path(run_dir, trial.get("trial_id")) else None,
+            })
+        return rows
 
     def get_run_leaderboard(self, run_dir: Path) -> dict[str, Any]:
         """Build the live Elo leaderboard for the run."""
@@ -381,21 +444,29 @@ class ArenaStudioService:
         levels: Optional[list[str]] = None,
         context_tiers: Optional[list[str]] = None,
         seeds: Optional[list[int]] = None,
+        backends: Optional[list[str]] = None,
+        driver_models: Optional[list[str]] = None,
+        varied_axis: Optional[str] = None,
+        values: Optional[list] = None,
+        factorial: bool = False,
     ) -> dict[str, Any]:
         """Preview the DoE matrix with per-cell time/cost estimates (#697 D3).
 
         Read-only: builds and annotates the cell list, never writes or
         executes anything.
         """
-        cells = doe.expand_matrix(
-            instruments,
-            models,
-            levels=levels or doe.DEFAULT_LEVELS,
-            context_tiers=context_tiers or doe.DEFAULT_CONTEXT_TIERS,
-            seeds=seeds or (0,),
+        dimensions = dict(
+            instruments=instruments, models=models,
+            levels=levels if levels is not None else (("L1",) if varied_axis else doe.DEFAULT_LEVELS),
+            context_tiers=context_tiers if context_tiers is not None else doe.DEFAULT_CONTEXT_TIERS,
+            seeds=seeds if seeds is not None else (0,),
+            backends=backends if backends is not None else doe.DEFAULT_BACKENDS,
+            driver_models=driver_models,
         )
+        matchup = doe.build_matchup(varied_axis, values or [], factorial=factorial, **dimensions) if varied_axis else {}
+        cells = matchup.get("cells") if varied_axis else doe.expand_matrix(**dimensions)
         annotated = doe.annotate_matrix_with_estimates(cells)
-        return {"cells": annotated, "summary": doe.matrix_summary(annotated)}
+        return {**matchup, "cells": annotated, "summary": doe.matrix_summary(annotated)}
 
     def write_doe_queue(
         self,
@@ -406,6 +477,11 @@ class ArenaStudioService:
         levels: Optional[list[str]] = None,
         context_tiers: Optional[list[str]] = None,
         seeds: Optional[list[int]] = None,
+        backends: Optional[list[str]] = None,
+        driver_models: Optional[list[str]] = None,
+        varied_axis: Optional[str] = None,
+        values: Optional[list] = None,
+        factorial: bool = False,
         budget_usd: float = 5.0,
         max_cost_usd_by_model: Optional[dict[str, float]] = None,
         replace: bool = False,
@@ -430,18 +506,18 @@ class ArenaStudioService:
                 f"run_id must be a safe path segment (letters/digits/_.-, no "
                 f"'/' or leading '.'), got {run_id!r}"
             )
-        cells = doe.expand_matrix(
-            instruments,
-            models,
-            levels=levels or doe.DEFAULT_LEVELS,
-            context_tiers=context_tiers or doe.DEFAULT_CONTEXT_TIERS,
-            seeds=seeds or (0,),
+        preview = self.preview_doe_matrix(
+            instruments, models, levels=levels, context_tiers=context_tiers,
+            seeds=seeds, backends=backends, driver_models=driver_models,
+            varied_axis=varied_axis, values=values, factorial=factorial,
         )
+        cells = preview["cells"]
+        matchup = {key: preview[key] for key in ("varied_axis", "values", "varied_axes", "factorial", "held") if key in preview}
         reference_images = {
-            inst: self.get_task_reference(inst)["image_path"] for inst in instruments
+            inst: self.get_task_reference(inst)["image_path"] for inst in {cell["instrument_id"] for cell in cells}
         }
         resolved_max_cost = doe.resolve_max_cost_usd_by_model(
-            {cell["model_id"] for cell in cells},
+            {cell["model_id"] for cell in cells if cell["backend"] not in doe.LIVE_BACKENDS},
             overrides=max_cost_usd_by_model,
         )
         payload, jobs = doe.build_nightly_queue(
@@ -451,6 +527,7 @@ class ArenaStudioService:
             budget_usd=budget_usd,
             max_cost_usd_by_model=resolved_max_cost,
         )
+        payload.update(matchup)
         # Checked after the request validates (unknown cost ceilings, the matrix), so a
         # bad request answers 400 instead of first asking to replace a queue.
         queue_rel = f"runs/code_cad_arena/{run_id}/doe_queue.json"
@@ -463,9 +540,11 @@ class ArenaStudioService:
         queue_path = run_dir / "doe_queue.json"
         doe.write_queue_file(queue_path, payload, jobs)
         return {
+            **matchup,
             "queue_path": str(queue_path),
             "n_jobs": len(jobs),
             "skipped": payload["skipped"],
+            "backend_warnings": payload["backend_warnings"],
         }
 
     def get_registry_tasks(self, family: Optional[str] = None) -> list[dict[str, Any]]:
