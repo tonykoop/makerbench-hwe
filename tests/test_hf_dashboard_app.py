@@ -185,3 +185,10 @@ def test_geometry_preview_direct_mesh_without_trimesh(monkeypatch):
     assert model_path is not None
     assert model_path.endswith(".glb")
     assert "directly" in status
+
+
+def test_unranked_rows_render_as_unranked():
+    manifest = {"runs": [{"run_id": "r", "model_identifier": "thin", "domain": "bracket",
+                          "score": 3.0, "harness_class": "autonomous"}]}
+    out = app.render_dual_league(manifest)
+    assert out["autonomous"]["rows"][0][0] == "unranked"

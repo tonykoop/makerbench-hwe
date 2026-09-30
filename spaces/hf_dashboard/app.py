@@ -81,7 +81,7 @@ def _league_table_rows(league: dict) -> list[list]:
         ver = row.get("verification") or {}
         verified = ver.get("verified", 0)
         out.append([
-            row.get("rank"),
+            row.get("rank") if row.get("rank") is not None else "unranked",
             row.get("headline"),
             row.get("mean_score") if row.get("mean_score") is not None else "—",
             row.get("best_score") if row.get("best_score") is not None else "—",

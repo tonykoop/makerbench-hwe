@@ -100,7 +100,8 @@ def test_rows_ranked_by_mean_score_desc():
         {"run_id": "b", "harness_class": "autonomous", "model_identifier": "m2", "score": 0.9},
         {"run_id": "c", "harness_class": "autonomous", "model_identifier": "m3", "score": None},
     ]}
-    rows = dd.build_dual_league(manifest)["leagues"]["autonomous"]["rows"]
+    # These fixtures carry no domain; floor off to test the ordering rule on its own.
+    rows = dd.build_dual_league(manifest, min_domains=0)["leagues"]["autonomous"]["rows"]
     assert [r["rank"] for r in rows] == [1, 2, 3]
     assert rows[0]["headline"].startswith("m2")  # 0.9
     assert rows[1]["headline"].startswith("m1")  # 0.4
@@ -209,3 +210,38 @@ def test_run_detail_keys_are_whitelisted():
         "workflow", "packet", "certificate", "artifact_3d", "video",
     }
     assert set(detail) == allowed
+
+
+# --- coverage floor (#877) --------------------------------------------------
+
+def _run(model, domain, score, run_id):
+    return {"run_id": run_id, "model_identifier": model, "domain": domain, "score": score,
+            "harness_class": "autonomous", "verification": "verified"}
+
+
+def test_thin_coverage_model_cannot_top_the_board():
+    runs = [_run("one-family-wonder", "bracket", 4.0, "w1"), _run("one-family-wonder", "bracket", 4.0, "w2")]
+    for i, dom in enumerate(("bracket", "enclosure", "hinge")):
+        runs.append(_run("broad", dom, 2.0, f"b{i}"))
+    rows = dd.build_dual_league({"runs": runs})["leagues"]["autonomous"]["rows"]
+    assert [r["headline"] for r in rows] == ["broad", "one-family-wonder"]
+    broad, thin = rows
+    assert broad["rank"] == 1 and broad["rank_eligible"] is True
+    assert thin["rank"] is None and thin["rank_eligible"] is False
+    assert "unranked" in thin["coverage_note"] and thin["n_domains"] == 1
+    assert thin["mean_score"] > broad["mean_score"]  # would have led without the floor
+
+
+def test_floor_is_configurable_and_applies_to_both_leagues():
+    runs = [_run("m", "bracket", 3.0, "a"),
+            {**_run("stack", "bracket", 3.0, "w"), "harness_class": "agentic-cad", "stack": "Claude + Blender MCP"}]
+    leagues = dd.build_dual_league({"runs": runs}, min_domains=1)["leagues"]
+    assert leagues["autonomous"]["rows"][0]["rank"] == 1
+    assert leagues["workflow"]["rows"][0]["rank"] == 1
+    leagues = dd.build_dual_league({"runs": runs})["leagues"]
+    assert leagues["autonomous"]["rows"][0]["rank"] is None
+    assert leagues["workflow"]["rows"][0]["rank"] is None
+
+
+def test_default_floor_constant():
+    assert dd.MIN_DOMAINS_FOR_RANK == 3

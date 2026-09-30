@@ -137,7 +137,16 @@ def _workflow_headline(entry: dict) -> str:
     return " + ".join(bits)
 
 
-def _aggregate_rows(entries: list[dict], *, key_fn, headline_fn, league: str) -> list[dict]:
+# Coverage floor (#877): a row needs runs in at least this many distinct task families
+# (the manifest's ``domain``) to take a rank. The public site never floors: its overall
+# is a mean over the capabilities a model attempted and it only reports coverage next to
+# it, so a one-family model can top it. Here an under-covered row is listed after every
+# ranked row, unranked, with an explicit note, so a thin row cannot lead the board.
+MIN_DOMAINS_FOR_RANK = 3
+
+
+def _aggregate_rows(entries: list[dict], *, key_fn, headline_fn, league: str,
+                    min_domains: int = MIN_DOMAINS_FOR_RANK) -> list[dict]:
     groups: dict = {}
     for entry in entries:
         key = key_fn(entry)
@@ -168,21 +177,36 @@ def _aggregate_rows(entries: list[dict], *, key_fn, headline_fn, league: str) ->
             },
             "members": sorted(m.get("run_id") for m in members if m.get("run_id")),
         })
+        n_domains = len(rows[-1]["domains"])
+        rows[-1]["n_domains"] = n_domains
+        rows[-1]["rank_eligible"] = n_domains >= min_domains
+        rows[-1]["coverage_note"] = (
+            "" if n_domains >= min_domains
+            else f"unranked: runs in {n_domains} of the {min_domains} task families needed to rank"
+        )
 
-    # Deterministic order: scored rows by mean_score desc, then n_runs desc, then
-    # headline asc; unscored rows always trail, ordered by headline.
+    # Deterministic order: rows that meet the coverage floor first, then scored rows by
+    # mean_score desc, then n_runs desc, then headline asc; unscored rows trail within
+    # their group, ordered by headline. Only floor-meeting rows take a rank (#877).
     rows.sort(key=lambda r: (
+        not r["rank_eligible"],
         r["mean_score"] is None,
         -(r["mean_score"] or 0.0),
         -r["n_runs"],
         r["headline"],
     ))
-    for rank, row in enumerate(rows, start=1):
-        row["rank"] = rank
+    rank = 0
+    for row in rows:
+        if row["rank_eligible"]:
+            rank += 1
+            row["rank"] = rank
+        else:
+            row["rank"] = None
     return rows
 
 
-def build_dual_league(manifest: dict, *, autonomous_classes=AUTONOMOUS_CLASSES) -> dict:
+def build_dual_league(manifest: dict, *, autonomous_classes=AUTONOMOUS_CLASSES,
+                      min_domains: int = MIN_DOMAINS_FOR_RANK) -> dict:
     """Split a runs-manifest into Autonomous and Workflow leaderboards (Tab A)."""
     entries = list(manifest.get("runs") or [])
     autonomous, workflow = [], []
@@ -204,6 +228,7 @@ def build_dual_league(manifest: dict, *, autonomous_classes=AUTONOMOUS_CLASSES) 
                 "rows": _aggregate_rows(
                     autonomous, key_fn=_autonomous_key,
                     headline_fn=_autonomous_headline, league="autonomous",
+                    min_domains=min_domains,
                 ),
             },
             "workflow": {
@@ -213,6 +238,7 @@ def build_dual_league(manifest: dict, *, autonomous_classes=AUTONOMOUS_CLASSES) 
                 "rows": _aggregate_rows(
                     workflow, key_fn=_workflow_headline,
                     headline_fn=_workflow_headline, league="workflow",
+                    min_domains=min_domains,
                 ),
             },
         },
