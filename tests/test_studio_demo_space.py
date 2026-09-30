@@ -42,6 +42,24 @@ def test_unknown_answer_field_is_rejected():
         builder.audit_snapshot(content)
 
 
+@pytest.mark.parametrize("wrong", ["seed", "trial_count"])
+def test_misstated_aggregate_scope_is_rejected_before_staging(tmp_path, monkeypatch, wrong):
+    source = ROOT / "makerbench/arena_studio/data/showcase.json"
+    content = json.loads(source.read_text())
+    if wrong == "seed":
+        content["cases"][0]["held"]["seeds"] = 0
+    else:
+        content["cases"][1]["rows"][0]["n_objective_trials"] = 1
+    original = Path.read_text
+    def changed_snapshot(path, *args, **kwargs):
+        return json.dumps(content) if path == source else original(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "read_text", changed_snapshot)
+    out = tmp_path / "space"
+    with pytest.raises(ValueError, match="trial counts"):
+        builder.stage(out)
+    assert not out.exists()
+
+
 @pytest.mark.parametrize("field", ["elo", "elos", "vote_count", "elo2", "voterId", "ratings"])
 def test_nested_preference_fields_are_rejected(field):
     with pytest.raises(ValueError, match="Preference"):
