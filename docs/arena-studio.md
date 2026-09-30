@@ -267,7 +267,8 @@ read-only; writing the queue starts no jobs.
   cells. The Studio field offers a starting driver value that you can change.
 - **Experiment mode.** Use **Full matrix** for the cross product. Choose **Vary
   one axis**, select the axis, then choose at least two distinct values for it
-  and one for every other applicable axis. Changing the selected axis holds the
+  and one for every other applicable axis. Unless factorial is checked,
+  changing the selected axis holds the
   other controls to their first value. Multiple varied axes are refused unless
   you check **Allow a factorial experiment**. Live model comparisons vary the
   driver axis, because the live runner ignores nominal model IDs.

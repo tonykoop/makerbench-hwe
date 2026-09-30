@@ -83,7 +83,9 @@ Other backends and live drivers distinguish cells. The queue reuses the existing
 `NightlyEntrant.backend`, `kind` and `model_id` fields: live backends have
 `kind=live` and the selected driver as `model_id`; other backends have `kind=arena`.
 An omitted live driver is an error, and supplying drivers without a live backend
-is also an error. Live backends do not support `studio` context.
+is also an error. Live backends do not support `studio` context. A matchup
+mixing live and code-CAD backends must use the same held nominal and driver
+model, so changing the backend does not also change the effective LLM.
 
 A **single-axis matchup** chooses one axis and at least two distinct values,
 holding every other applicable axis to one value. For example, hold the model,
