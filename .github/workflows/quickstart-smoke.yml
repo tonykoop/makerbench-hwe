@@ -1,0 +1,31 @@
+name: quickstart-smoke
+
+# Runs the QUICKSTART "Rung 1" stub round exactly as the doc writes it, and checks the
+# output matches the doc's Expected block, so the ten-minute quickstart cannot rot (#844).
+# Runs in parallel with makerbench-ci; adds ~1 minute of wall clock, zero tokens.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  quickstart-stub:
+    name: quickstart-smoke (stub rung)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: false
+
+      - name: Install OpenSCAD and xvfb (the doc's prerequisites)
+        run: sudo apt-get update && sudo apt-get install -y openscad xvfb
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Run QUICKSTART rung 1 verbatim
+        run: xvfb-run -a python scripts/quickstart_smoke.py
