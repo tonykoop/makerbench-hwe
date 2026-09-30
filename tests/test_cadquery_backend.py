@@ -92,6 +92,43 @@ class TestRealCadQueryCompiler:
         assert "mesh_mm3=48000.000" in volume_warning
         assert "relative_delta=0.000000" in volume_warning
 
+    def test_brep_volume_is_the_in_memory_shape_not_the_step_readback(self, tmp_path):
+        # #902: an ellipsoid built with transformGeometry (BSpline faces) and unioned with a
+        # box re-reads from the retained STEP with a wildly wrong volume in OCP (3.5k mm3
+        # against ~192k), while the in-memory B-rep and the mesh agree. The advisory must
+        # compare the mesh against the in-memory volume.
+        script = tmp_path / "ellipsoid.py"
+        script.write_text(
+            """import cadquery as cq
+s = cq.Solid.makeSphere(1.0, angleDegrees1=-90, angleDegrees2=90)
+e = s.transformGeometry(cq.Matrix([[54, 0, 0, 0], [0, 33, 0, 0], [0, 0, 25.3, 0]]))
+box = cq.Workplane('XY').box(24, 17, 12, centered=False).translate((46, -8.5, -6))
+result = cq.Workplane('XY').add(e).union(box)
+""",
+            encoding="utf-8",
+        )
+        artifacts = cadquery_backend.compile_cadquery_to_artifacts(script, tmp_path / "out")
+        fields = {
+            w.split(":")[0]: dict(kv.strip().split("=") for kv in w.split(":", 1)[1].split(";"))
+            for w in artifacts.warnings
+            if w.startswith(("brep_mesh_volume:", "step_roundtrip_volume:"))
+        }
+        assert 185_000 < float(fields["brep_mesh_volume"]["brep_mm3"]) < 195_000
+        assert float(fields["brep_mesh_volume"]["relative_delta"]) < 0.02
+        # The STEP read-back is reported separately; its value is OCP's business, so only
+        # the presence and the shared in-memory reference are asserted.
+        assert fields["step_roundtrip_volume"]["brep_mm3"] == fields["brep_mesh_volume"]["brep_mm3"]
+
+    def test_step_roundtrip_matches_for_a_plain_solid(self, tmp_path):
+        script = tmp_path / "box.py"
+        script.write_text(
+            "import cadquery as cq\nresult = cq.Workplane('XY').box(60, 40, 20)\n", encoding="utf-8"
+        )
+        artifacts = cadquery_backend.compile_cadquery_to_artifacts(script, tmp_path / "out")
+        rt = next(w for w in artifacts.warnings if w.startswith("step_roundtrip_volume:"))
+        assert "brep_mm3=48000.000" in rt and "step_mm3=48000.000" in rt
+        assert "relative_delta=0.000000" in rt
+
     def test_optional_fixture_input_is_readable_but_not_writable(self, tmp_path):
         seed_script = tmp_path / "seed.py"
         seed_script.write_text(
@@ -312,3 +349,23 @@ class TestRealBuild123dAlias:
 
         with pytest.raises(render.CompileError, match="must be a build123d Part"):
             cadquery_backend.compile_cadquery_to_artifacts(script, tmp_path / "out")
+
+
+class TestDriverVolumeParsing:
+    def test_reads_the_marker_line(self):
+        out = "noise\nCADQUERY_DRIVER_VOLUME: 62296.6\nCADQUERY_DRIVER_OK\n"
+        assert cadquery_backend._driver_volume(out) == 62296.6
+
+    def test_missing_or_garbled_marker_is_none(self):
+        assert cadquery_backend._driver_volume("CADQUERY_DRIVER_OK\n") is None
+        assert cadquery_backend._driver_volume("CADQUERY_DRIVER_VOLUME: nope\n") is None
+
+    def test_mesh_warning_uses_a_given_brep_volume_without_reading_the_step(self, tmp_path):
+        import trimesh
+
+        stl = tmp_path / "b.stl"
+        trimesh.creation.box(extents=[10, 10, 10]).export(stl.as_posix())
+        warning = cadquery_backend._step_mesh_volume_warning(
+            tmp_path / "does-not-exist.step", stl, 1000.0
+        )
+        assert warning == "brep_mesh_volume: brep_mm3=1000.000; mesh_mm3=1000.000; relative_delta=0.000000"
