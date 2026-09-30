@@ -69,7 +69,7 @@ dd = _load_dashboard_data()
 # ---------------------------------------------------------------------------
 
 LEAGUE_HEADERS = [
-    "Rank", "Stack / Model", "Mean", "Best", "Runs", "Verified", "HII", "Domains",
+    "Rank", "Stack / Model", "Mean", "Best", "Runs", "Verified", "HII", "Domains", "Coverage",
 ]
 
 
@@ -89,6 +89,7 @@ def _league_table_rows(league: dict) -> list[list]:
             f"{verified}/{row.get('n_runs', 0)} verified",
             row.get("hii_best"),
             ", ".join(row.get("domains") or []) or "—",
+            row.get("coverage_note") or f"{row.get('n_domains', 0)} scored families",
         ])
     return out
 

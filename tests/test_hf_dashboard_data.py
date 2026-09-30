@@ -245,3 +245,36 @@ def test_floor_is_configurable_and_applies_to_both_leagues():
 
 def test_default_floor_constant():
     assert dd.MIN_DOMAINS_FOR_RANK == 3
+
+
+def test_unscored_runs_do_not_count_toward_coverage():
+    # #890 review: scores [4, None, None] over three domains is one scored family.
+    runs = [_run("sparse", "bracket", 4.0, "s0"), _run("sparse", "enclosure", None, "s1"),
+            _run("sparse", "hinge", None, "s2")]
+    for i, dom in enumerate(("bracket", "enclosure", "hinge")):
+        runs.append(_run("steady", dom, 2.0, f"t{i}"))
+    rows = dd.build_dual_league({"runs": runs})["leagues"]["autonomous"]["rows"]
+    assert [r["headline"] for r in rows] == ["steady", "sparse"]
+    sparse = rows[1]
+    assert sparse["rank"] is None and sparse["n_domains"] == 1 and sparse["rank_eligible"] is False
+    assert sparse["domains"] == ["bracket", "enclosure", "hinge"]  # still listed, just not evidence
+
+
+def test_all_unscored_row_is_never_ranked_even_alone():
+    runs = [_run("ghost", dom, None, f"g{i}") for i, dom in enumerate(("a", "b", "c"))]
+    row = dd.build_dual_league({"runs": runs})["leagues"]["autonomous"]["rows"][0]
+    assert row["rank"] is None and row["n_domains"] == 0
+
+
+def test_recorded_zero_scores_count_as_scored_evidence():
+    runs = [_run("zeros", dom, 0.0, f"z{i}") for i, dom in enumerate(("a", "b", "c"))]
+    row = dd.build_dual_league({"runs": runs})["leagues"]["autonomous"]["rows"][0]
+    assert row["rank"] == 1 and row["n_domains"] == 3 and row["mean_score"] == 0.0
+
+
+def test_workflow_league_uses_scored_coverage_too():
+    def wf(dom, score, i):
+        return {**_run("x", dom, score, f"w{i}"), "harness_class": "agentic-cad", "stack": "Claude + Blender MCP"}
+    runs = [wf("a", 4.0, 0), wf("b", None, 1), wf("c", None, 2)]
+    row = dd.build_dual_league({"runs": runs})["leagues"]["workflow"]["rows"][0]
+    assert row["rank"] is None and row["n_domains"] == 1

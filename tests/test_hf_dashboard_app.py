@@ -192,3 +192,12 @@ def test_unranked_rows_render_as_unranked():
                           "score": 3.0, "harness_class": "autonomous"}]}
     out = app.render_dual_league(manifest)
     assert out["autonomous"]["rows"][0][0] == "unranked"
+
+
+def test_table_shows_why_a_row_is_unranked():
+    manifest = {"runs": [{"run_id": "r", "model_identifier": "thin", "domain": "bracket",
+                          "score": 3.0, "harness_class": "autonomous"}]}
+    row = app.render_dual_league(manifest)["autonomous"]["rows"][0]
+    assert row[0] == "unranked"
+    assert "scored in 1 of the 3 task families" in row[-1]
+    assert app.LEAGUE_HEADERS[-1] == "Coverage"
