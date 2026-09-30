@@ -75,6 +75,22 @@ export function DemoScreen({ route, runs }) {
           ${summary.data.varied_axis && html`<p>What changed: ${summary.data.varied_axis === "models" ? "the AI model" : "the CAD tool"}.
             Kept the same: ${Object.entries(summary.data.held || {}).map(([k, v]) =>
               `${HELD_LABELS[k] || k}: ${HELD_VALUES[v] || v}`).join(" · ")}.</p>`}
+          ${summary.data.story && html`<section class="demo-story" aria-labelledby="backend-story-title">
+            <h3 id="backend-story-title">${summary.data.story.title}</h3>
+            <p>${summary.data.story.summary}</p>
+            <table class="demo-history-table">
+              <caption>Published average across six build checks (three runs per tool)</caption>
+              <thead><tr><th scope="col">CAD tool</th><th scope="col">Original results</th>
+                <th scope="col">Same meshes, fixed check</th><th scope="col">Fresh runs</th></tr></thead>
+              <tbody>${summary.data.story.rows.map(row => html`<tr key=${row.backend}>
+                <th scope="row">${row.label}</th><td data-period="published">${(row.published * 100).toFixed(1)}%</td>
+                <td data-period="same_meshes">${(row.same_meshes * 100).toFixed(1)}%</td>
+                <td data-period="fresh">${(row.fresh * 100).toFixed(1)}%</td>
+              </tr>`)}</tbody>
+            </table>
+            <p>${summary.data.story.caveat}</p>
+            <p>Source write-ups: ${summary.data.story.sources.map(source => html`<code key=${source}>${source} </code>`)}</p>
+          </section>`}
           <div class="matchup-grid">${summary.data.rows.map((row, i) => html`
             <article class="matchup-entrant" key=${i}>
               <h3>${row.label}</h3>
