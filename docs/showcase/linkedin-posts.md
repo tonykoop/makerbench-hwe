@@ -1,4 +1,4 @@
-# LinkedIn post drafts (p1–p5), corrected
+# LinkedIn post drafts (p1–p7), corrected
 
 Technology-showcase posts. Each draft is ≤ 1,300 characters. Source for the
 fixes: the Lane D2 claims audit; sambuca facts come from
@@ -7,7 +7,7 @@ fixes: the Lane D2 claims audit; sambuca facts come from
 Status: **p1, p2, p4** are postable once the open questions under them are
 answered. **p3** is gated (needs #828 and #830 merged plus one real run).
 **p5**'s headline is **ON HOLD** until the frontier re-run (#668) lands; the
-rest of p5 is fixed.
+rest of p5 is fixed. **p6** (the benchmark caught a bug in its own scoring) is postable once its link placeholder and the check below are resolved. **p7** (string-instrument matchups) is **ON HOLD** until the min_wall analysis (#900 / PR #905) and the calibration decision it asks for land.
 
 Rules that apply to every post: do not link or imply that the live Fusion and
 SolidWorks connectors are open (they are not public); publish no single-voter
@@ -155,3 +155,81 @@ Claims → source
 - Both scorelines, never blended: `docs/CODE_CAD_ARENA.md`, `docs/CODE_CAD_AGREEMENT.md`.
 - No Elo or vote counts are published (`arena.json` policy).
 - Headline and link stay ON HOLD: #668 and #666 are open.
+
+---
+
+## p6: The benchmark caught a bug in its own scoring
+
+```text
+My CAD benchmark just caught a bug in its own scoring.
+
+I compared three CAD backends on one task: the same AI model, three seeds each. OpenSCAD scored 1.000. CadQuery scored 0.778 and failed the "watertight" check on all three seeds. That looked like a finding about CadQuery.
+
+It wasn't. I re-examined the meshes: each one carried four zero-area sliver triangles from the STL writer, and the scorer counted every sliver as its own broken body. Two of the three failures were the gate's fault. The third was real: that design has a non-manifold edge.
+
+The fix drops zero-area triangles before checking, with regression tests. Re-scoring the same meshes moved CadQuery from 0.778 to 0.889. A fresh re-run, after that fix and a prompt hint for build123d, scored 1.000 for both CadQuery and build123d.
+
+Caveats: three seeds, one easy ocarina task, fresh generations from a non-deterministic model. It says nothing about which CAD system is better. It does say a benchmark needs a way to check its own scorer.
+
+Write-up and code: [LINK once the site refresh (#666) ships]
+
+#AIEvaluation #CAD #Benchmark #OpenSCAD
+```
+
+Character count: 1109 (limit 1,300).
+
+Claims → source (all on `main` under `docs/showcase/post3/` unless noted)
+- **First result: OpenSCAD 1.000, CadQuery 0.778, three seeds, `watertight` failed 3 of 3**: `matchup-backend.md`, "Before (published)" column (ocarina, `claude-code-sonnet-5.5`, blind, L1). The same table gives build123d 0.556.
+- **Each mesh carried four zero-area sliver triangles from the STL writer; the scorer split each into a body that can never be watertight**: `cadquery-watertight-investigation.md`, Evidence 2 (#874, PR #886).
+- **Two of three failures were the gate's; the third is a real non-manifold edge**: the same file, "Answer" table and Evidence 4.
+- **Fix drops zero-area triangles (height below 1e-6 mm) before checking, with regression tests**: PR #886, `makerbench/code_cad_arena_runner.py`.
+- **Re-scoring the same meshes: CadQuery 0.778 to 0.889**: `cadquery-watertight-investigation.md` and the "Old meshes, fixed gate" column of `matchup-backend.md`.
+- **Fresh re-run: CadQuery 1.000, build123d 1.000 after the gate fix plus a build123d prompt hint**: `matchup-backend.md`, "After (fresh re-run)" column (PR #893; the hint is #875 / PR #888).
+- **Caveats** (three seeds, one easy task, fresh non-deterministic generations, cannot prove the hint prevented the earlier crash): the PR #893 description and `matchup-backend.md` update section.
+- No Elo, votes or preference scores are used anywhere in the sources.
+
+Open questions (do not post until answered)
+- **Link:** the placeholder waits on the site refresh (#666), as for p5. Alternatively link the public repo write-up directly.
+- **Later strings replay:** in the strings backend matchup (PR #897) a replay of CadQuery meshes in another runtime scored one seed differently from the live run, with the cause unknown and *not* the sliver fix. That does not change this post's claims (all from the ocarina matchup), but do not extend p6 to strings without reading that report.
+- **`min_wall` caveat on the quoted scores.** The S7 analysis (#900, PR #905, open) finds the `min_wall` check flips with its random sample seed. The seed-2 CadQuery mesh also fails `min_wall` (with `watertight`), so the 0.889 (and the 1.000 re-run values, which pass `min_wall`) each include that check; the `watertight` findings themselves do not. Re-check the figures if the check is recalibrated before posting.
+- "I re-examined the meshes" describes the S5 investigation (#874) run by the sprint's agents; adjust the voice if the poster did not do it personally.
+
+---
+
+## p7: String-instrument matchups (ON HOLD)
+
+```text
+I ran three controlled matchups on a string instrument: a boat-shaped harp modelled from a written brief. Each matchup changed exactly one thing and held the rest fixed: the model, the CAD backend, or whether the AI saw a reference image.
+
+What I can say so far: 18 trials, and 17 of them produced a recognisable arched harp; the other one was a script that would not render.
+
+What I will not say yet: which setup is better. [ON HOLD: pass-rate numbers wait for the wall-thickness check to be calibrated.]
+
+The most useful result so far is about the yardstick. That check estimates wall thickness from a random sample of points, and re-sampling the same mesh can change its verdict for some designs. So any score that contains it may move, and part of the run-to-run spread I saw on identical setups may be the check, not the model.
+
+Fix the check, then compare. Until then, no ranking.
+
+Every design is in an anonymized gallery: neutral labels, objective checks only, no model names, no votes.
+
+Gallery and method: [LINK once published]
+
+#AIEvaluation #CAD #Benchmark #OpenSCAD
+```
+
+Character count: 1078 (limit 1,300).
+
+**Status: ON HOLD.** Posting waits for the S7 gate calibration: the `min_wall` analysis in `docs/showcase/strings/min-wall-analysis.md` (#900, PR #905, still open) reports that the check is close to a coin flip on its sample seed (re-sampling the same mesh fails the floor in 3 to 10 of 10 samples across meshes, and some meshes change verdict between sample seeds), and a fix needs a metric decision. Until that lands, no pass-rate number in this post is safe.
+
+Numbers, and whether they survive calibration
+- **Safe (do not depend on `min_wall`):**
+  - three one-axis matchups (context, model, backend) on the `sambuca` brief: `docs/showcase/strings/matchup-context.md`, `matchup-model.md`, `matchup-backend.md`;
+  - 18 trials in the anonymized gallery, of which **17 rendered designs and one script failure with no render** (Design 16, a Codex seed-1 recursion bug, counted as 0): `docs/showcase/strings/gallery/` (the three matchups overlap on one setup; see its README);
+  - the 17 rendered designs are recognisable as arched harps: by eye in the gallery and the matchup renders (one reader's view, not a measurement); the failed script never reached the mesh checks and cannot be judged visually;
+  - anonymized and objective-only gallery: its README and `alt-text.txt`.
+- **FLAGGED, do not quote until calibrated:** every pass rate in the three reports (context blind 0.889 vs image 0.833; model 0.778 / 0.889 / 0.500; backend 1.000 vs 0.944), the "no measurable benefit from the image" line, and the identical-setup spread (0.889, 0.889, 1.000). Most of their failing checks are `min_wall`. The draft therefore quotes none of them and says the ranking is on hold.
+- **Unaffected by the wall-thickness sampling, but not for this post:** the Codex seed-1 zero (a script bug) and the CadQuery seed-0 `watertight` failure; both are single trials.
+- **Inference to recheck:** the draft says part of the run-to-run spread may be the check, not the model. That is a hypothesis from the #905 finding, not a measured split. My own strings reports attribute the spread to model non-determinism; that attribution is now partly unsupported.
+- **Excluded assets:** the three image-tier renders (third-party photo, licence unresolved).
+- No Elo, votes or preference scores anywhere.
+
+Before un-holding: re-run or re-score the affected numbers after calibration, then replace the "on hold" sentence with the calibrated result and re-check every figure against the reports.
