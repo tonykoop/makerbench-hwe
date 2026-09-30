@@ -35,10 +35,11 @@ and what must be true before it is posted. Epic: #845.
 | Sambuca hero case study (photo to parametric CAD) | [`sambuca/CASE_STUDY.md`](sambuca/CASE_STUDY.md) + two renders in `sambuca/assets/`; [PR #829](https://github.com/tonykoop/makerbench-hwe/pull/829) | Pilot run 2026-07-02 (CADAM with Claude Fable 5, OpenSCAD/BOSL2) from the public sambuca repo's `provenance.json` and `gate.json`; second render is a Round 2 text-only Sonnet export | Write-up: Apache-2.0. The first render was conditioned on a third-party museum photo whose licence is **unresolved** (`CASE_STUDY.md` section 3), so reuse of that render is **unknown, gated**. The photo itself is not committed. | **Gated**: photo licence; unknown turn count |
 | Exploratory: instrument CAD from reference images | [`instruments-from-photos/EXPLORATORY.md`](instruments-from-photos/EXPLORATORY.md) + previews; [PR #831](https://github.com/tonykoop/makerbench-hwe/pull/831) | One local Sonnet 5.5 session, unmodified `mesh_objective_gate`, registry brief dimensions | Write-up and our previews: Apache-2.0. Reference images are not committed (one is the owner's own photo, one appears generated, provenance unknown). | **Gated**: exploratory only, not benchmark data; not for a headline |
 | Second case study: stave djembe, reference photo to parametric CAD | [`djembe/CASE_STUDY.md`](djembe/CASE_STUDY.md) + one render; [PR #868](https://github.com/tonykoop/makerbench-hwe/pull/868) | One Sonnet 5.5 image-tier run, seed 0, 2026-09-30; repo `tonykoop/djembe` (public) | Write-up and render: Apache-2.0. Repo licence CC BY 4.0. The reference photo is **not committed** (shows a person, GPS metadata). | **Gated**: one run, `min_wall` failed (cause unknown); do not show the photo uncropped |
+| Case study 3: reference image to parametric CAD | not started; story [#911](https://github.com/tonykoop/makerbench-hwe/issues/911) | n/a | n/a | **Blocked** pending a public, licensed source repo (the story requires a public repo; no owner decision yet) |
 
 ## Posts
 
-All five drafts are in [`linkedin-posts.md`](linkedin-posts.md) ([PR #829](https://github.com/tonykoop/makerbench-hwe/pull/829)), each with a claims-to-source list, corrected against the D2 claims audit. Licence: Apache-2.0 (our text).
+Drafts p1 to p5 are in [`linkedin-posts.md`](linkedin-posts.md) ([PR #829](https://github.com/tonykoop/makerbench-hwe/pull/829)), each with a claims-to-source list, corrected against the D2 claims audit. p6 ([PR #913](https://github.com/tonykoop/makerbench-hwe/pull/913), stacked on #829) and p7 ([PR #914](https://github.com/tonykoop/makerbench-hwe/pull/914), stacked on #913) are appended below p5. Licence: Apache-2.0 (our text).
 
 | Post | Posting state | Remaining gates |
 |---|---|---|
@@ -47,6 +48,8 @@ All five drafts are in [`linkedin-posts.md`](linkedin-posts.md) ([PR #829](https
 | p3 Change one thing at a time | **Gated** | Fill the real-run placeholder from #846/#847 once they merge. The honest content is a tie (model) and a small-cell backend gap, not a ranking |
 | p4 Live kora build | **Gated** | Confirm the 28-body count against a screenshot; do not link or imply the private connector |
 | p5 New models on the board | **On hold** | Headline waits on the frontier re-run (#668) and #666; the rank-agreement line (rho about 0.07, small rounds) is fixed |
+| p6 The benchmark caught a bug in its own scoring | **Gated** (close to postable) | Link placeholder (site refresh #666); the quoted scores include a `min_wall` term for one CadQuery seed, and #905 finds that check unstable, so re-check the figures if it is recalibrated; voice ("I re-examined") assumes the poster did the S5 investigation |
+| p7 String-instrument matchups | **On hold** | Waits for the `min_wall` calibration decision (#900 / PR #905); the draft quotes no pass rates and lists every strings score as flagged |
 
 ## Matchup assets (post 3)
 
@@ -54,7 +57,21 @@ All five drafts are in [`linkedin-posts.md`](linkedin-posts.md) ([PR #829](https
 |---|---|---|---|---|
 | Stub demo (mechanism only) | [`post3/`](post3/) ([PR #829](https://github.com/tonykoop/makerbench-hwe/pull/829)) | `--stub` entrants, $0; a demo, not a result | Apache-2.0 | Crop the overlong "Held values" line before using the screenshot |
 | Real matchup, model varied | [`post3/matchup-model.md`](post3/matchup-model.md) + `post3/matchup-model/` ([PR #863](https://github.com/tonykoop/makerbench-hwe/pull/863)) | Opus 5.5 vs Sonnet 5.5, OpenSCAD held, ocarina, seeds 0-2, subscription `claude` CLI, 2026-09-30 | Apache-2.0; model-generated designs, no third-party input | A tie (1.000 each); wall time scoped in the report |
-| Real matchup, backend varied | [`post3/matchup-backend.md`](post3/matchup-backend.md) + `post3/matchup-backend/` ([PR #864](https://github.com/tonykoop/makerbench-hwe/pull/864)) | OpenSCAD vs CadQuery vs build123d, Sonnet 5.5 held, ocarina, seeds 0-2, 2026-09-30 | Apache-2.0; model-generated designs, no third-party input | 1.000 / 0.778 / 0.556 on one easy task; cause of `watertight` failures unknown |
+| Real matchup, backend varied | [`post3/matchup-backend.md`](post3/matchup-backend.md) + `post3/matchup-backend/` ([PR #864](https://github.com/tonykoop/makerbench-hwe/pull/864)) | OpenSCAD vs CadQuery vs build123d, Sonnet 5.5 held, ocarina, seeds 0-2, 2026-09-30 | Apache-2.0; model-generated designs, no third-party input | Original run 1.000 / 0.778 / 0.556 on one easy task; an S5 update section on `main` shows the `watertight` failures were partly a gate artifact (sliver triangles, fixed) and a re-run scoring 1.000 for all three. Quote the update, not the original table |
+
+## Strings matchups (epic S6, boat-shaped harp)
+
+All from the `sambuca` brief (public repo `tonykoop/sambuca`), Sonnet 5.5 / Opus 5.5 / GPT-6.1 Sol through subscription CLIs, seeds 0-2, 2026-09-30, Apache-2.0, objective checks only. **Every pass rate in this section depends on the `min_wall` check, which the S7 analysis (#900, [PR #905](https://github.com/tonykoop/makerbench-hwe/pull/905)) finds flips with its random sample seed: treat all of these scores as provisional and gated until it is calibrated.**
+
+| Item | Path / PR | Provenance | Posting state |
+|---|---|---|---|
+| Inventory of public string briefs | [`strings/README.md`](strings/README.md) ([PR #887](https://github.com/tonykoop/makerbench-hwe/pull/887), merged) | `--stub` over 20 public briefs; one Sonnet 5.5 trial on six | Reference, not a post asset |
+| Context varied (blind vs image) | [`strings/matchup-context.md`](strings/matchup-context.md) ([PR #891](https://github.com/tonykoop/makerbench-hwe/pull/891), merged) | Sonnet 5.5 + OpenSCAD held | **Gated**: scores provisional; image-tier renders also gated on the unresolved photo licence |
+| Model varied (Opus / Sonnet / Sol) | [`strings/matchup-model.md`](strings/matchup-model.md) ([PR #896](https://github.com/tonykoop/makerbench-hwe/pull/896), merged) | OpenSCAD held; includes arena retries after 120 s compile timeouts | **Gated**: scores provisional; not a ranking |
+| Backend varied (OpenSCAD vs CadQuery) | `strings/matchup-backend.md` ([PR #897](https://github.com/tonykoop/makerbench-hwe/pull/897), open) | Sonnet 5.5 held; replay in another runtime scored one seed differently, cause unknown | **Gated**: scores provisional; not yet on `main` |
+| min_wall analysis | `strings/min-wall-analysis.md` ([PR #905](https://github.com/tonykoop/makerbench-hwe/pull/905), open, other lane) | Read-only measurement of the local run dirs | Reference; decides the calibration |
+| Anonymized strings gallery | [`strings/gallery/`](strings/gallery/) ([PR #898](https://github.com/tonykoop/makerbench-hwe/pull/898), merged) | 18 blind-tier designs via `generate_render_gallery.py`; nine share one setup | **Gated**: scores shown on cards are provisional; image-tier renders excluded |
+| Strings carousel, 10 slides + PDF + alt text | `strings/carousel/`, `scripts/build_strings_carousel.py` ([PR #915](https://github.com/tonykoop/makerbench-hwe/pull/915)) | Built from the gallery and `content.json`; PROVISIONAL banner on design and result slides | **Gated**: the same calibration; footer link is a placeholder |
 
 ## Images, demos and tools
 
