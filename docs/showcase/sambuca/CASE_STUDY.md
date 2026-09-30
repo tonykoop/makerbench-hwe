@@ -2,7 +2,7 @@
 
 *Status: draft for Tony's review. Every claim below cites a file or URL; anything
 without a source is marked **unknown**. Source repo paths are relative to
-`instruments/strings/sambuca/` (the private-ish instrument repo, read-only here);
+`instruments/strings/sambuca/` (the public sambuca instrument repo, read-only here);
 `arena.json` = `site/data/arena.json`; registry = `tasks/code_cad_arena/registry.json`.*
 
 ## In plain English
@@ -12,7 +12,7 @@ harp from the Royal Cemetery at Ur. We gave one photo of it, plus the museum
 card's dimensions, to an AI CAD assistant, and got back an editable 3D model of a
 13-string boat harp in about two minutes. It gets the size and general shape
 right but misses details (the curved neck, gold collar, lapis inlay), and an
-automatic manufacturability check flagged walls far too thin to build. So it is a
+automatic manufacturability check flagged a feature far too thin to build. So it is a
 useful first draft, not a finished design, and one run is not enough to say
 which AI tool is best.
 
@@ -42,7 +42,7 @@ assembly, 13 strings, body 650 × 150 × 200 mm, instrument height 810 mm, keel
 soundport, at least 4 distinct bodies, `min_wall_mm` floor 1.0
 (`tasks/code_cad_arena/registry.json`, entry `sambuca`). The 1.0 mm floor is
 described as *provisional pending first-run calibration*
-(`docs/CODE_CAD_ARENA_ROUND1.md`, "New `min_wall_mm` floors are provisional").
+(`tasks/code_cad_arena/registry.json` notes: "provisional pending first-run calibration").
 
 **Image-conditioned run (the one that used the photo).**
 - Pipeline: photo → CADAM → Claude Fable 5 via OpenRouter → BOSL2 OpenSCAD →
@@ -203,7 +203,7 @@ measured master"; keep the "what it missed" callouts — they are the credibilit
 
 > I gave an AI a museum photo of a 4,600-year-old boat-shaped harp and asked for CAD.
 >
-> Two minutes later I had a parametric model: 650 × 150 mm hull, 13 strings, every dimension a slider.
+> Two minutes later I had a parametric model: 650 × 150 mm hull, 13 strings, the key dimensions as sliders.
 >
 > Then I ran it through an objective mesh gate. It passed 5 of 6 checks. The one it failed: minimum wall thickness — 0.015 mm against a 1 mm floor. Beautiful on screen, not buildable.
 >
@@ -225,7 +225,7 @@ measured master"; keep the "what it missed" callouts — they are the credibilit
 >
 > Experiment: hand a photo plus the card dimensions to an AI CAD tool and see what comes back.
 >
-> Result (CADAM + Claude Fable 5, OpenSCAD): a 13-string boat harp, 650 mm hull, 810 mm tall, sliders for every dimension. Recognisably a boat harp. Also clearly missing the J-curved neck, gold collar and lapis band.
+> Result (CADAM + Claude Fable 5, OpenSCAD): a 13-string boat harp, 650 mm hull, 810 mm tall, the key dimensions as sliders. Recognisably a boat harp. Also clearly missing the J-curved neck, gold collar and lapis band.
 >
 > Objective check: 5 of 6 gates pass. Wall thickness fails by a mile.
 >
