@@ -195,9 +195,13 @@ def _aggregate_rows(entries: list[dict], *, key_fn, headline_fn, league: str,
         n_domains = len(scored_domains)
         rows[-1]["scored_domains"] = scored_domains
         rows[-1]["n_domains"] = n_domains
-        rows[-1]["rank_eligible"] = n_domains >= min_domains
+        # A row with no numeric score at all is never ranked, whatever the floor (it is 0
+        # when a manifest carries no families); recorded zeros are scores and do count.
+        eligible = bool(scores) and n_domains >= min_domains
+        rows[-1]["rank_eligible"] = eligible
         rows[-1]["coverage_note"] = (
-            "" if n_domains >= min_domains
+            "" if eligible
+            else "unranked: no scored runs" if not scores
             else f"unranked: scored in {n_domains} of the {min_domains} task families needed to rank"
         )
 

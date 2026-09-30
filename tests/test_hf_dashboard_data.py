@@ -102,7 +102,7 @@ def test_rows_ranked_by_mean_score_desc():
     ]}
     # These fixtures carry no domain; floor off to test the ordering rule on its own.
     rows = dd.build_dual_league(manifest, min_domains=0)["leagues"]["autonomous"]["rows"]
-    assert [r["rank"] for r in rows] == [1, 2, 3]
+    assert [r["rank"] for r in rows] == [1, 2, None]  # the unscored row is never ranked
     assert rows[0]["headline"].startswith("m2")  # 0.9
     assert rows[1]["headline"].startswith("m1")  # 0.4
     assert rows[2]["mean_score"] is None         # unscored trails
@@ -304,3 +304,22 @@ def test_effective_min_domains_bounds():
     assert dd.effective_min_domains([{"domain": "x"}]) == 1
     assert dd.effective_min_domains([{"domain": d} for d in "abcd"]) == 3
     assert dd.effective_min_domains([{"domain": d} for d in "abcd"], 2) == 2
+
+
+@pytest.mark.parametrize("extra", [{}, {"harness_class": "agentic-cad", "stack": "S"}])
+def test_unscored_row_is_never_eligible_even_with_a_zero_floor(extra):
+    # #890 review: no domains -> effective floor 0; 0 >= 0 must not award rank 1 to no result.
+    for runs in ([{"run_id": "e", "model_identifier": "empty", "score": None, **extra}],
+                 [{"run_id": "e", "model_identifier": "empty", **extra}]):
+        out = dd.build_dual_league({"runs": runs})
+        assert out["min_domains_for_rank"] == 0
+        row = (out["leagues"]["workflow" if extra else "autonomous"]["rows"])[0]
+        assert row["rank"] is None and row["rank_eligible"] is False
+        assert row["coverage_note"] == "unranked: no scored runs"
+
+
+def test_scored_legacy_rows_without_domains_still_rank():
+    runs = [{"run_id": "a", "model_identifier": "m1", "score": 0.4},
+            {"run_id": "b", "model_identifier": "m2", "score": 0.0}]  # a recorded zero is a score
+    rows = dd.build_dual_league({"runs": runs})["leagues"]["autonomous"]["rows"]
+    assert [(r["headline"], r["rank"]) for r in rows] == [("m1", 1), ("m2", 2)]
