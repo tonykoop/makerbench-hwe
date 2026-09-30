@@ -967,25 +967,308 @@ def resolve_openrouter_slug(name: str, *, timeout_s: int = 30) -> str:
     return matches[0]
 
 
+class MeteredCostError(RuntimeError):
+    """A metered call's actual cost could not be read: the run must halt."""
+
+
+class BudgetExhausted(RuntimeError):
+    """The cap cannot cover the next call's maximum billable cost; no metered call is made."""
+
+
+def _valid_cost(value: object) -> bool:
+    """A usable USD amount: a finite, non-negative real number (never a bool)."""
+
+    import math
+
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+        and float(value) >= 0.0
+    )
+
+
+class MeteredBudget:
+    """Hard cap on cumulative metered spend, enforced before dispatch, safe across processes.
+
+    Accounting lives in an append-only JSONL ledger (or an in-memory list when no path is
+    given). Every call is bracketed: ``reserve`` writes the call's *maximum billable cost*
+    under an exclusive file lock after re-reading the ledger (so two budgets, threads or
+    processes sharing one ledger cannot both spend the same headroom), and ``settle``
+    writes the actual cost. A reservation that is never settled (a crash mid-call) stays
+    counted at its maximum, so an unknown outcome can only tighten the cap, never loosen it.
+
+    ``reserve`` refuses (``BudgetExhausted``) when settled actual spend plus outstanding
+    reservations plus this call's maximum would exceed ``max_cost_usd``, and when the ledger
+    holds any invalid cost (non-numeric, boolean, negative, NaN or infinite): rows are kept
+    as evidence and the budget fails closed. A call whose actual cost is unreadable is settled at
+    its reserved maximum and halts the run. ``halt_reason``/``halt_call_made`` tell the
+    orchestrator why it stopped and whether the halting call had been sent.
+    """
+
+    def __init__(self, max_cost_usd: float, ledger_path: Optional[Path] = None) -> None:
+        import math
+        import threading
+
+        if isinstance(max_cost_usd, bool) or not math.isfinite(max_cost_usd) or max_cost_usd <= 0:
+            raise ValueError("max_cost_usd must be a positive finite number")
+        self.max_cost_usd = float(max_cost_usd)
+        self.ledger_path = Path(ledger_path) if ledger_path else None
+        self.halt_reason: Optional[str] = None
+        self.halt_call_made = False
+        self._memory: list[dict] = []
+        self._thread_lock = threading.RLock()
+        self._next_id = 0
+        self._reserved: dict[str, float] = {}
+        if self.ledger_path is not None:
+            self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        state = self._state()
+        if state["bad"]:
+            self.halt_reason = state["bad"]
+            self.halt_call_made = True
+
+    # -- ledger access -------------------------------------------------------------
+    def _locked(self):
+        import contextlib
+        import fcntl
+
+        @contextlib.contextmanager
+        def lock():
+            with self._thread_lock:
+                if self.ledger_path is None:
+                    yield
+                    return
+                lock_path = self.ledger_path.with_name(self.ledger_path.name + ".lock")
+                with lock_path.open("a+") as handle:
+                    fcntl.flock(handle, fcntl.LOCK_EX)
+                    try:
+                        yield
+                    finally:
+                        fcntl.flock(handle, fcntl.LOCK_UN)
+
+        return lock()
+
+    def _rows(self) -> list[dict]:
+        if self.ledger_path is None:
+            return list(self._memory)
+        if not self.ledger_path.is_file():
+            return []
+        rows = []
+        for line in self.ledger_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                try:
+                    rows.append(json.loads(line))
+                except ValueError:
+                    rows.append({"kind": "corrupt", "raw": line[:200]})
+        return rows
+
+    def _append(self, row: dict) -> None:
+        if self.ledger_path is None:
+            self._memory.append(row)
+            return
+        with self.ledger_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
+            handle.flush()
+
+    def _state(self) -> dict:
+        settled = 0.0
+        max_call = 0.0
+        n_calls = 0
+        reserves: dict[str, float] = {}
+        bad: Optional[str] = None
+        for row in self._rows():
+            kind = row.get("kind")
+            if kind == "reserve":
+                if _valid_cost(row.get("max_cost_usd")):
+                    reserves[str(row.get("id"))] = float(row["max_cost_usd"])
+                else:
+                    bad = bad or f"ledger reservation {row.get('id')} has an invalid maximum cost"
+            elif kind == "settle":
+                rid = str(row.get("id"))
+                cost = row.get("cost_usd")
+                if _valid_cost(cost):
+                    settled += float(cost)
+                    max_call = max(max_call, float(cost))
+                    n_calls += 1
+                    reserves.pop(rid, None)
+                else:
+                    # unknown/invalid actual cost: keep counting the reserved maximum, fail closed
+                    bad = bad or f"ledger call {rid} has no valid cost ({row.get('model')})"
+            else:
+                bad = bad or "ledger contains an unreadable or unknown row"
+        outstanding = sum(reserves.values())
+        return {"settled": settled, "outstanding": outstanding, "n_calls": n_calls, "max_call": max_call, "bad": bad}
+
+    # -- public accounting ---------------------------------------------------------
+    @property
+    def cumulative_usd(self) -> float:
+        """Actual settled spend recorded in the ledger."""
+
+        with self._locked():
+            return self._state()["settled"]
+
+    @property
+    def n_calls(self) -> int:
+        with self._locked():
+            return self._state()["n_calls"]
+
+    def reserve(self, *, model: str, max_cost_usd: object, identity: Optional[dict] = None) -> str:
+        with self._locked():
+            if self.halt_reason:
+                raise BudgetExhausted(f"halted: {self.halt_reason}")
+            state = self._state()
+            if state["bad"]:
+                self.halt_reason, self.halt_call_made = state["bad"], True
+                raise BudgetExhausted(f"halted: {self.halt_reason}")
+            if not _valid_cost(max_cost_usd):
+                self.halt_reason, self.halt_call_made = f"no bounded maximum cost for {model}; refusing to send", False
+                raise BudgetExhausted(f"halted: {self.halt_reason}")
+            projected = state["settled"] + state["outstanding"] + float(max_cost_usd)
+            if projected > self.max_cost_usd:
+                self.halt_reason = (
+                    f"settled ${state['settled']:.6f} + outstanding ${state['outstanding']:.6f} + this call's "
+                    f"maximum ${float(max_cost_usd):.6f} would exceed the ${self.max_cost_usd:.2f} cap"
+                )
+                self.halt_call_made = False
+                raise BudgetExhausted(f"halted: {self.halt_reason}")
+            self._next_id += 1
+            import os
+            import time as _time
+
+            rid = f"{os.getpid()}-{_time.time_ns()}-{self._next_id}"
+            self._append({"kind": "reserve", "id": rid, "model": model, "max_cost_usd": float(max_cost_usd), **(identity or {})})
+            self._reserved[rid] = float(max_cost_usd)
+            return rid
+
+    def settle(self, rid: str, *, model: str, cost_usd: object, detail: Optional[dict] = None) -> None:
+        with self._locked():
+            row = {"kind": "settle", "id": rid, "model": model, "cost_usd": cost_usd if _valid_cost(cost_usd) else None, **(detail or {})}
+            if not _valid_cost(cost_usd):
+                row["invalid_cost_seen"] = repr(cost_usd)[:80]
+                self.halt_reason = f"a call to {model} returned no readable cost"
+                self.halt_call_made = True
+            reserved = self._reserved.pop(rid, None)
+            if reserved is not None and _valid_cost(cost_usd) and float(cost_usd) > reserved + 1e-12:
+                # the claimed upper bound was wrong: keep both numbers and stop before another request
+                row["reserved_max_usd"] = reserved
+                row["exceeded_reservation"] = True
+                self.halt_reason = (
+                    f"settled cost ${float(cost_usd):.6f} for {model} exceeded its reserved maximum ${reserved:.6f}"
+                )
+                self.halt_call_made = True
+            self._append(row)
+
+
+def _usage_cost(data: object) -> tuple[Optional[float], dict]:
+    """(actual cost in USD or None, token counts) from an OpenRouter response."""
+
+    usage = data.get("usage") if isinstance(data, dict) else None
+    if not isinstance(usage, dict):
+        return None, {}
+    tokens = {k: usage[k] for k in ("prompt_tokens", "completion_tokens", "total_tokens") if isinstance(usage.get(k), int)}
+    cost = usage.get("cost")
+    return (float(cost) if _valid_cost(cost) else None), tokens
+
+
+_openrouter_pricing_cache: dict[str, dict] = {}
+
+
+def _parse_pricing(pricing: object) -> Optional[dict]:
+    """Strictly parse an OpenRouter ``pricing`` object, or None if any billed price is unusable.
+
+    ``prompt`` and ``completion`` are required and must be valid non-negative numbers.
+    ``request`` and ``internal_reasoning`` may be absent (no such charge) but, when present, must
+    also be valid: an unparseable extra price is an unbounded charge, so the model is refused.
+    """
+
+    if not isinstance(pricing, dict):
+        return None
+    parsed: dict = {}
+    for key, required in (("prompt", True), ("completion", True), ("request", False), ("internal_reasoning", False)):
+        if key not in pricing:
+            if required:
+                return None
+            parsed[key] = 0.0
+            continue
+        raw = pricing[key]
+        if isinstance(raw, bool):
+            return None
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if not _valid_cost(value):
+            return None
+        parsed[key] = value
+    return parsed
+
+
+def _openrouter_pricing(slug: str, *, timeout_s: int = 30) -> Optional[dict]:
+    """Per-token USD prices for ``slug`` from ``/models`` ({prompt, completion, request, internal_reasoning}), or None."""
+
+    if slug in _openrouter_pricing_cache:
+        return _openrouter_pricing_cache[slug]
+    models = _openrouter_request("/models", None, timeout_s=timeout_s).get("data") or []
+    for entry in models:
+        if isinstance(entry, dict):
+            parsed = _parse_pricing(entry.get("pricing"))
+            if parsed is not None:
+                _openrouter_pricing_cache[str(entry.get("id"))] = parsed
+    return _openrouter_pricing_cache.get(slug)
+
+
+def _max_billable_cost(pricing: Optional[dict], *, prompt_bytes: int, max_tokens: int) -> Optional[float]:
+    """Upper bound on one request's cost, or None if pricing is unknown.
+
+    Prompt tokens never exceed the UTF-8 byte count; generated tokens (reasoning included) are
+    capped by ``max_tokens``. Reasoning tokens are priced at the completion rate, and any listed
+    ``internal_reasoning`` price is added on top for the same tokens (an over-count, never under).
+    """
+
+    if not pricing or "prompt" not in pricing or "completion" not in pricing:
+        return None
+    per_completion = pricing["completion"] + pricing.get("internal_reasoning", 0.0)
+    return pricing["prompt"] * prompt_bytes + per_completion * max_tokens + pricing.get("request", 0.0)
+
+
+DEFAULT_OPENROUTER_MAX_TOKENS = 16000
+
+
 def make_openrouter_generator(
     model: Optional[str] = None,
     *,
     timeout_s: int = 900,
     retry_sleep_s: float = 3.0,
     backend: str = "openscad",
+    budget: Optional[MeteredBudget] = None,
+    max_tokens: Optional[int] = None,
 ) -> Generator:
     """API-lane generator via OpenRouter chat completions (#620).
 
     Same contract as the CLI adapters: system preamble + spec prompt in, the
-    extracted candidate block out, one retry on transient failure, TimeoutError
-    on deadline (the orchestrator records status="timeout"). The request
-    carries the trial seed for what determinism the backend offers.
+    extracted candidate block out, TimeoutError on deadline (the orchestrator
+    records status="timeout"). The request carries the trial seed for what
+    determinism the backend offers.
+
+    OpenRouter is pay-per-token, so a call is never retried in-process (a retry is a second
+    charge; ``retry_sleep_s`` is accepted for compatibility and unused). The response's actual
+    ``usage.cost`` and the response id are recorded per trial in ``generate.usage_observations``
+    (written to the trial provenance) and in the budget ledger.
+
+    With a ``budget`` the cap is enforced *before dispatch*: the request carries ``max_tokens``
+    and a provider-side ``max_price`` taken from the model's listed prices, the call's maximum
+    billable cost (prompt bytes plus ``max_tokens`` at those prices) is reserved in the ledger,
+    and the call is refused if that reservation would push settled + outstanding spend past the
+    cap or if the model's pricing is unknown. A call whose actual cost is unreadable (including
+    a transport error or timeout, where billing is unknown) halts the run.
     """
 
     if not model:
         raise ValueError("openrouter entrants need a model, e.g. openrouter-glm-5.2")
+    token_cap = int(max_tokens or DEFAULT_OPENROUTER_MAX_TOKENS)
+    usage_observations: dict = {}
 
-    def generate(request: GenerationRequest, _retries: int = 1) -> str:
+    def generate(request: GenerationRequest) -> str:
         import socket
 
         if request.context_tier == "image":
@@ -1000,37 +1283,64 @@ def make_openrouter_generator(
         slug = resolve_openrouter_slug(model)
         system = BACKEND_SYSTEM.get(backend, SYSTEM)
         closing = _CLOSING_INSTRUCTION.get(backend, _CLOSING_INSTRUCTION["openscad"])
+        user_content = request.prompt + _workspace_text_blob(request) + f"\n{closing}"
         payload = {
             "model": slug,
             "messages": [
                 {"role": "system", "content": system},
-                {
-                    "role": "user",
-                    "content": request.prompt
-                    + _workspace_text_blob(request)
-                    + f"\n{closing}",
-                },
+                {"role": "user", "content": user_content},
             ],
             "seed": request.seed,
+            "usage": {"include": True},
         }
+        key = (request.model_id, request.instrument_id, int(request.seed), request.context_tier)
+        identity = {"instrument": request.instrument_id, "seed": int(request.seed), "tier": request.context_tier, "entrant": request.model_id}
+        reservation = None
+        if budget is not None:
+            pricing = _openrouter_pricing(slug)
+            prompt_bytes = len((system + user_content).encode("utf-8")) + 128
+            bound = _max_billable_cost(pricing, prompt_bytes=prompt_bytes, max_tokens=token_cap)
+            payload["max_tokens"] = token_cap
+            if pricing:
+                payload["provider"] = {
+                    "max_price": {
+                        "prompt": round(pricing["prompt"] * 1_000_000, 6),
+                        "completion": round(pricing["completion"] * 1_000_000, 6),
+                        "request": pricing.get("request", 0.0),  # flat USD per request (0 disallows any fee)
+                    }
+                }
+            reservation = budget.reserve(model=slug, max_cost_usd=bound, identity={**identity, "max_tokens": token_cap})
         try:
             data = _openrouter_request("/chat/completions", payload, timeout_s=timeout_s)
-            content = data["choices"][0]["message"]["content"]
         except (TimeoutError, socket.timeout) as exc:
+            usage_observations[key] = {"slug": slug, "cost_usd": None, "note": "timeout: billing unknown"}
+            if budget is not None:
+                budget.settle(reservation, model=slug, cost_usd=None, detail={"note": "timeout", **identity})
+                raise MeteredCostError(f"openrouter/{slug} timed out after {timeout_s}s; cost unknown") from exc
             raise TimeoutError(f"openrouter/{slug} timed out after {timeout_s}s") from exc
-        except Exception as exc:  # noqa: BLE001 - HTTP/schema errors retry once
-            if _retries > 0:
-                time.sleep(retry_sleep_s)
-                return generate(request, _retries - 1)
+        except Exception as exc:  # noqa: BLE001 - no retry: a retry is another charge
+            usage_observations[key] = {"slug": slug, "cost_usd": None, "note": "request failed: billing unknown"}
+            if budget is not None:
+                budget.settle(reservation, model=slug, cost_usd=None, detail={"note": "request failed", **identity})
+                raise MeteredCostError(f"openrouter/{slug} failed ({exc}); cost unknown") from exc
             raise RuntimeError(f"openrouter/{slug} failed: {exc}") from exc
+        cost, tokens = _usage_cost(data)
+        response_id = data.get("id") if isinstance(data, dict) and isinstance(data.get("id"), str) else None
+        usage_observations[key] = {"slug": slug, "cost_usd": cost, "response_id": response_id, **tokens}
+        if budget is not None:
+            budget.settle(reservation, model=slug, cost_usd=cost, detail={"response_id": response_id, **tokens, **identity})
+            if cost is None:
+                raise MeteredCostError(f"openrouter/{slug} returned no usable usage.cost; run halted")
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except Exception as exc:  # noqa: BLE001 - malformed body, already charged
+            raise RuntimeError(f"openrouter/{slug} returned a malformed response: {exc}") from exc
         candidate = extract_candidate(content, backend)
         if not candidate:
-            if _retries > 0:
-                time.sleep(retry_sleep_s)
-                return generate(request, _retries - 1)
             raise RuntimeError(f"openrouter/{slug} returned no fenced code block")
         return candidate
 
+    generate.usage_observations = usage_observations  # type: ignore[attr-defined]
     return generate
 
 
@@ -1112,6 +1422,7 @@ def resolve_generator(
     timeout_s: Optional[int] = None,
     retry_attempts: Optional[int] = None,
     backend: str = "openscad",
+    metered_budget: Optional[MeteredBudget] = None,
 ) -> Generator:
     """Build the Generator for one entrant model id.
 
@@ -1159,7 +1470,11 @@ def resolve_generator(
         agy_model = str(overrides["model"]) if overrides.get("model") else None
         return make_agy_generator(agy_model, backend=backend, **timeout_kwargs)
     if provider == "openrouter":
-        return make_openrouter_generator(model, backend=backend, **timeout_kwargs)
+        return make_openrouter_generator(
+            model, backend=backend, budget=metered_budget,
+            max_tokens=int(overrides.get("max_tokens")) if overrides.get("max_tokens") else None,
+            **timeout_kwargs,
+        )
     raise ValueError(f"unknown provider '{provider}' for model id '{model_id}'")
 
 

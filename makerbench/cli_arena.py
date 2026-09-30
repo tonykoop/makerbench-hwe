@@ -433,6 +433,8 @@ def arena_run(
         rate_limit_s: float = typer.Option(5.0, "--rate-limit-s", help="Seconds between calls to the same provider."),
         timeout_s: Optional[int] = typer.Option(None, help="Override per-call CLI timeout in seconds."),
         model_map: Optional[str] = typer.Option(None, "--model-map", help="JSON file mapping model_id -> {provider, model, effort}."),
+        max_cost: Optional[float] = typer.Option(None, "--max-cost", min=0.0, help="Hard cap in USD on cumulative ACTUAL metered (openrouter-*) spend, read from each response's usage.cost. Required when any entrant is openrouter-*. Halts the run (rest stay pending) when the cap would be reached or a call's cost is unreadable."),
+        cost_ledger: Optional[str] = typer.Option(None, "--cost-ledger", help="JSONL ledger of per-call metered costs; share one path across batches so --max-cost counts the cumulative total (default: <run-dir>/metered_cost_ledger.jsonl)."),
         context_tier: str = typer.Option("blind", "--context-tier", help="blind (default) | packet | repo | image | studio — #600/#609 context-grounding axis; studio = full repo incl. prior outputs + reference images, many turns (docs/ARENA_PHILOSOPHY.md)."),
         instruments_root: Optional[str] = typer.Option(None, "--instruments-root", help="Root of instrument build repos; required for --context-tier packet|repo|studio."),
         backend: str = typer.Option(
@@ -602,6 +604,26 @@ def arena_run(
     run_path = Path(run_dir)
     run_path.mkdir(parents=True, exist_ok=True)
 
+    metered = [
+        m for m in model_ids
+        if not (is_live or is_parametric or stub)
+        and str(dict((mapping or {}).get(m) or {}).get("provider") or providers.provider_for_model_id(m)) == "openrouter"
+    ]
+    budget = None
+    if metered and max_cost is None:
+        console.print("[red]openrouter-* entrants are pay-per-token: pass --max-cost <USD> (hard cap on cumulative actual spend).[/red]")
+        raise typer.Exit(code=1)
+    if max_cost is not None:
+        if max_cost <= 0:
+            console.print("[red]--max-cost must be positive[/red]")
+            raise typer.Exit(code=1)
+        budget = providers.MeteredBudget(
+            max_cost, Path(cost_ledger) if cost_ledger else run_path / "metered_cost_ledger.jsonl"
+        )
+        if budget.halt_reason or budget.cumulative_usd >= max_cost:
+            console.print(f"[red]cap already reached or ledger unreadable: cumulative ${budget.cumulative_usd:.6f} of ${max_cost:.2f}{(' (' + budget.halt_reason + ')') if budget.halt_reason else ''}[/red]")
+            raise typer.Exit(code=1)
+
     model_providers = {}
     for model_id in model_ids:
         if is_live or is_parametric:
@@ -617,7 +639,8 @@ def arena_run(
         )
     generators = {} if (is_live or is_parametric) else {
         model_id: providers.resolve_generator(
-            model_id, model_map=mapping, stub=stub, timeout_s=timeout_s, backend=backend
+            model_id, model_map=mapping, stub=stub, timeout_s=timeout_s, backend=backend,
+            metered_budget=budget,
         )
         for model_id in model_ids
     }
@@ -704,7 +727,13 @@ def arena_run(
         config=config,
         run_log_path=run_path / "run_log.json",
         execute_trial=execute,
+        budget=budget,
     )
+    if budget is not None:
+        console.print(
+            f"metered spend: ${budget.cumulative_usd:.6f} actual across {budget.n_calls} calls "
+            f"(cap ${budget.max_cost_usd:.2f}){'; HALTED: ' + budget.halt_reason if budget.halt_reason else ''}"
+        )
     scoreline = arena_runner.collect_objective_scoreline(log)
     arena_runner.write_json(
         run_path / "objective_scoreline.json",
