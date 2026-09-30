@@ -48,7 +48,10 @@ def test_refresh_keeps_matchups_and_all_extended_sections():
     payload = json.loads((ROOT / "site/data/leaderboard.json").read_text())
     matchups = json.loads((ROOT / "site/data/matchups.json").read_text())
     blocks = builder.prerender_blocks(payload, matchups=matchups)
-    assert len(matchups["matchups"]) == 66
+    # 66 subscription-lane matchups (r<N>-...) plus the 66 OpenRouter-lane matchups (or-r<N>-...)
+    ids = [item["id"] for item in matchups["matchups"]]
+    assert len(ids) == 132
+    assert sum(1 for i in ids if i.startswith("or-")) == 66
     assert blocks["matchups"] == builder._prerender_matchups_html(matchups)
     assert all(blocks[key] for key in ("freshness", "charts", "tasks", "ecosystem"))
     assert builder.inject_prerendered(page, payload, matchups=matchups) == page
