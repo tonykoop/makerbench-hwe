@@ -2915,13 +2915,13 @@ def test_prerender_freshness_line_carries_version_date_and_counters():
     }
     line = build_data._prerender_freshness_html(payload)
     assert line == (
-        "benchmark v0.1.0 · updated 2026-06-13 · 2 model rows · 3 arena rounds"
+        "benchmark v0.1.0 · results as of 2026-06-13 · 2 model rows · 3 arena rounds"
     )
     # Missing pieces drop out instead of rendering placeholders.
     assert build_data._prerender_freshness_html({}) == ""
     assert (
         build_data._prerender_freshness_html({"data_updated": "2026-06-13T20:42:10Z"})
-        == "updated 2026-06-13"
+        == "results as of 2026-06-13"
     )
 
 
@@ -2945,4 +2945,4 @@ def test_inject_prerendered_fills_freshness_markers_everywhere():
         "track_explainer": {"tracks": [], "guardrail": "g"},
     }
     out = build_data.inject_prerendered(template, payload)
-    assert out.count("updated 2026-06-13") == 2
+    assert out.count("results as of 2026-06-13") == 2

@@ -223,7 +223,7 @@ def test_homepage_freshness_signals_show_updated_date_and_version():
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", stamp)
     date = stamp[:10]
     # Hero (header area) + footer both carry the prerendered freshness line.
-    assert html.count(f"updated {date}") >= 2
+    assert html.count(f"results as of {date}") >= 2
     version = payload.get("benchmark_version")
     assert version and f"benchmark v{version}" in html
 

@@ -1162,6 +1162,8 @@
     renderFamilyChart();
     renderHistChart();
     renderDeltaChart();
+    var fallback = document.getElementById("chart-static-data");
+    if (fallback) fallback.hidden = true;
   }
 
   // ---- task cards ---------------------------------------------------------
@@ -1707,7 +1709,7 @@
   function renderFreshness(data) {
     var parts = [];
     if (data.benchmark_version) parts.push("benchmark v" + data.benchmark_version);
-    if (data.data_updated) parts.push("updated " + String(data.data_updated).slice(0, 10));
+    if (data.data_updated) parts.push("results as of " + String(data.data_updated).slice(0, 10));
     if (data.models && data.models.length) parts.push(data.models.length + " model rows");
     if (data.arena && data.arena.runs && data.arena.runs.length) {
       parts.push(data.arena.runs.length + " arena rounds");
