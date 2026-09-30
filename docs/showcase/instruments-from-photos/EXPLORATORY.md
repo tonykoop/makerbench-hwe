@@ -25,8 +25,8 @@ private archive if Tony wants them kept.
 
 | Instrument | Image used | Kind |
 |---|---|---|
-| Brian Boru harp | `strings/brian-boru-harp-replica/images/20191125_103813.jpg` (+ 5 siblings, `hero-render.png`) | **Real photos** (Tony, 2019-11-25, museum display case, heavy glare; the repo's own `photo-reference.md` says "Do not scale dimensions from these images") |
-| Hammered dulcimer | `strings/hammered-dulcimer/images/hero-render.png` | Appears to be a **rendered/generated concept image** (filename and look); provenance **unknown**, not verified |
+| Brian Boru harp | a private instrument build repo | **Real photos** (Tony's own, museum display case, heavy glare; the repo marks them not-for-scaling) |
+| Hammered dulcimer | a private instrument build repo | Appears to be a **rendered/generated concept image**; provenance **unknown**, not verified |
 | Guzheng | `strings/guzheng/images/hero-render.png` | Same: appears generated; provenance **unknown** |
 
 So only one of three is a real photo, and none of them was measured.
