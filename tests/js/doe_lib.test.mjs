@@ -127,3 +127,27 @@ test("money and time formatting never invent a number", () => {
   assert.equal(formatDuration(9000), "2.5 h");
   assert.equal(formatDuration(undefined), "Unknown");
 });
+
+
+test("backend selection counts live drivers and refuses an empty axis", () => {
+  const matrix = { instruments: ["ocarina"], models: ["a", "b"], levels: ["L1"], tiers: ["blind"], seeds: [0], backends: ["openscad", "fusion-live"], driver_models: ["gpt-5.6-sol"] };
+  assert.equal(cellCount(matrix), 3);
+  assert.equal(new URLSearchParams(previewQuery(matrix)).get("driver_models"), "gpt-5.6-sol");
+  assert.equal(previewQuery({ ...matrix, backends: [] }), null);
+});
+
+
+test("matchup query records its axis and refuses unintentional factorials", () => {
+  const matrix = { instruments: ["ocarina"], models: ["a"], levels: ["L1"], tiers: ["blind"], seeds: [0], backends: ["openscad", "blender"], varied_axis: "backends" };
+  const query = new URLSearchParams(previewQuery(matrix));
+  assert.equal(query.get("varied_axis"), "backends");
+  assert.equal(query.get("values"), "openscad,blender");
+  assert.equal(previewQuery({ ...matrix, levels: ["L1", "L2"] }), null);
+  assert.equal(new URLSearchParams(previewQuery({ ...matrix, levels: ["L1", "L2"], factorial: true })).get("factorial"), "true");
+});
+
+
+test("a backend matchup has two nightly entrants with one held model and level", () => {
+  const matrix = { instruments: ["ocarina"], models: ["a"], levels: ["L1"], tiers: ["blind"], seeds: [0], backends: ["openscad", "blender"], varied_axis: "backends" };
+  assert.deepEqual(doeBlockers({ matrix, invalidSeeds: [], runId: "matchup", budget: "5", preview: "ready", unknownModels: [], ceilings: {} }), []);
+});
