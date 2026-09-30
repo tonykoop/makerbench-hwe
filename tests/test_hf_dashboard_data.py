@@ -233,13 +233,15 @@ def test_thin_coverage_model_cannot_top_the_board():
 
 
 def test_floor_is_configurable_and_applies_to_both_leagues():
-    runs = [_run("m", "bracket", 3.0, "a"),
-            {**_run("stack", "bracket", 3.0, "w"), "harness_class": "agentic-cad", "stack": "Claude + Blender MCP"}]
+    def wf(dom, i):
+        return {**_run("x", dom, 3.0, f"w{i}"), "harness_class": "agentic-cad", "stack": "Claude + Blender MCP"}
+    # Three families exist (a, b, c), so the default floor stays 3 and one-family rows miss it.
+    runs = [_run("m", "a", 3.0, "m0"), wf("a", 1), _run("filler", "b", 1.0, "f0"), _run("filler", "c", 1.0, "f1")]
     leagues = dd.build_dual_league({"runs": runs}, min_domains=1)["leagues"]
     assert leagues["autonomous"]["rows"][0]["rank"] == 1
     assert leagues["workflow"]["rows"][0]["rank"] == 1
     leagues = dd.build_dual_league({"runs": runs})["leagues"]
-    assert leagues["autonomous"]["rows"][0]["rank"] is None
+    assert {r["headline"]: r["rank"] for r in leagues["autonomous"]["rows"]}["m"] is None
     assert leagues["workflow"]["rows"][0]["rank"] is None
 
 
@@ -278,3 +280,27 @@ def test_workflow_league_uses_scored_coverage_too():
     runs = [wf("a", 4.0, 0), wf("b", None, 1), wf("c", None, 2)]
     row = dd.build_dual_league({"runs": runs})["leagues"]["workflow"]["rows"][0]
     assert row["rank"] is None and row["n_domains"] == 1
+
+
+def test_floor_is_capped_at_the_families_that_exist():
+    # Two families in the whole manifest: the floor of 3 caps to 2, so a model scored in
+    # both ranks. Before the cap nothing could ever rank on such a dashboard.
+    runs = [_run("a", "bracket", 3.0, "a0"), _run("a", "hinge", 3.0, "a1"),
+            _run("b", "bracket", 1.0, "b0")]
+    out = dd.build_dual_league({"runs": runs})
+    assert out["min_domains_for_rank"] == 2
+    rows = out["leagues"]["autonomous"]["rows"]
+    assert [(r["headline"], r["rank"]) for r in rows] == [("a", 1), ("b", None)]
+
+
+def test_floor_cap_counts_families_across_both_leagues():
+    runs = [_run("a", "bracket", 3.0, "a0"), _run("a", "hinge", 3.0, "a1"),
+            {**_run("w", "enclosure", 2.0, "w0"), "harness_class": "agentic-cad", "stack": "S"}]
+    assert dd.build_dual_league({"runs": runs})["min_domains_for_rank"] == 3
+
+
+def test_effective_min_domains_bounds():
+    assert dd.effective_min_domains([]) == 0
+    assert dd.effective_min_domains([{"domain": "x"}]) == 1
+    assert dd.effective_min_domains([{"domain": d} for d in "abcd"]) == 3
+    assert dd.effective_min_domains([{"domain": d} for d in "abcd"], 2) == 2

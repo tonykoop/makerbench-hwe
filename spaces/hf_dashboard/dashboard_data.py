@@ -142,7 +142,18 @@ def _workflow_headline(entry: dict) -> str:
 # is a mean over the capabilities a model attempted and it only reports coverage next to
 # it, so a one-family model can top it. Here an under-covered row is listed after every
 # ranked row, unranked, with an explicit note, so a thin row cannot lead the board.
+# Policy (sprint manager, #877): 3 scored task families, *capped at the number of families
+# that exist in the manifest*, so a dashboard with fewer families still ranks its rows.
+# A follow-up can add the same floor to the site; until then the site has none.
 MIN_DOMAINS_FOR_RANK = 3
+
+
+def effective_min_domains(entries: list[dict], min_domains: int = MIN_DOMAINS_FOR_RANK) -> int:
+    """The floor actually applied: ``min_domains`` capped at the distinct task families
+    (``domain``) present anywhere in the manifest. With no family data it is 0, so a
+    manifest that carries no domains keeps its plain score ordering."""
+    families = {e.get("domain") for e in entries if e.get("domain")}
+    return min(min_domains, len(families))
 
 
 def _aggregate_rows(entries: list[dict], *, key_fn, headline_fn, league: str,
@@ -214,6 +225,7 @@ def build_dual_league(manifest: dict, *, autonomous_classes=AUTONOMOUS_CLASSES,
                       min_domains: int = MIN_DOMAINS_FOR_RANK) -> dict:
     """Split a runs-manifest into Autonomous and Workflow leaderboards (Tab A)."""
     entries = list(manifest.get("runs") or [])
+    min_domains = effective_min_domains(entries, min_domains)
     autonomous, workflow = [], []
     for entry in entries:
         if is_workflow_league(entry.get("harness_class"), autonomous_classes):
@@ -225,6 +237,7 @@ def build_dual_league(manifest: dict, *, autonomous_classes=AUTONOMOUS_CLASSES,
         "schema": DUAL_LEAGUE_SCHEMA,
         "source_schema": manifest.get("schema"),
         "total_runs": len(entries),
+        "min_domains_for_rank": min_domains,
         "leagues": {
             "autonomous": {
                 "title": "Autonomous",
