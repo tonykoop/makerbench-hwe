@@ -272,14 +272,21 @@ hide.
 ## Metered (OpenRouter) entrants: cost capture and `--max-cost`
 
 `openrouter-*` entrants bill per token. Every call requests `usage: {include: true}` and records
-the response's actual `usage.cost` and token counts in the trial's `*.provenance.json` under
-`usage` (`cost_usd` is `null` when the cost could not be read). Calls are never retried in-process
-(a retry is a second charge).
+the response's actual `usage.cost`, token counts and response id in the trial's `*.provenance.json`
+under `usage` (`cost_usd` is `null` when the cost could not be read). Calls are never retried
+in-process (a retry is a second charge).
 
-`arena run` refuses an `openrouter-*` entrant unless `--max-cost <USD>` is given. The cap applies to
-cumulative *actual* cost, kept in a JSONL ledger (`--cost-ledger`, default
-`<run-dir>/metered_cost_ledger.jsonl`; share one path across batches so the total is cumulative).
-Before each call the run halts if the cumulative cost plus the largest single call seen so far would
-reach the cap, and it halts at once when a call's cost is unreadable (including a transport error or
-timeout, where billing is unknown). A halted run leaves the remaining trials pending; a trial that
-was refused before it was sent gets its attempt back. `--stub` runs are never metered.
+`arena run` refuses an `openrouter-*` entrant unless `--max-cost <USD>` is given, and the cap is
+enforced **before dispatch**. Each request carries `max_tokens` (default 16,000; override per entrant
+with `max_tokens` in `--model-map`) and a provider-side `max_price` from the model's listed prices.
+Its maximum billable cost (prompt bytes plus `max_tokens` at those prices) is reserved in a JSONL ledger
+(`--cost-ledger`, default `<run-dir>/metered_cost_ledger.jsonl`) under an exclusive file lock, so
+processes sharing a ledger cannot spend the same headroom. The call is refused if settled actual spend +
+outstanding reservations + this call's maximum would exceed the cap, if the model's pricing is unknown,
+or if the ledger holds any invalid cost (non-numeric, boolean, negative, NaN or infinite; rows are kept
+as evidence). A call whose actual cost is unreadable (including a transport error or timeout) is settled
+at its reserved maximum and halts the run; an unsettled reservation keeps counting at its maximum. A halted
+run leaves the remaining trials pending, and a trial refused before it was sent gets its attempt back.
+`--stub` runs are never metered. The reserve makes the cap strict at the cost of headroom (the bound is
+the worst case, so the actual spend is usually well under the cap) and a response cut off by `max_tokens`
+scores as a failed cell.
