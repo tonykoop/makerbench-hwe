@@ -16,6 +16,41 @@ from makerbench.cli import app
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_post3_aggregated_seed_claim_matches_trial_counts():
+    data = json.loads((PACKAGE / "data/showcase.json").read_text())
+    for case in data["cases"][:2]:
+        assert case["held"]["seeds"] == [0, 1, 2]
+        assert all(row["n_objective_trials"] == len(case["held"]["seeds"]) for row in case["rows"])
+
+
+def test_builder_rejects_misstated_seed_scope_and_keys_images_by_entrant(monkeypatch):
+    spec = importlib.util.spec_from_file_location("demo_builder", ROOT / "scripts/build_studio_demo_data.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    data = module.build(ROOT)
+    data["cases"][0]["held"]["seeds"] = 0
+    with pytest.raises(ValueError, match="trial counts"):
+        module.validate_aggregate_seeds(data)
+    data = module.build(ROOT)
+    data["cases"][0]["rows"][0]["n_objective_trials"] = 1
+    with pytest.raises(ValueError, match="trial counts"):
+        module.validate_aggregate_seeds(data)
+    original = Path.read_text
+    scoreline = ROOT / "docs/showcase/post3/matchup-model/objective_scoreline.json"
+    def reversed_rows(path, *args, **kwargs):
+        text = original(path, *args, **kwargs)
+        if path == scoreline:
+            content = json.loads(text)
+            content["rows"].reverse()
+            return json.dumps(content)
+        return text
+    monkeypatch.setattr(Path, "read_text", reversed_rows)
+    content = module.build(ROOT)
+    for row in content["cases"][0]["rows"]:
+        relative = content["assets"][row["image"].rsplit("/", 1)[1]]
+        assert row["entrant"].removeprefix("claude-code-") + "-seed0.png" in relative
+
+
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     private_run = tmp_path / "runs/code_cad_arena/private-sentinel"
