@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import trimesh
@@ -18,6 +19,7 @@ import trimesh
 from makerbench import code_cad_arena_runner as runner
 from makerbench import code_cad_generator as gen
 from makerbench import code_cad_providers as providers
+from makerbench import build123d_backend, cadquery_backend
 from makerbench import entrant_tools, entrant_tools_mcp, redaction, scad_sandbox
 
 REQUIRE_SANDBOX = os.environ.get("MAKERBENCH_REQUIRE_SANDBOX") == "1"
@@ -27,6 +29,7 @@ if REQUIRE_SANDBOX and not _AVAILABLE:  # pragma: no cover - CI guard
 needs_sandbox = pytest.mark.skipif(not _AVAILABLE, reason="OpenSCAD sandbox unavailable here")
 
 CUBE = "cube([10, 20, 5]);\n"
+BUILD123D_BOX = "from build123d import Box\nresult = Box(10, 20, 5)\n"
 
 
 @pytest.fixture
@@ -104,6 +107,115 @@ def test_workspace_stl_is_measured_without_any_compile(layout, monkeypatch):
     assert out["ok"] is True
     volume = next(m for m in out["result"]["measurements"] if m["metric"] == "volume")
     assert volume["value"] == pytest.approx(64.0)
+    assert entrant_tools.read_ledger(harness / "ledger.jsonl")[0]["backend"] is None
+
+
+@pytest.fixture
+def build123d_compiler_spy(monkeypatch):
+    calls = []
+
+    def compile_box(src, out):
+        calls.append(src.read_text())
+        out.mkdir()
+        stl = out / "box.stl"
+        trimesh.creation.box(extents=[10, 20, 5]).export(stl)
+        return SimpleNamespace(stl_path=stl)
+
+    def wrong_compiler(*a, **kw):
+        pytest.fail("inline build123d must select the build123d compiler")
+
+    monkeypatch.setattr(build123d_backend, "compile_build123d_to_artifacts", compile_box)
+    monkeypatch.setattr(cadquery_backend, "compile_cadquery_to_artifacts", wrong_compiler)
+    monkeypatch.setattr(scad_sandbox, "compile_scad_sandboxed", wrong_compiler)
+    return calls
+
+
+@pytest.mark.parametrize("tool", ["measure", "render_view"])
+@pytest.mark.parametrize("explicit", [False, True])
+def test_inline_build123d_selects_its_compiler(layout, monkeypatch, build123d_compiler_spy,
+                                             tool, explicit):
+    workspace, harness, _ = layout
+    before = entrant_tools.copy_tree_digest(workspace)
+    monkeypatch.setattr(entrant_tools.render_view, "render_mesh_views",
+                        lambda *a, **kw: SimpleNamespace(images=[], to_dict=lambda: {"ok": True}))
+    session = _session(workspace, harness, backend="openscad" if explicit else "build123d")
+    args = {"source": BUILD123D_BOX}
+    if explicit:
+        args["backend"] = "build123d"
+    result = session.call(tool, args)
+    assert result["ok"] is True
+    if tool == "measure":
+        volume = next(m for m in result["result"]["measurements"] if m["metric"] == "volume")
+        assert volume["value"] == pytest.approx(1000.0)
+    assert build123d_compiler_spy == [BUILD123D_BOX]
+    assert entrant_tools.read_ledger(session.ledger)[0]["backend"] == "build123d"
+    assert entrant_tools.copy_tree_digest(workspace) == before
+
+
+def test_build123d_session_refuses_cadquery_before_worker(layout, monkeypatch):
+    workspace, harness, _ = layout
+    monkeypatch.setattr(cadquery_backend, "compile_cadquery_to_artifacts",
+                        lambda *a: pytest.fail("CadQuery-only source must not reach the worker"))
+    session = _session(workspace, harness, backend="build123d")
+    result = session.call("measure", {"source": "import cadquery as cq\nresult = cq.Workplane()\n"})
+    assert result["ok"] is False
+    assert "requires a script that imports build123d" in result["error"]
+    assert entrant_tools.read_ledger(session.ledger)[0]["backend"] == "build123d"
+
+
+def test_build123d_session_keeps_python_path_routing(layout, monkeypatch):
+    workspace, harness, _ = layout
+    (workspace / "draft.py").write_text(BUILD123D_BOX)
+    calls = []
+
+    def worker(src, out):
+        calls.append(src.read_text())
+        return SimpleNamespace(stl_path=workspace / "prior.stl")
+
+    monkeypatch.setattr(cadquery_backend, "compile_cadquery_to_artifacts", worker)
+    monkeypatch.setattr(build123d_backend, "compile_build123d_to_artifacts",
+                        lambda *a: pytest.fail("workspace .py paths retain generic worker routing"))
+    session = _session(workspace, harness, backend="build123d")
+    assert session.call("measure", {"path": "draft.py"})["ok"] is True
+    assert calls == [BUILD123D_BOX]
+    assert entrant_tools.read_ledger(session.ledger)[0]["backend"] == "cadquery"
+
+
+def test_unknown_backend_is_refused_without_ledger_exposure(layout, monkeypatch):
+    workspace, harness, _ = layout
+    unknown = "/host/private/unknown-backend"
+    with pytest.raises(entrant_tools.ToolError, match="backend must be one of"):
+        _session(workspace, harness, backend=unknown)
+    monkeypatch.setattr(entrant_tools.ToolSession, "_compile",
+                        staticmethod(lambda *a: pytest.fail("invalid backend must not compile")))
+    session = _session(workspace, harness, backend="build123d")
+    result = session.call("measure", {"source": BUILD123D_BOX, "backend": unknown})
+    assert result["ok"] is False and "backend must be one of" in result["error"]
+    assert entrant_tools.read_ledger(session.ledger)[0]["backend"] is None
+    assert unknown not in session.ledger.read_text()
+
+
+def test_compile_dispatch_refuses_unknown_backend(layout):
+    _, harness, _ = layout
+    with pytest.raises(entrant_tools.ToolError, match="backend must be one of"):
+        entrant_tools.ToolSession._compile(BUILD123D_BOX, "future-backend", harness)
+    assert not (harness / "candidate.py").exists()
+
+
+def test_mcp_schema_and_cli_accept_build123d_and_refuse_unknown(layout, monkeypatch):
+    workspace, harness, _ = layout
+    for schema in entrant_tools_mcp.TOOL_SCHEMAS.values():
+        assert schema["inputSchema"]["properties"]["backend"]["enum"] == [
+            "openscad", "cadquery", "build123d"]
+    sessions = []
+    monkeypatch.setattr(entrant_tools_mcp, "serve", lambda session, *a: sessions.append(session))
+    argv = ["--workspace", str(workspace), "--ledger", str(harness / "ledger.jsonl"), "--backend"]
+    assert entrant_tools_mcp.main([*argv, "build123d"]) == 0
+    assert sessions[0].backend == "build123d"
+    with pytest.raises(SystemExit) as exc:
+        entrant_tools_mcp.main([*argv, "future-backend"])
+    assert exc.value.code == 2
+    assert len(sessions) == 1
 
 
 def test_unavailable_sandbox_is_an_error_and_starts_no_process(layout, monkeypatch):
@@ -352,7 +464,7 @@ def _request(tier, workspace, tools=entrant_tools.TOOL_NAMES):
 
 
 def _capture_claude(monkeypatch, layout, tier, tools=entrant_tools.TOOL_NAMES, *, tool_calls=0,
-                    calls=None):
+                    calls=None, backend="openscad"):
     workspace, harness, _ = layout
     seen: dict = {}
 
@@ -363,14 +475,17 @@ def _capture_claude(monkeypatch, layout, tier, tools=entrant_tools.TOOL_NAMES, *
             seen["config"] = json.loads(Path(config).read_text())
             server = seen["config"]["mcpServers"]["makerbench"]["args"]
             ledger = Path(server[server.index("--ledger") + 1])
-            session = entrant_tools.ToolSession(workspace=workspace, ledger=ledger)
+            session = entrant_tools.ToolSession(workspace=workspace, ledger=ledger,
+                                                backend=server[server.index("--backend") + 1])
             for name, arguments in calls or [("measure", {"path": "prior.stl"})] * tool_calls:
                 session.call(name, arguments)
-        payload = {"result": "```scad\ncube(1);\n```", "is_error": False}
+        source = BUILD123D_BOX if backend == "build123d" else CUBE
+        fence = "python" if backend == "build123d" else "scad"
+        payload = {"result": f"```{fence}\n{source}```", "is_error": False}
         return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), "")
 
     monkeypatch.setattr(providers, "_run_cli", fake_run_cli)
-    generator = providers.make_claude_generator(retry_sleep_s=0)
+    generator = providers.make_claude_generator(retry_sleep_s=0, backend=backend)
     results = gen.run_generation_batch(
         registry={"instruments": [{"id": "lyre"}]}, instrument_id="lyre", seed=0,
         model_ids=["claude-code-sonnet"], generator=generator, out_dir=harness / "gen",
@@ -379,6 +494,38 @@ def _capture_claude(monkeypatch, layout, tier, tools=entrant_tools.TOOL_NAMES, *
     )
     provenance = json.loads(results[0].provenance_path.read_text())
     return seen, provenance
+
+
+def test_build123d_studio_config_and_trial_provenance(monkeypatch, layout, build123d_compiler_spy):
+    seen, provenance = _capture_claude(
+        monkeypatch, layout, "studio", backend="build123d",
+        calls=[("measure", {"source": BUILD123D_BOX})])
+    args = seen["config"]["mcpServers"]["makerbench"]["args"]
+    assert args[args.index("--backend") + 1] == "build123d"
+    assert build123d_compiler_spy == [BUILD123D_BOX]
+    calls = provenance["tools"]["calls"]
+    assert len(calls) == 1 and calls[0]["ok"] is True
+    assert calls[0]["backend"] == "build123d"
+
+
+def test_unsupported_studio_backend_refuses_before_config_or_entrant(monkeypatch, layout):
+    workspace, harness, _ = layout
+    with pytest.raises(RuntimeError, match="entrant tool backend must be one of"):
+        providers.claude_tools_args(_request("studio", workspace), harness, backend="future-backend")
+    assert not (harness / "mcp.json").exists()
+    monkeypatch.setattr(providers, "_run_cli", lambda *a, **kw: pytest.fail("must not launch entrant"))
+    generator = providers.make_claude_generator(backend="future-backend", retry_sleep_s=0)
+    with pytest.raises(RuntimeError, match="entrant tool backend must be one of"):
+        generator(_request("studio", workspace))
+
+
+@pytest.mark.parametrize("tier", ["blind", "packet", "repo", "image"])
+def test_build123d_non_studio_gets_no_mcp_tools(monkeypatch, layout, tier):
+    workspace, _, _ = layout
+    assert providers._claude_tools_enabled(_request(tier, workspace)) is False
+    seen, provenance = _capture_claude(monkeypatch, layout, tier, tools=(), backend="build123d")
+    assert not any(a.startswith("--mcp-config") for a in seen["cmd"])
+    assert provenance["tools"]["enabled"] == []
 
 
 def test_blind_claude_gets_no_tools_and_no_mcp_config(monkeypatch, layout):
