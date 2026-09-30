@@ -271,7 +271,8 @@ def nightly_lease(path: Path, *, now: Callable[[], datetime]) -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def _fresh_run_log(run_dir: Path, job: NightlyJob) -> None:
+def _fresh_run_log(run_dir: Path, job: NightlyJob, *,
+                   matchup: Optional[Mapping[str, object]] = None) -> None:
     path = run_dir / "run_log.json"
     if path.exists():
         return
@@ -288,6 +289,7 @@ def _fresh_run_log(run_dir: Path, job: NightlyJob) -> None:
                 "model_providers": {entrant.entrant_id: entrant.kind for entrant in job.entrants},
                 "provider_rate_limits_s": {},
                 "backend": "nightly-mixed",
+                **({"matchup": dict(matchup)} if matchup else {}),
             },
             "trials": [],
             "summary": {"counts": {}, "total_trials": 0, "total_attempts": 0},
@@ -639,7 +641,8 @@ class NightlyExecutor:
             job.run_dir = run_dir.as_posix()
             job.status = "running"
             save_queue(self.queue_path, payload, jobs)
-            _fresh_run_log(run_dir, job)
+            matchup = {key: payload[key] for key in ("varied_axis", "values", "varied_axes", "factorial", "held") if key in payload}
+            _fresh_run_log(run_dir, job, matchup=matchup)
             registry = arena_runner.load_arena_registry(self.registry_path)
             budget = _resume_budget(run_dir, limit_usd=job.budget_usd)
             outcomes: list[dict] = []
@@ -733,6 +736,7 @@ class NightlyExecutor:
                 {
                     "schema": "makerbench-code-cad-objective-scoreline-v1",
                     "rows": arena_runner.collect_objective_scoreline(run_log),
+                    **({"matchup": matchup} if matchup else {}),
                 },
             )
             morning = finalize_morning_bundle(run_dir, cost_usd=budget.spent_usd)
@@ -755,6 +759,7 @@ class NightlyExecutor:
             return {
                 "status": job.status,
                 "job_id": job.job_id,
+                **({"matchup": matchup} if matchup else {}),
                 "run_id": job.run_id,
                 "run_dir": run_dir.as_posix(),
                 "morning": morning,

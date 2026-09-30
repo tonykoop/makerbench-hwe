@@ -5,6 +5,10 @@ import { api } from "../lib/api.js";
 import { plural } from "../lib/format.js";
 import { costBadge, describeReference, parseModelList } from "../lib/launch.js";
 import {
+  BACKENDS,
+  MATCHUP_AXES,
+  axisValues,
+  entrantsPerJob,
   budgetView,
   ceilingsPayload,
   CONTEXT_TIERS,
@@ -109,7 +113,10 @@ function ChoiceChips({ legend, name, options, selected, onToggle }) {
 
 function ModelEstimates({ cells }) {
   const byModel = new Map();
-  for (const cell of cells) if (!byModel.has(cell.model_id)) byModel.set(cell.model_id, cell.estimate || {});
+  for (const cell of cells) {
+    const label = `${cell.model_id} / ${cell.backend || "openscad"}`;
+    if (!byModel.has(label)) byModel.set(label, cell.estimate || {});
+  }
   return html`
     <div class="table-scroll">
       <table class="data-table model-estimates">
@@ -238,6 +245,12 @@ function PreviewPanel({ query, preview, stale, budget, onBudget, skips }) {
               </dd>`}
         </div>
       </dl>
+      ${cells.some((cell) => cell.availability?.status !== "available") && html`
+        <div role="status"><h3>Backend readiness</h3><ul>
+          ${[...new Map(cells.filter((c) => c.availability?.status !== "available").map((c) => [c.backend, c])).values()].map(
+            (cell) => html`<li key=${cell.backend}><strong>${cell.backend}</strong>: ${cell.availability?.reason}</li>`)}
+        </ul></div>`}
+      ${preview.data.varied_axis && html`<p class="matchup-metadata">Varying <strong>${preview.data.varied_axis}</strong>. Held values: <code>${JSON.stringify(preview.data.held)}</code></p>`}
       <h3>Entrants</h3>
       <${ModelEstimates} cells=${cells} />
       <h3>Budget what-if</h3>
@@ -263,8 +276,13 @@ export function DoeScreen() {
   const tasks = useResource("/api/tasks");
   const [references, loadReference] = useReferences();
   const [instruments, setInstruments] = useState([]);
+  const [mode, setMode] = useState("matrix");
+  const [variedAxis, setVariedAxis] = useState("backends");
+  const [factorial, setFactorial] = useState(false);
   const [modelsText, setModelsText] = useState("");
   const [levels, setLevels] = useState([...LEVELS]);
+  const [driverText, setDriverText] = useState("gpt-5.6-sol");
+  const [backends, setBackends] = useState(["openscad"]);
   const [tiers, setTiers] = useState(["blind"]);
   const [seedsText, setSeedsText] = useState("0");
   const [runId, setRunId] = useState("");
@@ -286,7 +304,9 @@ export function DoeScreen() {
 
   const models = parseModelList(modelsText);
   const { seeds, invalid: invalidSeeds } = parseSeeds(seedsText);
-  const matrix = { instruments, models, levels, tiers, seeds };
+  const driver_models = backends.some((backend) => backend.endsWith("-live")) ? parseModelList(driverText) : [];
+  const matrix = { instruments, models, levels, tiers, seeds, backends, driver_models,
+    varied_axis: mode === "matchup" ? variedAxis : undefined, factorial };
   const query = invalidSeeds.length ? null : previewQuery(matrix);
   const settledQuery = useDebounced(query, 350);
   const preview = useResource(settledQuery ? `/api/doe/preview?${settledQuery}` : null);
@@ -294,9 +314,19 @@ export function DoeScreen() {
   const previewState = !query ? "none" : stale || preview.status !== "ready" ? (preview.status === "error" && !stale ? "error" : "loading") : "ready";
   const cells = previewState === "ready" ? preview.data.cells || [] : [];
   const unknownModels = unknownCostModels(cells);
-  const skips = predictedSkips(instruments, references, models.length * levels.length);
+  const skips = predictedSkips(instruments, references, entrantsPerJob(matrix));
   const blockers = doeBlockers({ matrix, invalidSeeds, runId, budget, preview: previewState, unknownModels, ceilings });
   const busy = write.status === "sending";
+
+  const holdOtherAxes = (axis) => {
+    if (axis !== "instruments") setInstruments((prev) => prev.slice(0, 1));
+    if (axis !== "models") setModelsText(models.slice(0, 1).join(", "));
+    if (axis !== "levels") setLevels(["L1"]);
+    if (axis !== "context_tiers") setTiers((prev) => prev.slice(0, 1));
+    if (axis !== "seeds") setSeedsText(String(seeds[0] ?? 0));
+    if (axis !== "backends") setBackends((prev) => prev.slice(0, 1));
+    if (axis !== "driver_models") setDriverText(parseModelList(driverText).slice(0, 1).join(", "));
+  };
 
   const toggleInstrument = (taskId) => {
     setInstruments((prev) => toggleIn(prev, taskId));
@@ -311,10 +341,15 @@ export function DoeScreen() {
         method: "POST",
         body: {
           run_id: runId,
+          varied_axis: matrix.varied_axis,
+          values: matrix.varied_axis ? axisValues(matrix, matrix.varied_axis) : undefined,
+          factorial: mode === "matchup" && factorial,
           instruments,
           models,
           levels,
           context_tiers: tiers,
+          backends,
+          driver_models: driver_models.length ? driver_models : undefined,
           seeds,
           budget_usd: Number(budget),
           max_cost_usd_by_model: ceilingsPayload(unknownModels, ceilings),
@@ -337,12 +372,30 @@ export function DoeScreen() {
     <div class="screen screen-doe">
       <h1 tabindex="-1">DoE matrix</h1>
       <p class="lede">
-        Design a nightly experiment: instruments × entrants × levels × context tiers × seeds. See what it costs, then write
+        Design a nightly experiment: instruments × entrants × backends × levels × context tiers × seeds. See what it costs, then write
         the queue. Nothing runs from this page.
       </p>
       <div class="doe-layout">
         <section class="panel doe-design" aria-labelledby="doe-design-title">
           <h2 id="doe-design-title">Design the matrix</h2>
+          <label class="field"><span class="field-label">Experiment mode</span>
+            <select name="experiment_mode" value=${mode} onChange=${(event) => {
+              const next = event.currentTarget.value;
+              setMode(next);
+              if (next === "matchup") holdOtherAxes(variedAxis);
+            }}><option value="matrix">Full matrix</option><option value="matchup">Vary one axis</option></select>
+          </label>
+          ${mode === "matchup" && html`
+            <label class="field"><span class="field-label">Axis to vary</span>
+              <select name="varied_axis" value=${variedAxis} onChange=${(event) => {
+                const next = event.currentTarget.value;
+                setVariedAxis(next);
+                if (!factorial) holdOtherAxes(next);
+              }}>${MATCHUP_AXES.map((axis) => html`<option value=${axis}>${axis.replaceAll("_", " ")}</option>`)}</select>
+            </label>
+            <p class="hint">Choose two or more values for this axis and one value for every held axis.</p>
+            <label class="check-row"><input type="checkbox" name="factorial" checked=${factorial} onChange=${(event) => setFactorial(event.currentTarget.checked)} />Allow a factorial experiment</label>`}
+
           <${InstrumentPicker} tasks=${tasks} selected=${instruments} onToggle=${toggleInstrument} references=${references} />
           <label class="field">
             <span class="field-label">Entrants</span>
@@ -371,6 +424,18 @@ export function DoeScreen() {
             selected=${tiers}
             onToggle=${(tier) => setTiers((prev) => toggleIn(prev, tier))}
           />
+          <${ChoiceChips}
+            legend="Backends / bridges"
+            name="backend"
+            options=${BACKENDS.map((id) => ({ id, label: id }))}
+            selected=${backends}
+            onToggle=${(id) => setBackends((prev) => toggleIn(prev, id))}
+          />
+          ${backends.some((backend) => backend.endsWith("-live")) && html`
+            <label class="field"><span class="field-label">Live driver models</span>
+              <input name="driver_models" value=${driverText} onInput=${(event) => setDriverText(event.currentTarget.value)} />
+              <span class="field-note">Codex driver ids, separated by commas. These replace entrant ids for live backends.</span>
+            </label>`}
           <label class="field">
             <span class="field-label">Seeds</span>
             <input

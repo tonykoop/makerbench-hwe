@@ -28,6 +28,11 @@ class DoeQueuePayload(BaseModel):
     models: list[str]
     levels: Optional[list[str]] = None
     context_tiers: Optional[list[str]] = None
+    backends: Optional[list[str]] = None
+    driver_models: Optional[list[str]] = None
+    varied_axis: Optional[str] = None
+    values: Optional[list[str | int]] = None
+    factorial: bool = False
     seeds: Optional[list[int]] = None
     budget_usd: float = 5.0
     max_cost_usd_by_model: Optional[dict[str, float]] = None
@@ -84,6 +89,11 @@ def register_delta_routes(
         levels: Optional[str] = Query(None, description="Comma-separated levels, default L1-L4"),
         context_tiers: Optional[str] = Query(None, description="Comma-separated context tiers"),
         seeds: Optional[str] = Query(None, description="Comma-separated integer seeds"),
+        backends: Optional[str] = Query(None, description="Comma-separated CAD backends"),
+        driver_models: Optional[str] = Query(None, description="Live driver models"),
+        varied_axis: Optional[str] = Query(None, description="One axis to vary"),
+        values: Optional[str] = Query(None, description="At least two values for that axis"),
+        factorial: bool = Query(False, description="Allow multiple varying axes"),
     ):
         try:
             seed_values = [int(s) for s in _split_csv(seeds)] if seeds else None
@@ -96,6 +106,9 @@ def register_delta_routes(
                 levels=_split_csv(levels),
                 context_tiers=_split_csv(context_tiers),
                 seeds=seed_values,
+                backends=_split_csv(backends),
+                driver_models=_split_csv(driver_models),
+                varied_axis=varied_axis, values=_split_csv(values), factorial=factorial,
             )
         except doe.DoeValidationError as e:
             # Fix-your-input errors (Tony, 2026-09-14): 400, so a client can tell them from a server failure.
@@ -113,6 +126,9 @@ def register_delta_routes(
                 levels=payload.levels,
                 context_tiers=payload.context_tiers,
                 seeds=payload.seeds,
+                backends=payload.backends,
+                driver_models=payload.driver_models,
+                varied_axis=payload.varied_axis, values=payload.values, factorial=payload.factorial,
                 budget_usd=payload.budget_usd,
                 max_cost_usd_by_model=payload.max_cost_usd_by_model,
                 replace=payload.replace,
