@@ -50,6 +50,15 @@ class NightlyEntrant:
             timeout_s=(int(payload["timeout_s"]) if payload.get("timeout_s") is not None else None),
         )
 
+    def matchup_level(self) -> str:
+        """Read a verifiable level from model::level[::backend], never a plain ID."""
+        parts = self.entrant_id.split("::")
+        if (len(parts) not in {2, 3} or parts[0] != self.model_id
+                or not parts[1] or parts[1] != parts[1].strip()
+                or (len(parts) == 3 and parts[2] != self.backend)):
+            raise ValueError("matchup level provenance requires model::level[::backend] entrant IDs")
+        return parts[1]
+
     def validate(self) -> None:
         if not self.entrant_id or not self.model_id:
             raise ValueError("nightly entrants require entrant_id and model_id")
@@ -277,12 +286,14 @@ def _fresh_run_log(run_dir: Path, job: NightlyJob, *,
     path = run_dir / "run_log.json"
     normalized = MatchupMetadata.model_validate(matchup).model_dump(mode="json") if matchup else None
     if normalized:
+        if not job.entrants:
+            raise ValueError("matchup level provenance requires encoded entrants")
         observed = {"instruments": [job.instrument_id], "seeds": [job.seed],
                     "backends": [e.backend for e in job.entrants],
                     "context_tiers": [e.context_tier for e in job.entrants],
                     "models": [e.model_id for e in job.entrants if e.kind != "live"],
                     "driver_models": [e.model_id for e in job.entrants if e.kind == "live"],
-                    "levels": [e.entrant_id.split("::")[1] for e in job.entrants if "::" in e.entrant_id]}
+                    "levels": [e.matchup_level() for e in job.entrants]}
         for axis, values in observed.items():
             allowed = normalized["values"] if axis == normalized["varied_axis"] else (
                 [normalized["held"][axis]] if axis in normalized["held"] else None)
