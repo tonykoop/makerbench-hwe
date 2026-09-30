@@ -270,6 +270,16 @@ def build_matchup(
         raise DoeValidationError("driver_models only apply to live backends")
     if live and not dimensions["driver_models"]:
         raise DoeValidationError("live backends require explicit driver_models")
+    if (
+        live
+        and any(b not in LIVE_BACKENDS for b in dimensions["backends"])
+        and len(dimensions["models"]) == len(dimensions["driver_models"]) == 1
+        and dimensions["models"] != dimensions["driver_models"]
+    ):
+        raise DoeValidationError(
+            "mixed live/code-CAD backends must hold the same effective model; "
+            "the held driver model must equal the held nominal model"
+        )
     varied = [name for name, items in dimensions.items() if len(items) > 1]
     if len(varied) > 1 and not factorial:
         raise DoeValidationError(f"matchups vary one axis; varying {varied!r} requires factorial")

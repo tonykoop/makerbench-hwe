@@ -35,6 +35,22 @@ def test_canonical_matchups_vary_one_axis(axis, values, extra):
     assert canonical not in result["held"]
 
 
+@pytest.mark.parametrize("live_backend", ["fusion-live", "solidworks-live"])
+def test_mixed_backend_matchup_requires_the_same_effective_model(live_backend):
+    dimensions = {"instruments": ["ocarina"], "models": ["claude-opus-5-5"]}
+    with pytest.raises(doe.DoeValidationError, match="effective model"):
+        doe.build_matchup(
+            "backends", ["openscad", live_backend],
+            driver_models=["gpt-5.6-sol"], **dimensions,
+        )
+    result = doe.build_matchup(
+        "backends", ["openscad", live_backend],
+        driver_models=["claude-opus-5-5"], **dimensions,
+    )
+    assert {cell["model_id"] for cell in result["cells"]} == {"claude-opus-5-5"}
+    assert result["varied_axes"] == ["backends"]
+
+
 def test_confounded_matchup_needs_factorial():
     dimensions = dict(instruments=["ocarina"], models=["claude-code-opus-5.5", "codex-gpt-5.6"])
     with pytest.raises(doe.DoeValidationError, match="factorial"):
