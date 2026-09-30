@@ -101,8 +101,9 @@ For CadQuery/build123d results, the artifact warnings also include two informati
 volume diagnostics. Neither changes an objective sub-score or pass/fail result, and a
 failure to compute one produces an `unavailable` warning.
 
-- `brep_mesh_volume`: the **in-memory** B-rep volume of the entrant's result (printed by
-  the sandboxed driver), the tessellated STL volume, and their relative delta. This is the
+- `brep_mesh_volume`: the **in-memory** B-rep volume of the entrant's result (written by
+  the sandboxed driver to a file next to the artifacts after the entrant has finished, not
+  taken from stdout), the tessellated STL volume, and their relative delta. This is the
   tessellation check; expect well under 1% (0.0% to 0.6% on the 11 measured designs).
 - `step_roundtrip_volume`: the in-memory B-rep volume against the retained STEP **read
   back** with OCP. A large delta means the STEP artifact does not faithfully carry the shape.
@@ -110,17 +111,20 @@ failure to compute one produces an `unavailable` warning.
 ### Why `brep_mesh_volume` used to disagree by up to 17x (#902)
 
 The first version read the volume back from the retained STEP and called that the B-rep
-volume. On the post-3 ocarina trials it disagreed with the mesh by up to 17x in 8 of 11 designs (for
-example 3,536 mm³ against 61,982 mm³) and agreed in the other 3. The cause is **not** units, tessellation, multiple
+volume. On the post-3 ocarina trials it disagreed with the mesh by up to 17x in 9 of 11 designs (for
+example 3,536 mm³ against 61,982 mm³) and agreed in the other 2. The cause is **not** units, tessellation, multiple
 solids or open shells: for the 11 designs whose scripts could be re-run, the in-memory B-rep
 volume matches the mesh within 0.0% to 0.6%, and the mesh volume matches the analytic design.
-What is wrong is the STEP read-back: in 8 of the 11 designs OCP reads the retained STEP back
-with the wrong volume (some also fail `BRepCheck`). The trigger is an ellipsoid built with
+What is wrong is the STEP read-back: in 9 of the 11 designs OCP reads the retained STEP back
+with the wrong volume (some also fail `BRepCheck`). In a minimal reproduction the trigger is an ellipsoid built with
 `transformGeometry` (BSpline faces) that is then combined with another solid by a boolean:
 the same ellipsoid alone round-trips exactly, a uniform sphere plus a box round-trips exactly,
 and `ShapeFix` before export does not help (writing the STEP without pcurves gets to within
-3.4% but is not a fix). The 3 of 11 designs that round-trip correctly are the ones that avoid
-that construction.
+3.4% but is not a fix). That is not established as the trigger for all nine: one bad CadQuery
+trial builds its body by revolving a half-ellipse (no `transformGeometry`) and also disagrees
+(191,001 against 60,848 mm³), while two build123d trials that revolve a half-ellipse round-trip
+exactly. So the safe statement is: STEP read-back is unreliable for these curved (elliptic /
+BSpline) bodies after booleans, and the exact trigger was not isolated.
 
 So the mesh (which the objective gate scores) and the in-memory B-rep were right, and the
 comparison was against a corrupted reference. The check now uses the in-memory volume, and the
