@@ -17,7 +17,7 @@ import {
   ratingScale,
   runInstruments,
   scatterPoints,
-} from "../lib/analytics.js";
+} from "../lib/agreement-stats.js";
 import { useResource } from "../hooks/useResource.js";
 import { Empty, ErrorState, Loading } from "../components/states.js";
 

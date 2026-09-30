@@ -1,10 +1,10 @@
 import { html } from "../html.js";
 import { formatWhen } from "../lib/format.js";
 import { buildHash } from "../lib/route.js";
-import { sharedEntrants } from "../lib/analytics.js";
+import { sharedEntrants } from "../lib/agreement-stats.js";
 import { useResource } from "../hooks/useResource.js";
 import { Empty, ErrorState, Loading } from "../components/states.js";
-import { LeaderboardTable } from "./analytics.js";
+import { LeaderboardTable } from "./agreement.js";
 
 const enc = encodeURIComponent;
 

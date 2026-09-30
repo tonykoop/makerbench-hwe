@@ -8,7 +8,7 @@ import { loadVoter, normalizeVoter, saveVoter } from "./lib/prefs.js";
 import { buildHash, parseHash } from "./lib/route.js";
 import { DoeScreen } from "./screens/doe.js";
 import { LaunchScreen } from "./screens/launch.js";
-import { AnalyticsScreen } from "./screens/analytics.js";
+import { AnalyticsScreen } from "./screens/agreement.js";
 import { CompareScreen } from "./screens/compare.js";
 import { MorningScreen, NightlyScreen } from "./screens/nightly.js";
 import { RunsScreen } from "./screens/runs.js";
