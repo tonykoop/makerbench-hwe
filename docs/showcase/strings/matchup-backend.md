@@ -16,8 +16,12 @@ seeds 0, 1, 2.
 Both backends produced a recognisable arched harp with a boat-shaped body and strings.
 On this brief the gap is one failed check in one of three CadQuery trials. No
 uncertainty or significance analysis was performed, so this sample cannot support a
-ranking of the backends. Unlike the ocarina matchup (where both B-rep routes
-failed `watertight` every time), CadQuery mostly passed here. Why seed 0 failed
+ranking of the backends. In the original ocarina backend matchup (`../post3/matchup-backend.md`, before its later
+S5 gate-fix update), the scored CadQuery and build123d meshes failed `watertight` in 5 of
+the 5 that produced meshes, and one build123d trial crashed with no mesh; that report's
+update section later re-scores those meshes with the corrected gate and re-runs the
+matchup, where all nine new trials pass. The comparison here is against that original,
+before-fix result only. Why seed 0 failed
 `watertight` is unknown (design versus STL tessellation was not investigated).
 
 **Run-to-run spread on the identical OpenSCAD setup.** The same held setup (Sonnet 5.5,
@@ -28,6 +32,25 @@ size should not be read as effects. That is the main caution for this whole stri
 
 Not measured: sound, printability beyond these checks, resemblance to the instrument,
 preference. No preference votes or Elo are involved.
+
+## Gate version and replay
+
+These trials were scored with the arena gate **before** the S5 fix that drops zero-area
+sliver triangles from B-rep STL output (#874); my branch was cut before that fix landed.
+I replayed the same recorded meshes through the corrected gate on `origin/main` (no model
+calls, `mesh_objective_gate` on each committed trial's STL):
+
+| Backend | Seed 0 | Seed 1 | Seed 2 | Mean |
+|---|---|---|---|---|
+| OpenSCAD | 1.000 | 1.000 | 1.000 | 1.000 |
+| CadQuery, original gate | 0.833 (`watertight`) | 1.000 | 1.000 | 0.944 |
+| CadQuery, corrected gate (replay) | 0.833 (`watertight`) | 0.833 (`min_wall`) | 1.000 | 0.889 |
+
+So the corrected gate does not rescue CadQuery seed 0 here, and it turns seed 1 into a
+`min_wall` failure; I did not investigate why (the wall estimate runs on the largest
+watertight body, which can change once slivers are removed). Treat the CadQuery mean as
+0.889 to 0.944 depending on the gate, and read neither as an effect. The table at the top
+keeps the original scoring because that is what the run produced.
 
 ## Wall time
 
