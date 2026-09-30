@@ -18,7 +18,7 @@ import {
   runInstruments,
   scatterPoints,
   sharedEntrants,
-} from "../../makerbench/arena_studio/static/app/lib/analytics.js";
+} from "../../makerbench/arena_studio/static/app/lib/agreement-stats.js";
 
 test("an Elo from fewer than five games is provisional (Q5)", () => {
   assert.equal(isProvisional({ games: 0 }), true);
