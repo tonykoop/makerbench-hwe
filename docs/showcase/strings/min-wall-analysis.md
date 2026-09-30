@@ -15,7 +15,7 @@ sensitive to the sample seed.
    The median wall reading in every design is 2.9 to 7.4 mm.
 2. The strings the entrants modelled are at or above the floor (1.0 to 2.0 mm) in every
    design where I could read the source, with one exception (a 0.7 mm string, below) that
-   the gate never measures anyway.
+   the gate did not measure in that design (it was not the largest body).
 3. Re-sampling the *same mesh* with nine other sample seeds flips the verdict: for the 13
    sambuca meshes with a watertight body, 3 to 10 of 10 seeds fail the floor (93 of the 130
    seed evaluations fail), **including both meshes that passed at seed 0**. With 40,000 samples, every one of the 13 reads
