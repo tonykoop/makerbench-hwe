@@ -238,8 +238,15 @@ def mesh_objective_gate(
     spec: Mapping[str, object],
     *,
     part_module_counter: Callable[[Path], int] = _default_part_module_counter,
+    min_wall_estimator: Optional[str] = None,
 ) -> Callable[[ObjectiveContext], dict]:
     """Build the oracle-free objective gate for one instrument spec.
+
+    ``min_wall_estimator`` (or the spec's ``min_wall_estimator``) selects how the wall is
+    measured: ``"min"`` (the default, unchanged: the minimum over 4,000 random samples with
+    seed 0) or ``"robust-v1"`` (opt-in, #901: the 1st percentile over 20,000 samples with a
+    fixed seed, which does not flip with the sample seed). Off by default, so no existing
+    result changes.
 
     Sub-scores (0.0/1.0 each) over the candidate's own rendered mesh:
     renders, watertight (every body manifold), nonzero_volume, fits_envelope
@@ -255,6 +262,10 @@ def mesh_objective_gate(
     min_bodies = int(spec.get("min_bodies") or 1)
     is_assembly = bool(spec.get("assembly"))
     min_wall_floor = float(spec.get("min_wall_mm") or MIN_WALL_FLOOR_MM)
+    wall_method = str(min_wall_estimator or spec.get("min_wall_estimator") or geometry.MIN_WALL_METHOD_DEFAULT)
+    if wall_method not in geometry.MIN_WALL_METHODS:
+        raise ValueError(f"min_wall_estimator must be one of {geometry.MIN_WALL_METHODS}, got {wall_method!r}")
+    robust_wall = wall_method == geometry.MIN_WALL_METHOD_ROBUST_V1
 
     def gate(context: ObjectiveContext) -> dict:
         import trimesh
@@ -282,7 +293,11 @@ def mesh_objective_gate(
 
         if watertight_bodies:
             biggest_solid = max(watertight_bodies, key=lambda body: len(body.faces))
-            measured_wall = geometry.estimate_min_wall_mm(biggest_solid, seed=0)
+            if robust_wall:
+                robust = geometry.estimate_wall_robust_v1(biggest_solid)
+                measured_wall = robust["wall_mm"]
+            else:
+                measured_wall = geometry.estimate_min_wall_mm(biggest_solid, seed=0)
             min_wall_ok = geometry.printable_wall(measured_wall, min_wall_floor)
         else:
             measured_wall = 0.0
@@ -352,9 +367,14 @@ def mesh_objective_gate(
                 failures.append(_failure(
                     "min_wall", measured=_round_or_none(measured_wall, 4), threshold=min_wall_floor,
                     unit="mm", requires="measured >= threshold - tolerance", body_id=body_ids[id(biggest_solid)],
-                    detail="thinnest ray-cast wall on the largest watertight body; "
-                           "other bodies are not measured",
-                    tolerance=geometry.WALL_MEAS_TOL_MM))
+                    detail=(f"1st percentile of ray-cast wall over {robust['n_samples']} samples "
+                            f"(robust-v1; raw minimum {_round_or_none(robust['min_mm'], 4)} mm) "
+                            "on the largest watertight body; other bodies are not measured"
+                            if robust_wall else
+                            "thinnest ray-cast wall on the largest watertight body; "
+                            "other bodies are not measured"),
+                    tolerance=geometry.WALL_MEAS_TOL_MM,
+                    **({"method": wall_method} if robust_wall else {})))
             else:
                 failures.append(_failure(
                     "min_wall", measured=None, threshold=min_wall_floor, unit="mm",
@@ -408,6 +428,7 @@ def mesh_objective_gate(
                 else None,
                 "min_wall_floor_mm": min_wall_floor,
                 "part_modules_compiled": part_modules,
+                **({"min_wall_method": wall_method} if robust_wall else {}),
                 "bbox_mm": [round(float(x), 3) for x in mesh.bounding_box.extents.tolist()],
             },
         }
