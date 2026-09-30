@@ -188,6 +188,120 @@ def expand_matrix(
     return cells
 
 
+MATCHUP_AXES = (
+    "instruments",
+    "models",
+    "levels",
+    "context_tiers",
+    "seeds",
+    "backends",
+    "driver_models",
+)
+_AXIS_ALIASES = {
+    "instrument": "instruments",
+    "model": "models",
+    "level": "levels",
+    "context": "context_tiers",
+    "context_tier": "context_tiers",
+    "seed": "seeds",
+    "backend": "backends",
+    "bridge": "backends",
+    "driver_model": "driver_models",
+}
+
+
+def build_matchup(
+    varied_axis: str,
+    values: Iterable,
+    *,
+    instruments: Iterable[str],
+    models: Iterable[str],
+    levels: Iterable[str] = ("L1",),
+    context_tiers: Iterable[str] = DEFAULT_CONTEXT_TIERS,
+    seeds: Iterable[int] = (0,),
+    backends: Iterable[str] = DEFAULT_BACKENDS,
+    driver_models: Optional[Iterable[str]] = None,
+    factorial: bool = False,
+) -> dict:
+    """Preview a controlled matchup, rejecting accidental multi-axis experiments.
+
+    Values are dispatch identifiers, never inferred from display labels.
+    Live matchups vary driver_models, not nominal models which the live runner
+    does not consume. Metadata is retained alongside cells and in queue files.
+    """
+    axis = _AXIS_ALIASES.get(varied_axis, varied_axis)
+    if axis not in MATCHUP_AXES:
+        raise DoeValidationError(f"unsupported varied_axis: {varied_axis}")
+    dimensions = {
+        "instruments": list(instruments),
+        "models": list(models),
+        "levels": list(levels),
+        "context_tiers": list(context_tiers),
+        "seeds": list(seeds),
+        "backends": list(backends),
+        "driver_models": list(driver_models) if driver_models is not None else [],
+    }
+    selected = list(dict.fromkeys(values))
+    if axis == "seeds":
+        try:
+            if any(isinstance(value, (bool, float)) for value in selected):
+                raise ValueError("seeds must be integers")
+            selected = list(dict.fromkeys(int(value) for value in selected))
+        except (ValueError, TypeError):
+            raise DoeValidationError("seeds must be integers") from None
+    elif any(not isinstance(value, str) or not value.strip() for value in selected):
+        raise DoeValidationError("axis values must be nonempty strings")
+    if len(selected) < 2:
+        raise DoeValidationError("a matchup needs at least two distinct axis values")
+    # Conflicting values for the chosen axis must not disappear behind --values.
+    original = list(dict.fromkeys(dimensions[axis]))
+    if len(original) > 1 and set(original) != set(selected):
+        raise DoeValidationError("selected values conflict with the varied axis")
+    dimensions[axis] = selected
+    dimensions = {name: list(dict.fromkeys(items)) for name, items in dimensions.items()}
+    if not all(dimensions[name] for name in MATCHUP_AXES if name != "driver_models"):
+        raise DoeValidationError("held axes must be nonempty")
+    live = any(backend in LIVE_BACKENDS for backend in dimensions["backends"])
+    if axis == "driver_models" and not all(b in LIVE_BACKENDS for b in dimensions["backends"]):
+        raise DoeValidationError("driver_models matchups require live backends")
+    if live and axis == "models":
+        raise DoeValidationError("live matchups vary driver_models, not nominal models")
+    if dimensions["driver_models"] and not live:
+        raise DoeValidationError("driver_models only apply to live backends")
+    if live and not dimensions["driver_models"]:
+        raise DoeValidationError("live backends require explicit driver_models")
+    if (
+        live
+        and any(b not in LIVE_BACKENDS for b in dimensions["backends"])
+        and len(dimensions["models"]) == len(dimensions["driver_models"]) == 1
+        and dimensions["models"] != dimensions["driver_models"]
+    ):
+        raise DoeValidationError(
+            "mixed live/code-CAD backends must hold the same effective model; "
+            "the held driver model must equal the held nominal model"
+        )
+    varied = [name for name, items in dimensions.items() if len(items) > 1]
+    if len(varied) > 1 and not factorial:
+        raise DoeValidationError(f"matchups vary one axis; varying {varied!r} requires factorial")
+    if (
+        live
+        and len(dimensions["models"]) > 1
+        and all(b in LIVE_BACKENDS for b in dimensions["backends"])
+    ):
+        raise DoeValidationError("nominal models are unused by live backends; hold one model")
+    cells = expand_matrix(**{**dimensions, "driver_models": dimensions["driver_models"] or None})
+    held = {name: items[0] for name, items in dimensions.items() if len(items) == 1}
+    return {
+        "schema": SCHEMA,
+        "varied_axis": axis,
+        "values": selected,
+        "varied_axes": varied,
+        "factorial": factorial,
+        "held": held,
+        "cells": cells,
+    }
+
+
 def _model_provider(model_id: str) -> Optional[str]:
     try:
         return providers.provider_for_model_id(model_id)
