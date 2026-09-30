@@ -926,25 +926,126 @@ def resolve_openrouter_slug(name: str, *, timeout_s: int = 30) -> str:
     return matches[0]
 
 
+class MeteredCostError(RuntimeError):
+    """A metered call's actual cost could not be read: the run must halt."""
+
+
+class BudgetExhausted(RuntimeError):
+    """The cumulative actual cost reached the cap; no further metered call is made."""
+
+
+class MeteredBudget:
+    """Cumulative actual-cost guard for metered (pay-per-token) entrants.
+
+    Every metered call's ``usage.cost`` is appended to an optional JSONL ledger, so the
+    cumulative total survives resumes and separate batches that share the ledger. Before
+    each call, the run halts if the cumulative cost plus the largest single call seen so
+    far would reach ``max_cost_usd`` (the reserve keeps one more call from crossing it).
+    A call whose cost cannot be read halts the run at once. ``halt_reason`` is set when
+    halted and ``halt_call_made`` says whether the halting call had already been sent.
+    """
+
+    def __init__(self, max_cost_usd: float, ledger_path: Optional[Path] = None) -> None:
+        import math
+        import threading
+
+        if not math.isfinite(max_cost_usd) or max_cost_usd <= 0:
+            raise ValueError("max_cost_usd must be a positive finite number")
+        self.max_cost_usd = float(max_cost_usd)
+        self.ledger_path = Path(ledger_path) if ledger_path else None
+        self.cumulative_usd = 0.0
+        self.max_call_usd = 0.0
+        self.n_calls = 0
+        self.halt_reason: Optional[str] = None
+        self.halt_call_made = False
+        self._lock = threading.Lock()
+        if self.ledger_path and self.ledger_path.is_file():
+            for line in self.ledger_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                cost = row.get("cost_usd")
+                if isinstance(cost, (int, float)):
+                    self.cumulative_usd += float(cost)
+                    self.max_call_usd = max(self.max_call_usd, float(cost))
+                    self.n_calls += 1
+                else:
+                    self.halt_reason = f"ledger has a call with unknown cost ({row.get('model')})"
+                    self.halt_call_made = True
+
+    def check_before_call(self) -> None:
+        with self._lock:
+            if self.halt_reason:
+                raise BudgetExhausted(f"halted: {self.halt_reason}")
+            if self.cumulative_usd + self.max_call_usd >= self.max_cost_usd or self.cumulative_usd >= self.max_cost_usd:
+                self.halt_reason = (
+                    f"cumulative ${self.cumulative_usd:.6f} plus the largest call "
+                    f"${self.max_call_usd:.6f} would reach the ${self.max_cost_usd:.2f} cap"
+                )
+                self.halt_call_made = False
+                raise BudgetExhausted(f"halted: {self.halt_reason}")
+
+    def record(self, *, model: str, cost_usd: Optional[float], detail: Optional[dict] = None) -> None:
+        with self._lock:
+            row = {"model": model, "cost_usd": cost_usd, "detail": detail or {}}
+            if isinstance(cost_usd, (int, float)):
+                self.cumulative_usd += float(cost_usd)
+                self.max_call_usd = max(self.max_call_usd, float(cost_usd))
+                self.n_calls += 1
+            else:
+                self.halt_reason = f"a call to {model} returned no readable cost"
+                self.halt_call_made = True
+            row["cumulative_usd"] = round(self.cumulative_usd, 8)
+            if self.ledger_path:
+                self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+                with self.ledger_path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def _usage_cost(data: object) -> tuple[Optional[float], dict]:
+    """(actual cost in USD or None, token counts) from an OpenRouter response."""
+
+    import math
+
+    usage = data.get("usage") if isinstance(data, dict) else None
+    if not isinstance(usage, dict):
+        return None, {}
+    tokens = {k: usage[k] for k in ("prompt_tokens", "completion_tokens", "total_tokens") if isinstance(usage.get(k), int)}
+    cost = usage.get("cost")
+    if isinstance(cost, bool) or not isinstance(cost, (int, float)) or not math.isfinite(float(cost)) or cost < 0:
+        return None, tokens
+    return float(cost), tokens
+
+
 def make_openrouter_generator(
     model: Optional[str] = None,
     *,
     timeout_s: int = 900,
     retry_sleep_s: float = 3.0,
     backend: str = "openscad",
+    budget: Optional[MeteredBudget] = None,
 ) -> Generator:
     """API-lane generator via OpenRouter chat completions (#620).
 
     Same contract as the CLI adapters: system preamble + spec prompt in, the
-    extracted candidate block out, one retry on transient failure, TimeoutError
-    on deadline (the orchestrator records status="timeout"). The request
-    carries the trial seed for what determinism the backend offers.
+    extracted candidate block out, TimeoutError on deadline (the orchestrator
+    records status="timeout"). The request carries the trial seed for what
+    determinism the backend offers.
+
+    OpenRouter is pay-per-token, so a call is never retried in-process (a retry is a second
+    charge; ``retry_sleep_s`` is accepted for compatibility and unused). The response's
+    actual ``usage.cost`` is recorded per trial in ``generate.usage_observations`` (written
+    to the trial provenance) and, when a ``budget`` is given, in its cumulative ledger. With
+    a budget, a call is refused once the cap would be reached, and a call whose cost is
+    unreadable (including a transport error or timeout, where billing is unknown) halts the run.
     """
 
     if not model:
         raise ValueError("openrouter entrants need a model, e.g. openrouter-glm-5.2")
 
-    def generate(request: GenerationRequest, _retries: int = 1) -> str:
+    usage_observations: dict = {}
+
+    def generate(request: GenerationRequest) -> str:
         import socket
 
         if request.context_tier == "image":
@@ -957,6 +1058,8 @@ def make_openrouter_generator(
                 "(#609); use a claude/codex entrant for image-tier trials"
             )
         slug = resolve_openrouter_slug(model)
+        if budget is not None:
+            budget.check_before_call()
         system = BACKEND_SYSTEM.get(backend, SYSTEM)
         closing = _CLOSING_INSTRUCTION.get(backend, _CLOSING_INSTRUCTION["openscad"])
         payload = {
@@ -971,25 +1074,39 @@ def make_openrouter_generator(
                 },
             ],
             "seed": request.seed,
+            "usage": {"include": True},
         }
+        key = (request.model_id, request.instrument_id, int(request.seed), request.context_tier)
         try:
             data = _openrouter_request("/chat/completions", payload, timeout_s=timeout_s)
-            content = data["choices"][0]["message"]["content"]
         except (TimeoutError, socket.timeout) as exc:
+            usage_observations[key] = {"slug": slug, "cost_usd": None, "note": "timeout: billing unknown"}
+            if budget is not None:
+                budget.record(model=slug, cost_usd=None, detail={"note": "timeout"})
+                raise MeteredCostError(f"openrouter/{slug} timed out after {timeout_s}s; cost unknown") from exc
             raise TimeoutError(f"openrouter/{slug} timed out after {timeout_s}s") from exc
-        except Exception as exc:  # noqa: BLE001 - HTTP/schema errors retry once
-            if _retries > 0:
-                time.sleep(retry_sleep_s)
-                return generate(request, _retries - 1)
+        except Exception as exc:  # noqa: BLE001 - no retry: a retry is another charge
+            usage_observations[key] = {"slug": slug, "cost_usd": None, "note": "request failed: billing unknown"}
+            if budget is not None:
+                budget.record(model=slug, cost_usd=None, detail={"note": "request failed"})
+                raise MeteredCostError(f"openrouter/{slug} failed ({exc}); cost unknown") from exc
             raise RuntimeError(f"openrouter/{slug} failed: {exc}") from exc
+        cost, tokens = _usage_cost(data)
+        usage_observations[key] = {"slug": slug, "cost_usd": cost, **tokens}
+        if budget is not None:
+            budget.record(model=slug, cost_usd=cost, detail=tokens)
+            if cost is None:
+                raise MeteredCostError(f"openrouter/{slug} returned no usable usage.cost; run halted")
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except Exception as exc:  # noqa: BLE001 - malformed body, already charged
+            raise RuntimeError(f"openrouter/{slug} returned a malformed response: {exc}") from exc
         candidate = extract_candidate(content, backend)
         if not candidate:
-            if _retries > 0:
-                time.sleep(retry_sleep_s)
-                return generate(request, _retries - 1)
             raise RuntimeError(f"openrouter/{slug} returned no fenced code block")
         return candidate
 
+    generate.usage_observations = usage_observations  # type: ignore[attr-defined]
     return generate
 
 
@@ -1071,6 +1188,7 @@ def resolve_generator(
     timeout_s: Optional[int] = None,
     retry_attempts: Optional[int] = None,
     backend: str = "openscad",
+    metered_budget: Optional[MeteredBudget] = None,
 ) -> Generator:
     """Build the Generator for one entrant model id.
 
@@ -1114,7 +1232,7 @@ def resolve_generator(
     if provider == "agy":
         return make_agy_generator(backend=backend, **timeout_kwargs)
     if provider == "openrouter":
-        return make_openrouter_generator(model, backend=backend, **timeout_kwargs)
+        return make_openrouter_generator(model, backend=backend, budget=metered_budget, **timeout_kwargs)
     raise ValueError(f"unknown provider '{provider}' for model id '{model_id}'")
 
 

@@ -268,3 +268,18 @@ things. The blind vote can reward aesthetic coherence or plausibility; the
 objective gate rewards renderability, manufacturability, and acoustic/DFM
 constraints. Disagreement between the two is expected evidence, not a defect to
 hide.
+
+## Metered (OpenRouter) entrants: cost capture and `--max-cost`
+
+`openrouter-*` entrants bill per token. Every call requests `usage: {include: true}` and records
+the response's actual `usage.cost` and token counts in the trial's `*.provenance.json` under
+`usage` (`cost_usd` is `null` when the cost could not be read). Calls are never retried in-process
+(a retry is a second charge).
+
+`arena run` refuses an `openrouter-*` entrant unless `--max-cost <USD>` is given. The cap applies to
+cumulative *actual* cost, kept in a JSONL ledger (`--cost-ledger`, default
+`<run-dir>/metered_cost_ledger.jsonl`; share one path across batches so the total is cumulative).
+Before each call the run halts if the cumulative cost plus the largest single call seen so far would
+reach the cap, and it halts at once when a call's cost is unreadable (including a transport error or
+timeout, where billing is unknown). A halted run leaves the remaining trials pending; a trial that
+was refused before it was sent gets its attempt back. `--stub` runs are never metered.

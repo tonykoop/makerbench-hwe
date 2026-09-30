@@ -7,7 +7,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable, Mapping
+from typing import Optional, Callable, Iterable, Mapping
 
 from .run_log_io import atomic_write_json, file_lock, merge_trial_rows
 
@@ -125,6 +125,7 @@ def run_orchestration(
     execute_trial: TrialExecutor,
     clock_fn: Callable[[], float] = time.monotonic,
     sleep_fn: Callable[[float], None] = time.sleep,
+    budget: Optional[object] = None,
 ) -> dict:
     """Run or resume an arena DoE, writing an idempotent JSON run log.
 
@@ -154,6 +155,8 @@ def run_orchestration(
         existing[trial.trial_id] = entry
         if _is_complete(entry) or int(entry.get("attempts", 0)) >= config.max_attempts:
             continue
+        if getattr(budget, "halt_reason", None):
+            break  # metered budget halted the run: leave the rest pending
 
         wait_s = _rate_limit_wait(trial, config, last_provider_call, clock_fn)
         if wait_s > 0:
@@ -181,7 +184,16 @@ def run_orchestration(
             # Old rows stay unknown; do not infer their timing from file dates.
             entry["wall_time_s"] = round(time.monotonic() - started, 6)
         last_provider_call[trial.provider] = clock_fn()
+        halted = getattr(budget, "halt_reason", None)
+        if halted and not getattr(budget, "halt_call_made", True) and entry.get("status") == "error":
+            # The budget refused this call before it was sent: no spend, so give the
+            # attempt back and leave the trial pending for a later run.
+            entry["attempts"] = max(0, int(entry.get("attempts", 1)) - 1)
+            entry["status"] = "pending"
+            entry["error"] = f"not run: {halted}"
         merged = _merge_and_write(run_log_path, config, managed_rows())
+        if halted:
+            break
 
     merged = _merge_and_write(run_log_path, config, managed_rows())
     return merged

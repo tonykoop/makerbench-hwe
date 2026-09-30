@@ -186,6 +186,9 @@ def _run_one(request: GenerationRequest, generator: Generator, out_dir: Path) ->
 
     provenance = _provenance(request, status, raw_path, scad_written, error)
     provenance["tools"] = _tools_record(request, generator)
+    usage = _usage_record(request, generator)
+    if usage is not None:
+        provenance["usage"] = usage
     provenance_path.write_text(
         json.dumps(provenance, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -223,6 +226,21 @@ def _provenance(
         "context_tier": request.context_tier,
         "workspace_dir": request.workspace_dir,
     }
+
+
+def _usage_record(request: GenerationRequest, generator: Generator) -> Optional[dict]:
+    """The metered-entrant ``usage`` block: the response's actual ``usage.cost`` and token counts.
+
+    Only generators that bill per call (OpenRouter) expose ``usage_observations``; every other
+    entrant has no ``usage`` key. ``cost_usd`` is ``None`` when the cost could not be read.
+    """
+
+    observations = getattr(generator, "usage_observations", None)
+    if not isinstance(observations, dict):
+        return None
+    key = (request.model_id, request.instrument_id, int(request.seed), request.context_tier)
+    observed = observations.get(key)
+    return dict(observed) if isinstance(observed, dict) else None
 
 
 def _tools_record(request: GenerationRequest, generator: Generator) -> dict:

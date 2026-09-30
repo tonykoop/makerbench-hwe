@@ -930,12 +930,13 @@ class TestOpenRouterProvider:
         with pytest.raises(ValueError, match="ambiguous"):
             providers.resolve_openrouter_slug("glm-5.2")
 
-    def test_retries_once_then_raises(self, monkeypatch):
+    def test_failed_call_is_not_retried_because_a_retry_is_another_charge(self, monkeypatch):
         monkeypatch.setattr(providers.time, "sleep", lambda _s: None)
-        self._request(monkeypatch, [RuntimeError("boom")])
+        calls = self._request(monkeypatch, [RuntimeError("boom")])
         gen = providers.make_openrouter_generator("z-ai/glm-5.2")
         with pytest.raises(RuntimeError, match="failed"):
             gen(self._req())
+        assert len(calls) == 1
 
     def test_timeout_raises_timeout_error(self, monkeypatch):
         self._request(monkeypatch, [TimeoutError("deadline")])
