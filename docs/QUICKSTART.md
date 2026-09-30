@@ -110,10 +110,6 @@ Full screen-by-screen guide: [arena-studio.md](arena-studio.md). Stop the server
 
 ### Matchups: vary one axis
 
-> **Pending merge of #828/#830.** The command below exists only on the `lane-a/matchup-mode`
-> branch (#830, stacked on #828). It is not on `main` yet, so `makerbench arena matchup` will
-> report "No such command" until both merge. Output below was captured from that branch.
-
 A matchup compares entrants while holding everything else fixed, so a difference in the
 scoreline is attributable to the one axis you varied. `arena matchup` only **previews** the
 cells (with cost and availability estimates); it dispatches nothing and spends nothing.
