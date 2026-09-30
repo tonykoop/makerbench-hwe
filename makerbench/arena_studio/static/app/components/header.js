@@ -38,7 +38,7 @@ export function StudioHeader({ runs, blind, runId, onSelectRun, voter, onVoterCh
             >
               <option value="">${placeholder}</option>
               ${options.map(
-                (run) => html`<option key=${run.run_id} value=${run.run_id}>${run.run_id}</option>`,
+                (run) => html`<option key=${run.run_id} value=${run.run_id}>${demo ? run.title : run.run_id}</option>`,
               )}
             </select>
           </label>
