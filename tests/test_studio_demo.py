@@ -23,6 +23,23 @@ def test_post3_aggregated_seed_claim_matches_trial_counts():
         assert all(row["n_objective_trials"] == len(case["held"]["seeds"]) for row in case["rows"])
 
 
+@pytest.mark.parametrize("defect", ["duplicate_seed", "duplicate_image", "wrong_average"])
+def test_snapshot_rejects_misstated_repeat_render_scope(defect):
+    spec = importlib.util.spec_from_file_location("demo_builder", ROOT / "scripts/build_studio_demo_data.py")
+    builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(builder)
+    data = builder.build(ROOT)
+    trials = data["cases"][0]["rows"][0]["trials"]
+    if defect == "duplicate_seed":
+        trials[1]["seed"] = 0
+    elif defect == "duplicate_image":
+        trials[1]["image"] = trials[0]["image"]
+    else:
+        trials[1]["objective_pass_rate"] = 0
+    with pytest.raises(ValueError):
+        builder.validate_aggregate_seeds(data)
+
+
 def test_builder_rejects_misstated_seed_scope_and_keys_images_by_entrant(monkeypatch):
     spec = importlib.util.spec_from_file_location("demo_builder", ROOT / "scripts/build_studio_demo_data.py")
     module = importlib.util.module_from_spec(spec)
@@ -68,7 +85,7 @@ def test_snapshot_reproduces_and_has_no_preference_or_source_artifact_fields():
     assert data == module.build(ROOT)
     assert len(data["cases"]) == 4
     assert sum(len(case["rows"]) for case in data["cases"]) == 29
-    assert len(data["assets"]) == 28
+    assert len(data["assets"]) == 38
 
     def check(value):
         if isinstance(value, dict):

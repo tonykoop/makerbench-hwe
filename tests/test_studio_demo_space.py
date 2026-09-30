@@ -23,7 +23,7 @@ def test_stage_has_only_demo_runtime_and_declared_public_assets(tmp_path):
     assert not (out / "makerbench/cli.py").exists()
     assert not (out / "makerbench/provenance.py").exists()
     assert not (out / "makerbench/arena_studio/service.py").exists()
-    assert len(list((out / "makerbench/arena_studio/demo_assets").glob("*.png"))) == 28
+    assert len(list((out / "makerbench/arena_studio/demo_assets").glob("*.png"))) == 38
     assert json.loads((out / "build-manifest.json").read_text()) == manifest
     assert all(not p.startswith(("runs/", "private/", ".git/")) for p in manifest["files"])
 
@@ -39,6 +39,22 @@ def test_unknown_answer_field_is_rejected():
     content = json.loads((ROOT / "makerbench/arena_studio/data/showcase.json").read_text())
     content["cases"][0]["rows"][0]["source_code"] = "PRIVATE_SENTINEL"
     with pytest.raises(ValueError, match="Unexpected showcase fields"):
+        builder.audit_snapshot(content)
+
+
+@pytest.mark.parametrize("defect", ["duplicate_seed", "duplicate_image", "wrong_average", "answer_field"])
+def test_enriched_trial_fields_fail_closed(defect):
+    content = json.loads((ROOT / "makerbench/arena_studio/data/showcase.json").read_text())
+    trials = content["cases"][0]["rows"][0]["trials"]
+    if defect == "duplicate_seed":
+        trials[1]["seed"] = 0
+    elif defect == "duplicate_image":
+        trials[1]["image"] = trials[0]["image"]
+    elif defect == "wrong_average":
+        trials[1]["objective_pass_rate"] = 0
+    else:
+        trials[0]["source_code"] = "PRIVATE_SENTINEL"
+    with pytest.raises(ValueError):
         builder.audit_snapshot(content)
 
 

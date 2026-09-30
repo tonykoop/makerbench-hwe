@@ -15,7 +15,9 @@ RUNTIME = ("makerbench/__init__.py", "makerbench/arena_studio/__init__.py",
            "makerbench/arena_studio/demo.py", "makerbench/arena_studio/data/showcase.json")
 RECIPE = ("app.py", "Dockerfile", "pyproject.toml", "README.md")
 PUBLIC_PNG = re.compile(
-    r"docs/showcase/(?:post3/matchup-model/(?:opus-5\.5|sonnet-5\.5)-seed0|"
+    r"docs/showcase/(?:post3/matchup-model/scored/(?:opus-5\.5|sonnet-5\.5)-seed[012]|"
+    r"post3/matchup-backend/after/scored/(?:openscad|cadquery|build123d)-seed[012]|"
+    r"post3/matchup-model/(?:opus-5\.5|sonnet-5\.5)-seed0|"
     r"post3/matchup-backend/after/(?:openscad|cadquery|build123d)-seed0|"
     r"strings/gallery/img/design-[0-9]{3}|kora/assets/(?:blind|image)-seed[012])\.png"
 )
@@ -51,10 +53,25 @@ def audit_snapshot(content):
             seeds = case["held"].get("seeds")
             if seeds != [0, 1, 2] or any(row["n_objective_trials"] != len(seeds) for row in case["rows"]):
                 raise ValueError("Post-3 aggregate trial counts must match seeds 0, 1, 2")
+            for row in case["rows"]:
+                trials = row.get("trials", [])
+                if (sorted(trial["seed"] for trial in trials) != seeds
+                        or len({trial["image"] for trial in trials}) != len(seeds)):
+                    raise ValueError("Post-3 render strips must contain distinct runs for seeds 0, 1, 2")
+                if abs(sum(trial["objective_pass_rate"] for trial in trials) / len(seeds) - row["objective_pass_rate"]) > 1e-6:
+                    raise ValueError("Post-3 trial averages must match the recorded result")
         for row in case["rows"]:
             if set(row) - {"label", "entrant", "backend", "objective_pass_rate", "n_objective_trials",
-                           "status", "image", "recorded_pipeline_rate", "gates"}:
+                           "status", "image", "recorded_pipeline_rate", "gates", "trials"}:
                 raise ValueError("Unexpected showcase fields")
+            for trial in row.get("trials", []):
+                if set(trial) != {"seed", "image", "gates", "objective_pass_rate", "failed_checks"}:
+                    raise ValueError("Unexpected showcase trial fields")
+                if set(trial["gates"]) - {"renders", "watertight", "nonzero_volume", "fits_envelope", "body_count", "min_wall"}:
+                    raise ValueError("Unexpected showcase build check")
+                for failure in trial["failed_checks"]:
+                    if set(failure) - {"check", "measured", "threshold", "tolerance", "unit", "requires", "body_id", "detail"}:
+                        raise ValueError("Unexpected showcase failure fields")
 
 
 def stage(out: Path, root: Path = ROOT) -> dict:
