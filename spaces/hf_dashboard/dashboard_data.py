@@ -137,7 +137,27 @@ def _workflow_headline(entry: dict) -> str:
     return " + ".join(bits)
 
 
-def _aggregate_rows(entries: list[dict], *, key_fn, headline_fn, league: str) -> list[dict]:
+# Coverage floor (#877): a row needs *scored* runs in at least this many distinct task families
+# (the manifest's ``domain``) to take a rank. The public site never floors: its overall
+# is a mean over the capabilities a model attempted and it only reports coverage next to
+# it, so a one-family model can top it. Here an under-covered row is listed after every
+# ranked row, unranked, with an explicit note, so a thin row cannot lead the board.
+# Policy (sprint manager, #877): 3 scored task families, *capped at the number of families
+# that exist in the manifest*, so a dashboard with fewer families still ranks its rows.
+# A follow-up can add the same floor to the site; until then the site has none.
+MIN_DOMAINS_FOR_RANK = 3
+
+
+def effective_min_domains(entries: list[dict], min_domains: int = MIN_DOMAINS_FOR_RANK) -> int:
+    """The floor actually applied: ``min_domains`` capped at the distinct task families
+    (``domain``) present anywhere in the manifest. With no family data it is 0, so a
+    manifest that carries no domains keeps its plain score ordering."""
+    families = {e.get("domain") for e in entries if e.get("domain")}
+    return min(min_domains, len(families))
+
+
+def _aggregate_rows(entries: list[dict], *, key_fn, headline_fn, league: str,
+                    min_domains: int = MIN_DOMAINS_FOR_RANK) -> list[dict]:
     groups: dict = {}
     for entry in entries:
         key = key_fn(entry)
@@ -168,23 +188,48 @@ def _aggregate_rows(entries: list[dict], *, key_fn, headline_fn, league: str) ->
             },
             "members": sorted(m.get("run_id") for m in members if m.get("run_id")),
         })
+        # Coverage counts *scored* families only: a run with no score is not evidence
+        # (the mean already excludes it), and a recorded 0 is a real score and counts.
+        scored_domains = sorted({m.get("domain") for m in members
+                                 if m.get("domain") and isinstance(m.get("score"), (int, float))})
+        n_domains = len(scored_domains)
+        rows[-1]["scored_domains"] = scored_domains
+        rows[-1]["n_domains"] = n_domains
+        # A row with no numeric score at all is never ranked, whatever the floor (it is 0
+        # when a manifest carries no families); recorded zeros are scores and do count.
+        eligible = bool(scores) and n_domains >= min_domains
+        rows[-1]["rank_eligible"] = eligible
+        rows[-1]["coverage_note"] = (
+            "" if eligible
+            else "unranked: no scored runs" if not scores
+            else f"unranked: scored in {n_domains} of the {min_domains} task families needed to rank"
+        )
 
-    # Deterministic order: scored rows by mean_score desc, then n_runs desc, then
-    # headline asc; unscored rows always trail, ordered by headline.
+    # Deterministic order: rows that meet the coverage floor first, then scored rows by
+    # mean_score desc, then n_runs desc, then headline asc; unscored rows trail within
+    # their group, ordered by headline. Only floor-meeting rows take a rank (#877).
     rows.sort(key=lambda r: (
+        not r["rank_eligible"],
         r["mean_score"] is None,
         -(r["mean_score"] or 0.0),
         -r["n_runs"],
         r["headline"],
     ))
-    for rank, row in enumerate(rows, start=1):
-        row["rank"] = rank
+    rank = 0
+    for row in rows:
+        if row["rank_eligible"]:
+            rank += 1
+            row["rank"] = rank
+        else:
+            row["rank"] = None
     return rows
 
 
-def build_dual_league(manifest: dict, *, autonomous_classes=AUTONOMOUS_CLASSES) -> dict:
+def build_dual_league(manifest: dict, *, autonomous_classes=AUTONOMOUS_CLASSES,
+                      min_domains: int = MIN_DOMAINS_FOR_RANK) -> dict:
     """Split a runs-manifest into Autonomous and Workflow leaderboards (Tab A)."""
     entries = list(manifest.get("runs") or [])
+    min_domains = effective_min_domains(entries, min_domains)
     autonomous, workflow = [], []
     for entry in entries:
         if is_workflow_league(entry.get("harness_class"), autonomous_classes):
@@ -196,6 +241,7 @@ def build_dual_league(manifest: dict, *, autonomous_classes=AUTONOMOUS_CLASSES) 
         "schema": DUAL_LEAGUE_SCHEMA,
         "source_schema": manifest.get("schema"),
         "total_runs": len(entries),
+        "min_domains_for_rank": min_domains,
         "leagues": {
             "autonomous": {
                 "title": "Autonomous",
@@ -204,6 +250,7 @@ def build_dual_league(manifest: dict, *, autonomous_classes=AUTONOMOUS_CLASSES) 
                 "rows": _aggregate_rows(
                     autonomous, key_fn=_autonomous_key,
                     headline_fn=_autonomous_headline, league="autonomous",
+                    min_domains=min_domains,
                 ),
             },
             "workflow": {
@@ -213,6 +260,7 @@ def build_dual_league(manifest: dict, *, autonomous_classes=AUTONOMOUS_CLASSES) 
                 "rows": _aggregate_rows(
                     workflow, key_fn=_workflow_headline,
                     headline_fn=_workflow_headline, league="workflow",
+                    min_domains=min_domains,
                 ),
             },
         },
