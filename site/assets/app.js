@@ -1472,8 +1472,8 @@
 
     fig.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" ' +
       'aria-label="MakerBench repo family: the makerbench-hwe harness at the ' +
-      'centre, connected to its private integrity repos, sibling capability ' +
-      'repos, and an interactive Space.">' +
+      'centre, connected to confirmed public benchmark resources and an ' +
+      'interactive Space.">' +
       '<desc>Hub-and-spoke diagram of the MakerBench repo family.</desc>' +
       edges + boxes + hub_g + '</svg>';
   }
@@ -1482,7 +1482,11 @@
     var data = DATA.ecosystem;
     var grid = document.getElementById("ecosystem-grid");
     if (!grid) return;
-    if (!data || !data.nodes || !data.nodes.length) {
+    var targets = (data && data.public_targets) || [];
+    var nodes = ((data && data.nodes) || []).filter(function (n) {
+      return n && n.private === false && targets.indexOf(n.url) !== -1;
+    });
+    if (!nodes.length) {
       grid.innerHTML = '<p class="muted-note">No ecosystem data.</p>';
       return;
     }
@@ -1495,14 +1499,14 @@
       }
     }
 
-    buildEcosystemMap(data.nodes);
+    buildEcosystemMap(nodes);
 
     // Legend, one entry per kind actually present, in canonical order.
     var legend = document.getElementById("eco-legend");
     if (legend) {
       var kinds = [];
       ["harness", "satellite", "surface", "integrity"].forEach(function (k) {
-        if (data.nodes.some(function (n) { return n.kind === k; })) kinds.push(k);
+        if (nodes.some(function (n) { return n.kind === k; })) kinds.push(k);
       });
       legend.innerHTML = kinds.map(function (k) {
         return '<span class="eco-key"><span class="eco-sw eco-sw-' + k +
@@ -1510,7 +1514,7 @@
       }).join("");
     }
 
-    grid.innerHTML = data.nodes.map(function (n) {
+    grid.innerHTML = nodes.map(function (n) {
       var tags = "";
       if (n.private) tags += '<span class="eco-tag private" title="Access-gated; ' +
         'contents never reach the sandbox or this site">private</span>';

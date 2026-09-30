@@ -279,14 +279,16 @@ HUMAN_BASELINE_PREFIX = "human-baseline"
 # family. `kind` drives both the card grouping and the themeable hub-and-spoke
 # SVG that app.js renders:
 #   harness   — this repo: the hub (harness + site + deterministic graders).
-#   integrity — private grader-integrity repos (gold oracles, submitted
-#               artifacts). Only a *pointer* is emitted; their contents
-#               (held-out seeds, oracle solutions) NEVER reach the payload —
-#               see CANARY.md / docs/CONTAMINATION_RESPONSE.md.
 #   satellite — sibling public capability repos that feed task families.
 #   surface   — an interactive front-end onto the benchmark.
 # Framing is kept consistent with docs/LANDSCAPE.md.
 GITHUB_ORG_URL = "https://github.com/tonykoop"
+# Public visibility confirmed against GitHub and the Space API on 2026-09-30.
+# This is an offline publication allowlist; stale `private: false` flags cannot
+# add a target. Recheck visibility before adding or republishing a target.
+ECOSYSTEM_PUBLIC_TARGETS = frozenset({
+    f"{GITHUB_ORG_URL}/makerbench-hwe", HF_SPACE_URL,
+})
 ECOSYSTEM_NODES: list[dict] = [
     {
         "id": "makerbench-hwe",
@@ -296,58 +298,6 @@ ECOSYSTEM_NODES: list[dict] = [
         "blurb": "The benchmark harness, this site, and the deterministic "
         "geometric graders — the open referee layer everything else plugs into.",
         "url": f"{GITHUB_ORG_URL}/makerbench-hwe",
-        "private": False,
-    },
-    {
-        "id": "makerbench-oracles",
-        "name": "makerbench-oracles",
-        "kind": "integrity",
-        "role": "Private gold · held-out seeds",
-        "blurb": "Private gold solutions and held-out seeds — the grader-"
-        "integrity tripwire. Access-gated by design; its contents never reach "
-        "the agent sandbox or this site.",
-        "url": f"{GITHUB_ORG_URL}/makerbench-oracles",
-        "private": True,
-    },
-    {
-        "id": "makerbench-submissions",
-        "name": "makerbench-submissions",
-        "kind": "integrity",
-        "role": "Private artifact archive",
-        "blurb": "The private archive of submitted artifacts behind every "
-        "published score — kept for server-side re-grade and reproducibility.",
-        "url": f"{GITHUB_ORG_URL}/makerbench-submissions",
-        "private": True,
-    },
-    {
-        "id": "3dmaker-vlm",
-        "name": "3DMaker-VLM",
-        "kind": "satellite",
-        "role": "Vision → parametric CAD",
-        "blurb": "Vision-to-parametric-CAD reverse-engineering — turning images "
-        "of a part into editable CAD, feeding the perception and reverse-"
-        "engineering families.",
-        "url": f"{GITHUB_ORG_URL}/3DMaker-VLM",
-        "private": False,
-    },
-    {
-        "id": "hwe-pipeline",
-        "name": "HWE-Pipeline",
-        "kind": "satellite",
-        "role": "Prototype → finished-good PLM/DFM",
-        "blurb": "The hardware prototype → finished-good evolution: the PLM/DFM "
-        "maturation the manufacturability ladder is grounded in.",
-        "url": f"{GITHUB_ORG_URL}/HWE-Pipeline",
-        "private": False,
-    },
-    {
-        "id": "studiopipeline-hwe",
-        "name": "StudioPipeline-hwe",
-        "kind": "satellite",
-        "role": "Benchmarked human–AI workflow",
-        "blurb": "A benchmarked human-AI workflow stack — the full studio "
-        "pipeline measured end-to-end, the basis of the Workflow league.",
-        "url": f"{GITHUB_ORG_URL}/StudioPipeline-hwe",
         "private": False,
     },
     {
@@ -363,11 +313,15 @@ ECOSYSTEM_NODES: list[dict] = [
 ]
 
 ECOSYSTEM_INTRO = (
-    "MakerBench is a family of repos, not one leaderboard. The harness and "
-    "deterministic graders are the referee; private integrity repos keep the "
-    "scores honest; sibling capability repos and an interactive Space extend "
-    "the surface."
+    "Explore the public benchmark harness, deterministic graders and site, "
+    "alongside the interactive leaderboard mirror."
 )
+
+
+def public_ecosystem_nodes(nodes: list[dict]) -> list[dict]:
+    """Fail closed for private, unknown or unconfirmed publication targets."""
+    return [dict(n) for n in nodes if isinstance(n, dict)
+            and n.get("private") is False and n.get("url") in ECOSYSTEM_PUBLIC_TARGETS]
 
 
 def is_human_baseline_identifier(identifier: object) -> bool:
@@ -1760,7 +1714,7 @@ def build_ecosystem(families: list[dict], models: list[dict]) -> dict:
     enriched with LIVE counts derived from the registry + scanned results, so
     the "how big is this really" framing stays pinned to reality and can't drift
     from the actual benchmark. No held-out seeds or private-oracle contents are
-    emitted — ``integrity`` nodes carry only a pointer (CANARY.md guardrail).
+    emitted. Private and unconfirmed identities are excluded from public data.
     """
     domains = sorted({f.get("domain", "") for f in families if f.get("domain")})
     # Scored competitors only (reference/control rows are not "models graded").
@@ -1769,7 +1723,7 @@ def build_ecosystem(families: list[dict], models: list[dict]) -> dict:
         for m in models
         if not m.get("is_control") and not m.get("is_human_baseline")
     )
-    nodes = [dict(node) for node in ECOSYSTEM_NODES]
+    nodes = public_ecosystem_nodes(ECOSYSTEM_NODES)
     for node in nodes:
         if node["id"] == "makerbench-hwe":
             node["stats"] = [
@@ -1777,7 +1731,8 @@ def build_ecosystem(families: list[dict], models: list[dict]) -> dict:
                 {"label": "domains", "value": len(domains)},
                 {"label": "models graded", "value": competitor_count},
             ]
-    return {"intro": ECOSYSTEM_INTRO, "nodes": nodes}
+    return {"intro": ECOSYSTEM_INTRO, "nodes": nodes,
+            "public_targets": sorted(ECOSYSTEM_PUBLIC_TARGETS)}
 
 
 ROADMAP_PHASES = [
@@ -4337,7 +4292,7 @@ def _prerender_sections(payload: dict, supplemental: dict | None = None) -> dict
         f'rel="noopener"><h3>{_esc(n.get("name", ""))}</h3>'
         f'<span class="eco-role">{_esc(n.get("role", ""))}</span>'
         f'<p>{_esc(n.get("blurb", ""))}</p></a>'
-        for n in (payload.get("ecosystem") or {}).get("nodes") or []
+        for n in public_ecosystem_nodes((payload.get("ecosystem") or {}).get("nodes") or [])
     ) or '<p class="muted-note">No ecosystem entries published.</p>'
     findings = (supplemental.get("findings") or {}).get("findings") or []
     blocks["findings"] = "".join(
