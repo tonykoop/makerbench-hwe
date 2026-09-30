@@ -2019,9 +2019,8 @@ def test_site_builds_data_driven_hero_stats(tmp_path):
     assert by_key["dfm_pass_rate"]["value"] == 0.5
     assert by_key["dfm_pass_rate"]["display"] == "50%"
 
-    # Top blind score is Model A's 4.00 — never the control's.
-    assert by_key["top_score"]["display"] == "4.00/4"
-    assert "baseline-v0" not in by_key["top_score"]["detail"]
+    # A single-family fixture provides no overall ranked leader.
+    assert "top_score" not in by_key
 
     # Blind→perception lift averaged per model: A +0.0, B +2.0 → +1.00.
     assert by_key["perception_lift"]["value"] == 1.0
