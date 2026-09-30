@@ -381,6 +381,8 @@ class ArenaStudioService:
         levels: Optional[list[str]] = None,
         context_tiers: Optional[list[str]] = None,
         seeds: Optional[list[int]] = None,
+        backends: Optional[list[str]] = None,
+        driver_models: Optional[list[str]] = None,
     ) -> dict[str, Any]:
         """Preview the DoE matrix with per-cell time/cost estimates (#697 D3).
 
@@ -393,6 +395,8 @@ class ArenaStudioService:
             levels=levels or doe.DEFAULT_LEVELS,
             context_tiers=context_tiers or doe.DEFAULT_CONTEXT_TIERS,
             seeds=seeds or (0,),
+            backends=backends if backends is not None else doe.DEFAULT_BACKENDS,
+            driver_models=driver_models,
         )
         annotated = doe.annotate_matrix_with_estimates(cells)
         return {"cells": annotated, "summary": doe.matrix_summary(annotated)}
@@ -406,6 +410,8 @@ class ArenaStudioService:
         levels: Optional[list[str]] = None,
         context_tiers: Optional[list[str]] = None,
         seeds: Optional[list[int]] = None,
+        backends: Optional[list[str]] = None,
+        driver_models: Optional[list[str]] = None,
         budget_usd: float = 5.0,
         max_cost_usd_by_model: Optional[dict[str, float]] = None,
         replace: bool = False,
@@ -436,12 +442,14 @@ class ArenaStudioService:
             levels=levels or doe.DEFAULT_LEVELS,
             context_tiers=context_tiers or doe.DEFAULT_CONTEXT_TIERS,
             seeds=seeds or (0,),
+            backends=backends if backends is not None else doe.DEFAULT_BACKENDS,
+            driver_models=driver_models,
         )
         reference_images = {
             inst: self.get_task_reference(inst)["image_path"] for inst in instruments
         }
         resolved_max_cost = doe.resolve_max_cost_usd_by_model(
-            {cell["model_id"] for cell in cells},
+            {cell["model_id"] for cell in cells if cell["backend"] not in doe.LIVE_BACKENDS},
             overrides=max_cost_usd_by_model,
         )
         payload, jobs = doe.build_nightly_queue(
@@ -466,6 +474,7 @@ class ArenaStudioService:
             "queue_path": str(queue_path),
             "n_jobs": len(jobs),
             "skipped": payload["skipped"],
+            "backend_warnings": payload["backend_warnings"],
         }
 
     def get_registry_tasks(self, family: Optional[str] = None) -> list[dict[str, Any]]:

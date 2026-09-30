@@ -3,6 +3,8 @@
 
 import { describeReference, joinNames, RUN_ID_PATTERN } from "./launch.js";
 
+export const BACKENDS = ["openscad", "cadquery", "build123d", "blender", "solidworks", "fusion", "solidworks-live", "fusion-live"];
+
 export const LEVELS = ["L1", "L2", "L3", "L4"];
 
 export const CONTEXT_TIERS = [
@@ -26,14 +28,17 @@ export function parseSeeds(text) {
   return { seeds: [...seeds].sort((a, b) => a - b), invalid };
 }
 
-export function cellCount({ instruments, models, levels, tiers, seeds }) {
-  return instruments.length * models.length * levels.length * tiers.length * seeds.length;
+export function cellCount(matrix) {
+  const { instruments, models, levels, tiers, seeds } = matrix;
+  const entrantCount = (matrix.backends || ["openscad"]).reduce((n, backend) =>
+    n + (backend.endsWith("-live") && matrix.driver_models?.length ? matrix.driver_models.length : models.length), 0);
+  return instruments.length * entrantCount * levels.length * tiers.length * seeds.length;
 }
 
 // null when there is nothing sensible to preview yet.
 export function previewQuery(matrix) {
   const { instruments, models, levels, tiers, seeds } = matrix;
-  if (![instruments, models, levels, tiers, seeds].every((list) => list.length > 0)) return null;
+  if (![instruments, models, levels, tiers, seeds, matrix.backends || ["openscad"]].every((list) => list.length > 0)) return null;
   if (cellCount(matrix) > MAX_PREVIEW_CELLS) return null;
   return new URLSearchParams({
     instruments: instruments.join(","),
@@ -41,6 +46,8 @@ export function previewQuery(matrix) {
     levels: levels.join(","),
     context_tiers: tiers.join(","),
     seeds: seeds.join(","),
+    backends: (matrix.backends || ["openscad"]).join(","),
+    ...(matrix.driver_models?.length ? { driver_models: matrix.driver_models.join(",") } : {}),
   }).toString();
 }
 
@@ -135,6 +142,8 @@ export function doeBlockers({ matrix, invalidSeeds, runId, budget, preview, unkn
     blockers.push("Each nightly job needs at least two entrants: list two models, or pick two levels.");
   }
   if (levels.length === 0) blockers.push("Choose at least one level.");
+  if (matrix.backends?.length === 0) blockers.push("Choose at least one backend.");
+  if (matrix.backends?.some((backend) => backend.endsWith("-live")) && matrix.driver_models?.length === 0) blockers.push("Choose a live driver model.");
   if (tiers.length === 0) blockers.push("Choose at least one context tier.");
   if (invalidSeeds.length) blockers.push(`Seeds must be whole numbers, not ${joinNames(invalidSeeds)}.`);
   else if (seeds.length === 0) blockers.push("Add at least one seed.");

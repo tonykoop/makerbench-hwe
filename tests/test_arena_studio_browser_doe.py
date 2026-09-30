@@ -393,3 +393,30 @@ def test_doe_hostile_registry_text_and_phone_width(studio_url: str, screenshot_d
         assert session.errors == []
         session.close()
         browser.close()
+
+
+
+def test_backend_selector_counts_live_drivers_and_shows_readiness(studio_url):
+    with sync_playwright() as playwright:
+        browser = _launch(playwright, "zero-webgl")
+        session = Session(browser, f"{studio_url}/#/doe", viewport={"width": 1440, "height": 1000})
+        page = session.page
+        page.locator("input[name=instrument][value=ocarina]").wait_for()
+        session.pick("ocarina")
+        page.fill("textarea[name=models]", SUBSCRIPTION)
+        page.check("input[name=backend][value=fusion-live]")
+        page.fill("input[name=driver_models]", "gpt-5.6-sol")
+        preview = page.locator(".doe-preview")
+        # Four levels times (two code entrants plus one live driver).
+        preview.locator(".facts dd.measure").first.filter(has_text="12").wait_for()
+        preview.get_by_role("heading", name="Backend readiness").wait_for()
+        assert "fusion-live" in preview.inner_text()
+        page.fill("input[name=run_id]", "backend-preview")
+        page.locator('.doe-write-form button[type=submit][aria-disabled="false"]').wait_for()
+        page.uncheck("input[name=backend][value=openscad]")
+        page.uncheck("input[name=backend][value=fusion-live]")
+        page.locator(".blockers", has_text="Choose at least one backend.").wait_for()
+        assert page.locator(".doe-write-form button[type=submit]").get_attribute("aria-disabled") == "true"
+        assert session.errors == []
+        session.close()
+        browser.close()
