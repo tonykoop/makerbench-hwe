@@ -3,6 +3,8 @@
 
 import { describeReference, joinNames, RUN_ID_PATTERN } from "./launch.js";
 
+export const BACKENDS = ["openscad", "cadquery", "build123d", "blender", "solidworks", "fusion", "solidworks-live", "fusion-live"];
+
 export const LEVELS = ["L1", "L2", "L3", "L4"];
 
 export const CONTEXT_TIERS = [
@@ -26,21 +28,45 @@ export function parseSeeds(text) {
   return { seeds: [...seeds].sort((a, b) => a - b), invalid };
 }
 
-export function cellCount({ instruments, models, levels, tiers, seeds }) {
-  return instruments.length * models.length * levels.length * tiers.length * seeds.length;
+export function entrantsPerJob(matrix) {
+  const { models, levels } = matrix;
+  return levels.length * (matrix.backends || ["openscad"]).reduce((n, backend) =>
+    n + (backend.endsWith("-live") ? (matrix.driver_models || []).length : models.length), 0);
+}
+
+export function cellCount(matrix) {
+  return matrix.instruments.length * matrix.tiers.length * matrix.seeds.length * entrantsPerJob(matrix);
+}
+
+export const MATCHUP_AXES = ["backends", "models", "levels", "context_tiers", "seeds", "instruments", "driver_models"];
+
+export function axisValues(matrix, axis) {
+  return matrix[axis === "context_tiers" ? "tiers" : axis] || [];
+}
+
+export function matchupBlockers(matrix) {
+  if (!matrix.varied_axis) return [];
+  const blockers = [];
+  if (axisValues(matrix, matrix.varied_axis).length < 2) blockers.push("Choose at least two values for the axis you vary.");
+  const others = MATCHUP_AXES.filter((axis) => axis !== matrix.varied_axis && axisValues(matrix, axis).length > 1);
+  if (others.length && !matrix.factorial) blockers.push(`Hold ${others.join(", ")} constant, or enable factorial.`);
+  return blockers;
 }
 
 // null when there is nothing sensible to preview yet.
 export function previewQuery(matrix) {
   const { instruments, models, levels, tiers, seeds } = matrix;
-  if (![instruments, models, levels, tiers, seeds].every((list) => list.length > 0)) return null;
-  if (cellCount(matrix) > MAX_PREVIEW_CELLS) return null;
+  if (![instruments, models, levels, tiers, seeds, matrix.backends || ["openscad"]].every((list) => list.length > 0)) return null;
+  if (cellCount(matrix) > MAX_PREVIEW_CELLS || matchupBlockers(matrix).length) return null;
   return new URLSearchParams({
     instruments: instruments.join(","),
     models: models.join(","),
     levels: levels.join(","),
     context_tiers: tiers.join(","),
     seeds: seeds.join(","),
+    backends: (matrix.backends || ["openscad"]).join(","),
+    ...(matrix.varied_axis ? { varied_axis: matrix.varied_axis, values: axisValues(matrix, matrix.varied_axis).join(","), factorial: String(Boolean(matrix.factorial)) } : {}),
+    ...(matrix.driver_models?.length ? { driver_models: matrix.driver_models.join(",") } : {}),
   }).toString();
 }
 
@@ -128,13 +154,15 @@ export function predictedSkips(instruments, references, entrantsPerJob) {
 
 export function doeBlockers({ matrix, invalidSeeds, runId, budget, preview, unknownModels, ceilings }) {
   const { instruments, models, levels, tiers, seeds } = matrix;
-  const blockers = [];
+  const blockers = [...matchupBlockers(matrix)];
   if (instruments.length === 0) blockers.push("Choose at least one instrument.");
   if (models.length === 0) blockers.push("List at least one entrant.");
-  else if (models.length * levels.length < 2) {
-    blockers.push("Each nightly job needs at least two entrants: list two models, or pick two levels.");
+  else if (entrantsPerJob(matrix) < 2) {
+    blockers.push("Each nightly job needs at least two entrants: choose two models, levels, backends or live drivers.");
   }
   if (levels.length === 0) blockers.push("Choose at least one level.");
+  if (matrix.backends?.length === 0) blockers.push("Choose at least one backend.");
+  if (matrix.backends?.some((backend) => backend.endsWith("-live")) && matrix.driver_models?.length === 0) blockers.push("Choose a live driver model.");
   if (tiers.length === 0) blockers.push("Choose at least one context tier.");
   if (invalidSeeds.length) blockers.push(`Seeds must be whole numbers, not ${joinNames(invalidSeeds)}.`);
   else if (seeds.length === 0) blockers.push("Add at least one seed.");

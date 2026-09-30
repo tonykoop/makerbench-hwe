@@ -381,21 +381,29 @@ class ArenaStudioService:
         levels: Optional[list[str]] = None,
         context_tiers: Optional[list[str]] = None,
         seeds: Optional[list[int]] = None,
+        backends: Optional[list[str]] = None,
+        driver_models: Optional[list[str]] = None,
+        varied_axis: Optional[str] = None,
+        values: Optional[list] = None,
+        factorial: bool = False,
     ) -> dict[str, Any]:
         """Preview the DoE matrix with per-cell time/cost estimates (#697 D3).
 
         Read-only: builds and annotates the cell list, never writes or
         executes anything.
         """
-        cells = doe.expand_matrix(
-            instruments,
-            models,
-            levels=levels or doe.DEFAULT_LEVELS,
-            context_tiers=context_tiers or doe.DEFAULT_CONTEXT_TIERS,
-            seeds=seeds or (0,),
+        dimensions = dict(
+            instruments=instruments, models=models,
+            levels=levels if levels is not None else (("L1",) if varied_axis else doe.DEFAULT_LEVELS),
+            context_tiers=context_tiers if context_tiers is not None else doe.DEFAULT_CONTEXT_TIERS,
+            seeds=seeds if seeds is not None else (0,),
+            backends=backends if backends is not None else doe.DEFAULT_BACKENDS,
+            driver_models=driver_models,
         )
+        matchup = doe.build_matchup(varied_axis, values or [], factorial=factorial, **dimensions) if varied_axis else {}
+        cells = matchup.get("cells") if varied_axis else doe.expand_matrix(**dimensions)
         annotated = doe.annotate_matrix_with_estimates(cells)
-        return {"cells": annotated, "summary": doe.matrix_summary(annotated)}
+        return {**matchup, "cells": annotated, "summary": doe.matrix_summary(annotated)}
 
     def write_doe_queue(
         self,
@@ -406,6 +414,11 @@ class ArenaStudioService:
         levels: Optional[list[str]] = None,
         context_tiers: Optional[list[str]] = None,
         seeds: Optional[list[int]] = None,
+        backends: Optional[list[str]] = None,
+        driver_models: Optional[list[str]] = None,
+        varied_axis: Optional[str] = None,
+        values: Optional[list] = None,
+        factorial: bool = False,
         budget_usd: float = 5.0,
         max_cost_usd_by_model: Optional[dict[str, float]] = None,
         replace: bool = False,
@@ -430,18 +443,18 @@ class ArenaStudioService:
                 f"run_id must be a safe path segment (letters/digits/_.-, no "
                 f"'/' or leading '.'), got {run_id!r}"
             )
-        cells = doe.expand_matrix(
-            instruments,
-            models,
-            levels=levels or doe.DEFAULT_LEVELS,
-            context_tiers=context_tiers or doe.DEFAULT_CONTEXT_TIERS,
-            seeds=seeds or (0,),
+        preview = self.preview_doe_matrix(
+            instruments, models, levels=levels, context_tiers=context_tiers,
+            seeds=seeds, backends=backends, driver_models=driver_models,
+            varied_axis=varied_axis, values=values, factorial=factorial,
         )
+        cells = preview["cells"]
+        matchup = {key: preview[key] for key in ("varied_axis", "values", "varied_axes", "factorial", "held") if key in preview}
         reference_images = {
-            inst: self.get_task_reference(inst)["image_path"] for inst in instruments
+            inst: self.get_task_reference(inst)["image_path"] for inst in {cell["instrument_id"] for cell in cells}
         }
         resolved_max_cost = doe.resolve_max_cost_usd_by_model(
-            {cell["model_id"] for cell in cells},
+            {cell["model_id"] for cell in cells if cell["backend"] not in doe.LIVE_BACKENDS},
             overrides=max_cost_usd_by_model,
         )
         payload, jobs = doe.build_nightly_queue(
@@ -451,6 +464,7 @@ class ArenaStudioService:
             budget_usd=budget_usd,
             max_cost_usd_by_model=resolved_max_cost,
         )
+        payload.update(matchup)
         # Checked after the request validates (unknown cost ceilings, the matrix), so a
         # bad request answers 400 instead of first asking to replace a queue.
         queue_rel = f"runs/code_cad_arena/{run_id}/doe_queue.json"
@@ -463,9 +477,11 @@ class ArenaStudioService:
         queue_path = run_dir / "doe_queue.json"
         doe.write_queue_file(queue_path, payload, jobs)
         return {
+            **matchup,
             "queue_path": str(queue_path),
             "n_jobs": len(jobs),
             "skipped": payload["skipped"],
+            "backend_warnings": payload["backend_warnings"],
         }
 
     def get_registry_tasks(self, family: Optional[str] = None) -> list[dict[str, Any]]:

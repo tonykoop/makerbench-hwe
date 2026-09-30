@@ -334,6 +334,40 @@ def _voted_pair_keys(run_dir: Path, voter_id: str) -> set[tuple[str, str]]:
     return keys
 
 
+@arena_app.command("matchup")
+def arena_matchup(
+    varied_axis: str = typer.Option(..., "--vary", help="Axis to vary: backend/bridge, model, level, context, seed, instrument or driver_model."),
+    values: str = typer.Option(..., "--values", help="At least two comma-separated dispatch identifiers."),
+    instruments: str = typer.Option(..., help="Held instrument ids; one unless factorial."),
+    models: str = typer.Option(..., help="Held entrant ids; one unless factorial."),
+    levels: str = typer.Option("L1", help="Held level labels."),
+    context_tiers: str = typer.Option("blind", "--context-tiers"),
+    seeds: str = typer.Option("0"),
+    backends: str = typer.Option("openscad", "--backends"),
+    driver_models: Optional[str] = typer.Option(None, "--driver-models"),
+    factorial: bool = typer.Option(False, "--factorial", help="Explicitly allow multiple varying axes."),
+    out: Optional[str] = typer.Option(None, "--out", help="Optional JSON preview file; no run is dispatched."),
+):
+    """Preview a matchup that varies one axis, with estimates and held values."""
+    from .arena_studio import doe
+
+    try:
+        result = doe.build_matchup(
+            varied_axis, _split_csv(values), instruments=_split_csv(instruments),
+            models=_split_csv(models), levels=_split_csv(levels),
+            context_tiers=_split_csv(context_tiers), seeds=[int(s) for s in _split_csv(seeds)],
+            backends=_split_csv(backends), driver_models=_split_csv(driver_models) if driver_models is not None else None,
+            factorial=factorial,
+        )
+        result["cells"] = doe.annotate_matrix_with_estimates(result["cells"])
+        result["summary"] = doe.matrix_summary(result["cells"])
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from None
+    if out:
+        atomic_write_json(Path(out), result)
+    typer.echo(json.dumps(result, indent=2))
+
+
 @arena_app.command("run")
 def arena_run(
         run_dir: str = typer.Option(..., "--run-dir", help="Run directory (use runs/code_cad_arena/<run_id>)."),
