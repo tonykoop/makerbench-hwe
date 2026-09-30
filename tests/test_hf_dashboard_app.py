@@ -185,3 +185,24 @@ def test_geometry_preview_direct_mesh_without_trimesh(monkeypatch):
     assert model_path is not None
     assert model_path.endswith(".glb")
     assert "directly" in status
+
+
+def _thin_and_broad():
+    """'thin' scored in 1 family; 'broad' in 3, so three families exist and the floor is 3."""
+    broad = [{"run_id": f"b{i}", "model_identifier": "broad", "domain": d, "score": 2.0,
+              "harness_class": "autonomous"} for i, d in enumerate(("bracket", "enclosure", "hinge"))]
+    thin = {"run_id": "r", "model_identifier": "thin", "domain": "bracket", "score": 3.0,
+            "harness_class": "autonomous"}
+    return {"runs": [thin] + broad}
+
+
+def test_unranked_rows_render_as_unranked():
+    rows = app.render_dual_league(_thin_and_broad())["autonomous"]["rows"]
+    assert [(r[1], r[0]) for r in rows] == [("broad", 1), ("thin", "unranked")]
+
+
+def test_table_shows_why_a_row_is_unranked():
+    row = app.render_dual_league(_thin_and_broad())["autonomous"]["rows"][1]
+    assert row[0] == "unranked"
+    assert "scored in 1 of the 3 task families" in row[-1]
+    assert app.LEAGUE_HEADERS[-1] == "Coverage"
