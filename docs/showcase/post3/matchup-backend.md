@@ -40,8 +40,10 @@ say anything about the CAD systems themselves. Assets: [`matchup-backend/after/`
 One open oddity, not investigated here: the advisory `brep_mesh_volume` warning on the
 CadQuery and build123d trials shows B-rep volumes far from the mesh volume in most trials
 (for example 3,536 mm³ B-rep against 61,982 mm³ mesh in an old CadQuery trial; the recorded
-mesh volumes of the CadQuery and build123d trials, old and new, span 59,575 to 70,804 mm³). It is advisory and does not affect scoring, but
-one of the two volume readings is unreliable for these shapes.
+mesh volumes of the CadQuery and build123d trials, old and new, span 59,575 to 70,804 mm³). It is advisory and does not affect scoring. **Explained afterwards (#902):** the mesh and the
+in-memory B-rep agree within 0.6%; the disagreement came from re-reading the retained STEP, which
+OCP reads back with the wrong volume for shapes that combine a `transformGeometry` ellipsoid with a
+boolean. See `docs/CODE_CAD_BACKEND_AXIS.md`.
 
 Commands (re-run):
 
