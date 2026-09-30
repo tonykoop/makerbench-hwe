@@ -20,6 +20,7 @@ from .cadam_adapter import CadamClient, CadamConfig, CadamRecoveryRequiredError
 from .code_cad_orchestrator import OrchestrationConfig, run_orchestration
 from .live_cad_runner import LiveCadConfig, connector_available, make_live_execute_trial
 from .run_log_io import atomic_write_json, file_lock
+from .schema import MatchupMetadata, matchup_metadata
 
 
 SCHEMA = "makerbench-nightly-cad-queue-v1"
@@ -48,6 +49,15 @@ class NightlyEntrant:
             max_cost_usd=float(payload.get("max_cost_usd") or 0.0),
             timeout_s=(int(payload["timeout_s"]) if payload.get("timeout_s") is not None else None),
         )
+
+    def matchup_level(self) -> str:
+        """Read a verifiable level from model::level[::backend], never a plain ID."""
+        parts = self.entrant_id.split("::")
+        if (len(parts) not in {2, 3} or parts[0] != self.model_id
+                or not parts[1] or parts[1] != parts[1].strip()
+                or (len(parts) == 3 and parts[2] != self.backend)):
+            raise ValueError("matchup level provenance requires model::level[::backend] entrant IDs")
+        return parts[1]
 
     def validate(self) -> None:
         if not self.entrant_id or not self.model_id:
@@ -274,7 +284,25 @@ def nightly_lease(path: Path, *, now: Callable[[], datetime]) -> Iterator[None]:
 def _fresh_run_log(run_dir: Path, job: NightlyJob, *,
                    matchup: Optional[Mapping[str, object]] = None) -> None:
     path = run_dir / "run_log.json"
+    normalized = MatchupMetadata.model_validate(matchup).model_dump(mode="json") if matchup else None
+    if normalized:
+        if not job.entrants:
+            raise ValueError("matchup level provenance requires encoded entrants")
+        observed = {"instruments": [job.instrument_id], "seeds": [job.seed],
+                    "backends": [e.backend for e in job.entrants],
+                    "context_tiers": [e.context_tier for e in job.entrants],
+                    "models": [e.model_id for e in job.entrants if e.kind != "live"],
+                    "driver_models": [e.model_id for e in job.entrants if e.kind == "live"],
+                    "levels": [e.matchup_level() for e in job.entrants]}
+        for axis, values in observed.items():
+            allowed = normalized["values"] if axis == normalized["varied_axis"] else (
+                [normalized["held"][axis]] if axis in normalized["held"] else None)
+            if allowed is not None and any(value not in allowed for value in values):
+                raise ValueError(f"matchup {axis} provenance disagrees with the queued job")
     if path.exists():
+        existing = json.loads(path.read_text(encoding="utf-8")).get("config", {}).get("matchup")
+        if existing != normalized:
+            raise ValueError("matchup provenance cannot change when resuming a run")
         return
     atomic_write_json(
         path,
@@ -289,7 +317,7 @@ def _fresh_run_log(run_dir: Path, job: NightlyJob, *,
                 "model_providers": {entrant.entrant_id: entrant.kind for entrant in job.entrants},
                 "provider_rate_limits_s": {},
                 "backend": "nightly-mixed",
-                **({"matchup": dict(matchup)} if matchup else {}),
+                **({"matchup": normalized} if normalized else {}),
             },
             "trials": [],
             "summary": {"counts": {}, "total_trials": 0, "total_attempts": 0},
@@ -633,6 +661,7 @@ class NightlyExecutor:
             if job is None:
                 return {"status": "queue-empty"}
             job.validate()
+            matchup = matchup_metadata(payload)
             if not job.run_id:
                 stamp = self.now().astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
                 job.run_id = f"{stamp}-{job.job_id}"
@@ -641,7 +670,6 @@ class NightlyExecutor:
             job.run_dir = run_dir.as_posix()
             job.status = "running"
             save_queue(self.queue_path, payload, jobs)
-            matchup = {key: payload[key] for key in ("varied_axis", "values", "varied_axes", "factorial", "held") if key in payload}
             _fresh_run_log(run_dir, job, matchup=matchup)
             registry = arena_runner.load_arena_registry(self.registry_path)
             budget = _resume_budget(run_dir, limit_usd=job.budget_usd)
