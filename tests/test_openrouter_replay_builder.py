@@ -45,6 +45,10 @@ def _fixture(tmp_path):
                                   "instrument": instrument, "seed": seed, "model": "m", "cost_usd": 0.001})
             run = runs / f"r{rnd}-{entrant.split('openrouter-', 1)[1]}"
             run.mkdir(parents=True)
+            for tr in trials:  # each trial's own provenance carries its settled cost; it differs by round
+                gen = run / "gen" / tr["trial_id"]
+                gen.mkdir(parents=True)
+                (gen / "x.provenance.json").write_text(json.dumps({"usage": {"cost_usd": rnd / 1000.0}}), encoding="utf-8")
             if rnd == 1 and entrant == "openrouter-deepseek-v4-pro":
                 trials[0] = _trial(trials[0]["instrument_id"], 0, "error", error="generation error: returned no fenced code block")
                 trials[1] = _trial(trials[1]["instrument_id"], 1, "auto_fail", stage="openscad_render")
@@ -114,6 +118,24 @@ def test_bundle_is_accepted_by_the_site_publisher_and_leaks_no_private_fields(tm
         assert forbidden not in published
 
 
+def test_the_same_instrument_and_seed_in_two_rounds_keeps_distinct_costs(tmp_path):
+    bundle, _ = _bundle(tmp_path)
+    costs = {}
+    for m in bundle["matchups"]:
+        if m["matchup"]["held"]["instruments"] == "kora" and m["matchup"]["held"]["seeds"] == 0:
+            row = next(e for e in m["entrants"] if e["entrant"] == "openrouter-grok-4.3")
+            costs[m["round"]] = row["cost_usd"]
+    assert costs == {1: 0.001, 2: 0.002}  # R1 and R2 both run kora seed 0; never the combined 0.003
+    assert sum(r["cost_usd"] for m in bundle["matchups"] for r in m["entrants"] if r["cost_usd"] is not None) > 0
+
+
+def test_a_retried_cell_has_no_per_cell_cost(tmp_path):
+    runs, _ = _fixture(tmp_path)
+    gen = next((runs / "r3-grok-4.5" / "gen").iterdir())
+    assert replay._cell_cost(gen, 1) == 0.003
+    assert replay._cell_cost(gen, 2) is None and replay._cell_cost(tmp_path / "missing", 1) is None
+
+
 def test_an_unfinished_trial_is_refused(tmp_path):
     runs, ledger = _fixture(tmp_path)
     log = runs / "r2-grok-4.3" / "run_log.json"
@@ -126,3 +148,22 @@ def test_an_unfinished_trial_is_refused(tmp_path):
         assert "unfinished trial" in str(exc)
     else:
         raise AssertionError("a pending trial must not be published")
+
+
+def test_recorded_source_paths_resolve_against_the_execution_root_and_a_missing_one_is_an_error(tmp_path):
+    spec = importlib.util.spec_from_file_location("makerbench_regrade_openrouter_baseline", ROOT / "scripts" / "regrade_openrouter_baseline.py")
+    regrade = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = regrade
+    spec.loader.exec_module(regrade)
+    root = tmp_path / "exec"
+    source = root / "runs" / "openrouter-run" / "r1-x" / "gen" / "t" / "a.scad"
+    source.parent.mkdir(parents=True)
+    source.write_text("cube(1);", encoding="utf-8")
+    recorded = "runs/openrouter-run/r1-x/gen/t/a.scad"  # relative, as the run log stores it
+    assert regrade.resolve_source(root, recorded) == source
+    for bad in (None, "", "runs/openrouter-run/r1-x/gen/t/missing.scad"):
+        try:
+            regrade.resolve_source(root, bad)
+        except SystemExit:
+            continue
+        raise AssertionError(f"{bad!r} must be refused")
