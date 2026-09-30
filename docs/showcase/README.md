@@ -34,7 +34,7 @@ and what must be true before it is posted. Epic: #845.
 |---|---|---|---|---|
 | Sambuca hero case study (photo to parametric CAD) | [`sambuca/CASE_STUDY.md`](sambuca/CASE_STUDY.md) + two renders in `sambuca/assets/`; [PR #829](https://github.com/tonykoop/makerbench-hwe/pull/829) | Pilot run 2026-07-02 (CADAM with Claude Fable 5, OpenSCAD/BOSL2) from the public sambuca repo's `provenance.json` and `gate.json`; second render is a Round 2 text-only Sonnet export | Write-up: Apache-2.0. The first render was conditioned on a third-party museum photo whose licence is **unresolved** (`CASE_STUDY.md` section 3), so reuse of that render is **unknown, gated**. The photo itself is not committed. | **Gated**: photo licence; unknown turn count |
 | Exploratory: instrument CAD from reference images | [`instruments-from-photos/EXPLORATORY.md`](instruments-from-photos/EXPLORATORY.md) + previews; [PR #831](https://github.com/tonykoop/makerbench-hwe/pull/831) | One local Sonnet 5.5 session, unmodified `mesh_objective_gate`, registry brief dimensions | Write-up and our previews: Apache-2.0. Reference images are not committed (one is the owner's own photo, one appears generated, provenance unknown). | **Gated**: exploratory only, not benchmark data; not for a headline |
-| Second case study: public-repo instrument | planned ([#851](https://github.com/tonykoop/makerbench-hwe/issues/851)) | | | |
+| Second case study: stave djembe, reference photo to parametric CAD | [`djembe/CASE_STUDY.md`](djembe/CASE_STUDY.md) + one render; [PR #868](https://github.com/tonykoop/makerbench-hwe/pull/868) | One Sonnet 5.5 image-tier run, seed 0, 2026-09-30; repo `tonykoop/djembe` (public) | Write-up and render: Apache-2.0. Repo licence CC BY 4.0. The reference photo is **not committed** (shows a person, GPS metadata). | **Gated**: one run, `min_wall` failed (cause unknown); do not show the photo uncropped |
 
 ## Posts
 
@@ -61,9 +61,9 @@ All five drafts are in [`linkedin-posts.md`](linkedin-posts.md) ([PR #829](https
 | Item | Path / PR | Provenance | Licence and reuse | Posting state |
 |---|---|---|---|---|
 | Ecosystem diagram (post 1) | [`ecosystem/`](ecosystem/) (SVG, 1200x627 PNG, alt text); [PR #832](https://github.com/tonykoop/makerbench-hwe/pull/832) | Public pieces of the tracker export only | Apache-2.0 (our diagram) | **Gated**: confirm live HF Space and site freshness; counts are as of the export |
-| Anonymized render gallery generator | `scripts/generate_render_gallery.py`; [PR #866](https://github.com/tonykoop/makerbench-hwe/pull/866) | Reads arena `run_log.json`; objective scores only | Apache-2.0 | Tool, not a post asset; palette can hint at backend |
-| Ecosystem diagram, light/dark asset pack | planned ([#852](https://github.com/tonykoop/makerbench-hwe/issues/852)) | | | |
-| 60-second Studio demo GIF | planned ([#850](https://github.com/tonykoop/makerbench-hwe/issues/850)) | | | |
+| Anonymized render gallery generator (HTML + `grid.png`) | `scripts/generate_render_gallery.py`; [PR #866](https://github.com/tonykoop/makerbench-hwe/pull/866) | Reads arena `run_log.json`; neutral labels, objective scores only, PNG metadata stripped | Apache-2.0 | Tool, not a post asset; render palette can still hint at the backend |
+| Ecosystem diagram, light/dark asset pack + alt text | same folder, `ecosystem-{light,dark}` and `alt-text.txt`; [PR #869](https://github.com/tonykoop/makerbench-hwe/pull/869) (stacked on #832) | Palette swap of the #832 diagram | Apache-2.0 (our diagram) | **Gated** as above |
+| 60-second Studio demo GIF | [`studio-demo/`](studio-demo/) + `scripts/record_studio_demo.py`; [PR #867](https://github.com/tonykoop/makerbench-hwe/pull/867) | Scripted Playwright walkthrough over the real #846/#847 run dirs; no vote screens | Apache-2.0 | **Gated**: crop or accept the overlong "Held values" line and the default voter name in the header |
 
 ## Adding an item
 
