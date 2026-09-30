@@ -179,6 +179,41 @@ class TestMeshObjectiveGate:
         result = gate(_context(tmp_path, self._box_with_slivers()))
         assert result["sub_scores"]["body_count"] == 0.0
 
+    @staticmethod
+    def _open_box_with_attached_sliver():
+        """A box missing one triangle, plus a zero-area face on one of the open boundary edges
+        (shared with exactly one real face), so it is connected to the body."""
+        import numpy as np
+
+        box = trimesh.creation.box(extents=[30, 30, 30])
+        faces = box.faces[1:]  # drop one triangle: three of its edges become boundary edges
+        edges = np.sort(trimesh.geometry.faces_to_edges(faces), axis=1)
+        uniq, counts = np.unique(edges, axis=0, return_counts=True)
+        a, b = uniq[counts == 1][0]
+        mid = (box.vertices[a] + box.vertices[b]) / 2
+        verts = np.vstack([box.vertices, mid])
+        sliver = [int(a), int(b), len(box.vertices)]
+        return trimesh.Trimesh(vertices=verts, faces=np.vstack([faces, sliver]), process=False), len(faces)
+
+    def test_zero_area_face_attached_to_a_real_body_is_kept(self):
+        # #921: only isolated slivers are dropped. A zero-area face that shares an edge with the
+        # body can be what closes a zero-width boundary loop, so removing it would un-close the body.
+        mesh, n_real = self._open_box_with_attached_sliver()
+        assert runner.drop_isolated_slivers(mesh) == 0
+        assert len(mesh.faces) == n_real + 1
+
+    def test_isolated_and_attached_slivers_are_told_apart(self):
+        import numpy as np
+
+        attached, n_real = self._open_box_with_attached_sliver()
+        extra = self._box_with_slivers(2)  # its last 6 vertices are the 2 isolated slivers
+        verts = np.vstack([attached.vertices, extra.vertices[-6:]])
+        base = len(attached.vertices)
+        faces = np.vstack([attached.faces, [[base, base + 1, base + 2], [base + 3, base + 4, base + 5]]])
+        mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+        assert runner.drop_isolated_slivers(mesh) == 2  # the two isolated ones only
+        assert len(mesh.faces) == n_real + 1             # the attached one stays
+
     def test_single_body_fails_assembly_min_bodies(self, tmp_path):
         gate = runner.mesh_objective_gate(
             {"id": "kora", "envelope_mm": [1500, 700, 700], "min_bodies": 4}

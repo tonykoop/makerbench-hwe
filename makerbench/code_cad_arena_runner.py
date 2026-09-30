@@ -234,6 +234,35 @@ def _round_or_none(value, digits: int = 4):
 DEGENERATE_FACE_HEIGHT_MM = 1e-6
 
 
+
+def drop_isolated_slivers(mesh) -> int:
+    """Remove zero-area faces that form components of their own; return how many.
+
+    A component made only of zero-area faces (an OCC seam/pole artifact) is not a body: it has
+    no area or volume and is never watertight. A zero-area face connected to real faces is left
+    alone (#921). ``mesh`` is modified in place.
+    """
+
+    import numpy as np
+    import trimesh
+
+    keep = mesh.nondegenerate_faces(height=DEGENERATE_FACE_HEIGHT_MM)
+    if keep.all():
+        return 0
+    components = trimesh.graph.connected_components(
+        mesh.face_adjacency, nodes=np.arange(len(mesh.faces)), min_len=1
+    )
+    drop = np.zeros(len(mesh.faces), dtype=bool)
+    for component in components:
+        if not keep[component].any():
+            drop[component] = True
+    dropped = int(drop.sum())
+    if dropped:
+        mesh.update_faces(~drop)
+        mesh.remove_unreferenced_vertices()
+    return dropped
+
+
 def mesh_objective_gate(
     spec: Mapping[str, object],
     *,
@@ -263,12 +292,10 @@ def mesh_objective_gate(
         # B-rep STL writers (CadQuery/build123d via OCC) can emit zero-area sliver
         # triangles at seams and poles. They carry no area or volume, but split()
         # turns each into its own "body" that is never watertight, failing the
-        # watertight check and inflating body_count (#874). Drop them first.
-        keep = mesh.nondegenerate_faces(height=DEGENERATE_FACE_HEIGHT_MM)
-        degenerate = int(len(mesh.faces) - int(keep.sum()))
-        if degenerate:
-            mesh.update_faces(keep)
-            mesh.remove_unreferenced_vertices()
+        # watertight check and inflating body_count (#874). Drop those isolated slivers.
+        # Zero-area faces attached to a real body stay: they can be what stitches a
+        # zero-width boundary loop closed, and removing them would un-close the body (#921).
+        degenerate = drop_isolated_slivers(mesh)
         bodies = mesh.split(only_watertight=False)
         if len(bodies) == 0:
             bodies = [mesh]
