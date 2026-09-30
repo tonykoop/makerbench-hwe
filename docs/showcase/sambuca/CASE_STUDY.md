@@ -10,22 +10,22 @@ without a source is marked **unknown**. Source repo paths are relative to
 The British Museum shows a modern reconstruction of a 4,600-year-old boat-shaped
 harp from the Royal Cemetery at Ur. We gave one photo of it, plus the museum
 card's dimensions, to an AI CAD assistant, and got back an editable 3D model of a
-13-string boat harp in about two minutes. It gets the size and general shape
+13-string boat harp after about two minutes of model thinking time (113 s). It gets the size and general shape
 right but misses details (the curved neck, gold collar, lapis inlay), and an
-automatic manufacturability check flagged a feature far too thin to build. So it is a
+automatic check failed a provisional wall-thickness gate (a 0.015 mm reading against a 1 mm floor; what caused that reading is unknown). So it is a
 useful first draft, not a finished design, and one run is not enough to say
 which AI tool is best.
 
 ## 60-second version
 
 A 2015 museum-gallery photo of a reconstructed Sumerian boat-shaped harp went in;
-a **parametric, sliders-editable CAD model** came out in about two minutes of
+a **parametric, sliders-editable CAD model** came out after about two minutes of
 model "thinking" time (113 s). It is recognisably a boat-hulled arched harp with 13
 strings, at the museum-card dimensions (650 × 150 mm hull, 810 mm tall). It is
 **not** a faithful replica: it misses the J-curve neck, the gold collar and the
 lapis band, and it **fails one of six objective gates** (minimum wall
 thickness). That gap is the interesting part — a model can make something that
-*looks* right and is still not buildable.
+*looks* right and still fails a provisional buildability gate.
 
 | | |
 |---|---|
@@ -171,7 +171,7 @@ measured master"; keep the "what it missed" callouts — they are the credibilit
 ## 6. What worked / what failed
 
 **Worked**
-- Image + short spec → a parametric model at the right envelope in one shot
+- Image + short spec → a parametric model at the right envelope in a single recorded generation (total turn count unknown)
   (bbox 668.6 × 149.9 × 841.9 mm vs 650 × 150 × 810 spec; `gate.json`).
 - Editable: 13 named parameters with sliders, `show_strings` toggle (`preview.jpeg`).
 - Five of six objective gates pass, including watertight on all 881 bodies.
@@ -203,9 +203,9 @@ measured master"; keep the "what it missed" callouts — they are the credibilit
 
 > I gave an AI a museum photo of a 4,600-year-old boat-shaped harp and asked for CAD.
 >
-> Two minutes later I had a parametric model: 650 × 150 mm hull, 13 strings, the key dimensions as sliders.
+> After about two minutes of model thinking I had a parametric model: 650 × 150 mm hull, 13 strings, the key dimensions as sliders.
 >
-> Then I ran it through an objective mesh gate. It passed 5 of 6 checks. The one it failed: minimum wall thickness — 0.015 mm against a 1 mm floor. Beautiful on screen, not buildable.
+> Then I ran it through an objective mesh gate. It passed 5 of 6 checks. The one it failed: minimum wall thickness — 0.015 mm against a 1 mm floor. Looked right on screen; failed a provisional wall-thickness gate.
 >
 > That gap is why I build MakerBench: a benchmark that scores what AI-generated hardware designs can actually do, not just how they look.
 >
@@ -241,11 +241,11 @@ measured master"; keep the "what it missed" callouts — they are the credibilit
 >
 > Test case: one museum photo of a reconstructed Sumerian boat harp, one AI CAD pipeline (CADAM + Claude Fable 5 → OpenSCAD).
 >
-> It returned a fully parametric 13-string model in about two minutes, and it fit the target envelope within a few percent (668 × 150 × 842 mm vs 650 × 150 × 810 mm).
+> It returned a fully parametric 13-string model after about two minutes of model thinking (113 s), and it fit the target envelope within a few percent (668 × 150 × 842 mm vs 650 × 150 × 810 mm).
 >
 > Our objective mesh gate passed 5 of 6 checks. It failed minimum wall thickness: 0.015 mm vs a 1 mm floor.
 >
-> Across MakerBench Arena rounds, human preference and the objective gate rank models almost independently (mean Spearman ρ ≈ 0.07 over rounds 6–10). That's the point of measuring both.
+> Across MakerBench Arena rounds, human preference and the objective gate rank models almost independently (mean Spearman ρ ≈ 0.07 over rounds 6–10, three entrants per round, so directional only). That's the point of measuring both.
 >
 > Caveats: single run, generated model not a measured master, and I don't claim this is the best pipeline for this task.
 >
