@@ -6,6 +6,8 @@ integration test is gated on the binary being present (it is, in CI).
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -102,7 +104,20 @@ def test_determinism_same_source_same_geometry_bytes(tmp_path):
 
 # --- real OpenSCAD backend (gated on the binary) ----------------------------
 
+def _headless_linux() -> bool:
+    """True on Linux with no X/Wayland display: OpenSCAD's PNG export needs an OpenGL
+    context and fails with "Unable to open a connection to the X server" (#878).
+    CI runs the suite under ``xvfb-run -a``, so DISPLAY is set there and it still runs."""
+    return sys.platform.startswith("linux") and not (
+        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+    )
+
+
 @pytest.mark.skipif(not openscad_available(), reason="OpenSCAD binary not installed")
+@pytest.mark.skipif(
+    _headless_linux(),
+    reason="no DISPLAY: OpenSCAD's PNG render needs an X display; run under `xvfb-run -a`",
+)
 def test_openscad_backend_builds_real_geometry_and_renders(tmp_path):
     env = UnifiedEnvironment(backend=OpenSCADBackend(), viewports={"front": "0,0,0,0,0,0,0"})
     result = env.build("HWE-01", CUBE, str(tmp_path))
