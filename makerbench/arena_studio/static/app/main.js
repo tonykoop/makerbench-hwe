@@ -131,3 +131,4 @@ function App() {
 const root = document.getElementById("app");
 root.textContent = "";
 render(html`<${App} />`, root);
+if (window.arenaStudioBoot) window.arenaStudioBoot.mounted();
