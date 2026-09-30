@@ -58,6 +58,20 @@ def test_enriched_trial_fields_fail_closed(defect):
         builder.audit_snapshot(content)
 
 
+@pytest.mark.parametrize("defect", ["answer_field", "trial_count", "invalid_rate"])
+def test_historical_story_fields_fail_closed(defect):
+    content = json.loads((ROOT / "makerbench/arena_studio/data/showcase.json").read_text())
+    story = content["cases"][1]["story"]
+    if defect == "answer_field":
+        story["source_code"] = "PRIVATE_SENTINEL"
+    elif defect == "trial_count":
+        story["rows"][0]["n_trials"] = 30
+    else:
+        story["rows"][0]["same_meshes"] = 100
+    with pytest.raises(ValueError):
+        builder.audit_snapshot(content)
+
+
 @pytest.mark.parametrize("wrong", ["seed", "trial_count"])
 def test_misstated_aggregate_scope_is_rejected_before_staging(tmp_path, monkeypatch, wrong):
     source = ROOT / "makerbench/arena_studio/data/showcase.json"

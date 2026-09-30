@@ -490,6 +490,34 @@ code {
   margin-top: var(--space-2);
 }
 
+.demo-screen .demo-story {
+  padding: var(--space-4);
+  margin-block: var(--space-4);
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+}
+
+.demo-screen .demo-history-table {
+  width: 100%;
+  table-layout: fixed;
+  font-size: var(--step--1);
+  border-collapse: collapse;
+}
+
+.demo-screen .demo-history-table th,
+.demo-screen .demo-history-table td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+  text-align: left;
+  vertical-align: top;
+}
+
+.demo-screen .demo-history-table caption {
+  text-align: left;
+  margin-bottom: var(--space-2);
+}
+
 .facts {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
