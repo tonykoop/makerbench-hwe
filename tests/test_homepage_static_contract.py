@@ -209,7 +209,7 @@ def test_about_cite_section_html_and_data_hooks():
 
 
 def test_homepage_freshness_signals_show_updated_date_and_version():
-    """mb#671: header + footer carry a human-readable 'updated YYYY-MM-DD'
+    """Header + footer carry a human-readable 'results as of YYYY-MM-DD'
     plus the benchmark version, prerendered from leaderboard.json's
     machine-readable ``data_updated`` stamp."""
     import re
