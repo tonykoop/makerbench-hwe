@@ -23,9 +23,13 @@ def test_sparse_sample_cannot_take_hero_or_static_rank_one():
     table = builder._prerender_leaderboard_html({"models": models})
     assert "broad-result" in table
     assert "sparse-perfect" not in table
+    card = builder.leaderboard_og_svg({"models": models})
+    assert "Leader: broad-result" in card
+    assert "sparse-perfect" not in card
 
 
 def test_no_overall_leader_is_fabricated_from_only_sparse_samples():
     models = [{"identifier": "sample", "tracks": {"blind": {
         "overall_mean": 4.0, "n_families_scored": 1}}}]
     assert not any(s["key"] == "top_score" for s in builder.build_hero_stats(models, [])['stats'])
+    assert "Leader:" not in builder.leaderboard_og_svg({"models": models})
