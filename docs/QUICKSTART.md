@@ -64,6 +64,22 @@ summary: {"scored": 1}
 
 A real model can and sometimes will score below 1.000; one trial is a smoke test, not a result.
 If you have no subscription CLI, skip this rung: everything else works without it.
+The codex rung works the same way with a `codex-` entrant. Measured on 2026-09-30 with the
+model set in the local codex config (4 m 34 s wall clock, one run):
+
+```bash
+python -m makerbench.cli arena run --run-dir runs/code_cad_arena/quickstart-codex \
+  --instruments ocarina --models codex-gpt-6.1-sol --timeout-s 400
+```
+
+```
+arena matrix: 1 instruments x 1 seeds x 1 reps x 1 models = 1 trials
+summary: {"scored": 1}
+ codex-gpt-6.1-sol   1.000   1
+```
+
+Codex is slower than the claude rung; use `--timeout-s 400` or higher. Substitute whatever model
+your codex login offers.
 This uses your subscription allowance, not per-token billing. Metered API entrants (for example
 `openrouter-*` or `agents/anthropic_agent.py`) are out of scope here.
 
@@ -88,7 +104,31 @@ Full screen-by-screen guide: [arena-studio.md](arena-studio.md). Stop the server
 
 ### Matchups: vary one axis
 
-TODO: write this section once PRs #828 and #830 are merged. Nothing here is documented until it is on `main`.
+> **Pending merge of #828/#830.** The command below exists only on the `lane-a/matchup-mode`
+> branch (#830, stacked on #828). It is not on `main` yet, so `makerbench arena matchup` will
+> report "No such command" until both merge. Output below was captured from that branch.
+
+A matchup compares entrants while holding everything else fixed, so a difference in the
+scoreline is attributable to the one axis you varied. `arena matchup` only **previews** the
+cells (with cost and availability estimates); it dispatches nothing and spends nothing.
+
+```bash
+python -m makerbench.cli arena matchup --vary model --values stub-a,stub-b \
+  --instruments ocarina --models stub-a
+```
+
+Expected: JSON with `"varied_axis": "models"`, a `held` block (instrument `ocarina`, level `L1`,
+context `blind`, seed `0`, backend `openscad`), two `cells` (one per model, each with
+`"cost_source": "subscription_zero_marginal"` and `"availability": "available"`), and a `summary`
+with `"n_cells": 2`. `--out preview.json` also writes the preview to a file.
+
+Guard rails (both are errors, by design):
+
+- Varying more than one axis, for example two instruments and two models, is rejected with
+  "matchups vary one axis ... requires factorial" unless you pass `--factorial`.
+- Fewer than two values gives "a matchup needs at least two distinct axis values".
+
+Axes you can vary with `--vary`: backend/bridge, model, level, context, seed, instrument, driver_model.
 
 ## Out of scope for this quickstart
 
