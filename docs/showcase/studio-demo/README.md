@@ -1,22 +1,26 @@
 # Studio demo GIF (about 60 s)
 
-`studio-walkthrough.gif` (800 px wide, 8 fps, about 62 s, 4.5 MB) is a scripted,
+`studio-walkthrough.gif` (800 px wide, 8 fps, about 56 s, 4.2 MB) is a scripted,
 captioned walkthrough of Arena Studio, produced by `scripts/record_studio_demo.py`
 (story #850, epic #845). Regenerate it rather than screen-recording by hand.
 
 ## What it shows
 
 1. The Runs screen listing two local runs (the real #846 and #847 run directories).
-2. Opening each run: entrants, instruments, trial count.
-3. The DoE matrix in **Vary one axis** mode: axis "models", instrument ocarina, entrants
+2. Opening a run: entrants and trial count.
+3. **Results:** the Agreement analytics screen's "People versus the objective checks" table, which shows each entrant's objective pass rate (100% for both in the model matchup) and trials (3 each). The human-rating columns read "Unknown" and votes 0.
+4. The DoE matrix in **Vary one axis** mode: axis "models", instrument ocarina, entrants
    `claude-code-opus-5.5, claude-code-sonnet-5.5`, then the preview with the held values
    and the `$0 subscription` cost badges.
 
 ## What it does not show
 
 - No model is launched; Studio runs without `--allow-live` and nothing is queued.
-- The voting, agreement-analytics and morning-review screens are never opened, so no
-  vote count or preference number appears. The run panels show 0 blind votes.
+- The voting and morning-review screens are never opened. Only `run_log.json` and preview PNGs are staged, so no vote exists: the visible Human Elo, People's rank and
+  Votes fields read "Unknown", "Unranked" and 0, and the script aborts if a human rating
+  ever appears. No preference number is recorded.
+- The results shown are the objective pass rates only; per-check gate results are not
+  displayed by Studio on that screen.
 - The ocarina reference image is not approved in the throwaway checkout, so the preview
   says "No image" and lists the instrument under the queue's skip list. That is visible
   in the recording and is accurate for that setup.

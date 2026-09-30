@@ -26,6 +26,9 @@ def _run(root: Path, name: str) -> Path:
     (run / "render" / "t0" / "output.stl").write_bytes(b"stl")
     (run / "render" / "t0" / "output.step").write_bytes(b"step")
     (run / "gen" / "entrant.scad").write_text("cube(1);", encoding="utf-8")
+    (run / "render" / "t0" / "extra_mesh.stl").write_bytes(b"stl")
+    (run / "raw_output.txt").write_text("model said", encoding="utf-8")
+    (run / "votes.jsonl").write_text('{"winner": "a"}\n', encoding="utf-8")
     return run
 
 
@@ -34,8 +37,8 @@ def test_stage_repo_copies_runs_without_source_geometry_or_locks(tmp_path):
     runs = staged / "runs" / "code_cad_arena" / "run-a"
     assert (runs / "run_log.json").is_file()
     assert (runs / "render" / "t0" / "preview.png").is_file()
-    for pattern in ("*.scad", "*.stl", "*.step", "*.lock"):
-        assert not list(runs.rglob(pattern)), pattern
+    staged_files = sorted(p.relative_to(runs).as_posix() for p in runs.rglob("*") if p.is_file())
+    assert staged_files == ["render/t0/preview.png", "run_log.json"]
     assert (staged / "tasks" / "code_cad_arena" / "registry.json").is_file()
 
 
@@ -48,5 +51,6 @@ def test_stage_repo_rejects_a_directory_without_a_run_log(tmp_path):
 def test_walkthrough_is_about_a_minute_and_avoids_preference_screens():
     assert 45 <= sum(demo.STEPS_HOLD.values()) <= 62
     source = (ROOT / "scripts" / "record_studio_demo.py").read_text(encoding="utf-8")
-    for screen in ("#/vote", "#/analytics", "#/morning", "Blind voting", "Agreement analytics"):
+    for screen in ("#/vote", "#/morning", "Blind voting", "Morning review"):
         assert screen not in source.split('"""', 2)[2], screen
+    assert "refusing to record preference data" in source

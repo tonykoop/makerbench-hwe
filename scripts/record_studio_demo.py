@@ -7,9 +7,12 @@ with Playwright, records the page, and converts the video to a GIF with ffmpeg.
 
 The walkthrough (about 60 s): the Runs list, two run detail panels, then the DoE
 matrix in "Vary one axis" mode: vary the model, pick an instrument, name two
-entrants, and read the preview's held values and $0 subscription estimates. It never
-opens the voting, analytics or morning-review screens, so no vote or preference
-number can appear in the recording.
+entrants, and read the preview's held values and $0 subscription estimates. The results
+step is the Agreement analytics screen, whose "People versus the objective checks" table
+shows each entrant's objective pass rate and trial count. It never opens the voting or
+morning-review screens. Only run_log.json and preview PNGs are staged (no vote or judge
+files), so the human-Elo columns read "Unknown" and the script aborts if any human
+rating appears; no preference number can be recorded.
 
 Requirements (not installed by MakerBench): `pip install playwright`, a Chromium
 that Playwright can launch, and `ffmpeg`. Nothing is sent over the network beyond
@@ -54,15 +57,15 @@ CAPTION_JS = """
 
 # (caption, seconds to hold after the step). Sums to roughly 60 s of holds plus typing.
 STEPS_HOLD = {
-    "runs": 5.0,
-    "run_a": 6.0,
-    "run_b": 6.0,
-    "doe": 4.0,
-    "mode": 5.0,
-    "axis": 5.0,
-    "instrument": 4.0,
-    "entrants": 4.0,
-    "preview": 13.0,
+    "runs": 4.0,
+    "run_a": 4.0,
+    "results": 10.0,
+    "doe": 3.0,
+    "mode": 4.0,
+    "axis": 4.0,
+    "instrument": 3.0,
+    "entrants": 3.0,
+    "preview": 10.0,
 }
 
 
@@ -76,7 +79,13 @@ def stage_repo(run_dirs: list[Path], work: Path) -> Path:
     for run_dir in run_dirs:
         if not (run_dir / "run_log.json").is_file():
             raise FileNotFoundError(f"no run_log.json in {run_dir}")
-        shutil.copytree(run_dir, runs / run_dir.name, ignore=shutil.ignore_patterns("*.lock", "*.scad", "*.step", "output.stl"))
+        target = runs / run_dir.name
+        target.mkdir()
+        shutil.copyfile(run_dir / "run_log.json", target / "run_log.json")
+        for preview in sorted(run_dir.glob("render/*/preview.png")):  # explicit allowlist
+            dest = target / preview.relative_to(run_dir)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(preview, dest)
     return work
 
 
@@ -121,9 +130,17 @@ def record_walkthrough(url: str, run_names: list[str], video_dir: Path) -> Path:
         say("Arena Studio: every run on disk, listed locally", STEPS_HOLD["runs"])
         page.get_by_role("link", name=run_names[0]).click()
         say(f"Open a run: its entrants, instruments and trials ({run_names[0]})", STEPS_HOLD["run_a"])
-        if len(run_names) > 1:
-            page.get_by_role("link", name=run_names[1]).click()
-            say(f"Another run, side by side in the list ({run_names[1]})", STEPS_HOLD["run_b"])
+        page.get_by_role("link", name="Agreement analytics").first.click()
+        table = page.locator("table").first
+        table.wait_for()
+        page.mouse.move(700, 400)
+        page.mouse.wheel(0, 340)
+        page.wait_for_timeout(600)
+        try:
+            page.get_by_text("No human votes yet").first.wait_for(timeout=10000)
+        except Exception as error:
+            raise RuntimeError("a human rating may be visible; refusing to record preference data") from error
+        say("Results: each entrant's objective pass rate over its trials (no votes involved)", STEPS_HOLD["results"])
         page.get_by_role("link", name="DoE matrix").click()
         page.locator("select[name=experiment_mode]").wait_for()
         say("DoE matrix: design an experiment; nothing runs from this page", STEPS_HOLD["doe"])
