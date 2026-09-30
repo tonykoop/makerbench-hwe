@@ -3,7 +3,7 @@
 Arena Studio lets you inspect CAD runs and compare objective results in your
 browser. Start with a walkthrough, or open its read-only public showcase.
 
-![Arena Studio walkthrough: browsing runs and the local voting interface](studio-demo/studio-walkthrough.gif)
+![Arena Studio walkthrough: browsing runs, objective results and DoE previews](studio-demo/studio-walkthrough.gif)
 
 [Watch the GIF directly](studio-demo/studio-walkthrough.gif) ·
 [Walkthrough scope](studio-demo/README.md) ·
