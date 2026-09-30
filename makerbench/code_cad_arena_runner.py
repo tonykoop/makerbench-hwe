@@ -415,6 +415,7 @@ def mesh_objective_gate(
             "sub_scores": sub_scores,
             "passed": rate >= 1.0,
             "gate": "makerbench.code_cad_arena_runner.mesh_objective_gate",
+            **({"min_wall_method": wall_method} if robust_wall else {}),
             "advisory": {"acoustic": acoustic},
             "checks": checks,
             "failures": failures,
@@ -772,9 +773,9 @@ def collect_objective_scoreline(run_log: Mapping[str, object]) -> list[dict]:
     single-shot trials and are excluded.
     """
 
-    totals: dict[tuple[str, str], list[float]] = {}
-    confinements: dict[tuple[str, str], set[str]] = {}
-    failed_checks: dict[tuple[str, str], list[dict]] = {}
+    totals: dict[tuple[str, str, str], list[float]] = {}
+    confinements: dict[tuple[str, str, str], set[str]] = {}
+    failed_checks: dict[tuple[str, str, str], list[dict]] = {}
     run_backend = str(((run_log.get("config") or {}).get("backend")) or "openscad")
     for entry in run_log.get("trials") or []:
         if is_consensus_row(entry):
@@ -793,7 +794,10 @@ def collect_objective_scoreline(run_log: Mapping[str, object]) -> list[dict]:
         # #799: rows are per (entrant, backend); a trial records its own
         # backend, else the run config's (older logs: openscad).
         backend = str(result.get("backend") or (entry.get("meta") or {}).get("backend") or run_backend)
-        row_key = (model_id, backend)
+        # #901: trials scored with different min_wall policies never share a row. The default
+        # policy has no marker (method "") so existing rows keep their exact shape.
+        method = str(objective.get("min_wall_method") or "")
+        row_key = (model_id, backend, method)
         totals.setdefault(row_key, []).append(float(rate))
         failed_checks.setdefault(row_key, []).extend(_trial_failed_checks(entry, result, objective))
         # Failed trials carry their classification in the orchestrator's
@@ -804,7 +808,7 @@ def collect_objective_scoreline(run_log: Mapping[str, object]) -> list[dict]:
 
     rows = []
     for row_key in sorted(totals):
-        entrant, backend = row_key
+        entrant, backend, method = row_key
         rates = totals[row_key]
         row = {
             "entrant": entrant,
@@ -812,6 +816,8 @@ def collect_objective_scoreline(run_log: Mapping[str, object]) -> list[dict]:
             "objective_pass_rate": round(sum(rates) / len(rates), 6),
             "n_objective_trials": len(rates),
         }
+        if method:
+            row["min_wall_method"] = method
         if failed_checks.get(row_key):
             # #903: additive key; rows with no failed check keep their exact bytes.
             row["failed_checks"] = failed_checks[row_key]
@@ -825,7 +831,8 @@ def collect_objective_scoreline(run_log: Mapping[str, object]) -> list[dict]:
                 else "not_applicable"
             )
         rows.append(row)
-    rows.sort(key=lambda row: (-row["objective_pass_rate"], row["entrant"], row["backend"]))
+    rows.sort(key=lambda row: (-row["objective_pass_rate"], row["entrant"], row["backend"],
+                               row.get("min_wall_method", "")))
     return rows
 
 

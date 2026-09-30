@@ -143,3 +143,53 @@ def test_robust_v1_is_seed_stable_on_the_measured_sambuca_meshes():
             checked += 1
     assert checked >= 13
     assert flips_default >= 10  # the default flips on nearly all of them
+
+
+# --- the estimator policy survives the persisted objective and the scoreline (#918 review) ---
+
+def _persisted(tmp_path, mesh, method):
+    """The real evaluate_objective_trial path, not the bare gate."""
+    from makerbench.code_cad_objective import evaluate_objective_trial
+
+    stl = tmp_path / "output.stl"
+    mesh.export(stl.as_posix())
+    png = tmp_path / "preview.png"
+    png.write_bytes(b"\x89PNG\r\n")
+    return evaluate_objective_trial(
+        trial_id="t", model_id="m", instrument_id="i", seed=0, scad_path=tmp_path / "x.scad",
+        out_dir=tmp_path / "out", objective_gate=runner.mesh_objective_gate(SPEC, min_wall_estimator=method),
+        compiler=lambda _src, _out: RenderArtifacts(stl_path=stl, png_path=png),
+    )
+
+
+@pytest.mark.parametrize("mesh_kind", ["passing", "failing"])
+def test_persisted_objective_records_the_method_only_when_it_is_not_the_default(tmp_path, mesh_kind):
+    mesh = trimesh.creation.box(extents=[50, 50, 5 if mesh_kind == "passing" else 0.4])
+    (tmp_path / "d").mkdir()
+    (tmp_path / "r").mkdir()
+    default = _persisted(tmp_path / "d", mesh, None)
+    robust = _persisted(tmp_path / "r", mesh, "robust-v1")
+    assert "min_wall_method" not in default["objective"]          # legacy payload untouched
+    assert robust["objective"]["min_wall_method"] == "robust-v1"  # durable, even when it passes
+
+
+def test_scoreline_never_mixes_estimator_policies_in_one_row(tmp_path):
+    mesh = trimesh.creation.box(extents=[50, 50, 5])
+    (tmp_path / "d").mkdir()
+    (tmp_path / "r").mkdir()
+    default = _persisted(tmp_path / "d", mesh, None)
+    robust = _persisted(tmp_path / "r", mesh, "robust-v1")
+
+    def trial(payload, tid):
+        return {"trial_id": tid, "model_id": "same-entrant", "instrument_id": "i", "seed": 0,
+                "status": "scored", "result": payload}
+
+    rows = runner.collect_objective_scoreline({"config": {"backend": "openscad"},
+                                                "trials": [trial(default, "a"), trial(robust, "b")]})
+    assert len(rows) == 2
+    by_method = {r.get("min_wall_method", "min"): r for r in rows}
+    assert set(by_method) == {"min", "robust-v1"}
+    assert "min_wall_method" not in by_method["min"] and by_method["robust-v1"]["n_objective_trials"] == 1
+    # default-only logs keep the exact legacy row shape
+    (legacy,) = runner.collect_objective_scoreline({"trials": [trial(default, "a")]})
+    assert set(legacy) == {"entrant", "backend", "objective_pass_rate", "n_objective_trials"}
