@@ -222,3 +222,40 @@ def test_baseline_root_entrants_are_opponents_only(tmp_path):
         vote.prepare([source, flat], out, workspace=tmp_path)
     with pytest.raises(ValueError, match="baseline root"):
         vote.prepare([source], tmp_path / "runs/x", workspace=tmp_path, baseline_roots=[flat])
+
+
+def sampling_roots(tmp_path):
+    source = fixture_runs(tmp_path)
+    return [source, extra_root(tmp_path, "gem", "SECRET_MODEL_C", "flat"),
+            extra_root(tmp_path, "or", "SECRET_MODEL_D", "prefixed")]
+
+
+def test_max_pairs_is_balanced_deterministic_and_covers_model_pairs(tmp_path):
+    roots = sampling_roots(tmp_path)  # 4 models x 10 cells = 60 pairs, 6 model pairs
+    first = vote.prepare(roots, tmp_path / "runs/a", workspace=tmp_path, max_pairs=12)
+    again = vote.prepare(roots, tmp_path / "runs/b", workspace=tmp_path, max_pairs=12)
+    ids = lambda q: [i.pair.pair_id for i in q.items]  # noqa: E731
+    assert len(first.items) == 12 and ids(first) == ids(again)
+    manifest = json.loads((tmp_path / "runs/a/package.local.json").read_text())
+    sample = manifest["sample"]
+    assert sample["pairs_total"] == 60 and sample["pairs_selected"] == 12
+    assert set(sample["model_appearances"].values()) == {6}  # 12 pairs x 2 sides / 4 models
+    covered = {frozenset(c.model_id for c in (i.pair.left, i.pair.right)) for i in first.items}
+    assert len(covered) == 6
+    assert len(list((tmp_path / "runs/a/blind").glob("*.png"))) == 24  # only sampled pairs staged
+    assert len(vote.prepare(roots, tmp_path / "runs/a", workspace=tmp_path, max_pairs=12).items) == 12
+    with pytest.raises(ValueError, match="differs"):
+        vote.prepare(roots, tmp_path / "runs/a", workspace=tmp_path, max_pairs=13)
+    other = vote.prepare(roots, tmp_path / "runs/c", workspace=tmp_path, max_pairs=13)
+    assert len(other.items) == 13
+
+
+def test_max_pairs_default_all_and_larger_than_total_and_invalid(tmp_path):
+    roots = sampling_roots(tmp_path)
+    assert len(vote.prepare(roots, tmp_path / "runs/all", workspace=tmp_path).items) == 60
+    assert len(vote.prepare(roots, tmp_path / "runs/big", workspace=tmp_path, max_pairs=500).items) == 60
+    with pytest.raises(ValueError, match="at least 1"):
+        vote.prepare(roots, tmp_path / "runs/zero", workspace=tmp_path, max_pairs=0)
+    small = vote.prepare(roots, tmp_path / "runs/small", workspace=tmp_path, max_pairs=3)
+    assert len(small.items) == 3  # fewer than the six model pairs: distinct model pairs only
+    assert len({frozenset(c.model_id for c in (i.pair.left, i.pair.right)) for i in small.items}) == 3

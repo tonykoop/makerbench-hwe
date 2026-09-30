@@ -48,7 +48,46 @@ def resolve_preview(raw: str, log: Path, source_root: Path) -> Path:
     return log.parent / png
 
 
-def prepare(source_root, out: Path, *, voter="Tony", workspace=ROOT, baseline_roots=()) -> VoteQueue:
+SAMPLE_SEED = "frontier-vote-sample-v1"
+
+
+def sample_pairs(pairs, n):
+    """Balanced, seeded sample of ``n`` (key, a, b) pairs; the same input and ``n`` always agree.
+
+    Greedy: every model pair is covered once first (while ``n`` allows), then the rest is filled,
+    each step taking the pair whose two models have appeared least, then whose model pair and
+    round are least covered, with a seeded hash as the final tie-break. Output keeps input order.
+    """
+    def tiebreak(index):
+        key, a, b = pairs[index]
+        return hashlib.sha256(f"{SAMPLE_SEED}:{n}:{json.dumps(key)}:{a.candidate_id}:{b.candidate_id}".encode()).hexdigest()
+
+    def models(index):
+        return tuple(sorted((pairs[index][1].model_id, pairs[index][2].model_id)))
+
+    appearances, by_models, by_round = defaultdict(int), defaultdict(int), defaultdict(int)
+    chosen, remaining = [], set(range(len(pairs)))
+    while len(chosen) < n:
+        uncovered = {i for i in remaining if not by_models[models(i)]}
+        pool = uncovered or remaining
+
+        def cost(i):
+            ma, mb = models(i)
+            return (appearances[ma] + appearances[mb], by_models[models(i)],
+                    by_round[pairs[i][0][0]], tiebreak(i))
+        best = min(pool, key=cost)
+        ma, mb = models(best)
+        appearances[ma] += 1
+        appearances[mb] += 1
+        by_models[(ma, mb)] += 1
+        by_round[pairs[best][0][0]] += 1
+        remaining.discard(best)
+        chosen.append(best)
+    return [pairs[i] for i in sorted(chosen)]
+
+
+def prepare(source_root, out: Path, *, voter="Tony", workspace=ROOT, baseline_roots=(),
+            max_pairs=None) -> VoteQueue:
     roots = [Path(r) for r in ([source_root] if isinstance(source_root, (str, Path)) else source_root)]
     if not roots:
         raise ValueError("At least one source root is required")
@@ -111,6 +150,15 @@ def prepare(source_root, out: Path, *, voter="Tony", workspace=ROOT, baseline_ro
                         candidate_id=opaque, trial_id=opaque, model_id=str(trial["model_id"]),
                         render_path=str(png), provenance={"original_trial_id": trial["trial_id"]},
                     ))
+    if max_pairs is not None and max_pairs < 1:
+        raise ValueError("max_pairs must be at least 1")
+    candidate_pairs = [
+        (key, a, b) for key, candidates in sorted(cells.items())
+        for a, b in combinations(sorted(candidates, key=lambda c: c.candidate_id), 2)
+        if not (a.candidate_id in baseline_ids and b.candidate_id in baseline_ids)]
+    total_pairs = len(candidate_pairs)
+    if max_pairs is not None and max_pairs < total_pairs:
+        candidate_pairs = sample_pairs(candidate_pairs, max_pairs)
     manifest = {"schema": SCHEMA, "voter": voter, "sources": sources,
                 "preview_only": True, "excluded": dict(sorted(excluded.items())),
                 "candidates": sum(map(len, cells.values())),
@@ -119,6 +167,14 @@ def prepare(source_root, out: Path, *, voter="Tony", workspace=ROOT, baseline_ro
                            for n in range(1, 11)}}
     if baseline:
         manifest["baseline_roots"] = sorted(str(r) for r in baseline)
+    if max_pairs is not None:
+        appearances = defaultdict(int)
+        for _, a, b in candidate_pairs:
+            appearances[a.model_id] += 1
+            appearances[b.model_id] += 1
+        manifest["sample"] = {"max_pairs": max_pairs, "seed": SAMPLE_SEED, "pairs_total": total_pairs,
+                              "pairs_selected": len(candidate_pairs),
+                              "model_appearances": dict(sorted(appearances.items()))}
     if not any(len(c) >= 2 for c in cells.values()):
         raise ValueError("No same-cell rendered pairs available")
     existing = out.exists()
@@ -129,32 +185,29 @@ def prepare(source_root, out: Path, *, voter="Tony", workspace=ROOT, baseline_ro
     else:
         (out / "blind").mkdir(parents=True)
     queue = VoteQueue(run_dir=out, voter=voter)
-    for key, candidates in sorted(cells.items()):
-        for a, b in combinations(sorted(candidates, key=lambda c: c.candidate_id), 2):
-            if a.candidate_id in baseline_ids and b.candidate_id in baseline_ids:
-                continue
-            pair = build_blind_pair(a, b, pair_seed=json.dumps(key))
-            sides = []
-            for side, candidate in (("left", pair.left), ("right", pair.right)):
-                alias = f"blind/{pair.pair_id}-{side}.png"
-                target = out / alias
-                # Re-encode without textual metadata; never change the source image.
-                with Image.open(candidate.render_path) as image:
-                    pixels = image.convert("RGBA")
-                    clean = Image.frombytes(pixels.mode, pixels.size, pixels.tobytes())
-                    encoded = BytesIO()
-                    clean.save(encoded, format="PNG")
-                    if existing:
-                        if target.resolve() != target or target.read_bytes() != encoded.getvalue():
-                            raise ValueError("Staged preview changed; use a fresh package")
-                    else:
-                        target.write_bytes(encoded.getvalue())
-                sides.append(VoteCandidate(candidate.candidate_id, candidate.model_id,
-                                           candidate.trial_id, alias, candidate.provenance))
-            queue.items.append(QueueItem(type(pair)(pair.pair_id, *sides), {
-                "round": key[0], "instrument_id": key[1], "seed": key[2], "rep": key[3],
-                "preview_only": True,
-            }))
+    for key, a, b in candidate_pairs:
+        pair = build_blind_pair(a, b, pair_seed=json.dumps(key))
+        sides = []
+        for side, candidate in (("left", pair.left), ("right", pair.right)):
+            alias = f"blind/{pair.pair_id}-{side}.png"
+            target = out / alias
+            # Re-encode without textual metadata; never change the source image.
+            with Image.open(candidate.render_path) as image:
+                pixels = image.convert("RGBA")
+                clean = Image.frombytes(pixels.mode, pixels.size, pixels.tobytes())
+                encoded = BytesIO()
+                clean.save(encoded, format="PNG")
+                if existing:
+                    if target.resolve() != target or target.read_bytes() != encoded.getvalue():
+                        raise ValueError("Staged preview changed; use a fresh package")
+                else:
+                    target.write_bytes(encoded.getvalue())
+            sides.append(VoteCandidate(candidate.candidate_id, candidate.model_id,
+                                       candidate.trial_id, alias, candidate.provenance))
+        queue.items.append(QueueItem(type(pair)(pair.pair_id, *sides), {
+            "round": key[0], "instrument_id": key[1], "seed": key[2], "rep": key[3],
+            "preview_only": True,
+        }))
     if not queue.items:
         raise ValueError("No same-cell rendered pairs available")
     if not existing:
@@ -257,6 +310,8 @@ def main():
                         help="run root holding R1-R10 logs; repeat to merge several roots")
     parser.add_argument("--baseline-root", type=Path, action="append", default=[],
                         help="a --source-root whose entrants are opponents only (not paired with each other)")
+    parser.add_argument("--max-pairs", type=int, default=None,
+                        help="balanced seeded sample of N pairs (default: all pairs)")
     parser.add_argument("--out", type=Path, default=ROOT / "runs/frontier-vote-2026-09-30")
     parser.add_argument("--voter", default="Tony")
     parser.add_argument("--port", type=int, default=0)
@@ -265,7 +320,8 @@ def main():
     args = parser.parse_args()
     if not 0 <= args.port <= 65535:
         parser.error("port must be between 0 and 65535")
-    queue = prepare(args.source_root, args.out, voter=args.voter, baseline_roots=args.baseline_root)
+    queue = prepare(args.source_root, args.out, voter=args.voter, baseline_roots=args.baseline_root,
+                    max_pairs=args.max_pairs)
     done, total = queue.progress()
     print(f"Local preview-only vote package: {done}/{total} pairs voted. No grading or publication.", flush=True)
     if args.prepare_only:
