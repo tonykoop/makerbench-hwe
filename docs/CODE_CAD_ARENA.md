@@ -278,14 +278,14 @@ in-process (a retry is a second charge).
 
 `arena run` refuses an `openrouter-*` entrant unless `--max-cost <USD>` is given, and the cap is
 enforced **before dispatch**. Each request carries `max_tokens` (default 16,000; override per entrant
-with `max_tokens` in `--model-map`) and a provider-side `max_price` from the model's listed prices.
+with `max_tokens` in `--model-map`) and a provider-side `max_price` (prompt, completion and the flat per-request fee) from the model's listed prices.
 Its maximum billable cost (prompt bytes plus `max_tokens` at those prices) is reserved in a JSONL ledger
 (`--cost-ledger`, default `<run-dir>/metered_cost_ledger.jsonl`) under an exclusive file lock, so
 processes sharing a ledger cannot spend the same headroom. The call is refused if settled actual spend +
-outstanding reservations + this call's maximum would exceed the cap, if the model's pricing is unknown,
+outstanding reservations + this call's maximum would exceed the cap, if the model's pricing is unknown, missing a required token price or carries an unparseable extra price (absent optional charges count as zero),
 or if the ledger holds any invalid cost (non-numeric, boolean, negative, NaN or infinite; rows are kept
 as evidence). A call whose actual cost is unreadable (including a transport error or timeout) is settled
-at its reserved maximum and halts the run; an unsettled reservation keeps counting at its maximum. A halted
+at its reserved maximum and halts the run; an unsettled reservation keeps counting at its maximum. A settlement above its own reservation halts the run at once (both numbers are kept). A halted
 run leaves the remaining trials pending, and a trial refused before it was sent gets its attempt back.
 `--stub` runs are never metered. The reserve makes the cap strict at the cost of headroom (the bound is
 the worst case, so the actual spend is usually well under the cap) and a response cut off by `max_tokens`

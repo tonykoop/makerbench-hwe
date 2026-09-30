@@ -978,6 +978,7 @@ class MeteredBudget:
         self._memory: list[dict] = []
         self._thread_lock = threading.RLock()
         self._next_id = 0
+        self._reserved: dict[str, float] = {}
         if self.ledger_path is not None:
             self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
         state = self._state()
@@ -1095,6 +1096,7 @@ class MeteredBudget:
 
             rid = f"{os.getpid()}-{_time.time_ns()}-{self._next_id}"
             self._append({"kind": "reserve", "id": rid, "model": model, "max_cost_usd": float(max_cost_usd), **(identity or {})})
+            self._reserved[rid] = float(max_cost_usd)
             return rid
 
     def settle(self, rid: str, *, model: str, cost_usd: object, detail: Optional[dict] = None) -> None:
@@ -1103,6 +1105,15 @@ class MeteredBudget:
             if not _valid_cost(cost_usd):
                 row["invalid_cost_seen"] = repr(cost_usd)[:80]
                 self.halt_reason = f"a call to {model} returned no readable cost"
+                self.halt_call_made = True
+            reserved = self._reserved.pop(rid, None)
+            if reserved is not None and _valid_cost(cost_usd) and float(cost_usd) > reserved + 1e-12:
+                # the claimed upper bound was wrong: keep both numbers and stop before another request
+                row["reserved_max_usd"] = reserved
+                row["exceeded_reservation"] = True
+                self.halt_reason = (
+                    f"settled cost ${float(cost_usd):.6f} for {model} exceeded its reserved maximum ${reserved:.6f}"
+                )
                 self.halt_call_made = True
             self._append(row)
 
@@ -1121,27 +1132,46 @@ def _usage_cost(data: object) -> tuple[Optional[float], dict]:
 _openrouter_pricing_cache: dict[str, dict] = {}
 
 
+def _parse_pricing(pricing: object) -> Optional[dict]:
+    """Strictly parse an OpenRouter ``pricing`` object, or None if any billed price is unusable.
+
+    ``prompt`` and ``completion`` are required and must be valid non-negative numbers.
+    ``request`` and ``internal_reasoning`` may be absent (no such charge) but, when present, must
+    also be valid: an unparseable extra price is an unbounded charge, so the model is refused.
+    """
+
+    if not isinstance(pricing, dict):
+        return None
+    parsed: dict = {}
+    for key, required in (("prompt", True), ("completion", True), ("request", False), ("internal_reasoning", False)):
+        if key not in pricing:
+            if required:
+                return None
+            parsed[key] = 0.0
+            continue
+        raw = pricing[key]
+        if isinstance(raw, bool):
+            return None
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if not _valid_cost(value):
+            return None
+        parsed[key] = value
+    return parsed
+
+
 def _openrouter_pricing(slug: str, *, timeout_s: int = 30) -> Optional[dict]:
-    """Per-token USD prices for ``slug`` from ``/models`` ({prompt, completion, request, reasoning}), or None."""
+    """Per-token USD prices for ``slug`` from ``/models`` ({prompt, completion, request, internal_reasoning}), or None."""
 
     if slug in _openrouter_pricing_cache:
         return _openrouter_pricing_cache[slug]
     models = _openrouter_request("/models", None, timeout_s=timeout_s).get("data") or []
     for entry in models:
-        pricing = entry.get("pricing") if isinstance(entry, dict) else None
-        if isinstance(pricing, dict):
-            parsed: dict = {}
-            for key in ("prompt", "completion", "request", "internal_reasoning"):
-                try:
-                    value = float(pricing.get(key, 0) or 0)
-                except (TypeError, ValueError):
-                    value = None
-                if value is not None and _valid_cost(value):
-                    parsed[key] = value
-                elif key in ("prompt", "completion"):
-                    parsed = {}
-                    break
-            if parsed:
+        if isinstance(entry, dict):
+            parsed = _parse_pricing(entry.get("pricing"))
+            if parsed is not None:
                 _openrouter_pricing_cache[str(entry.get("id"))] = parsed
     return _openrouter_pricing_cache.get(slug)
 
@@ -1235,6 +1265,7 @@ def make_openrouter_generator(
                     "max_price": {
                         "prompt": round(pricing["prompt"] * 1_000_000, 6),
                         "completion": round(pricing["completion"] * 1_000_000, 6),
+                        "request": pricing.get("request", 0.0),  # flat USD per request (0 disallows any fee)
                     }
                 }
             reservation = budget.reserve(model=slug, max_cost_usd=bound, identity={**identity, "max_tokens": token_cap})

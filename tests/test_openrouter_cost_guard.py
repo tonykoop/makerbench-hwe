@@ -91,7 +91,7 @@ def test_budgeted_request_carries_a_token_cap_and_a_provider_side_max_price(http
     _gen(MeteredBudget(5.0, tmp_path / "l.jsonl"))(_request())
     payload = calls[0]["payload"]
     assert payload["max_tokens"] == providers.DEFAULT_OPENROUTER_MAX_TOKENS
-    assert payload["provider"]["max_price"] == {"prompt": 1.0, "completion": 2.0}  # USD per million tokens
+    assert payload["provider"]["max_price"] == {"prompt": 1.0, "completion": 2.0, "request": 0.0}  # token prices per million, request fee per call
 
 
 def test_the_first_call_is_refused_when_its_maximum_could_exceed_the_cap(http, tmp_path):
@@ -125,6 +125,57 @@ def test_unknown_pricing_refuses_dispatch(http, tmp_path):
     with pytest.raises(BudgetExhausted, match="no bounded maximum"):
         _gen(budget)(_request())
     assert calls == []
+
+
+def test_the_request_fee_is_reserved_and_constrained_in_the_routing_request(http, tmp_path):
+    calls, queue, state = http
+    state["pricing"] = {"prompt": "0", "completion": "0", "request": "0.01"}
+    queue.append(_ok(0.01))
+    budget = MeteredBudget(5.0, tmp_path / "l.jsonl")
+    _gen(budget)(_request())
+    assert calls[0]["payload"]["provider"]["max_price"]["request"] == 0.01
+    reserve = json.loads((tmp_path / "l.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert reserve["max_cost_usd"] == pytest.approx(0.01)
+
+
+def test_a_settlement_above_its_reservation_halts_and_keeps_both_numbers(http, tmp_path):
+    calls, queue, state = http
+    state["pricing"] = {"prompt": "0", "completion": "0", "request": "0.01"}
+    queue.append(_ok(20.0))  # a broken bound: the flat fee charged far more than listed
+    ledger = tmp_path / "l.jsonl"
+    budget = MeteredBudget(25.0, ledger)
+    gen = _gen(budget)
+    gen(_request(0))
+    settle = json.loads(ledger.read_text(encoding="utf-8").splitlines()[1])
+    assert settle["cost_usd"] == 20.0 and settle["reserved_max_usd"] == pytest.approx(0.01) and settle["exceeded_reservation"]
+    assert budget.halt_reason and "exceeded its reserved maximum" in budget.halt_reason
+    with pytest.raises(BudgetExhausted):
+        gen(_request(1))
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("pricing", [
+    {"request": "0.01"},  # no token prices at all
+    {"prompt": "0.000001"},  # completion missing
+    {"completion": "0.000002"},  # prompt missing
+    {"prompt": "0", "completion": "0", "request": "unknown"},
+    {"prompt": "0", "completion": "0", "internal_reasoning": "n/a"},
+    {"prompt": "-1", "completion": "0"},
+    {"prompt": "nan", "completion": "0"},
+    {"prompt": True, "completion": "0"},
+])
+def test_missing_or_invalid_billing_prices_refuse_dispatch(http, tmp_path, pricing):
+    calls, queue, state = http
+    state["pricing"] = pricing
+    queue.append(_ok(0.01))
+    with pytest.raises(BudgetExhausted, match="no bounded maximum"):
+        _gen(MeteredBudget(5.0, tmp_path / "l.jsonl"))(_request())
+    assert calls == []
+
+
+def test_an_absent_optional_charge_is_zero_not_unknown():
+    parsed = providers._parse_pricing({"prompt": "0.000001", "completion": "0.000002"})
+    assert parsed == {"prompt": 1e-6, "completion": 2e-6, "request": 0.0, "internal_reasoning": 0.0}
 
 
 def test_failed_request_makes_one_call_and_halts_a_budgeted_run(http, tmp_path):
