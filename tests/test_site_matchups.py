@@ -83,7 +83,7 @@ def test_row_cannot_misstate_held_backend_or_measurements(tmp_path, change):
         b.build_matchups_page(tmp_path)
 
 
-@pytest.mark.parametrize('fault', ['different-held-models', 'unselected-backends', 'wrong-live-driver'])
+@pytest.mark.parametrize('fault', ['different-held-models', 'unselected-backends', 'wrong-live-driver', 'missing-live-driver'])
 def test_backend_and_driver_axes_cannot_hide_other_model_changes(tmp_path, fault):
     sample = bundle()
     item = sample['matchups'][0]
@@ -100,6 +100,10 @@ def test_backend_and_driver_axes_cannot_hide_other_model_changes(tmp_path, fault
         item['matchup']['held']['driver_models'] = 'driver-held'
         for row, backend in zip(item['entrants'], item['matchup']['values']):
             row['backend'] = backend
+    elif fault == 'missing-live-driver':
+        item['matchup']['values'] = ['openscad', 'fusion-live']
+        for row, backend in zip(item['entrants'], item['matchup']['values']):
+            row.update(backend=backend)
     (tmp_path/'sample.json').write_text(json.dumps(sample))
     with pytest.raises(ValueError):
         b.build_matchups_page(tmp_path)
@@ -151,3 +155,32 @@ def test_declared_topology_failure_is_published_without_changing_rate(tmp_path):
     actual = page['matchups'][0]['entrants'][0]
     assert actual['objective_pass_rate'] == 5/7
     assert actual['failed_checks']['topology'] == 1
+
+
+def test_compile_error_is_not_a_provider_infrastructure_error(tmp_path):
+    sample = bundle()
+    row = sample['matchups'][0]['entrants'][1]
+    row.update(n_infra_errors=0, n_execution_errors=1, n_compile_errors=1)
+    (tmp_path/'sample.json').write_text(json.dumps(sample))
+    page = b.build_matchups_page(tmp_path)
+    observed = page['matchups'][0]['entrants'][1]
+    assert observed['objective_pass_rate'] is None
+    assert observed['n_infra_errors'] == 0 and observed['n_compile_errors'] == 1
+    assert 'Unmeasured (compile failure)' in b._prerender_matchups_html(page)
+    row.update(n_infra_errors=1)
+    (tmp_path/'sample.json').write_text(json.dumps(sample))
+    with pytest.raises(ValueError, match='classifications'):
+        b.build_matchups_page(tmp_path)
+
+
+def test_actual_envelope_gate_name_does_not_trigger_preference_field_audit(tmp_path):
+    sample = bundle()
+    row = sample['matchups'][0]['entrants'][0]
+    row['objective_pass_rate'] = 4/6
+    row['failed_checks']['fits_envelope'] = 1
+    (tmp_path/'sample.json').write_text(json.dumps(sample))
+    page = b.build_matchups_page(tmp_path)
+    assert page['matchups'][0]['entrants'][0]['failed_checks']['fits_envelope'] == 1
+    assert 'fits_envelope (1)' in b._prerender_matchups_html(page)
+    with pytest.raises(ValueError, match='banned key'):
+        b.audit_arena_page_public({'failed_checks': {'elo_ratings': 1}})
