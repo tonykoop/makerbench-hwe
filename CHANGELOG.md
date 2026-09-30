@@ -4,6 +4,9 @@ All notable changes to MakerBench should be recorded here.
 
 ## Unreleased
 
+- Renamed the harness distribution to `makerbench-hwe` while preserving legacy
+  installed-version discovery. After pulling, re-run `pip install -e ".[studio]"`
+  (or `pip install -e .` without Studio) to register the new distribution name.
 - Added optional matchup provenance to result envelopes (#840), shared validation
   for varied and held axes, exported results/matchup schemas, and metadata-only
   golden fixtures. Legacy results keep schema version 0.1 and load without a
