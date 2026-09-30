@@ -123,8 +123,11 @@ How to read it:
 - The difference between blind and image tiers (0.889 vs 0.833 under the default gate; 1.000 vs
   1.000 under `robust-v1`) stays within what three seeds cannot separate, as stated above. Under
   `robust-v1` there is no tier difference at all on this gate.
-- A note on the analysis: `min-wall-analysis.md` originally dropped every zero-area triangle,
-  which changed two of these meshes (image seeds 1 and 2); it now carries a correction. The
+- A note on the analysis: `min-wall-analysis.md` (merged as #905) measured with the earlier gate
+  that dropped every zero-area triangle, which changed two of these meshes (image seeds 1 and 2).
+  It is kept as historical evidence of that gate version, and this PR appends a "Correction after
+  the gate fix (#921)" section to it with the corrected readings (image seed 1 watertight, 0.0105 mm;
+  image seed 2, 0.162 mm). The
   numbers in this section use the fixed gate (only isolated slivers dropped).
 
 Method and provenance: replay of `mesh_objective_gate` with the registry spec for `sambuca`
@@ -134,3 +137,11 @@ OpenSCAD 2021.01. The sampled minima depend on the numpy/trimesh build (#919), s
 reproduce only in that environment. The STL and SCAD stay in the gitignored `runs/` of the original
 worktrees. Needs #922 (sliver fix), #903 (explanations, merged) and #918 (the robust option) to
 reproduce.
+
+Replay recipe (to reproduce after these PRs evolve): check out the `makerbench-hwe` commit that has
+the robust option and the isolated-sliver helper together (the #918 branch head `5586e0b9`, which
+contains #922, on top of `main` at `f9dbb74d`), in a venv from `requirements.lock`, and for each of
+the six designs call `mesh_objective_gate(spec, ...)` with the registry `sambuca` spec on the
+design's `output.stl`, passing the design's own SCAD as `scad_path` so the assembly part-module
+count applies; call it once with defaults and once with `min_wall_estimator="robust-v1"`. Run with
+`PYTHONPATH` set to that checkout so the installed package does not shadow it.
