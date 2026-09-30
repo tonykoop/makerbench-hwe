@@ -344,7 +344,18 @@ class ArenaStudioService:
         if not isinstance(raw, str):
             return None
         path = Path(raw)
-        path = (path if path.is_absolute() else run_dir / path).resolve()
+        if not path.is_absolute():
+            repository_path = self.repo_root / path
+            # Production can record a repository-relative run prefix, while
+            # imported logs can record a path relative to the selected run.
+            # Recognize the qualified form before resolving symlinks so an
+            # escaping target cannot fall back to a different in-run file.
+            if (repository_path.is_relative_to(run_dir)
+                    or repository_path.resolve().is_relative_to(run_dir)):
+                path = repository_path
+            else:
+                path = run_dir / path
+        path = path.resolve()
         if not path.is_relative_to(run_dir) or path.suffix.lower() != ".png" or not path.is_file():
             return None
         with path.open("rb") as handle:

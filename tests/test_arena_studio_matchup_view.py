@@ -113,3 +113,88 @@ def test_declared_topology_checks_are_visible_without_inventing_undeclared_ones(
     assert trials[0]['gates']['topology'] == 0.0
     assert 'interfaces' not in trials[0]['gates']
     assert 'topology' not in trials[1]['gates']
+
+
+def test_production_relative_render_paths_reach_mounted_studio_routes(tmp_path, monkeypatch):
+    from pathlib import Path
+    import trimesh
+    from makerbench import code_cad_arena_runner as runner, nightly_cad
+    from makerbench.code_cad_objective import RenderArtifacts
+    from makerbench.code_cad_providers import make_stub_generator
+
+    monkeypatch.chdir(tmp_path)
+    run=Path('runs/code_cad_arena/relative-matchup')
+    run.mkdir(parents=True)
+    registry={'instruments':[{'id':'boxolin', 'task_brief':'fixture box instrument',
+                             'envelope_mm':[100,100,100], 'min_bodies':1}]}
+    registry_path=tmp_path/'registry.json'
+    registry_path.write_text(json.dumps(registry))
+    image=tmp_path/'reference.png'
+    image.write_bytes(PNG)
+    job=nightly_cad.NightlyJob(job_id='relative-fixture', instrument_id='boxolin',
+                             reference_image=str(image), entrants=[
+        nightly_cad.NightlyEntrant(entrant_id=model+'::L1', model_id=model, kind='arena')
+        for model in ['stub-a','stub-b']])
+    job.validate()
+    preview=build_matchup('model', ['stub-a','stub-b'], instruments=['boxolin'], models=['stub-a'])
+    metadata={k:preview[k] for k in ['varied_axis','values','varied_axes','factorial','held']}
+    nightly_cad._fresh_run_log(run, job, matchup=metadata)
+
+    def compiler(_source, output):
+        output.mkdir(parents=True, exist_ok=True)
+        stl=output/'output.stl'
+        trimesh.creation.box(extents=[30,20,10]).export(stl)
+        png=output/'preview.png'
+        png.write_bytes(PNG)
+        return RenderArtifacts(stl_path=stl, png_path=png)
+
+    models=tuple(e.entrant_id for e in job.entrants)
+    execute=runner.make_execute_trial(registry=registry, run_dir=run,
+        generators={m:make_stub_generator() for m in models}, compiler=compiler, backend='openscad')
+    log=orch.run_orchestration(config=orch.OrchestrationConfig(instrument_ids=('boxolin',),
+        model_ids=models, seeds=(0,)), run_log_path=run/'run_log.json', execute_trial=execute)
+    paths=[Path(t['result']['artifacts']['png_path']) for t in log['trials']]
+    assert len(paths)==2 and all(not p.is_absolute() and p.is_file() for p in paths)
+    (tmp_path/'server-cwd').mkdir()
+    monkeypatch.chdir(tmp_path/'server-cwd')
+    client=TestClient(create_studio_app(registry_path=registry_path, repo_root=tmp_path),
+                      base_url='http://127.0.0.1')
+    summary=client.get('/api/runs/relative-matchup/summary')
+    assert summary.status_code==200
+    rows=summary.json()['matchup_trials']
+    assert len(rows)==2 and all(r['render_url'] for r in rows)
+    for row in rows:
+        response=client.get(row['render_url'])
+        assert response.status_code==200 and response.content==PNG
+
+
+def test_short_run_relative_path_uses_the_selected_run(tmp_path):
+    run=make_matchup_repo(tmp_path)
+    (tmp_path/'preview-0.png').write_bytes(b'not the selected PNG')
+    path=run/'run_log.json'
+    payload=json.loads(path.read_text())
+    payload['trials'][0]['result']['artifacts']['png_path']='preview-0.png'
+    path.write_text(json.dumps(payload))
+    client=TestClient(create_studio_app(registry_path=tmp_path/'registry.json', repo_root=tmp_path),
+                      base_url='http://127.0.0.1')
+    response=client.get('/api/runs/matchup-fixture/matchup-render/fixture-0')
+    assert response.status_code==200 and response.content==PNG
+
+
+def test_repository_qualified_symlink_never_falls_back_to_another_in_run_file(tmp_path):
+    run=make_matchup_repo(tmp_path)
+    outside=tmp_path/'outside.png'
+    outside.write_bytes(PNG)
+    link=run/'escape.png'
+    link.symlink_to(outside)
+    relative=link.relative_to(tmp_path)
+    alternate=run/relative
+    alternate.parent.mkdir(parents=True)
+    alternate.write_bytes(PNG)
+    path=run/'run_log.json'
+    payload=json.loads(path.read_text())
+    payload['trials'][0]['result']['artifacts']['png_path']=relative.as_posix()
+    path.write_text(json.dumps(payload))
+    client=TestClient(create_studio_app(registry_path=tmp_path/'registry.json', repo_root=tmp_path),
+                      base_url='http://127.0.0.1')
+    assert client.get('/api/runs/matchup-fixture/matchup-render/fixture-0').status_code==404

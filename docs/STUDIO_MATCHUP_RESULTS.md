@@ -24,3 +24,11 @@ in both themes, desktop and phone widths, with WebGL disabled. The desktop
 control checks that the entrant cards share a row; phone coverage checks for
 horizontal overflow. Fixture renders and gate values are synthetic test data,
 not published benchmark results.
+
+Recorded PNG paths support absolute paths, repository-relative paths emitted by
+a run launched from the repository directory, and shorter run-relative paths.
+Repository-qualified paths use Studio's configured repository root, independent
+of its current working directory. The resolved file must remain inside the
+selected run; an escaping symlink is rejected rather than reinterpreted as a
+different relative file. Trial-ID lookup, unique-record and PNG checks still
+apply before the mounted route serves an image.
