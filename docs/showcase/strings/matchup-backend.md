@@ -33,24 +33,30 @@ size should not be read as effects. That is the main caution for this whole stri
 Not measured: sound, printability beyond these checks, resemblance to the instrument,
 preference. No preference votes or Elo are involved.
 
-## Gate version and replay
+## Gate version and replay (environment differs; not a gate-only effect)
 
-These trials were scored with the arena gate **before** the S5 fix that drops zero-area
-sliver triangles from B-rep STL output (#874); my branch was cut before that fix landed.
-I replayed the same recorded meshes through the corrected gate on `origin/main` (no model
-calls, `mesh_objective_gate` on each committed trial's STL):
+These trials were scored live by the arena, before the S5 fix that drops zero-area sliver
+triangles from B-rep STL output (#874); my branch was cut before that fix landed. Later I
+replayed the locally recorded trial STLs through `mesh_objective_gate` on current
+`origin/main` (no model calls) in a different runtime than the live run's (trimesh 4.12.2,
+NumPy 2.2.6 at replay; the live run's versions were not recorded):
 
 | Backend | Seed 0 | Seed 1 | Seed 2 | Mean |
 |---|---|---|---|---|
-| OpenSCAD | 1.000 | 1.000 | 1.000 | 1.000 |
-| CadQuery, original gate | 0.833 (`watertight`) | 1.000 | 1.000 | 0.944 |
-| CadQuery, corrected gate (replay) | 0.833 (`watertight`) | 0.833 (`min_wall`) | 1.000 | 0.889 |
+| OpenSCAD, recorded | 1.000 | 1.000 | 1.000 | 1.000 |
+| CadQuery, **recorded (live run)** | 0.833 (`watertight`) | 1.000 | 1.000 | 0.944 |
+| CadQuery, replay (stated environment) | 0.833 (`watertight`) | 0.833 (`min_wall`) | 1.000 | 0.889 |
+| OpenSCAD, replay | 1.000 | 1.000 | 1.000 | 1.000 |
 
-So the corrected gate does not rescue CadQuery seed 0 here, and it turns seed 1 into a
-`min_wall` failure; I did not investigate why (the wall estimate runs on the largest
-watertight body, which can change once slivers are removed). Treat the CadQuery mean as
-0.889 to 0.944 depending on the gate, and read neither as an effect. The table at the top
-keeps the original scoring because that is what the run produced.
+The replay is **not** a before/after of the gate fix. The corrected gate removes zero
+degenerate faces from all three CadQuery meshes (I counted; an independent replay of seed 1
+under the old and the corrected gate in the same runtime gave the same 0.833 and the same
+watertight-body count and wall estimate). So the seed-1 change from 1.000 recorded to 0.833
+replayed comes from something else: the runtime difference, or the randomised wall estimate.
+I did not identify which, so that cause is unknown. The recorded result is the headline
+table above; the replay only shows that CadQuery's mean is 0.889 to 0.944 depending on
+where it is scored, and I read neither as an effect. A same-environment before/after
+control was not run by me.
 
 ## Wall time
 
