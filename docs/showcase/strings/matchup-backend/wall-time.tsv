@@ -1,0 +1,7 @@
+backend	seed	elapsed_s
+openscad	0	203.3
+openscad	1	165.4
+openscad	2	131.9
+cadquery	0	76.6
+cadquery	1	61.3
+cadquery	2	68.5
