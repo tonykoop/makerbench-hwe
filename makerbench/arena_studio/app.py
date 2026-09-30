@@ -215,6 +215,14 @@ def create_studio_app(
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
+    @app.get("/api/runs/{run_id}/matchup-render/{trial_id}")
+    def get_matchup_render(run_id: str, trial_id: str):
+        run_path = _resolve_run_dir(run_id)
+        asset = service.matchup_render_path(run_path, trial_id)
+        if asset is None:
+            raise HTTPException(status_code=404, detail="Render not found")
+        return FileResponse(str(asset), media_type="image/png", headers={"X-Content-Type-Options": "nosniff"})
+
     @app.get("/api/runs/{run_id}/leaderboard")
     def get_run_leaderboard(run_id: str):
         run_path = _resolve_run_dir(run_id)

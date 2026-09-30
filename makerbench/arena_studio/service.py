@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import math
 import os
 import re
 import shutil
@@ -44,6 +45,7 @@ from makerbench.code_cad_vote_web import QueueItem, VoteQueue
 from makerbench.nightly_cad import _resume_budget, load_queue
 from makerbench.nightly_preflight import audit_lock
 from makerbench.redaction import run_relative_path
+from makerbench.schema import MatchupMetadata
 
 from . import analytics
 from . import doe
@@ -279,7 +281,7 @@ class ArenaStudioService:
                 created_at = data.get("started_at") or data.get("created_at")
                 cfg = data.get("config") or {}
                 models = cfg.get("model_ids") or []
-                instruments = cfg.get("instruments") or []
+                instruments = cfg.get("instruments") or cfg.get("instrument_ids") or []
                 trials_count = len(data.get("trials") or [])
             except Exception:
                 pass
@@ -323,7 +325,57 @@ class ArenaStudioService:
             "manifold_count": manifold,
             "trials": trials,
         })
+        if cfg.get("matchup"):
+            summary["matchup"] = MatchupMetadata.model_validate(cfg["matchup"]).model_dump(mode="json")
+            summary["matchup_trials"] = self._matchup_trials(run_dir, trials)
         return summary
+
+    def matchup_render_path(self, run_dir: Path, trial_id: str) -> Optional[Path]:
+        """Resolve one recorded PNG inside the selected run; never accept a filename."""
+        run_dir = run_dir.resolve()
+        log = _load_run_log(run_dir)
+        if not log.get("config", {}).get("matchup"):
+            return None
+        matches = [row for row in log.get("trials") or [] if row.get("trial_id") == trial_id]
+        if len(matches) != 1:
+            return None
+        result = matches[0].get("result") or {}
+        raw = (result.get("artifacts") or {}).get("png_path")
+        if not isinstance(raw, str):
+            return None
+        path = Path(raw)
+        path = (path if path.is_absolute() else run_dir / path).resolve()
+        if not path.is_relative_to(run_dir) or path.suffix.lower() != ".png" or not path.is_file():
+            return None
+        with path.open("rb") as handle:
+            if handle.read(8) != b"\x89PNG\r\n\x1a\n":
+                return None
+        return path
+
+    def _matchup_trials(self, run_dir: Path, trials: list) -> list[dict]:
+        def observed(value, ceiling=None):
+            return value if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                             and math.isfinite(value) and value >= 0
+                             and (ceiling is None or value <= ceiling)) else None
+
+        rows = []
+        for trial in trials:
+            result = trial.get("result") or {}
+            objective = result.get("objective") or {}
+            gates = objective.get("sub_scores") or {}
+            rows.append({
+                "trial_id": trial.get("trial_id"), "entrant": trial.get("model_id"),
+                "instrument_id": trial.get("instrument_id"), "seed": trial.get("seed"), "rep": trial.get("rep"),
+                "status": trial.get("status") or "pending", "backend": result.get("backend"),
+                "wall_time_s": observed(trial.get("wall_time_s")),
+                "objective_pass_rate": observed(objective.get("objective_pass_rate"), 1),
+                "gates": {key: observed(gates.get(key), 1) for key in (
+                    "renders", "watertight", "nonzero_volume", "body_count", "fits_envelope", "min_wall",
+                    *[key for key in ("topology", "interfaces") if key in gates])},
+                "render_url": f"/api/runs/{quote(run_dir.name, safe='')}/matchup-render/{quote(str(trial.get('trial_id')), safe='')}"
+                if self.matchup_render_path(run_dir, trial.get("trial_id")) else None,
+            })
+        return rows
 
     def get_run_leaderboard(self, run_dir: Path) -> dict[str, Any]:
         """Build the live Elo leaderboard for the run."""
