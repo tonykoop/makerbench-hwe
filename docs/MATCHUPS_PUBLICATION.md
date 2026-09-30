@@ -33,3 +33,12 @@ Run `python site/build_data.py` to regenerate `site/data/matchups.json` and the
 static section in `site/index.html`. The data drift guard covers both outputs.
 The section remains visible without JavaScript. No ranking is inferred across
 matchups that vary different instruments, seeds, backends or contexts.
+
+A production `auto_fail` records a pipeline zero with empty mesh sub-scores;
+its checks were not measured. Publish `objective_pass_rate: null`,
+`n_objective_trials: 0` and empty `failed_checks`, with one execution failure.
+The static table labels it “Unmeasured (execution error)” and “Not measured”; it
+does not turn the pipeline zero into a measured mesh rate or a failed mesh check.
+The native catalog records the original pipeline zero and `failure_stage`
+separately, and its summary counts render auto-fails outside mesh observations.
+The publisher rejects an `auto_fail` that claims observed mesh checks or a rate.

@@ -4329,6 +4329,8 @@ def build_matchups_page(results_dir: Path) -> dict:
                 if not isinstance(failed, dict) or any(k not in MATCHUP_GATES or not isinstance(v, int)
                         or isinstance(v, bool) or not 0 < v <= measured for k, v in failed.items()):
                     raise ValueError("invalid matchup failed checks")
+                if row.get("status") == "auto_fail" and (rate is not None or measured or failed):
+                    raise ValueError("an auto-fail has no recorded mesh-gate observations")
                 if rate is not None and rate < 1 and not failed:
                     raise ValueError("a failed matchup must record its failed checks")
                 if rate == 1 and failed:

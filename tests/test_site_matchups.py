@@ -184,3 +184,45 @@ def test_actual_envelope_gate_name_does_not_trigger_preference_field_audit(tmp_p
     assert 'fits_envelope (1)' in b._prerender_matchups_html(page)
     with pytest.raises(ValueError, match='banned key'):
         b.audit_arena_page_public({'failed_checks': {'elo_ratings': 1}})
+
+
+def test_render_auto_fail_cannot_be_published_as_a_measured_mesh_zero(tmp_path):
+    sample=bundle()
+    row=sample['matchups'][0]['entrants'][0]
+    row.update(status='auto_fail', failure_stage='openscad_render', objective_pass_rate=0,
+               n_objective_trials=1, failed_checks={'renders':1})
+    (tmp_path/'sample.json').write_text(json.dumps(sample))
+    with pytest.raises(ValueError, match='auto-fail'):
+        b.build_matchups_page(tmp_path)
+
+
+def test_production_render_auto_fail_preserves_pipeline_zero_without_mesh_measurement(tmp_path):
+    from makerbench.code_cad_objective import evaluate_objective_trial
+    from makerbench.render import CompileError
+
+    def compiler(_source, _output):
+        raise CompileError('fixture renderer failure')
+
+    def gate(_context):
+        raise AssertionError('mesh gate must not execute after render failure')
+
+    result=evaluate_objective_trial(trial_id='fixture', model_id='stub-b',
+        instrument_id='ocarina', seed=0, scad_path=tmp_path/'fixture.scad',
+        out_dir=tmp_path/'private-render', compiler=compiler, objective_gate=gate)
+    assert result['render_ok'] is False and result['failure_stage']=='openscad_render'
+    assert result['objective']['sub_scores']=={} and result['objective']['objective_pass_rate']==0
+    sample=bundle()
+    row=sample['matchups'][0]['entrants'][1]
+    row.update(status=result['status'], failure_stage=result['failure_stage'],
+               pipeline_objective_pass_rate=result['objective']['objective_pass_rate'],
+               objective_pass_rate=None, n_objective_trials=0, failed_checks={},
+               n_infra_errors=0, n_compile_errors=0, n_execution_errors=1)
+    (tmp_path/'sample.json').write_text(json.dumps(sample))
+    page=b.build_matchups_page(tmp_path)
+    published=page['matchups'][0]['entrants'][1]
+    assert published['objective_pass_rate'] is None and published['n_objective_trials']==0
+    assert published['failed_checks']=={}
+    html=b._prerender_matchups_html(page)
+    assert 'Unmeasured (execution error)' in html and 'Not measured' in html
+    assert '0.00%' not in html and 'renders (1)' not in html
+    assert row['pipeline_objective_pass_rate']==0
