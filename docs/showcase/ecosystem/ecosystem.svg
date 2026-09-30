@@ -30,10 +30,11 @@
 
   <rect class="box" x="40" y="335" width="240" height="150" rx="10" style="stroke:#2f7f79;stroke-width:2.5"/>
   <text x="58" y="367" class="h">CAD connectors</text>
-  <text x="58" y="393" class="b">OpenSCAD, compiled in a</text>
-  <text x="58" y="413" class="b">sandbox; SolidWorks and</text>
-  <text x="58" y="433" class="b">Fusion via job-dir backends</text>
-  <text x="58" y="461" class="l">(Windows watchers: unvalidated)</text>
+  <text x="58" y="391" class="b">OpenSCAD, optional</text>
+  <text x="58" y="409" class="b">sandboxed compile;</text>
+  <text x="58" y="427" class="b">SolidWorks and Fusion via</text>
+  <text x="58" y="445" class="b">job-dir backends</text>
+  <text x="58" y="470" class="l">(Windows watchers: unvalidated)</text>
 
   <!-- repo container -->
   <rect x="330" y="145" width="470" height="340" rx="14" fill="#eaf3f2" stroke="#2f7f79" stroke-width="2.5"/>
