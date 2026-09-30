@@ -41,6 +41,7 @@ from typing import Callable, Iterable, Mapping, Optional
 
 from .. import code_cad_providers as providers
 from .. import nightly_cad
+from ..schema import matchup_metadata
 
 try:
     from telemetry.store import read_all as _read_telemetry_sessions
@@ -291,7 +292,7 @@ def build_matchup(
         raise DoeValidationError("nominal models are unused by live backends; hold one model")
     cells = expand_matrix(**{**dimensions, "driver_models": dimensions["driver_models"] or None})
     held = {name: items[0] for name, items in dimensions.items() if len(items) == 1}
-    return {
+    result = {
         "schema": SCHEMA,
         "varied_axis": axis,
         "values": selected,
@@ -300,6 +301,8 @@ def build_matchup(
         "held": held,
         "cells": cells,
     }
+    result.update(matchup_metadata(result))
+    return result
 
 
 def _model_provider(model_id: str) -> Optional[str]:
