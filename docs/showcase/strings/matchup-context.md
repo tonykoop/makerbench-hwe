@@ -20,17 +20,18 @@ no measurable benefit on this gate, with a small sample. The gate does not check
 resemblance to the reference, so it cannot say whether the image made the design look
 more like the instrument.
 
-By eye, the renders differ in kind: all three blind designs are arched-neck harps
-(`blind-seed*.png`), while the three image designs are upright-pillar harps with
-sloping strings (`image-seed*.png`). That is a visual observation from one seed each
-tier; it is not scored, and I did not compare either family against the source photo
-side by side in this report.
+By eye, across all six committed renders (three seeds per tier), the designs differ in
+kind: the three blind designs are arched-neck harps (`blind-seed0/1/2.png`), while the
+three image designs are upright-pillar harps with sloping strings (`image-seed0/1/2.png`).
+This is a visual observation, not a score, and I did not compare either family against the
+source photo side by side in this report. It comes from three seeds per tier, so it is a
+pattern in this small sample, not a general claim about image context.
 
 ## Wall time
 
 One `arena run` per (tier, seed), timed with `date` around the command; scope is the
 whole process (start-up, CLI generation, compile, render, gate), not model-thinking time.
-Raw values are in `matchup-context/wall-time.tsv`.
+Raw values (rounded elapsed seconds, author-recorded; original start/end stamps were not kept, so they cannot be independently re-verified) are in `matchup-context/wall-time.tsv`.
 
 | Tier | Seed 0 | Seed 1 | Seed 2 | Mean |
 |---|---|---|---|---|
