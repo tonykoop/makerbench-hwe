@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -35,7 +36,7 @@ DEFAULT_TIMEOUT_S = 180
 STL_LINEAR_TOLERANCE_MM = 0.01
 STL_ANGULAR_TOLERANCE_RAD = 0.1
 _DRIVER_OK = "CADQUERY_DRIVER_OK"
-_DRIVER_VOLUME = "CADQUERY_DRIVER_VOLUME:"
+_DRIVER_VOLUME_FILE = "brep_volume.txt"
 _DRIVER_CANDIDATE_ERROR = "CADQUERY_DRIVER_CANDIDATE_ERROR:"
 _DRIVER_ENVIRONMENT_ERROR = "CADQUERY_DRIVER_ENVIRONMENT_ERROR:"
 
@@ -151,11 +152,18 @@ except BaseException as exc:
     print(f"CADQUERY_DRIVER_CANDIDATE_ERROR: STEP/STL export failed: {exc!r}")
     raise SystemExit(6)
 
-# The in-memory B-rep volume, the reference the mesh volume is checked against. The retained
-# STEP is not a safe reference: re-reading it can give a wrong volume (#902).
+# The in-memory B-rep volume, the reference the mesh volume is checked against (the retained
+# STEP is not a safe one: re-reading it can give a wrong volume, #902). It goes to a file next
+# to the artifacts, written after the entrant has finished, not to stdout: stdout is shared
+# with whatever the entrant prints.
 try:
-    volume = result.volume if uses_build123d else result.Volume()
-    print(f"CADQUERY_DRIVER_VOLUME: {abs(float(volume))!r}")
+    import math
+    import os
+
+    volume = abs(float(result.volume if uses_build123d else result.Volume()))
+    if math.isfinite(volume) and volume > 0.0:
+        with open(os.path.join(os.path.dirname(stl_path), "brep_volume.txt"), "w", encoding="utf-8") as stream:
+            stream.write(repr(volume))
 except BaseException:
     pass
 
@@ -368,16 +376,15 @@ def _read_step_volume(step_path: Path) -> float:
     return abs(float(props.Mass()))
 
 
-def _driver_volume(stdout: str) -> float | None:
-    """The in-memory B-rep volume the driver printed, or None when it did not."""
+def _read_driver_volume(worker_out_dir: Path) -> float | None:
+    """The in-memory B-rep volume the driver wrote next to the artifacts, or None when it is
+    missing, unreadable, non-finite or not positive."""
 
-    for line in stdout.splitlines():
-        if line.startswith(_DRIVER_VOLUME):
-            try:
-                return float(line[len(_DRIVER_VOLUME):].strip())
-            except ValueError:
-                return None
-    return None
+    try:
+        value = float((Path(worker_out_dir) / _DRIVER_VOLUME_FILE).read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    return value if math.isfinite(value) and value > 0.0 else None
 
 
 def _step_mesh_volume_warning(
@@ -455,6 +462,7 @@ def compile_cadquery_to_artifacts(
             "unprivileged user namespaces"
         )
     warnings: list[str] = []
+    driver_volume: float | None = None
 
     with tempfile.TemporaryDirectory(prefix="makerbench-cadquery-cwd-") as tmp:
         driver_path = Path(tmp) / "_cadquery_driver.py"
@@ -490,6 +498,7 @@ def compile_cadquery_to_artifacts(
                     )
             shutil.copy2(worker_step, step_path)
             shutil.copy2(worker_stl, stl_path)
+            driver_volume = _read_driver_volume(worker_out_dir)
 
     if proc.returncode != 0:
         if proc.stderr.lstrip().startswith("bwrap:"):
@@ -508,7 +517,7 @@ def compile_cadquery_to_artifacts(
         raise RuntimeError("cadquery worker exited successfully without its completion marker")
 
     warnings.extend(_render_preview(stl_path, png_path, timeout, env))
-    brep_volume = _driver_volume(proc.stdout)
+    brep_volume = driver_volume
     if brep_volume:
         try:
             warnings.append(_step_roundtrip_warning(step_path, brep_volume))
