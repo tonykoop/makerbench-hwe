@@ -201,11 +201,11 @@ Open questions (do not post until answered)
 ```text
 I ran three controlled matchups on a string instrument: a boat-shaped harp modelled from a written brief. Each matchup changed exactly one thing and held the rest fixed: the model, the CAD backend, or whether the AI saw a reference image.
 
-What I can say so far: every setup produced a recognisable arched harp, 18 designs in all, and the automatic mesh checks reach a verdict on all of them.
+What I can say so far: 18 trials, and 17 of them produced a recognisable arched harp; the other one was a script that would not render.
 
 What I will not say yet: which setup is better. [ON HOLD: pass-rate numbers wait for the wall-thickness check to be calibrated.]
 
-The most useful result so far is about the yardstick. That check estimates wall thickness from a random sample of points, and re-sampling the same mesh often flips its verdict. So any score that contains it may move, and part of the run-to-run spread I saw on identical setups may be the check, not the model.
+The most useful result so far is about the yardstick. That check estimates wall thickness from a random sample of points, and re-sampling the same mesh can change its verdict for some designs. So any score that contains it may move, and part of the run-to-run spread I saw on identical setups may be the check, not the model.
 
 Fix the check, then compare. Until then, no ranking.
 
@@ -216,15 +216,15 @@ Gallery and method: [LINK once published]
 #AIEvaluation #CAD #Benchmark #OpenSCAD
 ```
 
-Character count: 1079 (limit 1,300).
+Character count: 1078 (limit 1,300).
 
-**Status: ON HOLD.** Posting waits for the S7 gate calibration: the `min_wall` analysis in `docs/showcase/strings/min-wall-analysis.md` (#900, PR #905, still open) reports that the check is close to a coin flip on its sample seed (the same mesh fails the floor in 3 to 10 of 10 re-samples), and a fix needs a metric decision. Until that lands, no pass-rate number in this post is safe.
+**Status: ON HOLD.** Posting waits for the S7 gate calibration: the `min_wall` analysis in `docs/showcase/strings/min-wall-analysis.md` (#900, PR #905, still open) reports that the check is close to a coin flip on its sample seed (re-sampling the same mesh fails the floor in 3 to 10 of 10 samples across meshes, and some meshes change verdict between sample seeds), and a fix needs a metric decision. Until that lands, no pass-rate number in this post is safe.
 
 Numbers, and whether they survive calibration
 - **Safe (do not depend on `min_wall`):**
   - three one-axis matchups (context, model, backend) on the `sambuca` brief: `docs/showcase/strings/matchup-context.md`, `matchup-model.md`, `matchup-backend.md`;
-  - 18 designs in the anonymized gallery: `docs/showcase/strings/gallery/` (the three matchups overlap on one setup; see its README);
-  - every design is recognisable as an arched harp: by eye in the gallery and the matchup renders (one reader's view, not a measurement);
+  - 18 trials in the anonymized gallery, of which **17 rendered designs and one script failure with no render** (Design 16, a Codex seed-1 recursion bug, counted as 0): `docs/showcase/strings/gallery/` (the three matchups overlap on one setup; see its README);
+  - the 17 rendered designs are recognisable as arched harps: by eye in the gallery and the matchup renders (one reader's view, not a measurement); the failed script never reached the mesh checks and cannot be judged visually;
   - anonymized and objective-only gallery: its README and `alt-text.txt`.
 - **FLAGGED, do not quote until calibrated:** every pass rate in the three reports (context blind 0.889 vs image 0.833; model 0.778 / 0.889 / 0.500; backend 1.000 vs 0.944), the "no measurable benefit from the image" line, and the identical-setup spread (0.889, 0.889, 1.000). Most of their failing checks are `min_wall`. The draft therefore quotes none of them and says the ranking is on hold.
 - **Unaffected by the wall-thickness sampling, but not for this post:** the Codex seed-1 zero (a script bug) and the CadQuery seed-0 `watertight` failure; both are single trials.
