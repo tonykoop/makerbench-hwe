@@ -19,6 +19,16 @@ as the Studio API.
 
 ## Launch (WSL / Linux)
 
+Install with the README's [Try Studio](../README.md#try-studio) instructions, then:
+
+```bash
+makerbench studio
+```
+
+This works from any directory and opens the browser after the server starts.
+Use `--no-browser` for manual opening. It binds IPv4 loopback and defaults to
+stub launches. The older repository-oriented command is also available:
+
 ```
 python3 -m makerbench.cli arena studio --port 8080
 ```
