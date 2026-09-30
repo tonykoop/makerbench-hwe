@@ -14,6 +14,7 @@ import { MorningScreen, NightlyScreen } from "./screens/nightly.js";
 import { RunsScreen } from "./screens/runs.js";
 import { VoteScreen } from "./screens/vote.js";
 import { WorkbenchScreen } from "./screens/workbench.js";
+import { DemoScreen } from "./screens/demo.js";
 
 // Screens appear in the rail only once they exist. `takesRun` screens keep the
 // header's run choice in their route (#/<screen>/<run_id>).
@@ -55,8 +56,10 @@ function UnknownScreen({ route }) {
 
 function App() {
   const route = useRoute();
-  const [voter, setVoter] = useState(loadVoter);
-  const screen = SCREENS.find((candidate) => candidate.id === route.screen) || null;
+  const demo = document.body.dataset.demo === "true";
+  const screens = demo ? [{ id: "runs", label: "Showcase", component: DemoScreen, takesRun: true }] : SCREENS;
+  const [voter, setVoter] = useState(() => demo ? "" : loadVoter());
+  const screen = screens.find((candidate) => candidate.id === route.screen) || null;
   // /api/runs lists each run's entrants, so blind screens don't load it.
   const runs = useResource(screen?.blind ? null : "/api/runs");
   const mainRef = useRef(null);
@@ -105,10 +108,11 @@ function App() {
         onSelectRun=${selectRun}
         voter=${voter}
         onVoterChange=${changeVoter}
+        demo=${demo}
       />
       <nav class="rail" aria-label="Studio screens">
         <ul>
-          ${SCREENS.filter((item) => !(item.hideOnBlind && screen?.blind)).map(
+          ${screens.filter((item) => !(item.hideOnBlind && screen?.blind)).map(
             (item) => html`
               <li key=${item.id}>
                 <a

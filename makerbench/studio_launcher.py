@@ -48,6 +48,7 @@ def studio(
     registry: Path | None = typer.Option(None, help="Override the bundled instrument registry."),
     browser: bool = typer.Option(True, "--browser/--no-browser", help="Open the browser when ready."),
     allow_live: bool = typer.Option(False, help="Allow explicit provider-backed launches."),
+    demo: bool = typer.Option(False, help="Browse bundled public showcases read-only."),
 ) -> None:
     """Start Arena Studio and open its local browser window, from any directory."""
     missing = [name for name in ("fastapi", "uvicorn") if importlib.util.find_spec(name) is None]
@@ -57,12 +58,19 @@ def studio(
     import uvicorn
     from .arena_studio import create_studio_app
 
-    app = create_studio_app(
-        default_run_dir=Path(run_dir) if run_dir else None,
-        registry_path=registry or default_registry(),
-        repo_root=Path.cwd(),
-        allow_live=allow_live,
-    )
+    if demo:
+        if run_dir or registry or allow_live:
+            typer.echo("--demo cannot use --run-dir, --registry or --allow-live")
+            raise typer.Exit(2)
+        from .arena_studio.demo import create_demo_app
+        app = create_demo_app()
+    else:
+        app = create_studio_app(
+            default_run_dir=Path(run_dir) if run_dir else None,
+            registry_path=registry or default_registry(),
+            repo_root=Path.cwd(),
+            allow_live=allow_live,
+        )
     url = f"http://127.0.0.1:{port}/"
     typer.echo(f"Arena Studio: {url} (Ctrl+C to stop)")
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port))

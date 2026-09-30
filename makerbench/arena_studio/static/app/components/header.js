@@ -7,7 +7,7 @@ function serverStatus(health) {
   return { state: "loading", text: "Checking server…" };
 }
 
-export function StudioHeader({ runs, blind, runId, onSelectRun, voter, onVoterChange }) {
+export function StudioHeader({ runs, blind, runId, onSelectRun, voter, onVoterChange, demo = false }) {
   const health = useResource("/api/health");
   const status = serverStatus(health);
   const options = runs.status === "ready" ? runs.data.runs : [];
@@ -43,7 +43,7 @@ export function StudioHeader({ runs, blind, runId, onSelectRun, voter, onVoterCh
             </select>
           </label>
             `}
-        <label class="field">
+        ${!demo && html`<label class="field">
           <span class="field-label">Voting as</span>
           <input
             type="text"
@@ -53,7 +53,7 @@ export function StudioHeader({ runs, blind, runId, onSelectRun, voter, onVoterCh
             spellcheck="false"
             onChange=${(event) => onVoterChange(event.currentTarget.value)}
           />
-        </label>
+        </label>`}
         <p class="server-status" role="status" data-state=${status.state}>${status.text}</p>
       </div>
     </header>
