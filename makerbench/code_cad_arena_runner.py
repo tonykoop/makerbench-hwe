@@ -209,6 +209,10 @@ def _default_part_module_counter(scad_path: Path) -> int:
     return count_standalone_part_modules(scad_path)
 
 
+# Triangles with a height below this (mm) have no area worth measuring (#874).
+DEGENERATE_FACE_HEIGHT_MM = 1e-6
+
+
 def mesh_objective_gate(
     spec: Mapping[str, object],
     *,
@@ -235,6 +239,15 @@ def mesh_objective_gate(
         import trimesh
 
         mesh = trimesh.load(context.artifacts.stl_path.as_posix(), force="mesh")
+        # B-rep STL writers (CadQuery/build123d via OCC) can emit zero-area sliver
+        # triangles at seams and poles. They carry no area or volume, but split()
+        # turns each into its own "body" that is never watertight, failing the
+        # watertight check and inflating body_count (#874). Drop them first.
+        keep = mesh.nondegenerate_faces(height=DEGENERATE_FACE_HEIGHT_MM)
+        degenerate = int(len(mesh.faces) - int(keep.sum()))
+        if degenerate:
+            mesh.update_faces(keep)
+            mesh.remove_unreferenced_vertices()
         bodies = mesh.split(only_watertight=False)
         if len(bodies) == 0:
             bodies = [mesh]
@@ -303,6 +316,7 @@ def mesh_objective_gate(
             "metrics": {
                 "body_count": len(bodies),
                 "watertight_bodies": len(watertight_bodies),
+                "degenerate_faces_dropped": degenerate,
                 "largest_body_volume_mm3": round(volume, 3),
                 "min_wall_mm": round(measured_wall, 4)
                 if measured_wall != float("inf")
