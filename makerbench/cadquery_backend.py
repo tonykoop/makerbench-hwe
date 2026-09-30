@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -35,6 +36,7 @@ DEFAULT_TIMEOUT_S = 180
 STL_LINEAR_TOLERANCE_MM = 0.01
 STL_ANGULAR_TOLERANCE_RAD = 0.1
 _DRIVER_OK = "CADQUERY_DRIVER_OK"
+_DRIVER_VOLUME_FILE = "brep_volume.txt"
 _DRIVER_CANDIDATE_ERROR = "CADQUERY_DRIVER_CANDIDATE_ERROR:"
 _DRIVER_ENVIRONMENT_ERROR = "CADQUERY_DRIVER_ENVIRONMENT_ERROR:"
 
@@ -149,6 +151,21 @@ try:
 except BaseException as exc:
     print(f"CADQUERY_DRIVER_CANDIDATE_ERROR: STEP/STL export failed: {exc!r}")
     raise SystemExit(6)
+
+# The in-memory B-rep volume, the reference the mesh volume is checked against (the retained
+# STEP is not a safe one: re-reading it can give a wrong volume, #902). It goes to a file next
+# to the artifacts, written after the entrant has finished, not to stdout: stdout is shared
+# with whatever the entrant prints.
+try:
+    import math
+    import os
+
+    volume = abs(float(result.volume if uses_build123d else result.Volume()))
+    if math.isfinite(volume) and volume > 0.0:
+        with open(os.path.join(os.path.dirname(stl_path), "brep_volume.txt"), "w", encoding="utf-8") as stream:
+            stream.write(repr(volume))
+except BaseException:
+    pass
 
 print("CADQUERY_DRIVER_OK")
 '''
@@ -341,10 +358,9 @@ def _render_preview(stl_path: Path, png_path: Path, timeout: int, env: Mapping[s
     return tuple(line for line in proc.stderr.splitlines() if "WARNING:" in line)
 
 
-def _step_mesh_volume_warning(step_path: Path, stl_path: Path) -> str:
-    """Compare native OCP and tessellated-mesh volumes without affecting score."""
+def _read_step_volume(step_path: Path) -> float:
+    """Volume of the retained STEP as OCP reads it back."""
 
-    import trimesh
     from OCP.BRepGProp import BRepGProp
     from OCP.GProp import GProp_GProps
     from OCP.IFSelect import IFSelect_RetDone
@@ -357,15 +373,57 @@ def _step_mesh_volume_warning(step_path: Path, stl_path: Path) -> str:
         raise ValueError("OCP could not transfer a solid from the STEP artifact")
     props = GProp_GProps()
     BRepGProp.VolumeProperties_s(reader.OneShape(), props)
-    brep_volume = abs(float(props.Mass()))
+    return abs(float(props.Mass()))
+
+
+def _read_driver_volume(worker_out_dir: Path) -> float | None:
+    """The in-memory B-rep volume the driver wrote next to the artifacts, or None when it is
+    missing, unreadable, non-finite or not positive."""
+
+    try:
+        value = float((Path(worker_out_dir) / _DRIVER_VOLUME_FILE).read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    return value if math.isfinite(value) and value > 0.0 else None
+
+
+def _step_mesh_volume_warning(
+    step_path: Path, stl_path: Path, brep_volume: float | None = None
+) -> str:
+    """Compare the B-rep volume and the tessellated-mesh volume without affecting score.
+
+    ``brep_volume`` is the driver's in-memory volume. Without it (an older driver) the
+    retained STEP is re-read instead, which can be wrong (#902).
+    """
+
+    import trimesh
+
+    if brep_volume is None:
+        brep_volume = _read_step_volume(step_path)
     mesh = trimesh.load(stl_path.as_posix(), force="mesh")
     mesh_volume = abs(float(mesh.volume))
     if brep_volume <= 0.0:
-        raise ValueError("OCP reported a non-positive B-rep volume")
+        raise ValueError("reported a non-positive B-rep volume")
     relative_delta = abs(mesh_volume - brep_volume) / brep_volume
     return (
         "brep_mesh_volume: "
         f"brep_mm3={brep_volume:.3f}; mesh_mm3={mesh_volume:.3f}; "
+        f"relative_delta={relative_delta:.6f}"
+    )
+
+
+def _step_roundtrip_warning(step_path: Path, brep_volume: float) -> str:
+    """Compare the in-memory B-rep volume with the retained STEP read back (advisory).
+
+    A large delta means the STEP artifact does not faithfully carry the shape (seen with
+    ``transformGeometry`` BSpline faces after a boolean), independent of the mesh.
+    """
+
+    step_volume = _read_step_volume(step_path)
+    relative_delta = abs(step_volume - brep_volume) / brep_volume if brep_volume else float("inf")
+    return (
+        "step_roundtrip_volume: "
+        f"brep_mm3={brep_volume:.3f}; step_mm3={step_volume:.3f}; "
         f"relative_delta={relative_delta:.6f}"
     )
 
@@ -404,6 +462,7 @@ def compile_cadquery_to_artifacts(
             "unprivileged user namespaces"
         )
     warnings: list[str] = []
+    driver_volume: float | None = None
 
     with tempfile.TemporaryDirectory(prefix="makerbench-cadquery-cwd-") as tmp:
         driver_path = Path(tmp) / "_cadquery_driver.py"
@@ -439,6 +498,7 @@ def compile_cadquery_to_artifacts(
                     )
             shutil.copy2(worker_step, step_path)
             shutil.copy2(worker_stl, stl_path)
+            driver_volume = _read_driver_volume(worker_out_dir)
 
     if proc.returncode != 0:
         if proc.stderr.lstrip().startswith("bwrap:"):
@@ -457,8 +517,17 @@ def compile_cadquery_to_artifacts(
         raise RuntimeError("cadquery worker exited successfully without its completion marker")
 
     warnings.extend(_render_preview(stl_path, png_path, timeout, env))
+    brep_volume = driver_volume
+    if brep_volume:
+        try:
+            warnings.append(_step_roundtrip_warning(step_path, brep_volume))
+        except Exception as exc:  # noqa: BLE001 - this metric is warning-only by contract.
+            warnings.append(
+                "step_roundtrip_volume: unavailable "
+                f"({exc.__class__.__name__}: {str(exc) or 'no detail'})"
+            )
     try:
-        warnings.append(_step_mesh_volume_warning(step_path, stl_path))
+        warnings.append(_step_mesh_volume_warning(step_path, stl_path, brep_volume))
     except Exception as exc:  # noqa: BLE001 - this metric is warning-only by contract.
         warnings.append(
             "brep_mesh_volume: unavailable "

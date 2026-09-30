@@ -45,6 +45,12 @@ def test_homepage_without_javascript_exposes_committed_section_data():
                 json.loads((ROOT / "site/data/landscape.json").read_text())["entries"]
             )
             assert page.locator("#cite-bibtex").inner_text() == data["citation"]["bibtex"]
+            matchups = json.loads((ROOT / "site/data/matchups.json").read_text())["matchups"]
+            assert page.locator("#matchups").is_visible()
+            assert page.locator("#matchups article.arena-card").count() == len(matchups)
+            assert page.locator("#matchups tbody tr").count() == sum(
+                len(item["entrants"]) for item in matchups
+            )
             assert "Loading" not in page.locator("body").inner_text()
             assert all(section.is_visible() for section in page.locator("main section").all())
             screenshot = os.environ.get("HOMEPAGE_STATIC_SCREENSHOT")

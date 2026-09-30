@@ -115,6 +115,40 @@ function OpenInWorkbench({ runId, trials }) {
   `;
 }
 
+function MatchupResults({ metadata, trials }) {
+  if (!metadata) return null;
+  const varied = (metadata.varied_axes || [metadata.varied_axis]).join(", ");
+  return html`
+    <section class="matchup-results" aria-labelledby="matchup-results-title">
+      <h3 id="matchup-results-title">Matchup results</h3>
+      <p>Varied: ${varied}${metadata.factorial ? " (factorial)" : ""}</p>
+      <p class="hint">Held: ${Object.entries(metadata.held || {}).map(([key, value]) => `${key}: ${value}`).join(" · ")}</p>
+      <p class="hint">Objective mesh gates only. Wall time is the latest recorded attempt, excluding rate-limit waiting.</p>
+      <div class="matchup-grid">
+        ${(trials || []).map((trial) => html`
+          <article class="matchup-entrant" key=${trial.trial_id}>
+            <h4>${trial.entrant}</h4>
+            <p>${trial.instrument_id} · seed ${trial.seed} · repetition ${trial.rep}</p>
+            ${trial.render_url
+              ? html`<img class="matchup-render" src=${trial.render_url} alt=${`Render for ${trial.entrant}`} />`
+              : html`<p class="hint">Render not available</p>`}
+            <dl class="facts">
+              <div><dt>Status</dt><dd>${trial.status}</dd></div>
+              <div><dt>Wall time</dt><dd>${trial.wall_time_s == null ? "Not recorded" : `${trial.wall_time_s.toFixed(2)} s`}</dd></div>
+              <div><dt>Gate pass rate</dt><dd>${trial.objective_pass_rate == null ? "Not measured" : `${(trial.objective_pass_rate * 100).toFixed(2)}%`}</dd></div>
+            </dl>
+            <ul class="matchup-gates">
+              ${Object.entries(trial.gates || {}).map(([name, value]) => html`
+                <li key=${name}><span>${name}</span>: <strong>${value == null ? "Not recorded" : value >= 1 ? "Pass" : "Fail"}</strong></li>
+              `)}
+            </ul>
+          </article>
+        `)}
+      </div>
+    </section>
+  `;
+}
+
 function RunSummary({ runId }) {
   const summary = useResource(`/api/runs/${encodeURIComponent(runId)}/summary`);
   if (summary.status === "loading" || summary.status === "idle") {
@@ -148,6 +182,7 @@ function RunSummary({ runId }) {
       <${TagList} items=${run.models} empty="No entrants recorded." />
       <h3>Instruments</h3>
       <${TagList} items=${run.instruments} empty="No instruments recorded." />
+      <${MatchupResults} metadata=${run.matchup} trials=${run.matchup_trials} />
       <ul class="run-links">
         <li><a href=${buildHash("analytics", [run.run_id])}>Agreement analytics</a></li>
         <li><a href=${buildHash("compare", [], { a: run.run_id })}>Compare with another run</a></li>

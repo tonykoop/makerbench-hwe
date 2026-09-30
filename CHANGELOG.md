@@ -4,6 +4,10 @@ All notable changes to MakerBench should be recorded here.
 
 ## Unreleased
 
+- Added optional matchup provenance to result envelopes (#840), shared validation
+  for varied and held axes, exported results/matchup schemas, and metadata-only
+  golden fixtures. Legacy results keep schema version 0.1 and load without a
+  matchup claim. Resumed queue runs cannot be relabeled as another experiment.
 - Aligned `makerbench-logger` (SDK 0.2.0) with the authoritative WorkflowManifest
   contract (#92, #89): the SDK now emits the `hii` block in the schema's
   event-count shape (`l0/l1/l2_*_events`, weighted `autonomy_ratio` with L0=1.0 /

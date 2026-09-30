@@ -29,6 +29,7 @@ GENERATED_TOP_LEVEL = frozenset(
         "get_started.json",
         "inspect.json",
         "leaderboard.json",
+        "matchups.json",
         "run-library.json",
     }
 )

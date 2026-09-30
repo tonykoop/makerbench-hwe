@@ -11,7 +11,7 @@ from __future__ import annotations
 from enum import IntEnum
 from typing import Any, Callable, Literal, Optional
 
-from pydantic import (BaseModel, Field, field_serializer, field_validator,
+from pydantic import (BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_serializer, field_validator,
                       model_validator)
 
 from .canary import CANARY
@@ -1847,6 +1847,68 @@ class TaskResult(BaseModel):
     perception_trace: list[PerceptionObservation] = Field(default_factory=list)
 
 
+MatchupAxis = Literal["instruments", "models", "levels", "context_tiers", "seeds", "backends", "driver_models"]
+MatchupValue = StrictStr | StrictInt
+
+
+class MatchupMetadata(BaseModel):
+    """Controlled experiment provenance, shared by previews and result envelopes.
+
+    Names match the existing DoE metadata. Absence on an old result means no
+    matchup claim; it never means a guessed default experiment.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    varied_axis: MatchupAxis
+    values: list[MatchupValue] = Field(min_length=2)
+    varied_axes: list[MatchupAxis] = Field(default_factory=list)
+    factorial: bool = False
+    held: dict[MatchupAxis, MatchupValue]
+
+    @model_validator(mode="after")
+    def validate_experiment(self):
+        from .redaction import find_host_paths
+
+        if not self.varied_axes:
+            self.varied_axes = [self.varied_axis]
+        axes = set(self.varied_axes)
+        if len(axes) != len(self.varied_axes) or self.varied_axis not in axes:
+            raise ValueError("matchup varied_axes must be distinct and include varied_axis")
+        if len(axes) > 1 and not self.factorial:
+            raise ValueError("matchup with multiple varied axes requires factorial")
+        if axes.intersection(self.held):
+            raise ValueError("matchup cannot hold a varied axis")
+        required = {"instruments", "models", "levels", "context_tiers", "seeds", "backends"} - axes
+        if not required.issubset(self.held):
+            raise ValueError("matchup must record every held core axis")
+        if len(set(self.values)) != len(self.values):
+            raise ValueError("matchup values must be distinct")
+        for axis, values in [(self.varied_axis, self.values), *[(k, [v]) for k, v in self.held.items()]]:
+            for value in values:
+                if axis == "seeds":
+                    if not isinstance(value, int):
+                        raise ValueError("matchup seeds must be integers")
+                elif not isinstance(value, str) or not value.strip() or find_host_paths(value):
+                    raise ValueError("matchup values must be public identifiers")
+        return self
+
+    @field_serializer("values")
+    def redact_values(self, values):
+        return [_redact_published_text(v) if isinstance(v, str) else v for v in values]
+
+    @field_serializer("held")
+    def redact_held(self, values):
+        return {_redact_published_text(k): _redact_published_text(v) if isinstance(v, str) else v
+                for k, v in values.items()}
+
+
+def matchup_metadata(payload: dict) -> Optional[dict]:
+    """Validate the existing flat preview/queue fields, without copying cells."""
+    fields = ("varied_axis", "values", "varied_axes", "factorial", "held")
+    selected = {key: payload[key] for key in fields if key in payload}
+    return MatchupMetadata.model_validate(selected).model_dump(mode="json") if selected else None
+
+
 class RunResults(BaseModel):
     """The signed payload a tester submits to the leaderboard."""
 
@@ -1864,6 +1926,9 @@ class RunResults(BaseModel):
     reasoning_level: Optional[str] = None
     agent_identifier: Optional[str] = None
     hardware_environment: dict[str, str] = Field(default_factory=dict)
+    matchup: Optional[MatchupMetadata] = Field(
+        default=None, description="Explicit varied axis and held values; absent on legacy runs.",
+    )
 
     @field_serializer("hardware_environment")
     def _redact_hardware_environment_on_serialization(self, value: dict[str, str]) -> dict[str, str]:

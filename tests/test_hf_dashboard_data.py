@@ -100,8 +100,9 @@ def test_rows_ranked_by_mean_score_desc():
         {"run_id": "b", "harness_class": "autonomous", "model_identifier": "m2", "score": 0.9},
         {"run_id": "c", "harness_class": "autonomous", "model_identifier": "m3", "score": None},
     ]}
-    rows = dd.build_dual_league(manifest)["leagues"]["autonomous"]["rows"]
-    assert [r["rank"] for r in rows] == [1, 2, 3]
+    # These fixtures carry no domain; floor off to test the ordering rule on its own.
+    rows = dd.build_dual_league(manifest, min_domains=0)["leagues"]["autonomous"]["rows"]
+    assert [r["rank"] for r in rows] == [1, 2, None]  # the unscored row is never ranked
     assert rows[0]["headline"].startswith("m2")  # 0.9
     assert rows[1]["headline"].startswith("m1")  # 0.4
     assert rows[2]["mean_score"] is None         # unscored trails
@@ -209,3 +210,116 @@ def test_run_detail_keys_are_whitelisted():
         "workflow", "packet", "certificate", "artifact_3d", "video",
     }
     assert set(detail) == allowed
+
+
+# --- coverage floor (#877) --------------------------------------------------
+
+def _run(model, domain, score, run_id):
+    return {"run_id": run_id, "model_identifier": model, "domain": domain, "score": score,
+            "harness_class": "autonomous", "verification": "verified"}
+
+
+def test_thin_coverage_model_cannot_top_the_board():
+    runs = [_run("one-family-wonder", "bracket", 4.0, "w1"), _run("one-family-wonder", "bracket", 4.0, "w2")]
+    for i, dom in enumerate(("bracket", "enclosure", "hinge")):
+        runs.append(_run("broad", dom, 2.0, f"b{i}"))
+    rows = dd.build_dual_league({"runs": runs})["leagues"]["autonomous"]["rows"]
+    assert [r["headline"] for r in rows] == ["broad", "one-family-wonder"]
+    broad, thin = rows
+    assert broad["rank"] == 1 and broad["rank_eligible"] is True
+    assert thin["rank"] is None and thin["rank_eligible"] is False
+    assert "unranked" in thin["coverage_note"] and thin["n_domains"] == 1
+    assert thin["mean_score"] > broad["mean_score"]  # would have led without the floor
+
+
+def test_floor_is_configurable_and_applies_to_both_leagues():
+    def wf(dom, i):
+        return {**_run("x", dom, 3.0, f"w{i}"), "harness_class": "agentic-cad", "stack": "Claude + Blender MCP"}
+    # Three families exist (a, b, c), so the default floor stays 3 and one-family rows miss it.
+    runs = [_run("m", "a", 3.0, "m0"), wf("a", 1), _run("filler", "b", 1.0, "f0"), _run("filler", "c", 1.0, "f1")]
+    leagues = dd.build_dual_league({"runs": runs}, min_domains=1)["leagues"]
+    assert leagues["autonomous"]["rows"][0]["rank"] == 1
+    assert leagues["workflow"]["rows"][0]["rank"] == 1
+    leagues = dd.build_dual_league({"runs": runs})["leagues"]
+    assert {r["headline"]: r["rank"] for r in leagues["autonomous"]["rows"]}["m"] is None
+    assert leagues["workflow"]["rows"][0]["rank"] is None
+
+
+def test_default_floor_constant():
+    assert dd.MIN_DOMAINS_FOR_RANK == 3
+
+
+def test_unscored_runs_do_not_count_toward_coverage():
+    # #890 review: scores [4, None, None] over three domains is one scored family.
+    runs = [_run("sparse", "bracket", 4.0, "s0"), _run("sparse", "enclosure", None, "s1"),
+            _run("sparse", "hinge", None, "s2")]
+    for i, dom in enumerate(("bracket", "enclosure", "hinge")):
+        runs.append(_run("steady", dom, 2.0, f"t{i}"))
+    rows = dd.build_dual_league({"runs": runs})["leagues"]["autonomous"]["rows"]
+    assert [r["headline"] for r in rows] == ["steady", "sparse"]
+    sparse = rows[1]
+    assert sparse["rank"] is None and sparse["n_domains"] == 1 and sparse["rank_eligible"] is False
+    assert sparse["domains"] == ["bracket", "enclosure", "hinge"]  # still listed, just not evidence
+
+
+def test_all_unscored_row_is_never_ranked_even_alone():
+    runs = [_run("ghost", dom, None, f"g{i}") for i, dom in enumerate(("a", "b", "c"))]
+    row = dd.build_dual_league({"runs": runs})["leagues"]["autonomous"]["rows"][0]
+    assert row["rank"] is None and row["n_domains"] == 0
+
+
+def test_recorded_zero_scores_count_as_scored_evidence():
+    runs = [_run("zeros", dom, 0.0, f"z{i}") for i, dom in enumerate(("a", "b", "c"))]
+    row = dd.build_dual_league({"runs": runs})["leagues"]["autonomous"]["rows"][0]
+    assert row["rank"] == 1 and row["n_domains"] == 3 and row["mean_score"] == 0.0
+
+
+def test_workflow_league_uses_scored_coverage_too():
+    def wf(dom, score, i):
+        return {**_run("x", dom, score, f"w{i}"), "harness_class": "agentic-cad", "stack": "Claude + Blender MCP"}
+    runs = [wf("a", 4.0, 0), wf("b", None, 1), wf("c", None, 2)]
+    row = dd.build_dual_league({"runs": runs})["leagues"]["workflow"]["rows"][0]
+    assert row["rank"] is None and row["n_domains"] == 1
+
+
+def test_floor_is_capped_at_the_families_that_exist():
+    # Two families in the whole manifest: the floor of 3 caps to 2, so a model scored in
+    # both ranks. Before the cap nothing could ever rank on such a dashboard.
+    runs = [_run("a", "bracket", 3.0, "a0"), _run("a", "hinge", 3.0, "a1"),
+            _run("b", "bracket", 1.0, "b0")]
+    out = dd.build_dual_league({"runs": runs})
+    assert out["min_domains_for_rank"] == 2
+    rows = out["leagues"]["autonomous"]["rows"]
+    assert [(r["headline"], r["rank"]) for r in rows] == [("a", 1), ("b", None)]
+
+
+def test_floor_cap_counts_families_across_both_leagues():
+    runs = [_run("a", "bracket", 3.0, "a0"), _run("a", "hinge", 3.0, "a1"),
+            {**_run("w", "enclosure", 2.0, "w0"), "harness_class": "agentic-cad", "stack": "S"}]
+    assert dd.build_dual_league({"runs": runs})["min_domains_for_rank"] == 3
+
+
+def test_effective_min_domains_bounds():
+    assert dd.effective_min_domains([]) == 0
+    assert dd.effective_min_domains([{"domain": "x"}]) == 1
+    assert dd.effective_min_domains([{"domain": d} for d in "abcd"]) == 3
+    assert dd.effective_min_domains([{"domain": d} for d in "abcd"], 2) == 2
+
+
+@pytest.mark.parametrize("extra", [{}, {"harness_class": "agentic-cad", "stack": "S"}])
+def test_unscored_row_is_never_eligible_even_with_a_zero_floor(extra):
+    # #890 review: no domains -> effective floor 0; 0 >= 0 must not award rank 1 to no result.
+    for runs in ([{"run_id": "e", "model_identifier": "empty", "score": None, **extra}],
+                 [{"run_id": "e", "model_identifier": "empty", **extra}]):
+        out = dd.build_dual_league({"runs": runs})
+        assert out["min_domains_for_rank"] == 0
+        row = (out["leagues"]["workflow" if extra else "autonomous"]["rows"])[0]
+        assert row["rank"] is None and row["rank_eligible"] is False
+        assert row["coverage_note"] == "unranked: no scored runs"
+
+
+def test_scored_legacy_rows_without_domains_still_rank():
+    runs = [{"run_id": "a", "model_identifier": "m1", "score": 0.4},
+            {"run_id": "b", "model_identifier": "m2", "score": 0.0}]  # a recorded zero is a score
+    rows = dd.build_dual_league({"runs": runs})["leagues"]["autonomous"]["rows"]
+    assert [(r["headline"], r["rank"]) for r in rows] == [("m1", 1), ("m2", 2)]

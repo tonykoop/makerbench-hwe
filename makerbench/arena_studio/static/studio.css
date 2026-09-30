@@ -398,6 +398,32 @@ code {
   border-left: 1px solid var(--line);
 }
 
+.matchup-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+  gap: var(--space-3);
+}
+
+.matchup-entrant {
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  overflow-wrap: anywhere;
+}
+
+.matchup-render {
+  width: 100%;
+  max-height: 14rem;
+  object-fit: contain;
+  background: var(--surface);
+}
+
+.matchup-gates {
+  padding-left: var(--space-4);
+  font-size: var(--step--1);
+}
+
 .facts {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
