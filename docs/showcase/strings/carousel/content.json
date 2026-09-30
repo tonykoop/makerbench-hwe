@@ -35,7 +35,8 @@
   ],
   "yardstick": [
     "The wall-thickness check estimates from a random sample of points.",
-    "Re-sampling the same mesh flips its verdict in 3 to 10 of 10 tries.",
+    "Re-sampling the same mesh ten times, the wall floor failed in 3 to 10 of 10 samples across meshes.",
+    "Some meshes change verdict between sample seeds.",
     "So any score containing that check may move.",
     "Fix the check, then compare."
   ],

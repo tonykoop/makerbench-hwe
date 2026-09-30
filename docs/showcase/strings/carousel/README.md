@@ -4,8 +4,8 @@ Story #910 (epic #907). Built from the anonymized strings gallery (`../gallery/`
 `scripts/build_strings_carousel.py`; slide text and per-axis numbers live in `content.json`.
 
 **Status: GATED.** The three per-axis result slides quote pass rates that depend on the
-`min_wall` check, which the S7 analysis (#900, PR #905, open) finds flips with its random
-sample seed. Every result and design slide therefore carries a "PROVISIONAL" banner and the
+`min_wall` check, which the S7 analysis (#900, PR #905, open) finds fails or passes depending on its random
+sample seed (some meshes change verdict). Every result and design slide therefore carries a "PROVISIONAL" banner and the
 carousel says no ranking is claimed. Do not post it as a comparison until the check is
 calibrated and `content.json` is refreshed. Companion draft: p7 in `../../linkedin-posts.md`
 (ON HOLD for the same reason).
@@ -27,7 +27,7 @@ per slide), `content.json`.
 | 6 | 0.889 / 0.833 | `../matchup-context.md` |
 | 7 | 0.778 / 0.889 / 0.500; two arena retries, one Sol render failure | `../matchup-model.md` |
 | 8 | 1.000 / 0.944 (and 0.889 to 0.944 depending on where CadQuery is scored) | `../matchup-backend.md` (PR #897, not yet on `main`) |
-| 9 | flips in 3 to 10 of 10 re-samples | `../min-wall-analysis.md` (PR #905, not yet on `main`) |
+| 9 | fails the floor in 3 to 10 of 10 samples across meshes; some meshes change verdict between sample seeds | `../min-wall-analysis.md` (PR #905, not yet on `main`) |
 
 ## Things to know
 
