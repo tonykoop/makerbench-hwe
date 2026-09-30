@@ -17,8 +17,8 @@ subscription auth, no API key). Adapter: `make_agy_generator` in
   "RunCommand"` in agy's own log.
 - It is **non-deterministic and brief-dependent**. With the real arena prompt for four briefs,
   on `gemini-3.8-flash-high` from an empty cwd: `ocarina` and `kora` answered (14.7k and 21k
-  chars); `tongue-drum` was denied at step 4 after 34 s and `kena` at step 36 after 200 s. A
-  one-word probe always passes.
+  chars); `tongue-drum` was denied at step 4 after 34 s and `kena` at step 36 after 200 s. The
+  one-word probes I ran passed (two models); that is an observation, not a guarantee.
 - The frontier run used a run-local wrapper that treated the first empty answer as a permanent
   block and refused every later dispatch, so 65 of the 66 cells never called the model.
 - Separately, the adapter had **no way to pick a model**: an `antigravity-gemini-3.8-flash-high`
