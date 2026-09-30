@@ -215,6 +215,21 @@ def test_normalized_objective_keeps_checks(tmp_path):
 #: or the base gate changes, never to absorb a change made by the topology
 #: feature.
 PRE_FEATURE_SCORELINE = Path(__file__).parent / "fixtures" / "topology_undeclared_registry_scoreline.json"
+#: The same scoreline with the #903 ``failed_checks`` explanations (measured, threshold, body).
+EXPLAINED_SCORELINE = Path(__file__).parent / "fixtures" / "objective_scoreline_failed_checks.json"
+
+
+def _without_stochastic_wall(rows):
+    """The ray-cast ``min_wall`` reading comes from random surface samples, and the sample
+    differs between numpy/trimesh builds (0.2644 mm on py3.12, 0.153 mm on py3.10 for the same
+    mesh, #919), so the fixture pins that the reading is below the threshold, not its value."""
+    out = json.loads(json.dumps(rows))
+    for row in out:
+        for failed in row.get("failed_checks", []):
+            if (failed["check"] == "min_wall" and isinstance(failed["measured"], (int, float))
+                    and failed["measured"] < failed["threshold"] - failed.get("tolerance", 0)):
+                failed["measured"] = "below threshold"
+    return out
 
 
 def test_existing_registry_scorelines_match_the_pre_feature_baseline(tmp_path):
@@ -240,4 +255,10 @@ def test_existing_registry_scorelines_match_the_pre_feature_baseline(tmp_path):
                        "status": "scored", "result": {"objective": objective}})
     rows = runner.collect_objective_scoreline({"trials": trials})
 
-    assert json.dumps(rows, indent=2, sort_keys=True) + "\n" == PRE_FEATURE_SCORELINE.read_text()
+    # #903 added an optional per-row ``failed_checks`` explanation. It is additive: with it
+    # removed the rows are still byte-identical to the pre-feature baseline, so the pin is
+    # not regenerated. The explained rows are pinned in their own fixture below.
+    explained = json.dumps(_without_stochastic_wall(rows), indent=2, sort_keys=True) + "\n"
+    assert explained == EXPLAINED_SCORELINE.read_text()
+    baseline_rows = [{k: v for k, v in row.items() if k != "failed_checks"} for row in rows]
+    assert json.dumps(baseline_rows, indent=2, sort_keys=True) + "\n" == PRE_FEATURE_SCORELINE.read_text()

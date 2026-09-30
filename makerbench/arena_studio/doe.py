@@ -323,7 +323,10 @@ def _session_cost(session) -> Optional[float]:
     # under its free-form telemetry dict without assuming it is there.
     telemetry = getattr(session, "telemetry", None) or {}
     value = telemetry.get("cost_usd")
-    return float(value) if isinstance(value, (int, float)) else None
+    return float(value) if (
+        isinstance(value, (int, float)) and not isinstance(value, bool)
+        and math.isfinite(value) and value >= 0
+    ) else None
 
 
 def _historical_duration(model_id: str, telemetry_store: str, backend: str = "openscad") -> dict:
@@ -333,10 +336,12 @@ def _historical_duration(model_id: str, telemetry_store: str, backend: str = "op
         if getattr(s, "agent_id", None) == model_id
         and (getattr(s, "telemetry", None) or {}).get("backend", "openscad") == backend
     ]
-    if not matching:
+    durations = [s.duration_seconds for s in matching
+                 if math.isfinite(s.duration_seconds) and s.duration_seconds >= 0]
+    if not durations:
         return {"duration_s": None, "n_duration_samples": 0}
-    avg = sum(s.duration_seconds for s in matching) / len(matching)
-    return {"duration_s": round(avg, 1), "n_duration_samples": len(matching)}
+    avg = sum(durations) / len(durations)
+    return {"duration_s": round(avg, 1), "n_duration_samples": len(durations)}
 
 
 def _historical_cost(model_id: str, telemetry_store: str, backend: str = "openscad") -> dict:

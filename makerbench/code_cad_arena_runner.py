@@ -209,6 +209,27 @@ def _default_part_module_counter(scad_path: Path) -> int:
     return count_standalone_part_modules(scad_path)
 
 
+def _failure(check: str, *, measured, threshold, unit: str, requires: str,
+             body_id: Optional[str], detail: str, **extra) -> dict:
+    """One explained failed sub-score (#903): what was measured, against which threshold,
+    and on which body. ``requires`` is the relation that had to hold (``measured >= threshold``);
+    ``body_id`` is ``body_N`` (index in the gate's split) or ``assembly`` for whole-mesh checks."""
+    row = {"check": check, "measured": measured, "threshold": threshold, "unit": unit,
+           "requires": requires, "body_id": body_id, "detail": detail}
+    row.update(extra)
+    return row
+
+
+def _round_or_none(value, digits: int = 4):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if value != value or value in (float("inf"), float("-inf")) else round(value, digits)
+
+
 # Triangles with a height below this (mm) have no area worth measuring (#874).
 DEGENERATE_FACE_HEIGHT_MM = 1e-6
 
@@ -300,6 +321,69 @@ def mesh_objective_gate(
         extra_sub_scores, checks = topology.declared_checks(mesh, spec)
         sub_scores.update(extra_sub_scores)
         rate = sum(sub_scores.values()) / len(sub_scores)
+
+        # #903: explain every failed sub-score with measured value, threshold and body.
+        body_ids = {id(body): f"body_{i}" for i, body in enumerate(bodies)}
+        failures: list[dict] = []
+        if sub_scores["watertight"] == 0.0:
+            open_ids = [body_ids[id(b)] for b in bodies if not geometry.is_watertight(b)]
+            failures.append(_failure(
+                "watertight", measured=len(open_ids), threshold=0, unit="non-watertight bodies",
+                requires="measured <= threshold", body_id=open_ids[0],
+                detail=f"non-watertight bodies: {', '.join(open_ids[:8])}"
+                       + (f" (+{len(open_ids) - 8} more)" if len(open_ids) > 8 else ""),
+                body_ids=open_ids[:16]))
+        if sub_scores["nonzero_volume"] == 0.0:
+            failures.append(_failure(
+                "nonzero_volume", measured=_round_or_none(volume, 3), threshold=MIN_BODY_VOLUME_MM3,
+                unit="mm3", requires="measured >= threshold", body_id=body_ids[id(largest)],
+                detail="volume of the largest body (by face count)"))
+        if sub_scores["fits_envelope"] == 0.0:
+            extents = sorted(float(x) for x in mesh.bounding_box.extents)
+            bounds = sorted(envelope)
+            over = max(zip(extents, bounds), key=lambda pair: pair[0] - pair[1])
+            failures.append(_failure(
+                "fits_envelope", measured=_round_or_none(over[0], 3), threshold=_round_or_none(over[1], 3),
+                unit="mm", requires="measured <= threshold", body_id="assembly",
+                detail=f"sorted bbox extents {[round(x, 1) for x in extents]} vs envelope"
+                       f" (x{ENVELOPE_SLACK} slack) {[round(x, 1) for x in bounds]}"))
+        if sub_scores["min_wall"] == 0.0:
+            if watertight_bodies:
+                failures.append(_failure(
+                    "min_wall", measured=_round_or_none(measured_wall, 4), threshold=min_wall_floor,
+                    unit="mm", requires="measured >= threshold - tolerance", body_id=body_ids[id(biggest_solid)],
+                    detail="thinnest ray-cast wall on the largest watertight body; "
+                           "other bodies are not measured",
+                    tolerance=geometry.WALL_MEAS_TOL_MM))
+            else:
+                failures.append(_failure(
+                    "min_wall", measured=None, threshold=min_wall_floor, unit="mm",
+                    requires="measured >= threshold - tolerance", body_id=None,
+                    detail="no watertight body, so no wall was measured",
+                    tolerance=geometry.WALL_MEAS_TOL_MM))
+        if sub_scores["body_count"] == 0.0:
+            failures.append(_failure(
+                "body_count", measured=len(bodies), threshold=min_bodies, unit="bodies",
+                requires="measured >= threshold", body_id="assembly",
+                detail="connected bodies in the mesh"
+                       + (f"; {part_modules} part modules compiled" if part_modules is not None else "")))
+        topo = checks.get("topology") or {}
+        if sub_scores.get("topology") == 0.0:
+            failures.append(_failure(
+                "topology", measured=topo.get("observed"), threshold=topo.get("expected"), unit="betti/euler",
+                requires="measured == threshold", body_id="assembly",
+                detail=str(topo.get("error") or "observed topology differs from the declared one")))
+        if sub_scores.get("interfaces") == 0.0:
+            iface = checks.get("interfaces") or {}
+            items = [r for r in (iface.get("interfaces") or []) if r.get("status") != "pass"]
+            for item in items or [{"name": None, "error": iface.get("error")}]:
+                failures.append(_failure(
+                    "interfaces", measured=item.get("wall_material_fraction"),
+                    threshold=topology.WALL_MATERIAL_FRACTION, unit="fraction of wall probes in material",
+                    requires="measured >= threshold and core_points_in_material == 0", body_id="assembly",
+                    detail=str(item.get("error") or f"interface {item.get('name')!r}: "
+                               f"{item.get('core_points_in_material')} core points in material"),
+                    interface=item.get("name")))
         # #800: advisory only, computed after the rate and never folded into it.
         try:
             acoustic = acoustic_advisory.advise(spec, mesh)
@@ -313,6 +397,7 @@ def mesh_objective_gate(
             "gate": "makerbench.code_cad_arena_runner.mesh_objective_gate",
             "advisory": {"acoustic": acoustic},
             "checks": checks,
+            "failures": failures,
             "metrics": {
                 "body_count": len(bodies),
                 "watertight_bodies": len(watertight_bodies),
@@ -632,6 +717,32 @@ def is_consensus_row(entry: Mapping[str, object]) -> bool:
     return any(isinstance(t, str) and t.startswith(CONSENSUS_TIER_PREFIX) for t in tiers)
 
 
+
+def _trial_failed_checks(entry: Mapping[str, object], result: Mapping[str, object],
+                         objective: Mapping[str, object]) -> list[dict]:
+    """The explained failed checks of one trial, tagged with where they happened (#903).
+
+    New runs carry ``objective["failures"]``. A failed sub-score with no recorded explanation
+    (a run that predates #903) is listed with null measured/threshold/body, never dropped.
+    A trial that produced no score (compile failure, timeout, error) adds nothing here: it has
+    no sub-scores to explain, and its rows keep their exact shape.
+    """
+
+    where = {"trial_id": entry.get("trial_id"), "instrument_id": entry.get("instrument_id"),
+             "seed": entry.get("seed")}
+    recorded = objective.get("failures")
+    out: list[dict] = []
+    if isinstance(recorded, list):
+        out.extend({**where, **failure} for failure in recorded if isinstance(failure, Mapping))
+    explained = {str(f.get("check")) for f in out}
+    for name, score in (objective.get("sub_scores") or {}).items():
+        if score == 0.0 and name not in explained:
+            out.append({**where, "check": name, "measured": None, "threshold": None, "unit": None,
+                        "requires": None, "body_id": None,
+                        "detail": "not recorded (this result predates failure explanations)"})
+    return out
+
+
 def collect_objective_scoreline(run_log: Mapping[str, object]) -> list[dict]:
     """Aggregate the run log into per-entrant objective rows.
 
@@ -642,6 +753,7 @@ def collect_objective_scoreline(run_log: Mapping[str, object]) -> list[dict]:
 
     totals: dict[tuple[str, str], list[float]] = {}
     confinements: dict[tuple[str, str], set[str]] = {}
+    failed_checks: dict[tuple[str, str], list[dict]] = {}
     run_backend = str(((run_log.get("config") or {}).get("backend")) or "openscad")
     for entry in run_log.get("trials") or []:
         if is_consensus_row(entry):
@@ -662,6 +774,7 @@ def collect_objective_scoreline(run_log: Mapping[str, object]) -> list[dict]:
         backend = str(result.get("backend") or (entry.get("meta") or {}).get("backend") or run_backend)
         row_key = (model_id, backend)
         totals.setdefault(row_key, []).append(float(rate))
+        failed_checks.setdefault(row_key, []).extend(_trial_failed_checks(entry, result, objective))
         # Failed trials carry their classification in the orchestrator's
         # per-entry `meta` (result is None), so it survives into the row.
         confinement = result.get("confinement") or (entry.get("meta") or {}).get("confinement")
@@ -678,6 +791,9 @@ def collect_objective_scoreline(run_log: Mapping[str, object]) -> list[dict]:
             "objective_pass_rate": round(sum(rates) / len(rates), 6),
             "n_objective_trials": len(rates),
         }
+        if failed_checks.get(row_key):
+            # #903: additive key; rows with no failed check keep their exact bytes.
+            row["failed_checks"] = failed_checks[row_key]
         seen = confinements.get(row_key)
         if seen:
             # #785: one unconfined trial taints the whole row (worst case wins),
