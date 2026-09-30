@@ -7,8 +7,8 @@ the other string-family failures.
 ## Answer
 
 **No: strings are not what fails the 1 mm floor.** The hypothesis does not hold on this data,
-and something worth knowing came out instead: the `min_wall` check on these designs is
-close to a coin flip on the sample seed.
+and something worth knowing came out instead: the `min_wall` verdict on these designs is
+sensitive to the sample seed.
 
 1. In the sambuca designs that fail, the thin readings come from **1 to 4 of the 4,000
    surface samples**, at one or two places per design, never spread along a string line.
@@ -17,13 +17,14 @@ close to a coin flip on the sample seed.
    design where I could read the source, with one exception (a 0.7 mm string, below) that
    the gate never measures anyway.
 3. Re-sampling the *same mesh* with nine other sample seeds flips the verdict: for the 13
-   sambuca meshes with a watertight body, 3 to 10 of 10 seeds fail the floor, **including
-   both meshes that passed at seed 0**. With 40,000 samples, every one of the 13 reads
+   sambuca meshes with a watertight body, 3 to 10 of 10 seeds fail the floor (93 of the 130
+   seed evaluations fail), **including both meshes that passed at seed 0**. With 40,000 samples, every one of the 13 reads
    below 0.36 mm.
 
-So these `min_wall` failures are not "designs with thin strings"; they are sparse
-knife-edge or sliver features that the estimator finds or misses depending on where its
-samples land. That changes what a fix should be (see the end) and it means the current
+So these `min_wall` failures are not "designs with thin strings". The working hypothesis
+(from where the thin samples sit; I did not isolate the features in CAD) is that they are
+sparse knife-edge, sliver or grazing features that the estimator finds or misses depending on
+where its samples land. That changes what a fix should be (see the end) and it means the current
 sambuca `min_wall` numbers should not go in a public post as a design-quality finding.
 
 ## How the gate measures (from the code, current `main`)
@@ -35,8 +36,12 @@ shooting a ray inward along its normal, and the **minimum** distance to the far 
 the wall. It passes if that is at least the per-instrument floor minus 0.05 mm
 (`min_wall_mm`: sambuca 1.0). Two consequences that matter here:
 
-- **Separate string bodies are never measured.** Only the largest body is. A design that
-  models the 13 strings as their own bodies is not judged on their thickness at all.
+- **The measured body is chosen by face count, not by role.** It is the watertight body with
+  the most faces. The gate has no notion of "string" or "structure", so a separate string
+  body would be measured if it happened to have the most faces (a control: a 12-face
+  structural box plus a separate 1,024-face, 0.7 mm string measures the string and fails).
+  In these recorded designs the separate string bodies were not the largest, so they were
+  not selected; that is an observation about these samples, not a property of the gate.
 - **A fused design is judged on its whole surface by a single minimum**, so one grazing or
   sliver sample decides it. If no body is watertight, `min_wall` is 0 without measuring.
 
@@ -95,8 +100,8 @@ a wall reading are the 13 meshes in the resampling claim above.)
 Where the SCAD names a string diameter: 1.0 mm (Opus seed 0), 1.2 mm (context blind seed 1,
 Opus seeds 1 and 2, Codex seeds 1 and 2), 1.6 mm (Sonnet seed 0), 2 mm (Sonnet seed 2), and
 0.7 mm (Codex seed 0). Only the last is under the floor, and it models its strings as 15
-separate bodies, which the gate does not measure: the Codex seed-0 failure is a single
-0.049 mm sample on the main body. Other designs (for example context blind seed 2 and the
+separate bodies, which were not the body the gate measured here (the largest, by face count): the Codex
+seed-0 failure is a single 0.049 mm sample on the main body. Other designs (for example context blind seed 2 and the
 image tier) do not name a string diameter in a variable, and I did not read their string
 dimensions off the source.
 
@@ -120,8 +125,8 @@ there either. These are not evidence for or against a string floor.
 
 - **#901 (per-body string floors) is not supported by this analysis.** Its condition ("if the
   analysis confirms strings drive the failures") is not met for sambuca: the strings are not
-  the thin samples, and separate string bodies are not measured at all today. A string-role
-  floor would change no sambuca result.
+  the thin samples, and in these designs the separate string bodies were not the measured body.
+  A string-role floor would change no sambuca result.
 - The result that *is* supported: the `min_wall` estimator is a minimum over a few thousand
   random samples, so it reports the worst grazing sample, not a wall thickness. A calibrated
   version would measure a **robust** quantity (for example the share of surface area, or the
@@ -137,3 +142,23 @@ One instrument for the main table; 14 trials; single generations per cell; I did
 render the thin features, so their identification is by position only. Estimates use the
 repository's estimator as is; a different ray-cast tolerance or sampling scheme would give
 different absolute numbers. Nothing here says the designs are printable or not.
+
+## Reproducibility metadata
+
+Measured with Python 3.12.3, numpy 2.2.6, trimesh 4.12.2, scipy 1.15.3, rtree 1.4.1 and
+OpenSCAD 2021.01 (the designs' renderer), against the gate in this repository's `main` at
+`89a03ce`. **The sampled minima depend on the numpy/trimesh build**: the same mesh gave a
+different sampled minimum on CI's Python 3.10 (see #919), which is one more face of the
+same seed sensitivity, so exact wall values here reproduce only in this environment; the
+pass/fail counts and the seed-flip pattern are the transferable result.
+
+SHA-256 (first 16 hex) of each measured `output.stl`, for future diagnosis (the files are in
+the gitignored `runs/` of the original matchup worktrees):
+
+| Run | Seed | STL sha256[:16] |
+|---|---|---|
+| context, blind | 0 / 1 / 2 | 7a4c68cdd40db28e / 8707708ce3af72fa / e3dc1eb310502ae5 |
+| context, image | 0 / 1 / 2 | 80c2b2e8bceeb93f / 51c240a16e272ae0 / 27d4a397aeaa9877 |
+| model, Opus 5.5 | 0 / 1 / 2 | 79151269c81b605d / cccb7d54c56364bb / 1f030ecf4ac0ff76 |
+| model, Sonnet 5.5 | 0 / 1 / 2 | dd9fcea277607bb9 / 9beabba5d50001aa / 0da8aeaf14d26908 |
+| model, Codex (GPT-6.1 Sol) | 0 / 2 | bc957cba169ce04c / 6e5b704bb62d6d92 |
