@@ -112,7 +112,7 @@ def test_nonzero_exit_keeps_the_existing_single_retry(stub_agy, monkeypatch):
     bin_, calls = stub_agy
     monkeypatch.setenv("AGY_STUB_MODE", "fail_rc")
     gen = providers.make_agy_generator(bin_=str(bin_), retry_sleep_s=0)
-    with pytest.raises(RuntimeError, match=r"agy failed \(rc=3\)"):
+    with pytest.raises(RuntimeError, match=r"agy failed \(rc=3, 2 attempts\)"):
         gen(_request())
     assert len(calls()) == 2
 
@@ -171,3 +171,18 @@ def test_prompt_note_forbids_tools_without_asking_for_permissions():
     note = providers.AGY_NO_TOOLS_NOTE.lower()
     assert "do not run any commands" in note and "do not use any tools" in note
     assert "permission" not in note and "allow" not in note
+
+
+def test_attempt_count_spans_mixed_failures(stub_agy, monkeypatch, tmp_path):
+    # rc!=0 once, then a silent denial, then success: 3 calls in total, and when everything
+    # keeps failing the message counts every call, not just the last retry sequence.
+    bin_, calls = stub_agy
+    script = bin_.read_text().replace(
+        'if mode == "fail_rc":',
+        'if mode == "mixed" and call == 1:\n    sys.stderr.write("boom")\n    sys.exit(3)\nif mode == "mixed" and call in (2, 3):\n'
+        '    sys.stderr.write(' + repr(DENIAL) + ')\n    sys.exit(0)\nif mode == "fail_rc":')
+    bin_.write_text(script)
+    monkeypatch.setenv("AGY_STUB_MODE", "mixed")
+    gen = providers.make_agy_generator(bin_=str(bin_), retry_sleep_s=0)  # defaults: 1 exit + 2 denial retries
+    assert gen(_request()) == "cube([10, 10, 10]);"
+    assert len(calls()) == 4  # rc!=0, denied, denied, ok

@@ -821,22 +821,29 @@ def make_agy_generator(
         cmd = [bin_, "--print", prompt, "--print-timeout", print_timeout]
         if model:
             cmd += ["--model", model]
-        denied_attempts = 0
+        # One loop and one total call counter across both retry kinds (a non-zero exit gets
+        # ``_retries`` more calls, a silent denial ``empty_retries`` more), so the final
+        # message counts every call made, including mixed failures.
+        calls = 0
+        exit_retries_left = _retries
+        denial_retries_left = empty_retries
         while True:
             result = _run_entrant_cli(
                 "agy", cmd, request=request, trial_cwd=_trial_cwd(request, cwd),
                 timeout_s=timeout_s, observations=observations,
             )
+            calls += 1
             if result.returncode != 0:
-                if _retries > 0:
+                if exit_retries_left > 0:
+                    exit_retries_left -= 1
                     time.sleep(retry_sleep_s)
-                    return generate(request, _retries - 1)
+                    continue
                 detail = (result.stderr or result.stdout or "<no output>")[:500]
-                raise RuntimeError(f"agy failed (rc={result.returncode}): {detail}")
-            if _agy_denied_tool(result) and denied_attempts < empty_retries:
+                raise RuntimeError(f"agy failed (rc={result.returncode}, {calls} attempts): {detail}")
+            if _agy_denied_tool(result) and denial_retries_left > 0:
                 # A fresh call: the model's tool use is not deterministic, so the same brief
                 # usually succeeds on the next try (#926).
-                denied_attempts += 1
+                denial_retries_left -= 1
                 time.sleep(retry_sleep_s)
                 continue
             break
@@ -845,7 +852,7 @@ def make_agy_generator(
             # agy exits 0 with empty stdout when headless mode auto-denies a tool (e.g. an
             # un-allowlisted shell command); the reason is only on stderr. Surface it instead
             # of a bare "empty output" error.
-            raise RuntimeError(f"agy produced no output (rc=0, {denied_attempts + 1} attempts): {reason}")
+            raise RuntimeError(f"agy produced no output (rc=0, {calls} attempts): {reason}")
         return extract_candidate(result.stdout, backend)
 
     generate.sandbox_observations = observations
