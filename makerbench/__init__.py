@@ -2,7 +2,10 @@
 
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
-try:
-    __version__ = _pkg_version("makerbench-hwe")
-except PackageNotFoundError:
-    __version__ = "0.0.0+unknown"
+__version__ = "0.0.0+unknown"
+for _distribution in ("makerbench-hwe", "makerbench"):
+    try:
+        __version__ = _pkg_version(_distribution)
+        break
+    except PackageNotFoundError:
+        continue

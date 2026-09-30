@@ -10,16 +10,21 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize("legacy", [False, True])
-def test_installed_package_version_matches_metadata_not_legacy(tmp_path, legacy):
+@pytest.mark.parametrize("distribution,legacy", [
+    ("makerbench-hwe", False), ("makerbench-hwe", True), ("makerbench", False),
+])
+def test_installed_package_version_matches_metadata_not_legacy(tmp_path, distribution, legacy):
     version = "9.8.7"
-    wheel = tmp_path / f"makerbench_hwe-{version}-py3-none-any.whl"
-    info = f"makerbench_hwe-{version}.dist-info"
+    normalized = distribution.replace("-", "_")
+    wheel = tmp_path / f"{normalized}-{version}-py3-none-any.whl"
+    info = f"{normalized}-{version}.dist-info"
     entries = {}
     for name in ("__init__.py", "provenance.py", "render.py", "run_log_io.py"):
         entries["makerbench/" + name] = (ROOT / "makerbench" / name).read_bytes()
+    for name in ("__init__.py", "scoring.py"):
+        entries["makerbench_core/" + name] = (ROOT / "makerbench_core" / name).read_bytes()
     entries[info + "/METADATA"] = (
-        f"Metadata-Version: 2.1\nName: makerbench-hwe\nVersion: {version}\n"
+        f"Metadata-Version: 2.1\nName: {distribution}\nVersion: {version}\n"
     ).encode()
     entries[info + "/WHEEL"] = (
         "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
@@ -42,9 +47,11 @@ def test_installed_package_version_matches_metadata_not_legacy(tmp_path, legacy)
         f"import sys; sys.path.insert(0, {str(target)!r}); "
         "import importlib.metadata as m, makerbench; "
         "from makerbench.provenance import grader_environment; import json; "
-        "print(json.dumps([m.version('makerbench-hwe'),makerbench.__version__,"
-        "grader_environment()['makerbench']]))"
+        "from makerbench_core.scoring import _package_version; "
+        f"print(json.dumps([m.version({distribution!r}),makerbench.__version__,"
+        "grader_environment()['makerbench'],_package_version()]))"
     )
-    result = subprocess.run([sys.executable, "-I", "-c", code], cwd=tmp_path,
+    # Exclude site-packages too: an installed checkout must not mask legacy-only fixtures.
+    result = subprocess.run([sys.executable, "-I", "-S", "-c", code], cwd=tmp_path,
                             check=True, capture_output=True, text=True)
-    assert json.loads(result.stdout) == [version, version, version]
+    assert json.loads(result.stdout) == [version] * 4

@@ -458,7 +458,7 @@ def _yes_no(value: bool) -> str:
 
 
 def _package_version() -> str:
-    for package_name in ("makerbench-core", "makerbench"):
+    for package_name in ("makerbench-hwe", "makerbench-core", "makerbench"):
         try:
             return importlib.metadata.version(package_name)
         except importlib.metadata.PackageNotFoundError:
