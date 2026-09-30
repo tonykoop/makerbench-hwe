@@ -1,4 +1,4 @@
-# LinkedIn post drafts (p1–p5), corrected
+# LinkedIn post drafts (p1–p6), corrected
 
 Technology-showcase posts. Each draft is ≤ 1,300 characters. Source for the
 fixes: the Lane D2 claims audit; sambuca facts come from
@@ -7,7 +7,7 @@ fixes: the Lane D2 claims audit; sambuca facts come from
 Status: **p1, p2, p4** are postable once the open questions under them are
 answered. **p3** is gated (needs #828 and #830 merged plus one real run).
 **p5**'s headline is **ON HOLD** until the frontier re-run (#668) lands; the
-rest of p5 is fixed.
+rest of p5 is fixed. **p6** (the benchmark caught a bug in its own scoring) is postable once its link placeholder and the check below are resolved.
 
 Rules that apply to every post: do not link or imply that the live Fusion and
 SolidWorks connectors are open (they are not public); publish no single-voter
@@ -155,3 +155,40 @@ Claims → source
 - Both scorelines, never blended: `docs/CODE_CAD_ARENA.md`, `docs/CODE_CAD_AGREEMENT.md`.
 - No Elo or vote counts are published (`arena.json` policy).
 - Headline and link stay ON HOLD: #668 and #666 are open.
+
+---
+
+## p6: The benchmark caught a bug in its own scoring
+
+```text
+My CAD benchmark just caught a bug in its own scoring.
+
+I compared three CAD backends on one task: the same AI model, three seeds each. OpenSCAD scored 1.000. CadQuery scored 0.778 and failed the "watertight" check on all three seeds. That looked like a finding about CadQuery.
+
+It wasn't. I re-examined the meshes: each one carried four zero-area sliver triangles from the STL writer, and the scorer counted every sliver as its own broken body. Two of the three failures were the gate's fault. The third was real: that design has a non-manifold edge.
+
+The fix drops zero-area triangles before checking, with regression tests. Re-scoring the same meshes moved CadQuery from 0.778 to 0.889. A fresh re-run, after that fix and a prompt hint for build123d, scored 1.000 for both CadQuery and build123d.
+
+Caveats: three seeds, one easy ocarina task, fresh generations from a non-deterministic model. It says nothing about which CAD system is better. It does say a benchmark needs a way to check its own scorer.
+
+Write-up and code: [LINK once the site refresh (#666) ships]
+
+#AIEvaluation #CAD #Benchmark #OpenSCAD
+```
+
+Character count: 1109 (limit 1,300).
+
+Claims → source (all on `main` under `docs/showcase/post3/` unless noted)
+- **First result: OpenSCAD 1.000, CadQuery 0.778, three seeds, `watertight` failed 3 of 3**: `matchup-backend.md`, "Before (published)" column (ocarina, `claude-code-sonnet-5.5`, blind, L1). The same table gives build123d 0.556.
+- **Each mesh carried four zero-area sliver triangles from the STL writer; the scorer split each into a body that can never be watertight**: `cadquery-watertight-investigation.md`, Evidence 2 (#874, PR #886).
+- **Two of three failures were the gate's; the third is a real non-manifold edge**: the same file, "Answer" table and Evidence 4.
+- **Fix drops zero-area triangles (height below 1e-6 mm) before checking, with regression tests**: PR #886, `makerbench/code_cad_arena_runner.py`.
+- **Re-scoring the same meshes: CadQuery 0.778 to 0.889**: `cadquery-watertight-investigation.md` and the "Old meshes, fixed gate" column of `matchup-backend.md`.
+- **Fresh re-run: CadQuery 1.000, build123d 1.000 after the gate fix plus a build123d prompt hint**: `matchup-backend.md`, "After (fresh re-run)" column (PR #893; the hint is #875 / PR #888).
+- **Caveats** (three seeds, one easy task, fresh non-deterministic generations, cannot prove the hint prevented the earlier crash): the PR #893 description and `matchup-backend.md` update section.
+- No Elo, votes or preference scores are used anywhere in the sources.
+
+Open questions (do not post until answered)
+- **Link:** the placeholder waits on the site refresh (#666), as for p5. Alternatively link the public repo write-up directly.
+- **Later strings replay:** in the strings backend matchup (PR #897) a replay of CadQuery meshes in another runtime scored one seed differently from the live run, with the cause unknown and *not* the sliver fix. That does not change this post's claims (all from the ocarina matchup), but do not extend p6 to strings without reading that report.
+- "I re-examined the meshes" describes the S5 investigation (#874) run by the sprint's agents; adjust the voice if the poster did not do it personally.
