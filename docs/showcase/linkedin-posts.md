@@ -191,4 +191,5 @@ Claims → source (all on `main` under `docs/showcase/post3/` unless noted)
 Open questions (do not post until answered)
 - **Link:** the placeholder waits on the site refresh (#666), as for p5. Alternatively link the public repo write-up directly.
 - **Later strings replay:** in the strings backend matchup (PR #897) a replay of CadQuery meshes in another runtime scored one seed differently from the live run, with the cause unknown and *not* the sliver fix. That does not change this post's claims (all from the ocarina matchup), but do not extend p6 to strings without reading that report.
+- **`min_wall` caveat on the quoted scores.** The S7 analysis (#900, PR #905, open) finds the `min_wall` check flips with its random sample seed. The seed-2 CadQuery mesh also fails `min_wall` (with `watertight`), so the 0.889 (and the 1.000 re-run values, which pass `min_wall`) each include that check; the `watertight` findings themselves do not. Re-check the figures if the check is recalibrated before posting.
 - "I re-examined the meshes" describes the S5 investigation (#874) run by the sprint's agents; adjust the voice if the poster did not do it personally.
