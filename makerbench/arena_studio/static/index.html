@@ -6,6 +6,68 @@
   <meta name="color-scheme" content="light dark">
   <title>Arena Studio</title>
   <link rel="stylesheet" href="/static/studio.css">
+  <script>
+  // Classic script: recovery must work even when ES modules cannot load.
+  (function () {
+    var mounted = false;
+    var failed = false;
+    var timer;
+    function showFailure(detail) {
+      if (mounted || failed) return;
+      failed = true;
+      window.clearTimeout(timer);
+      function show() {
+        var root = document.getElementById("app");
+        if (!root || mounted) return;
+        var panel = document.createElement("section");
+        panel.className = "boot";
+        panel.setAttribute("role", "alert");
+        var title = document.createElement("h1");
+        title.textContent = "Arena Studio could not start";
+        var error = document.createElement("p");
+        error.textContent = detail;
+        var hint = document.createElement("p");
+        hint.textContent = "Module scripts may be blocked, the cache may be stale, or a browser extension may interfere. Press Ctrl+Shift+R to reload, or try a browser with extensions disabled.";
+        var health = document.createElement("a");
+        health.href = "/api/health";
+        health.textContent = "Check server health";
+        panel.append(title, error, hint, health);
+        root.replaceChildren(panel);
+      }
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", show, { once: true });
+      } else {
+        show();
+      }
+    }
+    window.arenaStudioBoot = {
+      mounted: function () {
+        mounted = true;
+        window.clearTimeout(timer);
+      }
+    };
+    window.addEventListener("error", function (event) {
+      var message = event.message || (event.error && event.error.message);
+      if (!message && event.target && event.target.tagName === "SCRIPT") {
+        message = "A required application module failed to load.";
+      }
+      if (message) showFailure("Boot error: " + message);
+    }, true);
+    window.addEventListener("unhandledrejection", function (event) {
+      var reason = event.reason;
+      showFailure("Boot error: " + String(reason && reason.message || reason || "Unhandled promise rejection"));
+    });
+    timer = window.setTimeout(function () {
+      // A cached older entry module can mount without knowing this handshake.
+      var root = document.getElementById("app");
+      if (root && root.querySelector(".studio")) {
+        window.arenaStudioBoot.mounted();
+        return;
+      }
+      showFailure("The application did not mount within 5 seconds.");
+    }, 5000);
+  }());
+  </script>
   <script type="importmap">
   {
     "imports": {
