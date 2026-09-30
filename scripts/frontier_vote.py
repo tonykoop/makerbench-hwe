@@ -19,7 +19,7 @@ import webbrowser
 from PIL import Image
 
 from makerbench.code_cad_vote_surface import VoteCandidate, build_blind_pair
-from makerbench.code_cad_vote_web import QueueItem, VoteQueue, VoteRequestHandler
+from makerbench.code_cad_vote_web import QueueItem, VoteQueue, VoteRequestHandler, render_queue_page
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = "makerbench-frontier-local-vote-v1"
@@ -137,29 +137,66 @@ def prepare(source_root: Path, out: Path, *, voter="Tony", workspace=ROOT) -> Vo
 class LocalVoteHandler(VoteRequestHandler):
     """Only blind assets are served; manifests and revealed vote files stay private."""
 
-    def allowed(self):
+    def trusted_host(self):
+        hosts = self.headers.get_all("Host", [])
+        port = self.server.server_address[1]
+        allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        if port == 80:
+            allowed.update({"127.0.0.1", "localhost"})
+        return len(hosts) == 1 and hosts[0].lower() in allowed
+
+    def allowed_asset(self, path):
+        aliases = {"/" + c.render_path for i in self.queue.items for c in (i.pair.left, i.pair.right)}
+        if path not in aliases or not re.fullmatch(r"/blind/pair-[a-f0-9]{12}-(?:left|right)\.png", path):
+            return False
+        asset = self.queue.run_dir / path.lstrip("/")
+        return asset.is_file() and asset.resolve() == asset
+
+    def _send_html(self, html, status=200):
+        body = html.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def dispatch(self, head=False):
+        if not self.trusted_host():
+            self.send_error(403)
+            return
         path = urlsplit(self.path).path
         if path in {"/", "/queue"}:
-            return True
-        aliases = {"/" + c.render_path for i in self.queue.items for c in (i.pair.left, i.pair.right)}
-        return path in aliases and bool(re.fullmatch(r"/blind/pair-[a-f0-9]{12}-(?:left|right)\.png", path))
+            if self.queue.next_unvoted() is None:
+                self._send_html("<h1>Voting complete</h1><p>Votes remain local in ignored runs/. Close this tab and stop the server with Ctrl+C.</p>")
+            else:
+                self._send_html(render_queue_page(self.queue))
+            return
+        if not self.allowed_asset(path):
+            self.send_error(404)
+            return
+        # Only an exact, contained PNG alias ever reaches filesystem dispatch.
+        self.path = path
+        if head:
+            super().do_HEAD()
+        else:
+            super().do_GET()
 
     def do_GET(self):  # noqa: N802
-        if not self.allowed():
-            self.send_error(404)
-            return
-        if self.queue.next_unvoted() is None and urlsplit(self.path).path in {"/", "/queue"}:
-            self._send_html("<h1>Voting complete</h1><p>Votes remain local in ignored runs/. Close this tab and stop the server with Ctrl+C.</p>")
-            return
-        super().do_GET()
+        self.dispatch()
 
     def do_HEAD(self):  # noqa: N802
-        if not self.allowed():
-            self.send_error(404)
-            return
-        super().do_HEAD()
+        self.dispatch(head=True)
 
     def do_POST(self):  # noqa: N802
+        origins = self.headers.get_all("Origin", [])
+        expected = "http://" + self.headers.get("Host", "").lower()
+        if not self.trusted_host() or origins != [expected]:
+            self.send_error(403)
+            return
+        if self.headers.get_content_type() != "application/json":
+            self.send_error(415)
+            return
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:

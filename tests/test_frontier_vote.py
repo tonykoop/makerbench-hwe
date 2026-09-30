@@ -59,7 +59,7 @@ def test_real_http_blindness_vote_resume_and_source_preservation(tmp_path):
                 assert error.value.code == 404
         request = urllib.request.Request(base + "/vote", data=json.dumps({
             "pair_id": pair.pair_id, "winner": "left", "flags": {"left": ["wrong_proportions"]}
-        }).encode(), headers={"Content-Type": "application/json"})
+        }).encode(), headers={"Content-Type": "application/json", "Origin": base})
         assert json.load(urllib.request.urlopen(request)) == {"ok": True}
         with pytest.raises(urllib.error.HTTPError) as error:
             urllib.request.urlopen(request)
@@ -108,3 +108,58 @@ def test_output_and_preview_containment_fail_before_staging(tmp_path):
     with pytest.raises(ValueError, match="contained"):
         vote.prepare(source, tmp_path / "runs/votes", workspace=tmp_path)
     assert not (tmp_path / "runs").exists()
+
+
+def test_query_page_routes_never_dispatch_to_private_files(tmp_path):
+    source = fixture_runs(tmp_path)
+    out = tmp_path / "runs/votes"
+    queue = vote.prepare(source, out, workspace=tmp_path)
+    (out / "queue").write_text("PRIVATE_SENTINEL")
+    server = vote.serve(queue)
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        for path in ("/queue?cache=1", "/?cache=1"):
+            response = urllib.request.urlopen(base + path)
+            html = response.read().decode()
+            assert "PRIVATE_SENTINEL" not in html and "package.local.json" not in html
+            assert 'data-pair-id="' in html and response.headers.get_content_type() == "text/html"
+            head = urllib.request.urlopen(urllib.request.Request(base + path, method="HEAD"))
+            assert head.status == 200 and head.read() == b""
+            assert head.headers.get_content_type() == "text/html"
+        alias = queue.items[0].pair.left.render_path
+        assert urllib.request.urlopen(base + "/" + alias + "?cache=1").status == 200
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_foreign_host_origin_and_non_json_leave_votes_unchanged(tmp_path):
+    source = fixture_runs(tmp_path)
+    out = tmp_path / "runs/votes"
+    queue = vote.prepare(source, out, workspace=tmp_path)
+    server = vote.serve(queue)
+    base = f"http://127.0.0.1:{server.server_port}"
+    payload = json.dumps({"pair_id": queue.items[0].pair.pair_id, "winner": "left"}).encode()
+    try:
+        with pytest.raises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(urllib.request.Request(base + "/queue", headers={"Host": "untrusted.example"}))
+        assert error.value.code == 403
+        for headers in (
+            {"Host": "untrusted.example", "Origin": "https://untrusted.example", "Content-Type": "text/plain"},
+            {"Origin": "https://untrusted.example", "Content-Type": "application/json"},
+            {"Content-Type": "application/json"},
+            {"Origin": base, "Content-Type": "text/plain"},
+        ):
+            with pytest.raises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(urllib.request.Request(base + "/vote", data=payload, headers=headers))
+            assert error.value.code in {403, 415}
+            assert queue.progress() == (0, 10)
+            assert not (out / "votes.blind.jsonl").exists()
+            assert not (out / "votes.revealed.jsonl").exists()
+        response = urllib.request.urlopen(urllib.request.Request(
+            base + "/vote", data=payload, headers={"Origin": base, "Content-Type": "application/json"}))
+        assert json.load(response) == {"ok": True}
+        assert queue.progress() == (1, 10)
+    finally:
+        server.shutdown()
+        server.server_close()

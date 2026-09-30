@@ -27,7 +27,9 @@ The default package is `runs/frontier-vote-2026-09-30/`, which is ignored by Git
 The local manifest records source log/image hashes, exclusions and round counts.
 Blind PNG names and candidate IDs are opaque; copied previews omit PNG text
 metadata. The HTTP server exposes only the voting page and blind PNGs, keeping
-the manifest and revealed vote records inaccessible to the browser. Originals
+the manifest and revealed vote records inaccessible to the browser. The server
+checks exact loopback Host headers; votes require same-origin JSON
+requests. Query-bearing page URLs never dispatch to package files. Originals
 remain untouched. Source or staged image changes block resumption; choose a
 fresh output under this checkout's `runs/` to make a separate round.
 
