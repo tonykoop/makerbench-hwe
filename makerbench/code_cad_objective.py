@@ -162,6 +162,10 @@ def _normalize_gate_result(result: Mapping[str, object]) -> dict:
     if isinstance(checks, Mapping):
         # #797: declared/not-declared topology and interface statuses.
         normalized["checks"] = dict(checks)
+    failures = result.get("failures")
+    if isinstance(failures, list):
+        # #903: measured value, threshold and body for every failed sub-score.
+        normalized["failures"] = [dict(f) for f in failures if isinstance(f, Mapping)]
     return normalized
 
 
