@@ -175,11 +175,10 @@ rows above change:
   originally recorded, and `min_wall` fails with a measured wall of 0.0105 mm on `body_0`
   (seed 0, 4,000 samples). The statement above that this row is an open-mesh defect, and the
   boundary-edge counts quoted for it, describe the mesh *after* removing the attached
-  triangles, not the design as scored. I did not re-run the seed sweep for this mesh.
+  triangles, not the design as scored. Its seed sweep is in the table below.
 - **Context image seed 2** reads 0.162 mm at the gate (not 0.557) once its attached zero-area
   faces are kept. Its seed-sweep and 40,000-sample columns above were measured on the
-  faces-removed mesh and are approximate for the scored mesh; the conclusion (fails at seed 0,
-  sample-seed sensitive) is unchanged.
+  faces-removed mesh; the corrected values are in the table below.
 
 Checking every mesh with the isolated-only rule (a first version of this correction wrongly said
 the other twelve were unaffected; a review found two more) shows **four** rows affected, the two
