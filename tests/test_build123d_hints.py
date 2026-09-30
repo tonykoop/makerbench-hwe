@@ -13,11 +13,23 @@ from makerbench import code_cad_providers as providers
 def test_version_string_is_pinned():
     # Bump deliberately, together with the signature table, after re-verifying it.
     assert hints.BUILD123D_HINT_VERSION == "0.13.0"
+    assert hints.BUILD123D_VERIFIED_VERSIONS == ("0.12.0", "0.13.0")
+
+
+def test_hint_names_the_given_version_and_falls_back_to_the_pin(monkeypatch):
+    assert "installed build123d is 9.9.9" in hints.build123d_hint("9.9.9")
+    import importlib.metadata as md
+
+    def missing(_name):
+        raise md.PackageNotFoundError
+
+    monkeypatch.setattr(md, "version", missing)
+    assert hints.installed_build123d_version() == hints.BUILD123D_HINT_VERSION
 
 
 def test_prompt_states_version_and_every_signature():
     prompt = providers.BACKEND_SYSTEM["build123d"]
-    assert f"build123d {hints.BUILD123D_HINT_VERSION}" in prompt
+    assert f"installed build123d is {hints.installed_build123d_version()}" in prompt
     for sig in hints.BUILD123D_CURVE_SIGNATURES.values():
         assert sig in prompt
     assert prompt.rstrip().endswith("nothing else.")
@@ -42,9 +54,9 @@ def _param_names(signature: str) -> list[str]:
 
 def test_hint_matches_installed_build123d():
     b3d = pytest.importorskip("build123d")
-    assert b3d.__version__ == hints.BUILD123D_HINT_VERSION, (
-        "installed build123d differs from the version the hint was verified against; "
-        "re-check BUILD123D_CURVE_SIGNATURES and bump BUILD123D_HINT_VERSION"
+    assert b3d.__version__ in hints.BUILD123D_VERIFIED_VERSIONS, (
+        "installed build123d is not a version the signature table was verified against; "
+        "re-check BUILD123D_CURVE_SIGNATURES and extend BUILD123D_VERIFIED_VERSIONS"
     )
     for name, sig in hints.BUILD123D_CURVE_SIGNATURES.items():
         real = inspect.signature(getattr(b3d, name).__init__)
