@@ -8,10 +8,16 @@ once rung 1's install is done. Times are from a clean Ubuntu (WSL2) box with Pyt
 - Python 3.10 or newer (tested on 3.12.3) with `venv`, and `git`.
 - OpenSCAD on your PATH: `sudo apt-get install openscad` (Ubuntu; tested 2021.01),
   `brew install --cask openscad` (macOS), `winget install OpenSCAD.OpenSCAD` (Windows).
-- Not needed for this quickstart: `xvfb`, Bubblewrap (`--sandboxed-compile` is off by default),
+- Headless Linux (no `DISPLAY`, for example a server or CI box): install `xvfb` and prefix every
+  `arena run` below with `xvfb-run -a`. Without a display, the OpenSCAD render step fails
+  (`Unable to open a connection to the X server`, `Can't create OpenGL OffscreenView`) and the
+  round exits 0 but reports `summary: {"auto_fail": 2}` with both entrants at 0.000. That is a
+  missing render prerequisite, not model performance. Desktop Linux, macOS, Windows and WSLg
+  have a display and do not need it.
+- Not needed for this quickstart: Bubblewrap (`--sandboxed-compile` is off by default),
   any API key.
 
-## Rung 1: stub round (about 1 minute, zero tokens)
+## Rung 1: stub round (about 1 minute including install, zero tokens)
 
 ```bash
 git clone https://github.com/tonykoop/makerbench-hwe.git
@@ -119,7 +125,8 @@ python -m makerbench.cli arena matchup --vary model --values stub-a,stub-b \
 
 Expected: JSON with `"varied_axis": "models"`, a `held` block (instrument `ocarina`, level `L1`,
 context `blind`, seed `0`, backend `openscad`), two `cells` (one per model, each with
-`"cost_source": "subscription_zero_marginal"` and `"availability": "available"`), and a `summary`
+`"estimate": {"cost_source": "subscription_zero_marginal", ...}` and
+`"availability": {"status": "available", ...}`), and a `summary`
 with `"n_cells": 2`. `--out preview.json` also writes the preview to a file.
 
 Guard rails (both are errors, by design):
