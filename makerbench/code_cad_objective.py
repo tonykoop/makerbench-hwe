@@ -162,6 +162,11 @@ def _normalize_gate_result(result: Mapping[str, object]) -> dict:
     if isinstance(checks, Mapping):
         # #797: declared/not-declared topology and interface statuses.
         normalized["checks"] = dict(checks)
+    method = result.get("min_wall_method")
+    if isinstance(method, str) and method:
+        # #901: a non-default min_wall policy is part of the result's identity. Absent for the
+        # default estimator, so existing objective payloads keep their exact shape.
+        normalized["min_wall_method"] = method
     failures = result.get("failures")
     if isinstance(failures, list):
         # #903: measured value, threshold and body for every failed sub-score.

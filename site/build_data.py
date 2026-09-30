@@ -435,7 +435,9 @@ def _arena_run_entry(run_id: str, payloads: dict) -> dict | None:
     which fails the publication bar and is skipped entirely.
     """
     elo = payloads.get("elo") or {}
-    scoreline = payloads.get("scoreline") or []
+    # #901: rows scored under a non-default min_wall policy are withheld from public entries
+    # (they cannot be labelled here and must not read as default evidence).
+    scoreline = [row for row in (payloads.get("scoreline") or []) if not row.get("min_wall_method")]
     agreement = payloads.get("agreement") or {}
     config = ((payloads.get("run_log") or {}).get("config")) or {}
 
@@ -664,6 +666,11 @@ def _arena_page_round(number: int, run_dir: Path) -> dict | None:
         if row.get("confinement") == "unconfined":
             # #785: a non-blind trial whose entrant could read outside its staged
             # workspace is not integrity-safe; never publish its score.
+            continue
+        if row.get("min_wall_method"):
+            # #901: a row scored under a non-default min_wall policy is not comparable with
+            # default rows and this page has no way to label it; withhold it (fail closed)
+            # rather than show it as default evidence.
             continue
         rows.append(
             {
