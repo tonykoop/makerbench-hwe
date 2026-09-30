@@ -81,3 +81,73 @@ def test_row_cannot_misstate_held_backend_or_measurements(tmp_path, change):
     (tmp_path / 'sample.json').write_text(json.dumps(sample))
     with pytest.raises(ValueError):
         b.build_matchups_page(tmp_path)
+
+
+@pytest.mark.parametrize('fault', ['different-held-models', 'unselected-backends', 'wrong-live-driver'])
+def test_backend_and_driver_axes_cannot_hide_other_model_changes(tmp_path, fault):
+    sample = bundle()
+    item = sample['matchups'][0]
+    item['matchup'] = {'varied_axis': 'backends', 'values': ['openscad', 'cadquery'],
+        'varied_axes': ['backends'], 'factorial': False,
+        'held': {'instruments': 'ocarina', 'models': 'stub-a', 'levels': 'L1', 'context_tiers': 'blind', 'seeds': 0}}
+    item['entrants'][0]['backend'] = 'openscad'
+    item['entrants'][1]['backend'] = 'cadquery'
+    if fault == 'unselected-backends':
+        for row, backend in zip(item['entrants'], ['blender', 'build123d']):
+            row.update(entrant='stub-a', backend=backend)
+    elif fault == 'wrong-live-driver':
+        item['matchup']['values'] = ['solidworks-live', 'fusion-live']
+        item['matchup']['held']['driver_models'] = 'driver-held'
+        for row, backend in zip(item['entrants'], item['matchup']['values']):
+            row['backend'] = backend
+    (tmp_path/'sample.json').write_text(json.dumps(sample))
+    with pytest.raises(ValueError):
+        b.build_matchups_page(tmp_path)
+
+
+@pytest.mark.parametrize('kind', ['backend', 'live-backend', 'driver'])
+def test_valid_backend_and_live_driver_comparisons_publish(tmp_path, kind):
+    sample = bundle()
+    item = sample['matchups'][0]
+    held = {'instruments': 'ocarina', 'models': 'stub-a', 'levels': 'L1', 'context_tiers': 'blind', 'seeds': 0}
+    if kind == 'driver':
+        held['backends'] = 'fusion-live'
+        metadata = {'varied_axis': 'driver_models', 'values': ['stub-a', 'stub-b'], 'varied_axes': ['driver_models'], 'factorial': False, 'held': held}
+        for row in item['entrants']:
+            row['backend'] = 'fusion-live'
+    else:
+        backends = ['openscad', 'cadquery'] if kind == 'backend' else ['solidworks-live', 'fusion-live']
+        if kind == 'live-backend':
+            held['driver_models'] = 'driver-held'
+        metadata = {'varied_axis': 'backends', 'values': backends, 'varied_axes': ['backends'], 'factorial': False, 'held': held}
+        for row, backend in zip(item['entrants'], backends):
+            row.update(backend=backend, entrant='stub-a' if kind == 'backend' else 'driver-held')
+    item['matchup'] = metadata
+    (tmp_path/'sample.json').write_text(json.dumps(sample))
+    assert len(b.build_matchups_page(tmp_path)['matchups']) == 1
+
+
+def test_perfect_rate_and_duplicate_ids_are_not_misleading(tmp_path):
+    sample = bundle()
+    sample['matchups'][0]['entrants'][0]['objective_pass_rate'] = 1.0
+    source = tmp_path/'sample.json'
+    source.write_text(json.dumps(sample))
+    with pytest.raises(ValueError, match='perfect'):
+        b.build_matchups_page(tmp_path)
+    sample = bundle()
+    sample['matchups'].append(sample['matchups'][0])
+    source.write_text(json.dumps(sample))
+    with pytest.raises(ValueError, match='unique'):
+        b.build_matchups_page(tmp_path)
+
+
+def test_declared_topology_failure_is_published_without_changing_rate(tmp_path):
+    sample = bundle()
+    row = sample['matchups'][0]['entrants'][0]
+    row['objective_pass_rate'] = 5/7
+    row['failed_checks']['topology'] = 1
+    (tmp_path/'sample.json').write_text(json.dumps(sample))
+    page = b.build_matchups_page(tmp_path)
+    actual = page['matchups'][0]['entrants'][0]
+    assert actual['objective_pass_rate'] == 5/7
+    assert actual['failed_checks']['topology'] == 1
