@@ -1,7 +1,11 @@
 # Ecosystem diagram — LinkedIn post 1 (2026-10-06)
 
-Files: `ecosystem.svg` (source), `ecosystem-1200x627.png` (LinkedIn size, rendered
-from the SVG with `rsvg-convert -w 1200 -h 627`).
+Files: `ecosystem-light.svg` / `ecosystem-dark.svg` (sources, same layout and text,
+different palette) and `ecosystem-light-1200x627.png` / `ecosystem-dark-1200x627.png`
+(LinkedIn size, rendered with `rsvg-convert -w 1200 -h 627 <svg> -o <png>`).
+`ecosystem.svg` / `ecosystem-1200x627.png` are the original single-palette card, kept because the repository README embeds `ecosystem.svg`.
+The alt text below is also in `alt-text.txt`, ready to paste. Use the light card by
+default; the dark one is for dark-background surfaces. Both carry the same claims.
 
 ## Alt text
 
