@@ -67,7 +67,7 @@ done; done
 CadQuery must run from a clean venv (`pip install -e ".[cadquery]"`, cadquery 2.8.0):
 the Bubblewrap sandbox cannot see packages under `~/.local` (`../post3/matchup-backend.md`).
 `modelmap.json` maps `claude-code-sonnet-5.5` to `claude-sonnet-5-5`
-(`../../post3/matchup-model.md`).
+(`../post3/matchup-model.md`).
 
 ## Files and provenance
 
