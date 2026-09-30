@@ -193,3 +193,116 @@ def test_scoreline_never_mixes_estimator_policies_in_one_row(tmp_path):
     # default-only logs keep the exact legacy row shape
     (legacy,) = runner.collect_objective_scoreline({"trials": [trial(default, "a")]})
     assert set(legacy) == {"entrant", "backend", "objective_pass_rate", "n_objective_trials"}
+
+
+# --- real pipeline: failures before scoring, and the public boundary (#918 review, round 2) ---
+
+ROBUST_REGISTRY = {"instruments": [{"id": "boxolin", "task_brief": "a box instrument", "envelope_mm": [200, 200, 200],
+                                    "min_bodies": 1, "min_wall_estimator": "robust-v1"}]}
+
+
+def _fake_box_compiler(**_kw):
+    def compiler(scad_path, out_dir):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stl = out_dir / "output.stl"
+        trimesh.creation.box(extents=[30, 30, 30]).export(stl.as_posix())
+        png = out_dir / "preview.png"
+        png.write_bytes(b"\x89PNG\r\n")
+        return RenderArtifacts(stl_path=stl, png_path=png)
+
+    return compiler
+
+
+def _run(tmp_path, registry, generator, compiler):
+    from makerbench.code_cad_orchestrator import OrchestrationConfig, run_orchestration
+
+    config = OrchestrationConfig(instrument_ids=("boxolin",), model_ids=("stub-a",), seeds=(0, 1), reps=1,
+                                 max_attempts=1)
+    execute = runner.make_execute_trial(backend="openscad", registry=registry, run_dir=tmp_path,
+                                        generators={"stub-a": generator}, compiler=compiler)
+    return run_orchestration(config=config, run_log_path=tmp_path / "run_log.json", execute_trial=execute)
+
+
+def _flaky_generator(fail_seed):
+    from makerbench.code_cad_providers import make_stub_generator
+
+    inner = make_stub_generator()
+
+    def generate(request):
+        if request.seed == fail_seed:
+            raise RuntimeError("generation failed")
+        return inner(request)
+
+    return generate
+
+
+def test_generation_failure_stays_in_the_configured_policy_row(tmp_path):
+    log = _run(tmp_path, ROBUST_REGISTRY, _flaky_generator(0), _fake_box_compiler())
+    failed = next(e for e in log["trials"] if e["status"] == "error")
+    assert failed["meta"]["min_wall_method"] == "robust-v1"
+    rows = runner.collect_objective_scoreline(log)
+    assert len(rows) == 1, rows                       # no untagged default row was invented
+    (row,) = rows
+    assert row["min_wall_method"] == "robust-v1" and row["n_objective_trials"] == 2
+    assert row["objective_pass_rate"] == pytest.approx(0.5)  # the failure still counts as zero
+
+
+def test_compile_failure_stays_in_the_configured_policy_row(tmp_path):
+    from makerbench import render
+
+    def failing_compiler(scad_path, out_dir):
+        raise render.CompileError("openscad exploded")
+
+    log = _run(tmp_path, ROBUST_REGISTRY, _flaky_generator(-1), failing_compiler)
+    assert {e["status"] for e in log["trials"]} == {"auto_fail"}
+    rows = runner.collect_objective_scoreline(log)
+    assert len(rows) == 1 and rows[0]["min_wall_method"] == "robust-v1" and rows[0]["objective_pass_rate"] == 0.0
+
+
+def test_default_registry_failures_keep_the_legacy_row_shape(tmp_path):
+    registry = {"instruments": [{k: v for k, v in ROBUST_REGISTRY["instruments"][0].items() if k != "min_wall_estimator"}]}
+    log = _run(tmp_path, registry, _flaky_generator(0), _fake_box_compiler())
+    failed = next(e for e in log["trials"] if e["status"] == "error")
+    assert "min_wall_method" not in (failed.get("meta") or {})
+    (row,) = runner.collect_objective_scoreline(log)
+    assert "min_wall_method" not in row
+
+
+def _build_data():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("mb_site_build_data_901", ROOT_DIR / "site" / "build_data.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+
+
+def test_public_pages_withhold_non_default_policy_rows(tmp_path):
+    """Native scoreline -> the real publishers: a robust row is never shown as default evidence."""
+    (tmp_path / "robust").mkdir()
+    log = _run(tmp_path / "robust", ROBUST_REGISTRY, _flaky_generator(-1), _fake_box_compiler())
+    robust_rows = runner.collect_objective_scoreline(log)
+    default_rows = [{"entrant": "claude-code-sonnet", "backend": "openscad", "objective_pass_rate": 0.5,
+                     "n_objective_trials": 2, "confinement": "verified"}]
+    assert robust_rows[0]["min_wall_method"] == "robust-v1"
+
+    build_data = _build_data()
+    round_dir = tmp_path / "runs" / "code_cad_arena" / "round2"
+    round_dir.mkdir(parents=True)
+    (round_dir / "objective_scoreline.json").write_text(
+        json.dumps({"schema": "makerbench-code-cad-objective-scoreline-v1", "rows": robust_rows + default_rows}),
+        encoding="utf-8")
+    page = build_data.build_arena_page(tmp_path / "runs")
+    assert [r["entrant"] for r in page["rounds"][0]["scoreline"]] == ["claude-code-sonnet"]  # robust row withheld
+
+    # only-robust round: nothing to publish at all
+    (round_dir / "objective_scoreline.json").write_text(
+        json.dumps({"schema": "makerbench-code-cad-objective-scoreline-v1", "rows": robust_rows}), encoding="utf-8")
+    assert build_data.build_arena_page(tmp_path / "runs") is None
+
+    entry = build_data._arena_run_entry("r", {"scoreline": robust_rows + default_rows,
+                                              "run_log": {"config": {"model_ids": ["claude-code-sonnet"]}}})
+    assert [r["entrant"] for r in entry["objective_pass_rate"]] == ["claude-code-sonnet"]

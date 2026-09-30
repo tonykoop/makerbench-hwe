@@ -85,7 +85,11 @@ with `"min_wall_estimator": "robust-v1"` in the registry spec. Anything else rai
 scored this way carry `min_wall_method = "robust-v1"` in the persisted objective (and
 `metrics.min_wall_method` in the raw gate result), and `objective_scoreline.json` puts them in their
 own row with a `min_wall_method` field: trials scored under different policies **never share a row**, so
-a robust score cannot be averaged into a default one. Default-policy results and rows carry no marker
+a robust score cannot be averaged into a default one. A trial that fails before it is scored (generation error, compile or render failure) keeps the
+policy its instrument selected, via its trial provenance, so failures stay in the same row and
+count in that row's denominator. **Public pages fail closed:** the site's arena page and run
+entries withhold any row with a `min_wall_method` until they can label it, so a non-default
+score is never shown as default evidence. Default-policy results and rows carry no marker
 and keep their exact shape. A failed `min_wall`
 explanation (#903) names the method and reports the raw minimum of the same samples, so the
 old number stays visible.
