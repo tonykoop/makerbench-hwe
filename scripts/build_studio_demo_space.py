@@ -19,10 +19,24 @@ PUBLIC_PNG = re.compile(
     r"post3/matchup-backend/after/scored/(?:openscad|cadquery|build123d)-seed[012]|"
     r"post3/matchup-model/(?:opus-5\.5|sonnet-5\.5)-seed0|"
     r"post3/matchup-backend/after/(?:openscad|cadquery|build123d)-seed0|"
-    r"strings/gallery/img/design-[0-9]{3}|kora/assets/(?:blind|image)-seed[012])\.png"
+    r"strings/gallery/(?:img/design-[0-9]{3}|grid)|kora/assets/(?:blind|image)-seed[012])\.png"
+    r"|docs/showcase/kora/assets/reference-photo-900px\.jpg"
 )
 PREFERENCE = re.compile(r"^(?:elo.*|votes?.*|voters?.*|ballot.*|ratings?.*|rankings?.*|preference.*)$")
-HOST_PATH = re.compile(r"(?:/(?:home|tmp|mnt|Users)/|[A-Za-z]:[\\/])")
+HOST_PATH = re.compile(r"(?:/(?:home|tmp|mnt|Users)/|(?<![A-Za-z])[A-Za-z]:[\\/])")
+SOURCE_BASE = "https://github.com/tonykoop/makerbench-hwe/blob/main/"
+
+
+def audit_source(path, url):
+    if (not path.startswith("docs/showcase/") or ".." in Path(path).parts
+            or Path(path).suffix != ".md" or url != SOURCE_BASE + path):
+        raise ValueError("Source links must point to public showcase write-ups on GitHub")
+
+
+def audit_image(content, image):
+    if image is not None and (not image.startswith("/api/demo/assets/")
+                             or image.removeprefix("/api/demo/assets/") not in content["assets"]):
+        raise ValueError("Image must reference a declared local demo asset")
 
 
 def audit_data(value):
@@ -40,19 +54,34 @@ def audit_data(value):
 
 def audit_snapshot(content):
     audit_data(content)
-    if set(content) != {"assets", "cases", "demo", "schema", "verification_status"}:
+    if set(content) != {"assets", "cases", "demo", "schema", "verification_status", "hero"}:
         raise ValueError("Unexpected showcase fields")
     if content["schema"] != "makerbench-studio-showcase-v1" or content["demo"] is not True:
         raise ValueError("Unexpected showcase schema")
     if {c["id"] for c in content["cases"]} != {"post3-models", "post3-backends", "strings-gallery", "kora"}:
         raise ValueError("Unexpected showcase groups")
+    if set(content["hero"]) != {"image", "alt", "caption"}:
+        raise ValueError("Unexpected hero fields")
+    audit_image(content, content["hero"]["image"])
     for case in content["cases"]:
-        if set(case) - {"id", "title", "instrument", "note", "source", "varied_axis", "held", "rows", "story"}:
+        if set(case) - {"id", "title", "instrument", "note", "source", "source_url", "varied_axis", "held", "rows", "story", "photo"}:
             raise ValueError("Unexpected showcase fields")
+        audit_source(case["source"], case["source_url"])
+        if "photo" in case:
+            photo = case["photo"]
+            if (case["id"] != "kora" or set(photo) != {"image", "alt", "caption", "credit_url", "license_url"}
+                    or photo["credit_url"] != "https://github.com/tonykoop/kora"
+                    or photo["license_url"] != "https://creativecommons.org/licenses/by/4.0/"):
+                raise ValueError("Unexpected reference photo fields or attribution")
+            audit_image(content, photo["image"])
         if "story" in case:
             story = case["story"]
             if case["id"] != "post3-backends" or set(story) != {"title", "summary", "caveat", "rows", "sources"}:
                 raise ValueError("Unexpected showcase story fields")
+            for source in story["sources"]:
+                if set(source) != {"path", "url", "label"}:
+                    raise ValueError("Unexpected story source fields")
+                audit_source(source["path"], source["url"])
             for row in story["rows"]:
                 if set(row) != {"backend", "label", "published", "same_meshes", "fresh", "n_trials"}:
                     raise ValueError("Unexpected historical comparison fields")
@@ -71,11 +100,15 @@ def audit_snapshot(content):
                     raise ValueError("Post-3 trial averages must match the recorded result")
         for row in case["rows"]:
             if set(row) - {"label", "entrant", "backend", "objective_pass_rate", "n_objective_trials",
-                           "status", "image", "recorded_pipeline_rate", "gates", "trials"}:
+                           "status", "image", "recorded_pipeline_rate", "gates", "trials", "context_tier"}:
                 raise ValueError("Unexpected showcase fields")
+            if "context_tier" in row and (case["id"] != "kora" or row["context_tier"] not in {"blind", "image"}):
+                raise ValueError("Unexpected reference context")
+            audit_image(content, row["image"])
             for trial in row.get("trials", []):
                 if set(trial) != {"seed", "image", "gates", "objective_pass_rate", "failed_checks"}:
                     raise ValueError("Unexpected showcase trial fields")
+                audit_image(content, trial["image"])
                 if set(trial["gates"]) - {"renders", "watertight", "nonzero_volume", "fits_envelope", "body_count", "min_wall"}:
                     raise ValueError("Unexpected showcase build check")
                 for failure in trial["failed_checks"]:
@@ -95,8 +128,10 @@ def stage(out: Path, root: Path = ROOT) -> dict:
     sources.update({relative: relative for relative in tracked
                     if relative.startswith("makerbench/arena_studio/static/")})
     for asset, relative in content["assets"].items():
-        if not re.fullmatch(r"[a-f0-9]{20}\.png", asset) or not PUBLIC_PNG.fullmatch(relative):
+        if not re.fullmatch(r"[a-f0-9]{20}\.(?:png|jpg)", asset) or not PUBLIC_PNG.fullmatch(relative):
             raise ValueError("Unexpected demo asset reference")
+        if Path(asset).suffix != Path(relative).suffix:
+            raise ValueError("Demo image extension must match the public asset")
         sources["makerbench/arena_studio/demo_assets/" + asset] = relative
     # Validate every source before creating any output.
     for destination, relative in sources.items():

@@ -33,7 +33,9 @@ def test_all_showcases_are_visible_without_mutating_controls():
             page = browser.new_page(viewport={"width": 390, "height": 844})
             page.add_init_script("Object.defineProperty(window, 'localStorage', {get() { throw new Error('Storage unavailable'); }});")
             errors = []
+            requests = []
             page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on("request", lambda request: requests.append(request.url))
             for run, title, rows in (("post3-models", "Comparing AI models", 2),
                                      ("post3-backends", "Comparing CAD tools", 3),
                                      ("strings-gallery", "String-instrument gallery", 18),
@@ -44,6 +46,12 @@ def test_all_showcases_are_visible_without_mutating_controls():
                 assert "physical instruments in CAD" in page.locator(".demo-intro").inner_text()
                 assert page.get_by_role("combobox").locator("option", has_text=title).count() == 1
                 playwright.expect(page.locator(".server-status")).to_contain_text("Server ")
+                assert page.locator(".demo-header-links a").count() == 3
+                assert page.get_by_role("link", name="Try it locally", exact=True).get_attribute("href") == "https://github.com/tonykoop/makerbench-hwe/blob/main/docs/showcase/try-it.md"
+                assert page.locator(".demo-hero img").count() == 1
+                source = page.locator(".demo-source")
+                assert source.get_attribute("href").startswith("https://github.com/tonykoop/makerbench-hwe/blob/main/docs/showcase/")
+                assert source.get_attribute("rel") == "noopener noreferrer"
                 content = page.locator("main").inner_text()
                 for jargon in ("published objective aggregate", "Measured mesh gate rate", "Varied:", "Held:",
                                "claude-code-", "nonzero_volume", "min_wall"):
@@ -71,6 +79,7 @@ def test_all_showcases_are_visible_without_mutating_controls():
                     assert "caught a bug in its own scoring" in story.inner_text()
                     assert "one introductory ocarina task" in story.inner_text()
                     assert "stays at zero" in story.inner_text()
+                    assert story.locator("a").count() == 2
                     table_rows = story.locator("tbody tr")
                     assert table_rows.count() == 3
                     assert table_rows.nth(0).locator("td").all_text_contents() == ["100.0%", "100.0%", "100.0%"]
@@ -81,10 +90,15 @@ def test_all_showcases_are_visible_without_mutating_controls():
                     page.locator("h1").focus()
                     assert not tooltip.is_visible()
                 if run == "strings-gallery":
+                    assert page.locator(".demo-gallery .matchup-entrant").count() == 18
                     assert "Build checks were not completed." in page.locator(".matchup-entrant").nth(15).inner_text()
                     assert "Passed 0 of 6" not in content
                     assert page.locator(".matchup-entrant").nth(15).locator(".demo-check[data-state='unknown']").count() == 6
                 if run == "kora":
+                    assert page.locator(".demo-context-arm").count() == 2
+                    assert all(arm.locator(".matchup-entrant").count() == 3 for arm in page.locator(".demo-context-arm").all())
+                    assert page.locator(".demo-reference img").count() == 1
+                    assert page.get_by_role("link", name="CC BY 4.0", exact=True).count() == 1
                     assert "Passed 5 of 6 build checks in this run." in content
                     chip = page.locator(".matchup-entrant").nth(5).locator(".demo-check[data-state='fail']")
                     chip.focus()
@@ -100,6 +114,7 @@ def test_all_showcases_are_visible_without_mutating_controls():
                 assert page.locator("[data-open-trial]").count() == 0
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             assert not errors
+            assert requests and all(url.startswith(f"http://127.0.0.1:{port}/") for url in requests)
             browser.close()
     finally:
         server.should_exit = True

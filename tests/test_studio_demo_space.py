@@ -23,7 +23,8 @@ def test_stage_has_only_demo_runtime_and_declared_public_assets(tmp_path):
     assert not (out / "makerbench/cli.py").exists()
     assert not (out / "makerbench/provenance.py").exists()
     assert not (out / "makerbench/arena_studio/service.py").exists()
-    assert len(list((out / "makerbench/arena_studio/demo_assets").glob("*.png"))) == 38
+    assert len(list((out / "makerbench/arena_studio/demo_assets").glob("*.png"))) == 39
+    assert len(list((out / "makerbench/arena_studio/demo_assets").glob("*.jpg"))) == 1
     assert json.loads((out / "build-manifest.json").read_text()) == manifest
     assert all(not p.startswith(("runs/", "private/", ".git/")) for p in manifest["files"])
 

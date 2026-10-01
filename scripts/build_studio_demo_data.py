@@ -16,6 +16,13 @@ MODEL_NAMES = {"claude-code-opus-5.5": "Claude Opus 5.5",
                "codex-gpt-6.1-sol": "GPT-6.1 Sol"}
 BACKEND_NAMES = {"openscad": "OpenSCAD", "cadquery": "CadQuery", "build123d": "build123d"}
 FAILURE_FIELDS = {"check", "measured", "threshold", "tolerance", "unit", "requires", "body_id", "detail"}
+SOURCE_BASE = "https://github.com/tonykoop/makerbench-hwe/blob/main/"
+
+
+def source_link(path, label):
+    if not path.startswith("docs/showcase/") or ".." in Path(path).parts or Path(path).suffix != ".md":
+        raise ValueError("Source links must name public showcase write-ups")
+    return {"path": path, "url": SOURCE_BASE + path, "label": label}
 
 
 def backend_story(root):
@@ -50,7 +57,9 @@ def backend_story(root):
             "caveat": "Three runs per CAD tool, on one introductory ocarina task. The fresh runs are new designs, "
                       "so this does not establish why they improved or rank the CAD tools. One old build123d run "
                       "crashed without a mesh and stays at zero in both historical columns.",
-            "rows": rows, "sources": [source, "docs/showcase/post3/cadquery-watertight-investigation.md"]}
+            "rows": rows, "sources": [source_link(source, "Full comparison study"),
+                                      source_link("docs/showcase/post3/cadquery-watertight-investigation.md",
+                                                  "Scoring correction investigation")]}
 
 
 def validate_aggregate_seeds(content):
@@ -77,10 +86,12 @@ def build(root: Path = ROOT) -> dict:
         path = root / relative
         if (not relative.startswith("docs/showcase/") or path.resolve() != path
                 or not path.resolve().is_relative_to(root / "docs/showcase")
-                or not path.is_file() or path.suffix != ".png"):
-            raise ValueError("Showcase images must be contained public PNGs")
-        assert path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
-        name = hashlib.sha256(relative.encode()).hexdigest()[:20] + ".png"
+                or not path.is_file() or path.suffix not in {".png", ".jpg"}):
+            raise ValueError("Showcase images must be contained public PNGs or JPEGs")
+        magic = b"\x89PNG\r\n\x1a\n" if path.suffix == ".png" else b"\xff\xd8\xff"
+        if not path.read_bytes().startswith(magic):
+            raise ValueError("Showcase image format disagrees with its extension")
+        name = hashlib.sha256(relative.encode()).hexdigest()[:20] + path.suffix
         assets[name] = relative
         return "/api/demo/assets/" + name
 
@@ -180,13 +191,23 @@ def build(root: Path = ROOT) -> dict:
                 "Each card shows one repeat run. A part-count fallback passed rough models; "
                 "these checks do not establish resemblance, sound or a complete build.",
         "source": "docs/showcase/kora/CASE_STUDY.md", "held": {},
-        "rows": [score(base + f"scoreline-{tier}-seed{seed}.json",
+        "photo": {"image": image(base + "reference-photo-900px.jpg"),
+                  "alt": "Reference photograph of a kora with a round resonator and tall string neck",
+                  "caption": "Reference photo supplied to the photo arm; the historical logs do not confirm the model read it.",
+                  "credit_url": "https://github.com/tonykoop/kora",
+                  "license_url": "https://creativecommons.org/licenses/by/4.0/"},
+        "rows": [{**score(base + f"scoreline-{tier}-seed{seed}.json",
                        f'{"Text brief only" if tier == "blind" else "With reference photo"} — run {seed}',
-                       base + f"{tier}-seed{seed}.png")
+                       base + f"{tier}-seed{seed}.png"), "context_tier": tier}
                  for tier in ("blind", "image") for seed in range(3)],
     })
+    for case in cases:
+        case["source_url"] = source_link(case["source"], "Read the study")["url"]
     content = {"schema": "makerbench-studio-showcase-v1", "demo": True,
                "verification_status": "display-only; see source studies", "cases": cases,
+               "hero": {"image": image("docs/showcase/strings/gallery/grid.png"),
+                        "alt": "Montage of 18 draft string-instrument designs",
+                        "caption": "One brief, many shapes: 18 recorded string-instrument designs."},
                "assets": assets}
     validate_aggregate_seeds(content)
     return content

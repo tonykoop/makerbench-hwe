@@ -19,6 +19,11 @@ export function StudioHeader({ runs, blind, runId, onSelectRun, voter, onVoterCh
   return html`
     <header class="studio-header">
       <a class="wordmark" href="#/runs">Arena Studio</a>
+      ${demo && html`<nav class="demo-header-links" aria-label="MakerBench links">
+        <a href="https://tonykoop.github.io/makerbench-hwe/" target="_blank" rel="noopener noreferrer">Public site</a>
+        <a href="https://github.com/tonykoop/makerbench-hwe" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <a href="https://github.com/tonykoop/makerbench-hwe/blob/main/docs/showcase/try-it.md" target="_blank" rel="noopener noreferrer">Try it locally</a>
+      </nav>`}
       <div class="header-controls">
         ${blind
           ? runId &&
