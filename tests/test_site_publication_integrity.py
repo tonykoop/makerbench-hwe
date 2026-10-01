@@ -9,7 +9,8 @@ import pytest
 
 SITE = Path(__file__).resolve().parents[1] / "site"
 FIELD = re.compile(
-    r"(?:^|_)(?:elo|votes?|voters?|ratings?|ballots?|subjective)(?:_|$)",
+    r"(?:^|_)(?:elos?\d*|elo(?:ratings?|scores?)|votes?|"
+    r"vote(?:counts?|totals?)|voters?|voted|ratings?|ballots?|subjective)(?:_|$)",
     re.IGNORECASE,
 )
 # Quoted and JavaScript bare object keys, including embedded HTML script data.
@@ -53,7 +54,8 @@ def test_committed_site_has_no_subjective_ranking_fields():
 
 @pytest.mark.parametrize("key", ["elo", "subjective_elo", "vote_count", "voteCount",
                                  "vote-count", "rating", "ratings", "voters", "eloRating",
-                                 "ELOLeaderboard", "ELO"])
+                                 "ELOLeaderboard", "ELO", "elos", "votecount", "eloratings",
+                                 "elo2", "votecounts", "votetotal", "nVotes", "eloScore"])
 def test_guard_rejects_nested_fields(key):
     with pytest.raises(AssertionError, match="Forbidden publication field"):
         audit_json({"rounds": [{"nested": {key: 123}}]})
@@ -73,4 +75,5 @@ def test_guard_rejects_fields_in_public_files(tmp_path, suffix, text):
 
 def test_policy_prose_and_unrelated_fields_are_allowed():
     audit_json({"policy": "Elo and votes are withheld", "development": 1,
+                "velocity": 2, "develop": 3,
                 "objective_pass_rate": 0.5, "agreement": {"rho": 0.07}})
