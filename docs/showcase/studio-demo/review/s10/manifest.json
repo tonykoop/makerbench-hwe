@@ -1,5 +1,5 @@
 {
-  "capture_base_head": "5cd6e8c59621f924418aa4fc7a258407e28f7ca2",
+  "capture_base_head": "82e276b2664f938d1fe33de573fddfbcefd996f6",
   "chromium": "153.0.8010.12",
   "playwright": "1.63.0",
   "publication": "Pending Tony's visual approval; local capture only",
@@ -44,6 +44,8 @@
     "docs/showcase/strings/gallery/img/design-015.png": "f489f602ab482ab7aedb8a69aeadd6bfbffbe6a3cd03496b6a75802851b49d9a",
     "docs/showcase/strings/gallery/img/design-017.png": "c0ebc2664f640a2042011b8547a5244eb16bd5d20ced50cf950a56f5ba47d80e",
     "docs/showcase/strings/gallery/img/design-018.png": "b4398986f7d770b04cb1c39416776ec75268ce3988eae0bea56a6afe1d2a0f25",
+    "makerbench/__init__.py": "f86bef7cb5d8571c60882a1d1d2d762f1e77992b3da9944487773c1affdd246c",
+    "makerbench/arena_studio/__init__.py": "b0e7e1e597d2118dd4fa24c48440921a2ad8f503194f8dd1e08e40d1d9a34872",
     "makerbench/arena_studio/data/showcase.json": "62e3ad9ac8fb9e1bacd4d523ef95a616f80fe860a697f65f6260b5b52415604f",
     "makerbench/arena_studio/demo.py": "ce2e8548934d25e282aa12d43949f063dd8542dd0e5907236382ce66e937ecd9",
     "makerbench/arena_studio/static/app/components/codeEditor.js": "287bacc9c529b2359ebf336c5169ce06508761440424cedb98927d2288216249",
@@ -76,7 +78,7 @@
     "makerbench/arena_studio/static/app/package.json": "53e6efceaf38ed1d2691c9949b6879329a6273acce26958896de83386574d1e1",
     "makerbench/arena_studio/static/app/screens/agreement.js": "0550c5e538fddd6e6e53d6f6cf653455eaa4a7b66f1c5c2474d36d8fcf262cc7",
     "makerbench/arena_studio/static/app/screens/compare.js": "e2b0073ac9d0f600eb85548e85797637b2d461e070c9e6f2887292ca6b4bbd40",
-    "makerbench/arena_studio/static/app/screens/demo.js": "2eca9bcf2217795853fa86155d6a1022a642b730f5c8ff8d000479f479ac891c",
+    "makerbench/arena_studio/static/app/screens/demo.js": "55f7e7fc3ace0db4dbcc53e7bfee500b77c0785fee8ca02ca14caeb1e27e7b63",
     "makerbench/arena_studio/static/app/screens/doe.js": "4f23ee93913f824359f2e55b8c2aedc233d36ac5b501cd2140feb3597644b4a2",
     "makerbench/arena_studio/static/app/screens/launch.js": "8b4f3c8648be22bdd39f44935734cba821930012c27af69dbcb4876dcff72cdc",
     "makerbench/arena_studio/static/app/screens/nightly.js": "817784b87ddcea7d6baf8732ae4dc0113ccc443520de1c73003a593769176261",
@@ -140,7 +142,7 @@
       "full_page": true,
       "loaded_images": 8,
       "non_loopback_requests": 0,
-      "sha256": "36a6746e6c17fc5c81957bc9f96c749bc78f7f23bb3e99831f14b1fbba4022aa",
+      "sha256": "e951d7d913bd921020eaeaaa7914e7b55fa064fb8968d721ed9b4db59ca1cd5e",
       "viewport": {
         "height": 900,
         "width": 1366
@@ -192,12 +194,12 @@
       "full_page": true,
       "loaded_images": 8,
       "non_loopback_requests": 0,
-      "sha256": "ce82b70ab36df5670dcc119253f7b4fe9a3389b983c9e40518b0b6004ea5c721",
+      "sha256": "e8a6b5845f256c5d1d87fb4cb7d3515527be22fdb5a3550a894b802f09268a15",
       "viewport": {
         "height": 844,
         "width": 390
       }
     }
   ],
-  "source_tree_dirty": true
+  "source_tree_dirty": false
 }

@@ -14,11 +14,14 @@ look before publishing. These files are a local review pack, not a deployment.
 
 The [manifest](s10/manifest.json) records screenshot hashes, browser versions,
 viewport sizes, the capture's base commit and hashes of every served demo
-input. The captured runtime is the clean #953 implementation. The manifest's
-`source_tree_dirty` flag is true because the new capture script had not yet
-been committed; screenshot/tool additions do not change those runtime inputs.
-The final PR must retain the same input hashes. This preserves the distinction
-between the commit used for capture and the later commit containing its images.
+input. The captured runtime includes the main-integrated #953 presentation and its
+readable photo attribution. The manifest's `capture_base_head` records the
+clean commit used for capture; `source_tree_dirty` is false. The later commit
+containing the refreshed screenshots does not change those runtime inputs.
+Server-version source files are fingerprinted alongside the API, static UI and
+public images. The final PR must retain the same input hashes. This preserves
+the distinction between the commit used for capture and the commit containing
+its images.
 
 To reproduce from a clone with Python dependencies installed:
 
