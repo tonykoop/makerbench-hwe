@@ -43,7 +43,7 @@ def test_all_showcases_are_visible_without_mutating_controls():
                 assert page.locator(".matchup-entrant").count() == rows
                 assert "physical instruments in CAD" in page.locator(".demo-intro").inner_text()
                 assert page.get_by_role("combobox").locator("option", has_text=title).count() == 1
-                assert "Server " in page.locator(".server-status").inner_text()
+                playwright.expect(page.locator(".server-status")).to_contain_text("Server ")
                 content = page.locator("main").inner_text()
                 for jargon in ("published objective aggregate", "Measured mesh gate rate", "Varied:", "Held:",
                                "claude-code-", "nonzero_volume", "min_wall"):
@@ -53,11 +53,46 @@ def test_all_showcases_are_visible_without_mutating_controls():
                     assert page.get_by_role("heading", name="Claude Sonnet 5.5", exact=True).count() == 1
                     assert page.get_by_text("Passed all 6 build checks in 3 of 3 runs.", exact=True).count() == 2
                     assert "What changed: the AI model" in content and "no reference image" in content
+                if run in {"post3-models", "post3-backends"}:
+                    for card in page.locator(".matchup-entrant").all():
+                        assert card.locator(".demo-render-strip img").count() == 3
+                        assert card.locator(".demo-render-strip figcaption").all_text_contents() == ["Run 0", "Run 1", "Run 2"]
+                        assert card.locator(".demo-check[data-state='pass']").count() == 6
+                    chip = page.locator(".demo-check").first
+                    chip.hover()
+                    tooltip = chip.locator("[role='tooltip']")
+                    assert tooltip.is_visible()
+                    assert "Measurements and thresholds were not saved" in tooltip.inner_text()
+                    chip.focus()
+                    page.keyboard.press("Escape")
+                    assert not tooltip.is_visible()
+                if run == "post3-backends":
+                    story = page.locator(".demo-story")
+                    assert "caught a bug in its own scoring" in story.inner_text()
+                    assert "one introductory ocarina task" in story.inner_text()
+                    assert "stays at zero" in story.inner_text()
+                    table_rows = story.locator("tbody tr")
+                    assert table_rows.count() == 3
+                    assert table_rows.nth(0).locator("td").all_text_contents() == ["100.0%", "100.0%", "100.0%"]
+                    assert table_rows.nth(1).locator("td").all_text_contents() == ["77.8%", "88.9%", "100.0%"]
+                    assert table_rows.nth(2).locator("td").all_text_contents() == ["55.6%", "66.7%", "100.0%"]
+                    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                    page.locator("h1").hover()
+                    page.locator("h1").focus()
+                    assert not tooltip.is_visible()
                 if run == "strings-gallery":
                     assert "Build checks were not completed." in page.locator(".matchup-entrant").nth(15).inner_text()
                     assert "Passed 0 of 6" not in content
+                    assert page.locator(".matchup-entrant").nth(15).locator(".demo-check[data-state='unknown']").count() == 6
                 if run == "kora":
                     assert "Passed 5 of 6 build checks in this run." in content
+                    chip = page.locator(".matchup-entrant").nth(5).locator(".demo-check[data-state='fail']")
+                    chip.focus()
+                    assert chip.locator("[role='tooltip']").is_visible()
+                    explanation = chip.locator("[role='tooltip']").inner_text()
+                    assert "0.0702 mm" in explanation and "threshold 1 mm" in explanation
+                    assert "tolerance 0.05 mm" in explanation and "body_0" in explanation
+                    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 page.wait_for_function("Array.from(document.querySelectorAll('img')).every(i => i.complete && i.naturalWidth > 0)")
                 assert page.get_by_text("Voting as", exact=True).count() == 0
                 assert page.get_by_role("link", name="Launch", exact=True).count() == 0

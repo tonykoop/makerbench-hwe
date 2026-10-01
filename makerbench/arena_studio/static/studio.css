@@ -424,6 +424,100 @@ code {
   font-size: var(--step--1);
 }
 
+.demo-screen .demo-render-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 6rem), 1fr));
+  gap: var(--space-2);
+}
+
+.demo-screen .demo-render-strip figure {
+  min-width: 0;
+  margin: 0;
+}
+
+.demo-screen .demo-render-strip figcaption {
+  font-size: var(--step--1);
+  color: var(--muted);
+}
+
+.demo-screen .demo-checks {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: 0;
+  list-style: none;
+}
+
+.demo-screen .demo-check {
+  display: inline-block;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: .35rem;
+  font-size: var(--step--1);
+  cursor: help;
+}
+
+.demo-screen .demo-check[data-state="fail"] {
+  border-style: dashed;
+}
+
+.demo-screen .demo-check-detail {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + .5rem);
+  left: 0;
+  right: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  z-index: 10;
+  overflow-wrap: anywhere;
+}
+
+.demo-screen .demo-check:hover .demo-check-detail,
+.demo-screen .demo-check:focus .demo-check-detail {
+  display: block;
+}
+
+.demo-screen .demo-check[data-dismissed="true"] .demo-check-detail {
+  display: none;
+}
+
+.demo-screen .demo-failure-detail {
+  display: block;
+  margin-top: var(--space-2);
+}
+
+.demo-screen .demo-story {
+  padding: var(--space-4);
+  margin-block: var(--space-4);
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+}
+
+.demo-screen .demo-history-table {
+  width: 100%;
+  table-layout: fixed;
+  font-size: var(--step--1);
+  border-collapse: collapse;
+}
+
+.demo-screen .demo-history-table th,
+.demo-screen .demo-history-table td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+  text-align: left;
+  vertical-align: top;
+}
+
+.demo-screen .demo-history-table caption {
+  text-align: left;
+  margin-bottom: var(--space-2);
+}
+
 .facts {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
