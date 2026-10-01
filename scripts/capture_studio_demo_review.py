@@ -27,7 +27,8 @@ CASES = (("post3-models", "Comparing AI models", 2),
 
 def fingerprint(root):
     snapshot = json.loads((root / "makerbench/arena_studio/data/showcase.json").read_text())
-    paths = {root / "makerbench/arena_studio/demo.py", root / "makerbench/arena_studio/data/showcase.json"}
+    paths = {root / relative for relative in ("makerbench/__init__.py", "makerbench/arena_studio/__init__.py",
+                                             "makerbench/arena_studio/demo.py", "makerbench/arena_studio/data/showcase.json")}
     paths.update(path for path in (root / "makerbench/arena_studio/static").rglob("*") if path.is_file())
     paths.update(root / relative for relative in snapshot["assets"].values())
     return {path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
