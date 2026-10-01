@@ -66,6 +66,17 @@ def test_all_showcases_are_visible_without_mutating_controls():
                     chip.focus()
                     page.keyboard.press("Escape")
                     assert not tooltip.is_visible()
+                if run == "post3-backends":
+                    story = page.locator(".demo-story")
+                    assert "caught a bug in its own scoring" in story.inner_text()
+                    assert "one introductory ocarina task" in story.inner_text()
+                    assert "stays at zero" in story.inner_text()
+                    table_rows = story.locator("tbody tr")
+                    assert table_rows.count() == 3
+                    assert table_rows.nth(0).locator("td").all_text_contents() == ["100.0%", "100.0%", "100.0%"]
+                    assert table_rows.nth(1).locator("td").all_text_contents() == ["77.8%", "88.9%", "100.0%"]
+                    assert table_rows.nth(2).locator("td").all_text_contents() == ["55.6%", "66.7%", "100.0%"]
+                    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                     page.locator("h1").hover()
                     page.locator("h1").focus()
                     assert not tooltip.is_visible()

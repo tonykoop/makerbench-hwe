@@ -47,8 +47,17 @@ def audit_snapshot(content):
     if {c["id"] for c in content["cases"]} != {"post3-models", "post3-backends", "strings-gallery", "kora"}:
         raise ValueError("Unexpected showcase groups")
     for case in content["cases"]:
-        if set(case) - {"id", "title", "instrument", "note", "source", "varied_axis", "held", "rows"}:
+        if set(case) - {"id", "title", "instrument", "note", "source", "varied_axis", "held", "rows", "story"}:
             raise ValueError("Unexpected showcase fields")
+        if "story" in case:
+            story = case["story"]
+            if case["id"] != "post3-backends" or set(story) != {"title", "summary", "caveat", "rows", "sources"}:
+                raise ValueError("Unexpected showcase story fields")
+            for row in story["rows"]:
+                if set(row) != {"backend", "label", "published", "same_meshes", "fresh", "n_trials"}:
+                    raise ValueError("Unexpected historical comparison fields")
+                if row["n_trials"] != 3 or any(not 0 <= row[field] <= 1 for field in ("published", "same_meshes", "fresh")):
+                    raise ValueError("Historical comparisons must retain three runs and valid averages")
         if case["id"] in {"post3-models", "post3-backends"}:
             seeds = case["held"].get("seeds")
             if seeds != [0, 1, 2] or any(row["n_objective_trials"] != len(seeds) for row in case["rows"]):
