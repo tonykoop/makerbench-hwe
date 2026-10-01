@@ -98,6 +98,7 @@ def test_all_showcases_are_visible_without_mutating_controls():
                     assert page.locator(".demo-context-arm").count() == 2
                     assert all(arm.locator(".matchup-entrant").count() == 3 for arm in page.locator(".demo-context-arm").all())
                     assert page.locator(".demo-reference img").count() == 1
+                    assert "Photo from tonykoop/kora, CC BY 4.0." in page.locator(".demo-reference figcaption").inner_text()
                     assert page.get_by_role("link", name="CC BY 4.0", exact=True).count() == 1
                     assert "Passed 5 of 6 build checks in this run." in content
                     chip = page.locator(".matchup-entrant").nth(5).locator(".demo-check[data-state='fail']")
