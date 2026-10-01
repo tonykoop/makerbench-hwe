@@ -1,0 +1,203 @@
+{
+  "capture_base_head": "5cd6e8c59621f924418aa4fc7a258407e28f7ca2",
+  "chromium": "153.0.8010.12",
+  "playwright": "1.63.0",
+  "publication": "Pending Tony's visual approval; local capture only",
+  "runtime_sha256": {
+    "docs/showcase/kora/assets/blind-seed0.png": "2c33d89e971b111032a1aa11bd9ce8c94a6a2eedff33d9f6489ee846fb0567ab",
+    "docs/showcase/kora/assets/blind-seed1.png": "20edf5ccbc6be3735e118a18853629a04d4af13f24b82711b18d9f7956ec94c3",
+    "docs/showcase/kora/assets/blind-seed2.png": "4bc58011250d56f7017f42689237ac44b55daf157ddd4f92160af2889093235b",
+    "docs/showcase/kora/assets/image-seed0.png": "bf2dedd5473fa8387af2366a2a1d5e73249a83a1da447120d6592cceda7ccd01",
+    "docs/showcase/kora/assets/image-seed1.png": "f551f03e7c0caf7550a372167c89ea753b878007a91c9a63f3d68265793f0837",
+    "docs/showcase/kora/assets/image-seed2.png": "e8012e9e756b7c406ab1e88b72f5fb4cabccc863c24387ab0e3206fbac145cf7",
+    "docs/showcase/kora/assets/reference-photo-900px.jpg": "990858fb6c1c3864d5efd74faf54fee5074435e0e7a65c4b9373c5d9f4446c9e",
+    "docs/showcase/post3/matchup-backend/after/scored/build123d-seed0.png": "5e264f3714cb199fe9ed06341e9900bafd81a4a597aeb03bf086e42c51ab700e",
+    "docs/showcase/post3/matchup-backend/after/scored/build123d-seed1.png": "ce0f278779eb1b15c78bca456ec10ce0586a74f11e03940a24bc48bea748950d",
+    "docs/showcase/post3/matchup-backend/after/scored/build123d-seed2.png": "8e41d055c68495cca197100d6c8e12045a711233652e56926a608b2f79fca2af",
+    "docs/showcase/post3/matchup-backend/after/scored/cadquery-seed0.png": "aab798904b812da145314aa2e098adbe34b97c2cb594f96a80a350f8df083a49",
+    "docs/showcase/post3/matchup-backend/after/scored/cadquery-seed1.png": "14d341c2fc2bce5c37a37abb5ed2ddfa7acbe96d9b57f3ec41f9c50183490ee9",
+    "docs/showcase/post3/matchup-backend/after/scored/cadquery-seed2.png": "3c64c06314decd01577423c62a2145a681a49c8e0c6836367d999c2b29423016",
+    "docs/showcase/post3/matchup-backend/after/scored/openscad-seed0.png": "63d2d677f27b6e166360c806fc9c61cea89d1d1c981ff4d2c00e4b6d64a88c12",
+    "docs/showcase/post3/matchup-backend/after/scored/openscad-seed1.png": "647a9ff964e803196575039db6982de7ef13bc38b0910ed190e9bace876bf177",
+    "docs/showcase/post3/matchup-backend/after/scored/openscad-seed2.png": "cf8b188e98670ff173ff3f3040385624b47135adff35a5a52cc392e155e395af",
+    "docs/showcase/post3/matchup-model/scored/opus-5.5-seed0.png": "dbf4521a70a07c24a81bc88f17f0821151133503fbb26f91a377bcecef42c006",
+    "docs/showcase/post3/matchup-model/scored/opus-5.5-seed1.png": "0be095280bb69b27c6c73c970de9df2eccb9ee6d82b935439c5ea65c15779750",
+    "docs/showcase/post3/matchup-model/scored/opus-5.5-seed2.png": "aed1ec29aca06b9f722ca5f5b84bcbd1e5dadd22b5e08c4da2ff3549674a7229",
+    "docs/showcase/post3/matchup-model/scored/sonnet-5.5-seed0.png": "40d936a835a4806f037699f6afe4901da7fb50b5b7576ec5f58f17e43c8310f3",
+    "docs/showcase/post3/matchup-model/scored/sonnet-5.5-seed1.png": "84fb7e8aeff61b79a256f4bfda2640862584b1580cbd50e5892b9ff61557ae58",
+    "docs/showcase/post3/matchup-model/scored/sonnet-5.5-seed2.png": "1abd9e56ffbca1c26f21636995338b8461fd54fe657fbaa7cc4089f9574c3cda",
+    "docs/showcase/strings/gallery/grid.png": "3b2818d0113a144398a4787046453a59803eb9106125d400df7bb21aa0adf569",
+    "docs/showcase/strings/gallery/img/design-001.png": "ddd11994444b20dd153a61e110b18780cf4a5b6233c1094a8ae96cb915f6224f",
+    "docs/showcase/strings/gallery/img/design-002.png": "59901bd4c029e3e65d5dd45f30dd6b218058e7bbdc88b2a8b5a17c273857608f",
+    "docs/showcase/strings/gallery/img/design-003.png": "ba455373907a4aa4ec1f34719db49c1cef6eb4b8f7ba402a41e024721698a27d",
+    "docs/showcase/strings/gallery/img/design-004.png": "c29b0b4ce401bbd0e6ba88023f381c495c0fd55fbe6da26e8fbbeacd91a96b77",
+    "docs/showcase/strings/gallery/img/design-005.png": "be03de8c0a8de2cd817590ca8db24e27d48cc0857ebc61c57450eb9b20e1e458",
+    "docs/showcase/strings/gallery/img/design-006.png": "10496bcab86273115a4fc451862900df403acb8e7f57540bdfd9ca474dda6ca4",
+    "docs/showcase/strings/gallery/img/design-007.png": "143547b198fdeb8e73c4cbce83d4e0d1c79a7d4184420260bb831a4874750706",
+    "docs/showcase/strings/gallery/img/design-008.png": "385747c234b562e076eba918223401cf4707fb75d5c3a46a49d684f9728b11cb",
+    "docs/showcase/strings/gallery/img/design-009.png": "96b034156331db34e42edbc1913f0f194ea4035375c86db04be47f60b214e9d0",
+    "docs/showcase/strings/gallery/img/design-010.png": "2e15bb70ebdb5b39dda2d4f0b7dd7b9410f6d317a3e05ece3a386c358ab1369b",
+    "docs/showcase/strings/gallery/img/design-011.png": "a1d726519fee44168ecc5dfe32b5a18cb49cc82cb34ec7afed891657ef80648b",
+    "docs/showcase/strings/gallery/img/design-012.png": "61c9e19495a4a8bd4ff9636ed2b9de111c9f6e75da9ad4742b412ac467552f07",
+    "docs/showcase/strings/gallery/img/design-013.png": "642a1423ed14754d04f825f1c52d4d1808e283b50d1b9a113ad93d3503691a31",
+    "docs/showcase/strings/gallery/img/design-014.png": "6d993b5dac7694b2c8a9838c44b57b182880c9fd75c74580c24124198a06c987",
+    "docs/showcase/strings/gallery/img/design-015.png": "f489f602ab482ab7aedb8a69aeadd6bfbffbe6a3cd03496b6a75802851b49d9a",
+    "docs/showcase/strings/gallery/img/design-017.png": "c0ebc2664f640a2042011b8547a5244eb16bd5d20ced50cf950a56f5ba47d80e",
+    "docs/showcase/strings/gallery/img/design-018.png": "b4398986f7d770b04cb1c39416776ec75268ce3988eae0bea56a6afe1d2a0f25",
+    "makerbench/arena_studio/data/showcase.json": "62e3ad9ac8fb9e1bacd4d523ef95a616f80fe860a697f65f6260b5b52415604f",
+    "makerbench/arena_studio/demo.py": "ce2e8548934d25e282aa12d43949f063dd8542dd0e5907236382ce66e937ecd9",
+    "makerbench/arena_studio/static/app/components/codeEditor.js": "287bacc9c529b2359ebf336c5169ce06508761440424cedb98927d2288216249",
+    "makerbench/arena_studio/static/app/components/header.js": "8d4ddf9606fa537862087c76f0687b3956983b67216712dda2f3631e623fab69",
+    "makerbench/arena_studio/static/app/components/modelViewer.js": "88cfc5f2b7524f0b1ae448b506f73b1028bc9ad6643b98e7aa1bc06e91509c12",
+    "makerbench/arena_studio/static/app/components/reveal.js": "dcb19dcf95fbd7fced402960912804670de9eb6ba0568483be1f76dc2be79571",
+    "makerbench/arena_studio/static/app/components/states.js": "e1d3f8a40c84c62171cd861cd5ce63238e50ea2502307118fa3cd10e90f6fd05",
+    "makerbench/arena_studio/static/app/components/turntable.js": "9cd9d2c81cf1348249b2a768aa5877c253cc33a8e83053291baa32cda057035c",
+    "makerbench/arena_studio/static/app/components/voteSession.js": "8157b869f59011c8b56152b623c5e8c0b6cf8852e706dc2eaa979cff86fe57d4",
+    "makerbench/arena_studio/static/app/components/voteStage.js": "3070f0edcc660b7a6383e12771d5f0f341a0b79b7efc259daa70d8aba8020400",
+    "makerbench/arena_studio/static/app/hooks/useResource.js": "eda0b0dccea64c5c93885925a436bb5e6045359ce76bd0cc0dc148428de35c04",
+    "makerbench/arena_studio/static/app/html.js": "21842d4fd80dde19aadc4b970ba237617ed0038ba1b774554e17d316a7f6a9fe",
+    "makerbench/arena_studio/static/app/lib/agreement-stats.js": "29ea99755fa335e0775c228f50faaf1da9e3b2a619e521975e74ffa16a4b9176",
+    "makerbench/arena_studio/static/app/lib/anonymity.js": "89a50890acce749c179da55affe8643d47f619a19b5eed0bb136e3c52c4428de",
+    "makerbench/arena_studio/static/app/lib/api.js": "a20cb2c58cb3db20dfd67f85553810e788c8bbf569225db6518383bf9f26630a",
+    "makerbench/arena_studio/static/app/lib/curate.js": "41f82bd19764675e8e73a792746d1d09a48b3870d5b6018ed5c5b7bcd48e97e8",
+    "makerbench/arena_studio/static/app/lib/doe.js": "5cee65f7c9c4d0cf42cf573a9aeb4ca063540f1c1a820e5ff5b5f28150163f0c",
+    "makerbench/arena_studio/static/app/lib/format.js": "a69b1b8bb76436dcf109cb6b8ecf591dade207eec7e500c597b4891cd0cab2b4",
+    "makerbench/arena_studio/static/app/lib/launch.js": "4051331c338b4cb730ef054fd700fabd0c12a95d4aa03d524189ff66447c269a",
+    "makerbench/arena_studio/static/app/lib/nightly.js": "c9ee3a65fd16dbfd3441ba120b38a48b6ea7615516bb0196d05146d5118a4021",
+    "makerbench/arena_studio/static/app/lib/params.js": "b56d9a8576e943f1a7a0c00cedeaf210e78e50c6e3b1cc330c13517caeb7153b",
+    "makerbench/arena_studio/static/app/lib/prefs.js": "f61c6265105e92ff954b2beeb639feb214a44c3b2072af92042d1120846dfd08",
+    "makerbench/arena_studio/static/app/lib/revise.js": "f4ed1a95c78417140e0c7e38aef2312c91850a5fe1fedb4975a6d95cb01128ff",
+    "makerbench/arena_studio/static/app/lib/route.js": "4c3b856157fc33aedeee802fa14ac51631a9711356981bf1dbe6208824e4d4a9",
+    "makerbench/arena_studio/static/app/lib/voteEndpoints.js": "e504b80458038a804e21dc810b030207b8aef7de0da36843679b2ee4d731b77d",
+    "makerbench/arena_studio/static/app/lib/voteKeys.js": "be2a30a8384828f4ee16bd46ebb589894c9a59e14f7cb8b1077e2233040aee72",
+    "makerbench/arena_studio/static/app/lib/webgl.js": "4db4d50d4f0218724d8ace5d10c3b07d1cad397b318e86e37942135d22425778",
+    "makerbench/arena_studio/static/app/lib/workbench.js": "33394e627539eee0468df2fecc1314a7ff8c0ca787a4ae946f920e2cc4ee49dd",
+    "makerbench/arena_studio/static/app/main.js": "fcdb3b18880d0488cd25a3d14233726a46ed8b32e5b596e08296014d0c1e1f6f",
+    "makerbench/arena_studio/static/app/package.json": "53e6efceaf38ed1d2691c9949b6879329a6273acce26958896de83386574d1e1",
+    "makerbench/arena_studio/static/app/screens/agreement.js": "0550c5e538fddd6e6e53d6f6cf653455eaa4a7b66f1c5c2474d36d8fcf262cc7",
+    "makerbench/arena_studio/static/app/screens/compare.js": "e2b0073ac9d0f600eb85548e85797637b2d461e070c9e6f2887292ca6b4bbd40",
+    "makerbench/arena_studio/static/app/screens/demo.js": "2eca9bcf2217795853fa86155d6a1022a642b730f5c8ff8d000479f479ac891c",
+    "makerbench/arena_studio/static/app/screens/doe.js": "4f23ee93913f824359f2e55b8c2aedc233d36ac5b501cd2140feb3597644b4a2",
+    "makerbench/arena_studio/static/app/screens/launch.js": "8b4f3c8648be22bdd39f44935734cba821930012c27af69dbcb4876dcff72cdc",
+    "makerbench/arena_studio/static/app/screens/nightly.js": "817784b87ddcea7d6baf8732ae4dc0113ccc443520de1c73003a593769176261",
+    "makerbench/arena_studio/static/app/screens/runs.js": "0da5ce4baf4de7017399c71a991ca0b2d9ab5de68d3b4fc6a7e6bc03586a3a10",
+    "makerbench/arena_studio/static/app/screens/vote.js": "b8ebb3366e1493066bcdffcbbfcbaf8d7d0feece448a4b085e1f1694376d375c",
+    "makerbench/arena_studio/static/app/screens/workbench.js": "939e9637bed3ca7660763c975e8dff515d91f208279e23b5a7b24721815ee750",
+    "makerbench/arena_studio/static/index.html": "2bda8db8627ce1bd336a69815c766a41046628eb13849bb7b9e536c0095a1800",
+    "makerbench/arena_studio/static/studio.css": "f531e116b832e869ef886df2e3f86f07f515d70d3fe68ae8d9c5944bbc9d6b03",
+    "makerbench/arena_studio/static/vendor/LICENSE-htm": "740725f7252e750af735d0028cc534970772f513331e9f68150fede8fb3ce00f",
+    "makerbench/arena_studio/static/vendor/LICENSE-preact": "1fe6958409c8c257a70c587a18b6f7f412b179b456630790d30b2ec9a8e4b7d4",
+    "makerbench/arena_studio/static/vendor/VENDOR.json": "4d650866fe030f644daf96c30ccdb9a72451943f9b59fe6f272810081962f54d",
+    "makerbench/arena_studio/static/vendor/htm.module.js": "ab33dd3f38059b9be4d5f5350128eefb2356639c4e0bbe9d9e8b3ba75847e9e4",
+    "makerbench/arena_studio/static/vendor/preact-hooks.module.js": "a6ee626f2d01570592dd569a792e3f050154aa02890eead8c223fa3ed5aa3d5a",
+    "makerbench/arena_studio/static/vendor/preact.module.js": "c30e721ebfdc6e2ad4c18c14d2dfb82667829c8aec27de1207774e3fc16858a8"
+  },
+  "schema": "makerbench-studio-visual-review-v1",
+  "screenshots": [
+    {
+      "browser_errors": 0,
+      "case": "post3-models",
+      "file": "post3-models-1366.png",
+      "full_page": true,
+      "loaded_images": 7,
+      "non_loopback_requests": 0,
+      "sha256": "95e143efdd94b895878b6595b56160734d40ad4f31ca7ace9890e8a8f69442d9",
+      "viewport": {
+        "height": 900,
+        "width": 1366
+      }
+    },
+    {
+      "browser_errors": 0,
+      "case": "post3-backends",
+      "file": "post3-backends-1366.png",
+      "full_page": true,
+      "loaded_images": 10,
+      "non_loopback_requests": 0,
+      "sha256": "942f3a287fbf0e8b83c306de30f384c03eeac545252851c3674948e9cf5b5133",
+      "viewport": {
+        "height": 900,
+        "width": 1366
+      }
+    },
+    {
+      "browser_errors": 0,
+      "case": "strings-gallery",
+      "file": "strings-gallery-1366.png",
+      "full_page": true,
+      "loaded_images": 18,
+      "non_loopback_requests": 0,
+      "sha256": "8baf261efd0560108dc3cd325a6995db27af2bb9499e540d990363f1d52918e2",
+      "viewport": {
+        "height": 900,
+        "width": 1366
+      }
+    },
+    {
+      "browser_errors": 0,
+      "case": "kora",
+      "file": "kora-1366.png",
+      "full_page": true,
+      "loaded_images": 8,
+      "non_loopback_requests": 0,
+      "sha256": "36a6746e6c17fc5c81957bc9f96c749bc78f7f23bb3e99831f14b1fbba4022aa",
+      "viewport": {
+        "height": 900,
+        "width": 1366
+      }
+    },
+    {
+      "browser_errors": 0,
+      "case": "post3-models",
+      "file": "post3-models-390.png",
+      "full_page": true,
+      "loaded_images": 7,
+      "non_loopback_requests": 0,
+      "sha256": "32a7f8b3de038ede43b0711055767eb4ff014a08b84abd0c3ce7f74acc7f3f86",
+      "viewport": {
+        "height": 844,
+        "width": 390
+      }
+    },
+    {
+      "browser_errors": 0,
+      "case": "post3-backends",
+      "file": "post3-backends-390.png",
+      "full_page": true,
+      "loaded_images": 10,
+      "non_loopback_requests": 0,
+      "sha256": "450be365a68c39b5c9b2e0bedcf4ba9ee20e95c2435f671163c9dd2dec7888df",
+      "viewport": {
+        "height": 844,
+        "width": 390
+      }
+    },
+    {
+      "browser_errors": 0,
+      "case": "strings-gallery",
+      "file": "strings-gallery-390.png",
+      "full_page": true,
+      "loaded_images": 18,
+      "non_loopback_requests": 0,
+      "sha256": "30a33ff1f896171e8483eab15379bbe721566dd741bb174750a12a577204b81a",
+      "viewport": {
+        "height": 844,
+        "width": 390
+      }
+    },
+    {
+      "browser_errors": 0,
+      "case": "kora",
+      "file": "kora-390.png",
+      "full_page": true,
+      "loaded_images": 8,
+      "non_loopback_requests": 0,
+      "sha256": "ce82b70ab36df5670dcc119253f7b4fe9a3389b983c9e40518b0b6004ea5c721",
+      "viewport": {
+        "height": 844,
+        "width": 390
+      }
+    }
+  ],
+  "source_tree_dirty": true
+}
