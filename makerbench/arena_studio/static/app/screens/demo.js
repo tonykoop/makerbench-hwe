@@ -54,6 +54,19 @@ function resultText(row) {
   return `Build-check average: ${(row.objective_pass_rate * 100).toFixed(2)}%${row.n_objective_trials != null ? ` across ${row.n_objective_trials} runs` : ""}.`;
 }
 
+function DemoCard({ row, index, selected }) {
+  return html`<article class="matchup-entrant" key=${index}>
+              <h3>${row.label}</h3>
+              <div class="demo-render-strip">${(row.trials || []).filter(trial => trial.image).map((trial, index) => html`
+                <figure key=${index}>
+                  <img class="matchup-render" src=${trial.image} alt=${`${row.label}${trial.seed == null ? "" : `, run ${trial.seed}`}`} />
+                  ${trial.seed != null && html`<figcaption>Run ${trial.seed}</figcaption>`}
+                </figure>`)}</div>
+              <p>${resultText(row)}</p>
+              <${CheckChips} row=${row} prefix=${`${selected}-${index}`} />
+            </article>`;
+}
+
 export function DemoScreen({ route, runs }) {
   const selected = route.args[0] || "post3-models";
   const summary = useResource(`/api/runs/${encodeURIComponent(selected)}/summary`);
@@ -63,11 +76,15 @@ export function DemoScreen({ route, runs }) {
       <p class="lede">MakerBench asks AI models to design physical instruments in CAD.
         Six objective build checks score whether each design renders and meets the build requirements.</p>
       <p>Explore the recorded results and pictures below. This demo is read-only.</p>
+      ${runs.data?.hero && html`<figure class="demo-hero">
+        <img src=${runs.data.hero.image} alt=${runs.data.hero.alt} />
+        <figcaption>${runs.data.hero.caption}</figcaption>
+      </figure>`}
     </section>
     <ul class="run-links">${(runs.data?.runs || []).map((run) => html`
       <li key=${run.run_id}><a href=${`#/runs/${run.run_id}`}>${run.title}</a></li>`)}
     </ul>
-    ${summary.status === "loading" || summary.status === "idle"
+    ${summary.status === "loading" || summary.status === "idle" || (summary.status === "ready" && summary.data.id !== selected)
       ? html`<${Loading} label="Loading showcase…" />`
       : summary.status === "error"
         ? html`<${ErrorState} error=${summary.error} onRetry=${summary.reload} />`
@@ -89,20 +106,26 @@ export function DemoScreen({ route, runs }) {
               </tr>`)}</tbody>
             </table>
             <p>${summary.data.story.caveat}</p>
-            <p>Source write-ups: ${summary.data.story.sources.map(source => html`<code key=${source}>${source} </code>`)}</p>
+            <p>Source write-ups: ${summary.data.story.sources.map(source => html`<a key=${source.path} href=${source.url} target="_blank" rel="noopener noreferrer">${source.label}</a>`)}</p>
           </section>`}
-          <div class="matchup-grid">${summary.data.rows.map((row, i) => html`
-            <article class="matchup-entrant" key=${i}>
-              <h3>${row.label}</h3>
-              <div class="demo-render-strip">${(row.trials || []).filter(trial => trial.image).map((trial, index) => html`
-                <figure key=${index}>
-                  <img class="matchup-render" src=${trial.image} alt=${`${row.label}${trial.seed == null ? "" : `, run ${trial.seed}`}`} />
-                  ${trial.seed != null && html`<figcaption>Run ${trial.seed}</figcaption>`}
-                </figure>`)}</div>
-              <p>${resultText(row)}</p>
-              <${CheckChips} row=${row} prefix=${`${selected}-${i}`} />
-            </article>`)}</div>
-          <p>How these examples were made: <code>${summary.data.source}</code></p>
+          ${selected === "kora" ? html`<div class="demo-context-grid">
+            ${["blind", "image"].map(tier => html`<section class="demo-context-arm" key=${tier}>
+              <h3>${tier === "blind" ? "Text brief only" : "With a reference photo"}</h3>
+              ${tier === "blind" ? html`<p>The same kora task, described in words without a reference image.</p>` : html`
+                <figure class="demo-reference">
+                  <img src=${summary.data.photo.image} alt=${summary.data.photo.alt} />
+                  <figcaption>${summary.data.photo.caption}<br />Photo from${" "}
+                    <a href=${summary.data.photo.credit_url} target="_blank" rel="noopener noreferrer">tonykoop/kora</a>,${" "}
+                    <a href=${summary.data.photo.license_url} target="_blank" rel="noopener noreferrer">CC BY 4.0</a>.
+                  </figcaption>
+                </figure>`}
+              <div class="matchup-grid">${summary.data.rows.map((row, index) => row.context_tier === tier && html`
+                <${DemoCard} row=${row} index=${index} selected=${selected} />`)}</div>
+            </section>`)}
+          </div>` : html`<div class=${`matchup-grid ${selected === "strings-gallery" ? "demo-gallery" : ""}`}>
+            ${summary.data.rows.map((row, index) => html`<${DemoCard} row=${row} index=${index} selected=${selected} />`)}
+          </div>`}
+          <p>How these examples were made: <a class="demo-source" href=${summary.data.source_url} target="_blank" rel="noopener noreferrer">Read the study on GitHub</a></p>
         </section>`}
   </div>`;
 }

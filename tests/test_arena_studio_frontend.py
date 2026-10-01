@@ -112,6 +112,13 @@ def test_nothing_shipped_reaches_the_network():
     offenders = []
     for path in _shipped_files(".html", ".css", ".js", ".json"):
         for url in re.findall(r"https?://[^\s\"'`)<>]+", path.read_text(encoding="utf-8")):
+            # Explicit demo navigation links are inert until the visitor clicks.
+            if path == STATIC / "app/components/header.js" and url in {
+                "https://tonykoop.github.io/makerbench-hwe/",
+                "https://github.com/tonykoop/makerbench-hwe",
+                "https://github.com/tonykoop/makerbench-hwe/blob/main/docs/showcase/try-it.md",
+            }:
+                continue
             if url not in ALLOWED_URL_STRINGS:
                 offenders.append(f"{path.relative_to(STATIC)}: {url}")
     assert offenders == []

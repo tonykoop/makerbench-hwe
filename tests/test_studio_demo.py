@@ -107,7 +107,7 @@ def test_snapshot_reproduces_and_has_no_preference_or_source_artifact_fields():
     assert data == module.build(ROOT)
     assert len(data["cases"]) == 4
     assert sum(len(case["rows"]) for case in data["cases"]) == 29
-    assert len(data["assets"]) == 38
+    assert len(data["assets"]) == 40
 
     def check(value):
         if isinstance(value, dict):
@@ -143,6 +143,11 @@ def test_demo_reads_only_committed_showcases_and_assets(client):
     assert client.get("/api/runs/private-sentinel/summary").status_code == 404
     assert client.get("/api/demo/assets/unknown.png").status_code == 404
     assert 'data-demo="true"' in client.get("/").text
+    hero = client.get(client.get("/api/runs").json()["hero"]["image"])
+    assert hero.headers["content-type"] == "image/png"
+    photo = client.get(client.get("/api/runs/kora/summary").json()["photo"]["image"])
+    assert photo.headers["content-type"] == "image/jpeg"
+    assert photo.content.startswith(b"\xff\xd8\xff")
 
 
 def test_every_real_studio_mutation_is_refused_before_writes(client, tmp_path, monkeypatch):

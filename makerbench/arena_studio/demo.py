@@ -33,7 +33,7 @@ def create_demo_app(allowed_hosts=("127.0.0.1", "localhost")) -> FastAPI:
 
     @app.get("/api/runs")
     def runs():
-        return {"demo": True, "runs": [{"run_id": key, "title": case["title"]}
+        return {"demo": True, "hero": content["hero"], "runs": [{"run_id": key, "title": case["title"]}
                                         for key, case in cases.items()]}
 
     @app.get("/api/runs/{run_id}/summary")
@@ -57,7 +57,8 @@ def create_demo_app(allowed_hosts=("127.0.0.1", "localhost")) -> FastAPI:
                 raise HTTPException(404, "Showcase image not found")
         if path.is_symlink() or not path.is_file():
             raise HTTPException(404, "Showcase image not found")
-        return FileResponse(path, media_type="image/png", headers={"X-Content-Type-Options": "nosniff"})
+        media_type = "image/jpeg" if path.suffix == ".jpg" else "image/png"
+        return FileResponse(path, media_type=media_type, headers={"X-Content-Type-Options": "nosniff"})
 
     @app.get("/")
     def index():
