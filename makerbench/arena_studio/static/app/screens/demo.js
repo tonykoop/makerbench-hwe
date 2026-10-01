@@ -114,8 +114,8 @@ export function DemoScreen({ route, runs }) {
               ${tier === "blind" ? html`<p>The same kora task, described in words without a reference image.</p>` : html`
                 <figure class="demo-reference">
                   <img src=${summary.data.photo.image} alt=${summary.data.photo.alt} />
-                  <figcaption>${summary.data.photo.caption}<br />Photo from
-                    <a href=${summary.data.photo.credit_url} target="_blank" rel="noopener noreferrer">tonykoop/kora</a>,
+                  <figcaption>${summary.data.photo.caption}<br />Photo from${" "}
+                    <a href=${summary.data.photo.credit_url} target="_blank" rel="noopener noreferrer">tonykoop/kora</a>,${" "}
                     <a href=${summary.data.photo.license_url} target="_blank" rel="noopener noreferrer">CC BY 4.0</a>.
                   </figcaption>
                 </figure>`}
