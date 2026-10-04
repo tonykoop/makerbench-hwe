@@ -1,7 +1,7 @@
 # Case study 3: a kora, reference photo to parametric CAD
 
 Story #911 (epic #907). This is a manager-approved substitution to a public repo (`tonykoop/kora`). It is
-the same instrument as the live-built kora in post 4 (see `../linkedin-posts.md`, p4),
+the same instrument as the separately live-built 28-body kora (built in a CAD connector),
 shown here from a reference photo to parametric code-CAD. One model, one brief, three
 seeds per arm; a first draft of geometry, not a measured master or a build packet.
 
@@ -98,7 +98,7 @@ and no significance analysis was performed.
 - Passing the checks says almost nothing here: the same brief without the photo passes too,
   and the results look rough. Use the renders, not the scores, to judge quality.
 - One instrument, one model, three seeds per arm; no significance analysis was performed.
-- The 28-body kora in post 4 is a different artifact (built live in a CAD connector); this
+- The live-built 28-body kora is a different artifact (built live in a CAD connector); this
   study does not compare against it.
 - Turn counts and token usage were not recorded.
 

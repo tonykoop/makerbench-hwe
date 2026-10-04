@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Check numeric claims in showcase posts against the files they cite.
+"""Check numeric claims in showcase docs against the files they cite.
 
-Showcase drafts (``docs/showcase/linkedin-posts.md`` and the candidate posts in
-the case studies) quote numbers from results files: rank-agreement rho, pass
-rates, body counts, bounding-box dimensions, costs. This script binds each
+The showcase case studies (``docs/showcase/*/CASE_STUDY.md``) and other
+annotated showcase docs quote numbers from results files: rank-agreement rho,
+pass rates, body counts, bounding-box dimensions, costs. This script binds each
 quoted number to its source and fails when the two disagree.
 
 Citation convention
 -------------------
 Citations are HTML comments, so they never render in the published text. Put
 them in the same ``## `` section as the number they back (by convention, right
-after the post's fenced block or blockquote)::
+after the paragraph, fenced block or blockquote that quotes it)::
 
     <!-- claim: 0.07 source: site/data/arena.json#/headline/value -->
     <!-- claim: 1.000 at: "OpenSCAD scored 1.000" source: results/x.json#/rows/0/rate -->
@@ -55,9 +55,9 @@ and not preceded by a word character, so ``6–10`` (en dash) and ``6-10`` are
 ranges with two positive endpoints, ``2026-09-30`` yields 2026, 09 and 30, and
 ``r6-r10`` or ``v1.2`` yield nothing.
 
-Post bodies are fenced ``text`` blocks and blockquotes: ``>`` lines indented
+Quoted bodies are fenced ``text`` blocks and blockquotes: ``>`` lines indented
 by up to three spaces, plus their lazy continuation lines. Every
-number occurrence in a post body that no citation binds is reported as
+number occurrence in a quoted body that no citation binds is reported as
 UNCITED: a warning, or an error under ``--strict``.
 
 Exit status: 0 when every citation matches, 1 on any mismatch, missing source,
@@ -80,10 +80,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GLOB = "docs/showcase/**/*.md"
-ALWAYS_CHECK = (
-    "docs/showcase/linkedin-posts.md",
-    "docs/showcase/sambuca/CASE_STUDY.md",
-)
+# Case studies are always checked, cited or not, so a quoted number added to
+# one without a citation fails under --strict.
+CASE_STUDY_GLOB = "docs/showcase/*/CASE_STUDY.md"
 
 CLAIM_RE = re.compile(
     r"<!--\s*claim:\s*(?P<value>\S+)"
@@ -348,11 +347,11 @@ class Token:
     start: int
     end: int
     text: str
-    in_post: bool
+    in_quote: bool
     bound: bool = False
 
 
-def _post_spans(visible: str) -> list[tuple[int, int]]:
+def _quote_body_spans(visible: str) -> list[tuple[int, int]]:
     spans = [(m.start(1), m.end(1)) for m in FENCE_RE.finditer(visible)]
     spans += _quote_spans(visible)
     return spans
@@ -415,7 +414,7 @@ def check_document(path: Path, root: Path, report: Report) -> None:
         # Visible text: every HTML comment blanked out (offsets preserved), so
         # a citation never binds to the value written in its own comment.
         visible = re.sub(r"<!--.*?-->", lambda m: " " * len(m.group(0)), section, flags=re.DOTALL)
-        spans = _post_spans(visible)
+        spans = _quote_body_spans(visible)
         tokens = [
             Token(m.start(), m.end(), m.group(0), any(a <= m.start() < b for a, b in spans))
             for m in displayed_numbers(visible)
@@ -494,21 +493,22 @@ def check_document(path: Path, root: Path, report: Report) -> None:
                 )
 
         for tok in tokens:
-            if tok.in_post and not tok.bound:
-                report.add("warning", rel, line_of(text, start + tok.start), f"UNCITED number {tok.text} in post text")
+            if tok.in_quote and not tok.bound:
+                report.add("warning", rel, line_of(text, start + tok.start), f"UNCITED number {tok.text} in quoted text")
 
 
 def default_targets(root: Path) -> list[Path]:
-    targets = {root / p for p in ALWAYS_CHECK if (root / p).is_file()}
+    targets = set(root.glob(CASE_STUDY_GLOB))
     for path in root.glob(DEFAULT_GLOB):
-        if "<!-- claim:" in path.read_text(encoding="utf-8"):
+        text = path.read_text(encoding="utf-8")
+        if "<!-- claim:" in text or "<!-- nocheck:" in text:
             targets.add(path)
     return sorted(targets)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("paths", nargs="*", type=Path, help="markdown files (default: annotated showcase docs)")
+    parser.add_argument("paths", nargs="*", type=Path, help="markdown files (default: case studies and annotated showcase docs)")
     parser.add_argument("--root", type=Path, default=REPO_ROOT, help="repository root for source paths")
     parser.add_argument("--strict", action="store_true", help="treat uncited numbers as errors")
     parser.add_argument("-v", "--verbose", action="store_true", help="also print passing claims and nocheck notes")

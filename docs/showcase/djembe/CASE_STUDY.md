@@ -85,11 +85,3 @@ height/radius points.
 - Sound, tuning, head tension and structural strength are not modelled; the repo
   itself marks this instrument "not build-ready".
 - Turn count and token use were not recorded.
-
-## Caption suggestion (for a post)
-
-"Stave-built djembe from a reference photo: an editable OpenSCAD model with a
-stave-count parameter. It passed 5 of 6 automatic mesh checks and failed the
-provisional wall-thickness check; one run, a first draft." Credit the repo as
-`tonykoop/djembe` (CC BY 4.0) if the photo is ever shown; do not show the current hero
-photo without cropping out the person and stripping location metadata.
