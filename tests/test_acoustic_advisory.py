@@ -120,11 +120,13 @@ def test_other_families_report_not_modelled(spec, needle):
     assert result["label"] == "advisory"
 
 
-def test_shipped_registry_models_the_kena_and_not_the_ocarina():
+def test_shipped_registry_models_the_kena_pipe_and_the_ocarina_vessel():
     specs = {s["id"]: s for s in json.loads(REGISTRY.read_text())["instruments"]}
     assert acoustic.modelled_reason(specs["kena"]) is None
     assert acoustic.parse_target_hz(specs["kena"]["constraints"]) == 392.0
+    # #980: the ocarina is no longer outside the model; it is a Helmholtz vessel.
     assert acoustic.modelled_reason(specs["ocarina"]) is not None
+    assert acoustic.vessel_reason(specs["ocarina"]) is None
     assert all(acoustic.modelled_reason(s) is not None for s in specs.values() if s["family"] == "strings")
 
 
