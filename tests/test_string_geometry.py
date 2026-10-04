@@ -273,6 +273,89 @@ def test_protrusion_touching_every_string_near_an_end_is_flagged():
     _explained(clearance)
 
 
+def _saddled(saddle_width):
+    """Strings from the nut over a narrow saddle 20 mm in from the bridge anchor, then bent down
+    (~11 degrees) into the bridge block: a saddle beside the anchor, as on a guitar bridge."""
+    z = BOX_TOP + 8
+    box = trimesh.creation.box(extents=[80, SCALE + 60, BOX_TOP])
+    box.apply_translation([0, 0, BOX_TOP / 2])
+    nut = trimesh.creation.box(extents=[70, 6, 10])
+    nut.apply_translation([0, SCALE / 2, BOX_TOP + 5])
+    anchor = trimesh.creation.box(extents=[70, 8, 6])
+    anchor.apply_translation([0, -SCALE / 2, BOX_TOP + 3])
+    saddle = trimesh.creation.box(extents=[70, saddle_width, z - BOX_TOP + 1])
+    saddle.apply_translation([0, -SCALE / 2 + 20, BOX_TOP - 1 + (z - BOX_TOP + 1) / 2])
+    parts = [box, nut, anchor, saddle]
+    for x in np.linspace(-25, 25, 6):
+        top = np.array([x, -SCALE / 2 + 20, z])
+        parts.append(trimesh.creation.cylinder(radius=0.6, segment=[top, [x, SCALE / 2 + 2, z]], sections=8))
+        parts.append(trimesh.creation.cylinder(radius=0.6, segment=[top, [x, -SCALE / 2, BOX_TOP + 4]], sections=8))
+    return trimesh.boolean.union(parts, engine="manifold")
+
+
+@pytest.mark.parametrize("width", [3.0, 6.0])
+def test_narrow_saddle_does_not_erase_the_strings(width):
+    """#995 review: a 3 mm saddle fused under every string joined all six through its thin side
+    faces into one wide group, which was discarded: 0 strings. Plate faces are dropped first."""
+    result = sg.advise(_spec(scale_length_mm=380), _saddled(width))
+    assert result["detected"] == 6
+    assert result["status"] == "consistent", result["failures"]
+
+
+def _afterlength(deg, length=60.0):
+    """Six strings nut -> bridge, then a straight afterlength descending ``deg`` to a tailpiece."""
+    z = BOX_TOP + 8
+    parts = [_instrument(6)]
+    t = np.radians(deg)
+    for x in np.linspace(-25, 25, 6):
+        start = np.array([x, -SCALE / 2, z])
+        end = start + length * np.array([0.0, -np.cos(t), -np.sin(t)])
+        parts.append(trimesh.creation.cylinder(radius=0.6, segment=[start, end], sections=8))
+    tail = trimesh.creation.box(extents=[70, 6, 12])
+    tail.apply_translation([0, -SCALE / 2 - length * np.cos(t), z - length * np.sin(t) - 4])
+    parts.append(tail)
+    return trimesh.boolean.union(parts, engine="manifold")
+
+
+def test_shallow_afterlength_is_an_ambiguous_termination_not_a_fault():
+    """#995 review: a 1 degree afterlength to a fused tailpiece read as speaking string (451 mm)
+    with clearance faults at the bridge. A bend under the collinear limit at a short contact is
+    reported as an ambiguous termination; the speaking length stops at the bridge."""
+    result = sg.advise(_spec(), _afterlength(1.0))
+    assert result["detected"] == 6
+    assert result["status"] == "consistent", result["failures"]
+    assert len(result["ambiguous_terminations"]) == 6
+    assert all(a["break_angle_deg"] == pytest.approx(1.0, abs=0.2) for a in result["ambiguous_terminations"])
+    for s in result["strings"]:
+        assert s["speaking_length_mm"] == pytest.approx(SCALE - 6, abs=3.0)
+    # a clear break angle is an ordinary bent run-out, nothing ambiguous
+    steep = sg.advise(_spec(), _afterlength(9.5))
+    assert steep["status"] == "consistent" and steep["ambiguous_terminations"] == []
+
+
+def _headstock(deg):
+    z = BOX_TOP + 8
+    parts = [_instrument(6)]
+    t = np.radians(deg)
+    for x in np.linspace(-25, 25, 6):
+        start = np.array([x, SCALE / 2, z])
+        parts.append(trimesh.creation.cylinder(
+            radius=0.6, segment=[start, start + 60.0 * np.array([0.0, np.cos(t), np.sin(t)])], sections=8))
+    return trimesh.boolean.union(parts, engine="manifold")
+
+
+@pytest.mark.parametrize("deg, unsupported", [(17.0, False), (21.0, True), (25.0, True)])
+def test_steep_headstock_runouts_are_reported_not_counted(deg, unsupported):
+    """#995 review: run-outs past 20 degrees counted as 6 extra strings. They belong to their
+    string; past the calibrated range they are reported as unsupported, never failed."""
+    result = sg.advise(_spec(), _headstock(deg))
+    assert result["detected"] == 6
+    assert result["status"] == "consistent", result["failures"]
+    assert bool(result["unsupported_runouts"]) is unsupported
+    if unsupported:
+        assert all(r["angles_deg"] == [pytest.approx(deg, abs=0.5)] for r in result["unsupported_runouts"])
+
+
 def test_thin_soundboard_is_not_a_string():
     plate = trimesh.creation.box(extents=[200, 400, 3])
     assert sg.detect_strings(plate)["strings"] == []

@@ -19,7 +19,9 @@ String detection (works on a unioned mesh)
     to end: straight on (parallel within 2 degrees, on one axis within a string diameter), or
     bent up to 20 degrees across a short gap inside a shared nut or bridge (a run-out at a
     break angle). Stretches that overlap along their axis are side by side (a doubled course)
-    and never join. Strings are counted, not stretches.
+    and never join. Strings are counted, not stretches. Run-outs bent beyond 20 degrees (up to
+    60) still join their string but are reported as ``unsupported_runouts``. Thin faces on
+    flat patches wider than a string (a narrow saddle's sides) are dropped before grouping.
 
 Contacts, supports and speaking length (``string_profile``)
     Each string's whole path, anchor to anchor, is sampled. A point is in contact when no
@@ -72,6 +74,15 @@ COLLINEAR_COS = float(np.cos(np.radians(2.0)))
 #: degrees, across a gap up to ``JOIN_MAX_MM`` inside that support, is the same string.
 RUNOUT_MAX_DEG = 20.0
 RUNOUT_MAX_COS = float(np.cos(np.radians(RUNOUT_MAX_DEG)))
+#: Run-outs bent further than ``RUNOUT_MAX_DEG`` (a steep headstock, 21-25 degrees) are still
+#: joined to their string up to this angle, so they are never counted as extra strings, but are
+#: reported as ``unsupported_runouts``: outside the range this check is calibrated for.
+RUNOUT_LINK_MAX_DEG = 60.0
+RUNOUT_LINK_MAX_COS = float(np.cos(np.radians(RUNOUT_LINK_MAX_DEG)))
+#: A short contact between two near-collinear stretches whose directions differ by at least this
+#: much (but under the 2 degree collinear limit) may be a bridge with a shallow afterlength: an
+#: ``ambiguous_termination``, not a contact fault.
+BREAK_MIN_DEG = 0.5
 JOIN_MAX_MM = 25.0
 OVERLAP_TOL_MM = 1.0
 SAME_ROD_FRAC = 0.75
@@ -138,9 +149,35 @@ def shape_diameter(mesh: trimesh.Trimesh) -> np.ndarray:
     return sdf
 
 
+def _plate_faces(mesh: trimesh.Trimesh, sdf: np.ndarray, max_diameter_mm: float) -> np.ndarray:
+    """Thin faces that lie on a flat patch wider than a string can be (#995 review): the sides of
+    a narrow saddle, nut or plate. A string's flat facets are strips no wider than its diameter,
+    so these faces are dropped before grouping, and a saddle fused under every string no longer
+    joins them all into one wide group (which was then discarded: 0 strings)."""
+    plate = np.zeros(len(mesh.faces), dtype=bool)
+    thin = sdf <= max_diameter_mm
+    for facet, normal in zip(mesh.facets, mesh.facets_normal):
+        if not thin[facet].any():
+            continue
+        points = mesh.vertices[np.unique(mesh.faces[facet])]
+        u = np.cross(normal, [1.0, 0.0, 0.0] if abs(normal[0]) < 0.9 else [0.0, 1.0, 0.0])
+        u /= np.linalg.norm(u)
+        v = np.cross(normal, u)
+        flat = np.c_[points @ u, points @ v]
+        if len(flat) < 3:
+            continue
+        try:
+            _, extents = trimesh.bounds.oriented_bounds_2D(flat)
+        except Exception:  # noqa: BLE001 - a degenerate facet is not a plate
+            continue
+        if float(min(extents)) > max_diameter_mm:
+            plate[facet] = True
+    return plate
+
+
 def _segments(mesh: trimesh.Trimesh, sdf: np.ndarray, max_diameter_mm: float) -> list[dict]:
     """Long, slender, thin face groups: one per free stretch of a string."""
-    thin = sdf <= max_diameter_mm
+    thin = (sdf <= max_diameter_mm) & ~_plate_faces(mesh, sdf, max_diameter_mm)
     adjacency = mesh.face_adjacency
     keep = thin[adjacency[:, 0]] & thin[adjacency[:, 1]]
     groups = trimesh.graph.connected_components(adjacency[keep], nodes=np.nonzero(thin)[0], min_len=1)
@@ -185,7 +222,7 @@ def _link_cost(mesh: trimesh.Trimesh, a: Mapping[str, Any], end_a: tuple, b: Map
     if float(np.dot(gap, da)) < -OVERLAP_TOL_MM or float(np.dot(-gap, db)) < -OVERLAP_TOL_MM:
         return None  # overlapping along the axis: side by side, not end to end
     cos = abs(float(np.dot(a["axis"], b["axis"])))
-    if cos < RUNOUT_MAX_COS:
+    if cos < RUNOUT_LINK_MAX_COS:
         return None
     off_a = float(np.linalg.norm(gap - float(np.dot(gap, a["axis"])) * a["axis"]))
     off_b = float(np.linalg.norm(gap - float(np.dot(gap, b["axis"])) * b["axis"]))
@@ -300,13 +337,18 @@ def detect_strings(mesh: trimesh.Trimesh, *, max_diameter_mm: float = DEFAULT_MA
         center = mean + u * (pu.min() + pu.max()) / 2.0 + v * (pv.min() + pv.max()) / 2.0
         t = (points - center) @ axis
         t0, t1 = float(t.min()), float(t.max())
-        free = sorted((float(((m["points"] - center) @ axis).min()), float(((m["points"] - center) @ axis).max()))
-                      for m in members)
+        stretches = sorted((float(((m["points"] - center) @ axis).min()),
+                            float(((m["points"] - center) @ axis).max()), m["axis"]) for m in members)
+        free = [(a, b) for a, b, _ in stretches]
+        runout_angles = sorted(round(float(np.degrees(np.arccos(min(1.0, abs(float(np.dot(m["axis"], axis))))))), 1)
+                               for m in chain if not any(m is k for k in members))
         strings.append({"faces": np.concatenate([m["faces"] for m in chain]), "segments": len(chain),
-                        "runouts": len(chain) - len(members),
+                        "runouts": len(chain) - len(members), "runout_angles_deg": runout_angles,
+                        "unsupported_runouts": sum(a > RUNOUT_MAX_DEG for a in runout_angles),
                         "length_mm": t1 - t0, "width_mm": max(m["width_mm"] for m in members),
                         "diameter_mm": float(np.median([m["diameter_mm"] for m in members])),
-                        "axis": axis, "center": center, "t0": t0, "t1": t1, "free": free})
+                        "axis": axis, "center": center, "t0": t0, "t1": t1, "free": free,
+                        "free_axes": [ax for _, _, ax in stretches]})
     strings.sort(key=lambda st: -st["length_mm"])
     return {"strings": strings, "segments": len(segments), "thin_faces": int((sdf <= max_diameter_mm).sum()),
             "faces": len(mesh.faces)}
@@ -405,26 +447,54 @@ def string_profile(rest: trimesh.Trimesh | None, string: Mapping[str, Any], *,
     # #995 review: the string is terminated by the OUTERMOST contact at each end of its path
     # (the anchor it is fused into, or the nut or bridge it runs over before a free end).
     # Every other contact lies between them, on the speaking part: a fault, unless the spec
-    # declares intermediate bridges and the contact is short. Supports past an anchor need a
-    # break angle; the bent run-out then ends the straight path at that support (detect_strings).
+    # declares intermediate bridges and the contact is short. A support past an anchor with a
+    # clear break angle ends the straight path itself (detect_strings); one with a shallow bend
+    # (BREAK_MIN_DEG to 2 degrees) is an ambiguous termination, reported and never failed.
     ends = {}
     if runs and terminating(*runs[0]):
         ends[0] = terminating(*runs[0])
     if len(runs) > 1 and terminating(*runs[-1]):
         ends[len(runs) - 1] = terminating(*runs[-1])
-    supports, faults = [], []
+    def break_angle(a: float, b: float) -> float | None:
+        """Direction change (degrees) between the free stretches either side of ``a..b``."""
+        axes, free = string.get("free_axes") or [], string["free"]
+        if len(axes) != len(free):
+            return None
+        # the gap between two consecutive free stretches that lies inside this contact run
+        for k in range(len(free) - 1):
+            gap_a, gap_b = free[k][1], free[k + 1][0]
+            if gap_b > gap_a and a - FINE_STEP_MM <= gap_a and gap_b <= b + FINE_STEP_MM:
+                u, w = axes[k], axes[k + 1]
+                break
+        else:
+            return None
+        return float(np.degrees(np.arccos(min(1.0, abs(float(np.dot(u, w)))))))
+
+    supports, faults, afterlength_sides = [], [], []
     for k, (a, b) in enumerate(runs):
         length = b - a
         mask = (ts >= a) & (ts <= b)
         lowest = float(np.min(np.where(inside[mask], clear[mask], 0.0)))
         run = {"from": round((a - t0) / total, 3), "to": round((b - t0) / total, 3),
                "length_mm": round(length, 2), "min_clearance_mm": round(lowest, 2)}
+        angle = break_angle(a, b) if k not in ends and length <= support_max else None
         if k in ends:
             supports.append({**run, "kind": ends[k]})
+        elif angle is not None and angle >= BREAK_MIN_DEG:
+            # #995 review: the string changes direction here (by less than the 2 degree collinear
+            # limit): a bridge with a shallow afterlength, or not. Ambiguous, so it ends the
+            # speaking part and nothing on its afterlength side is reported as a fault.
+            supports.append({**run, "kind": "ambiguous_termination", "break_angle_deg": round(angle, 2)})
+            afterlength_sides.append((a, t0) if a - t0 < t1 - b else (b, t1))
         elif intermediate_bridges and length <= support_max:
             supports.append({**run, "kind": "intermediate_bridge"})
         else:
             faults.append({**run, "kind": "contact"})
+    if afterlength_sides:
+        def on_afterlength(f: Mapping[str, Any]) -> bool:
+            a, b = t0 + f["from"] * total, t0 + f["to"] * total
+            return any(min(edge, end) <= a and b <= max(edge, end) for edge, end in afterlength_sides)
+        faults = [f for f in faults if not on_afterlength(f)]
     bounds = sorted([(t0, t0)] + [(t0 + r["from"] * total, t0 + r["to"] * total) for r in supports] + [(t1, t1)])
     speaking = max(b_start - a_end for (_, a_end), (b_start, _) in zip(bounds, bounds[1:]))
     away = inside & np.isfinite(clear)
@@ -533,7 +603,9 @@ def advise(spec: Mapping[str, Any], mesh: trimesh.Trimesh) -> dict[str, Any]:
                            "diameter_mm": round(st["diameter_mm"], 2), "segments": st["segments"],
                            "min_clearance_mm": None if prof["min_free_clearance_mm"] is None
                            else round(prof["min_free_clearance_mm"], 2),
-                           "supports": prof["supports"], "contacts": prof["faults"]})
+                           "supports": prof["supports"], "contacts": prof["faults"],
+                           "runout_angles_deg": st.get("runout_angles_deg", []),
+                           "unsupported_runouts": st.get("unsupported_runouts", 0)})
         if prof["faults"]:
             worst = min(prof["faults"], key=lambda f: f["min_clearance_mm"])
             where = ", ".join(f"{f['from']:.0%}-{f['to']:.0%}" for f in prof["faults"])
@@ -549,12 +621,20 @@ def advise(spec: Mapping[str, Any], mesh: trimesh.Trimesh) -> dict[str, Any]:
                        f"soundboard or body"))
 
     lengths = [st["length_mm"] for st in strings]
+    # #995 review: what the check cannot judge is reported, never failed
+    ambiguous = [{"body_id": f"string_{i}", **r} for i, prof in enumerate(profiles)
+                 for r in prof["supports"] if r["kind"] == "ambiguous_termination"]
+    unsupported = [{"body_id": f"string_{i}", "angles_deg": [a for a in st.get("runout_angles_deg", [])
+                                                            if a > RUNOUT_MAX_DEG]}
+                   for i, st in enumerate(strings) if st.get("unsupported_runouts")]
     return {
         **base,
         "status": "inconsistent" if failures else "consistent",
         "family": FAMILY,
         "failures": failures,
         "detected": len(strings),
+        "ambiguous_terminations": ambiguous,
+        "unsupported_runouts": unsupported,
         "declared": {"string_count": count, "sympathetic_string_count": sympathetic or None,
                      "lengths": window, "intermediate_bridges": intermediate},
         "strings": per_string,
@@ -573,6 +653,11 @@ def advise(spec: Mapping[str, Any], mesh: trimesh.Trimesh) -> dict[str, Any]:
             f"{SUPPORT_MAX_FRAC:.0%}))" + ("; declared intermediate bridges between them" if intermediate else ""),
             "speaking length = longest free interval between neighbouring supports or anchors",
             f"clearance >= {MIN_CLEARANCE_MM:g} mm everywhere else on the path",
+            f"a short contact where the string bends by {BREAK_MIN_DEG:g}-2 degrees is an ambiguous "
+            "termination (a bridge with a shallow afterlength, or not): it ends the speaking length and "
+            "is reported, never failed",
+            f"run-outs bent {RUNOUT_MAX_DEG:g}-{RUNOUT_LINK_MAX_DEG:g} degrees belong to their string but are "
+            "outside the calibrated range: reported as unsupported_runouts, never counted or failed",
             "not modelled: tension, gauge, break angle, frets, action",
         ],
     }
