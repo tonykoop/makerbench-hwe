@@ -648,3 +648,36 @@ def test_tie_break_key_is_computed_from_the_canonical_mesh():
     assert len(raw) > 1  # the hazard is real for raw volumes
     keys = {geometry.canonical_order_key(_reordered(body, s)) for s in range(8)}
     assert len(keys) == 1
+
+
+# --- #1009: the largest body behind nonzero_volume / largest_body_volume_mm3 ------------------
+
+def test_largest_body_is_chosen_independently_of_order_and_matches_the_measured_body(tmp_path):
+    """Two equally large (12-face) bodies listed in either order: robust-v1 reports the same
+    largest_body_volume_mm3 and nonzero_volume, and the largest body is the one whose wall
+    robust-v1 measures (the 20 x 20 x 0.4 plate, 160 mm3, not the 125 mm3 cube)."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    a = _payload(tmp_path / "a", _two_boxes(first_thin=True))
+    b = _payload(tmp_path / "b", _two_boxes(first_thin=False))
+    assert a["metrics"]["largest_body_volume_mm3"] == b["metrics"]["largest_body_volume_mm3"] == pytest.approx(160.0)
+    assert a["sub_scores"]["nonzero_volume"] == b["sub_scores"]["nonzero_volume"]
+    assert a["metrics"]["min_wall_mm"] < 1.0  # the measured body is that same plate
+
+
+def test_largest_body_tie_can_no_longer_flip_nonzero_volume(tmp_path):
+    """A degenerate tie: a speck below MIN_BODY_VOLUME_MM3 and a 12 mm cube (1,728 mm3 >= MIN_BODY_VOLUME_MM3), both 12 faces. The
+    first-listed rule failed nonzero_volume when the speck came first; robust-v1 picks the cube
+    in both orders. Legacy "min" keeps first-listed so older results reproduce."""
+    speck = trimesh.creation.box(extents=[0.01, 0.01, 0.01])
+    cube = trimesh.creation.box(extents=[12.0, 12.0, 12.0])
+    cube.apply_translation([40.0, 0.0, 0.0])
+    results = {}
+    for name, pair, method in (("rs", [speck, cube], "robust-v1"), ("rc", [cube, speck], "robust-v1"),
+                               ("ls", [speck, cube], "min"), ("lc", [cube, speck], "min")):
+        (tmp_path / name).mkdir()
+        results[name] = _payload(tmp_path / name, trimesh.util.concatenate(pair), min_wall_estimator=method)
+    assert results["rs"]["sub_scores"]["nonzero_volume"] == results["rc"]["sub_scores"]["nonzero_volume"] == 1.0
+    assert results["rs"]["metrics"]["largest_body_volume_mm3"] == pytest.approx(1728.0)
+    assert results["ls"]["sub_scores"]["nonzero_volume"] == 0.0  # legacy: the speck, first-listed
+    assert results["lc"]["sub_scores"]["nonzero_volume"] == 1.0
