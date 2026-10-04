@@ -47,7 +47,7 @@ same generator callable produce stable filenames and stable prompt hashes.
 This harness does not call vendor APIs directly and does not know about private
 provenance systems. Provider adapters, CLIs, or local test generators can all
 share the same output/provenance contract without exposing secrets or private
-Selecta internals.
+private-integration internals.
 
 ## CAD-backend axis
 
