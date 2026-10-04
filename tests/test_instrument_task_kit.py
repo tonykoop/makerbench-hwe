@@ -294,3 +294,145 @@ def test_stub_agents_replay_gold_and_perturb_params():
     bad = kit.perturbed_stub_agent(module, {"size": lambda p: p["size"] * 2})(spec, track="blind")
     assert bad.source == "cube(20);"
     assert spec.params["size"] == 10  # the real spec is untouched
+
+
+# ----- #984: CSV read bound to the validated file (TOCTOU) + Windows paths -----
+
+SECRET = "member_id,target_hz\nSECRET,1\n"
+
+
+def _swap_file_to_outside(tmp_path, repo):
+    (tmp_path / "outside.csv").write_text(SECRET, encoding="utf-8")
+    (repo / "family-spec.csv").unlink()
+    (repo / "family-spec.csv").symlink_to(tmp_path / "outside.csv")
+
+
+def _swap_file_to_private(tmp_path, repo):
+    (repo / "private").mkdir()
+    (repo / "private" / "table.csv").write_text(SECRET, encoding="utf-8")
+    (repo / "family-spec.csv").unlink()
+    (repo / "family-spec.csv").symlink_to(repo / "private" / "table.csv")
+
+
+def _swap_parent_dir_to_outside(tmp_path, repo):
+    outside = tmp_path / "outside_dir"
+    outside.mkdir()
+    (outside / "spec.csv").write_text(SECRET, encoding="utf-8")
+    (repo / "data").rename(tmp_path / "data_moved")
+    (repo / "data").symlink_to(outside, target_is_directory=True)
+
+
+@pytest.mark.parametrize("dirfd", [True, False], ids=["dirfd", "inode-recheck"])
+@pytest.mark.parametrize("csv_rel,swap", [
+    ("family-spec.csv", _swap_file_to_outside),
+    ("family-spec.csv", _swap_file_to_private),
+    ("data/spec.csv", _swap_parent_dir_to_outside),
+], ids=["file->outside", "file->private", "parent-dir->outside"])
+def test_scaffold_symlink_swap_after_validation_is_refused(tmp_path, monkeypatch, dirfd, csv_rel, swap):
+    # The swap happens inside the visibility lookup: after resolve_csv validated
+    # the path and before the content read, i.e. exactly the TOCTOU window.
+    if dirfd and not scaffold_mod._DIRFD_OK:
+        pytest.skip("platform has no O_NOFOLLOW / dir_fd")
+    monkeypatch.setattr(scaffold_mod, "_DIRFD_OK", dirfd)
+    repo = _plain_repo(tmp_path)
+    (repo / "data").mkdir()
+    (repo / "data" / "spec.csv").write_text(CSV, encoding="utf-8")
+
+    def lookup(slug):
+        swap(tmp_path, repo)
+        return "PUBLIC"
+
+    with pytest.raises(scaffold_mod.ScaffoldError, match="changed after validation"):
+        scaffold_mod.scaffold(repo_dir=repo, task_id="instrument_x", columns=["member_id"],
+                              csv_rel=csv_rel, tasks_root=tmp_path / "tasks", visibility_lookup=lookup,
+                              slug="tonykoop/x", commit="c")
+    assert not (tmp_path / "tasks").exists()
+
+
+@pytest.mark.parametrize("dirfd", [True, False], ids=["dirfd", "inode-recheck"])
+def test_scaffold_bound_read_without_swap_still_works(tmp_path, monkeypatch, dirfd):
+    if dirfd and not scaffold_mod._DIRFD_OK:
+        pytest.skip("platform has no O_NOFOLLOW / dir_fd")
+    monkeypatch.setattr(scaffold_mod, "_DIRFD_OK", dirfd)
+    repo = _plain_repo(tmp_path)
+    (repo / "data").mkdir()
+    (repo / "data" / "spec.csv").write_text("\ufeff" + CSV, encoding="utf-8")  # BOM is stripped
+    out = scaffold_mod.scaffold(repo_dir=repo, task_id="instrument_x", columns=["member_id"],
+                                csv_rel="data/spec.csv", tasks_root=tmp_path / "tasks",
+                                visibility_lookup=lambda s: "PUBLIC", slug="tonykoop/x", commit="c")
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert [r["member_id"] for r in data["rows"]] == ["A", "B", "C"]
+
+
+def test_scaffold_in_repo_symlink_is_still_allowed(tmp_path):
+    # A symlink that resolves inside the repo is read at its resolved target.
+    repo = _plain_repo(tmp_path)
+    (repo / "alias.csv").symlink_to(repo / "family-spec.csv")
+    out = scaffold_mod.scaffold(repo_dir=repo, task_id="instrument_x", columns=["member_id"],
+                                csv_rel="alias.csv", tasks_root=tmp_path / "tasks",
+                                visibility_lookup=lambda s: "PUBLIC", slug="tonykoop/x", commit="c")
+    assert json.loads(out.read_text(encoding="utf-8"))["source"]["path"] == "family-spec.csv"
+
+
+def test_scaffold_rejects_fifo_swapped_in(tmp_path):
+    if not hasattr(__import__("os"), "mkfifo") or not scaffold_mod._DIRFD_OK:
+        pytest.skip("no mkfifo / dir_fd")
+    import os
+
+    repo = _plain_repo(tmp_path)
+
+    def lookup(slug):
+        (repo / "family-spec.csv").unlink()
+        os.mkfifo(repo / "family-spec.csv")
+        return "PUBLIC"
+
+    with pytest.raises(scaffold_mod.ScaffoldError, match="regular file"):
+        scaffold_mod.scaffold(repo_dir=repo, task_id="instrument_x", columns=["member_id"],
+                              tasks_root=tmp_path / "tasks", visibility_lookup=lookup,
+                              slug="tonykoop/x", commit="c")
+
+
+_WINDOWS_BAD = [
+    r"C:\outside.csv",            # drive-absolute
+    r"C:outside.csv",             # drive-relative
+    r"\outside.csv",              # rooted
+    r"\\server\share\x.csv",      # UNC
+    r"\\?\C:\outside.csv",        # extended-length
+    r"..\outside.csv",            # traversal
+    r"sub\..\..\outside.csv",     # nested traversal
+    r"private\table.csv",
+    r"PRIVATE\table.csv",
+    r"Private.\table.csv",        # Win32 strips trailing dots ...
+    r"private \table.csv",        # ... and trailing spaces
+    r".git\config",
+    r".GIT.\config",
+    r"data/..\..\outside.csv",    # mixed separators
+]
+
+
+@pytest.mark.parametrize("csv_rel", _WINDOWS_BAD)
+def test_check_csv_rel_windows_rules_via_ntpath(csv_rel):
+    from pathlib import PureWindowsPath
+
+    with pytest.raises(scaffold_mod.ScaffoldError):
+        scaffold_mod.check_csv_rel(csv_rel, flavours=(PureWindowsPath,))
+
+
+@pytest.mark.parametrize("csv_rel", _WINDOWS_BAD)
+def test_scaffold_refuses_windows_spellings_on_every_os(tmp_path, csv_rel):
+    repo = _plain_repo(tmp_path)
+    with pytest.raises(scaffold_mod.ScaffoldError):
+        scaffold_mod.scaffold(repo_dir=repo, task_id="instrument_x", columns=["member_id"],
+                              csv_rel=csv_rel, tasks_root=tmp_path / "tasks",
+                              visibility_lookup=lambda s: "PUBLIC", slug="tonykoop/x",
+                              commit="c", read_csv=_no_read)
+
+
+@pytest.mark.parametrize("csv_rel", [r"family-spec.csv", r"data\spec.csv", r"data\.\spec.csv",
+                                     r"privateer\x.csv", r"git\x.csv"])
+def test_check_csv_rel_windows_allows_in_repo_paths(csv_rel):
+    import ntpath
+    from pathlib import PureWindowsPath
+
+    scaffold_mod.check_csv_rel(csv_rel, flavours=(PureWindowsPath,))
+    assert not ntpath.isabs(csv_rel)
