@@ -35,8 +35,9 @@ Checks (each failure is explained in the #903 shape)
         an upper bound, both from the closest vertex pair.
     ``part_interference``
         Two parts interpenetrate when their shared volume exceeds ``interference_tolerance_mm3``
-        AND its mean thickness (``2 V / A``, the interference depth) exceeds
-        ``interference_depth_tolerance_mm``. The default depth allowance
+        AND their penetration depth exceeds ``interference_depth_tolerance_mm``. The penetration
+        depth is the deepest point of the shared solid's surface, measured from the other part's
+        surface, so a deep tab is not averaged away by a broad shallow overlap. The default depth allowance
         (``INTERFERENCE_DEPTH_TOLERANCE_MM``, 0.2 mm) is the press-fit interference range of
         printed parts, so a press fit over a long engagement passes. A neck running through
         the bowl wall does not. A spec that declares one of the two tolerances is judged on
@@ -64,6 +65,12 @@ INTERFERENCE_DEPTH_TOLERANCE_MM = 0.2
 #: Face-pair product up to which a floating part's reported gap is measured triangle by triangle.
 EXACT_GAP_FACE_PAIRS = 5e7
 MAX_PARTS = 40
+#: Inputs above this many faces are not measured (#982 review): status ``incomplete`` with
+#: ``incomplete_reason: too_large``, so the advisory stays under ~1 GB (a 524k-face assembly
+#: peaks near 600 MB; 1.18M faces reached 1.19 GB).
+MAX_FACES = 600_000
+MAX_DEPTH_SAMPLES = 4_000
+DEPTH_BATCH = 256
 CAVITY_PROBE_POINTS = 64
 
 
@@ -153,8 +160,8 @@ def _gap(a, b, search: float) -> float | None:
         return None
 
 
-def _overlap(a, b) -> tuple[float, float] | None:
-    """``(shared volume mm3, shared surface area mm2)`` of two solids, or ``None`` on failure."""
+def _overlap(a, b):
+    """``(shared volume mm3, shared solid)`` of two solids, or ``None`` on failure."""
     import manifold3d
 
     try:
@@ -162,10 +169,51 @@ def _overlap(a, b) -> tuple[float, float] | None:
         if shared.status() != manifold3d.Error.NoError:
             return None
         if shared.is_empty():
-            return 0.0, 0.0
-        return float(shared.volume()), float(shared.surface_area())
+            return 0.0, None
+        return float(shared.volume()), shared
     except Exception:  # noqa: BLE001 - an unmeasurable pair is reported, never raised
         return None
+
+
+def _near(part: trimesh.Trimesh, lo: np.ndarray, hi: np.ndarray) -> trimesh.Trimesh | None:
+    """The faces of ``part`` whose bounding boxes reach the box ``lo..hi``."""
+    tris = part.triangles
+    keep = np.all(tris.max(axis=1) >= lo, axis=1) & np.all(tris.min(axis=1) <= hi, axis=1)
+    if not keep.any():
+        return None
+    return part.submesh([np.nonzero(keep)[0]], append=True)
+
+
+def _penetration_depth(shared, a: trimesh.Trimesh, b: trimesh.Trimesh) -> float | None:
+    """How deep the two parts run into each other (#982 review), in mm.
+
+    Every point of the shared solid's surface lies on one part's surface inside the other, so
+    its depth is its distance to the other part's surface (its distance to its own is ~0). The
+    penetration depth is the largest such depth over the shared surface. Samples: its vertices,
+    face centroids, and points halfway from each centroid to the face's corners. Distances are
+    queried in batches against only the faces near the overlap, so memory stays bounded."""
+    mesh = shared.to_mesh64()
+    vertices = np.asarray(mesh.vert_properties, dtype=float)[:, :3]
+    faces = np.asarray(mesh.tri_verts, dtype=np.int64)
+    if not len(faces):
+        return None
+    tris = vertices[faces]
+    centroids = tris.mean(axis=1)
+    halfway = ((tris + centroids[:, None, :]) / 2.0).reshape(-1, 3)
+    points = np.unique(np.round(np.vstack([vertices, centroids, halfway]), 9), axis=0)
+    if len(points) > MAX_DEPTH_SAMPLES:
+        points = points[np.linspace(0, len(points) - 1, MAX_DEPTH_SAMPLES).astype(int)]
+    lo, hi = vertices.min(axis=0), vertices.max(axis=0)
+    margin = float(np.linalg.norm(hi - lo)) + 1e-6
+    depth = np.zeros(len(points))
+    for part in (a, b):
+        near = _near(part, lo - margin, hi + margin)
+        if near is None:
+            return None
+        for start in range(0, len(points), DEPTH_BATCH):
+            _, distance, _ = trimesh.proximity.closest_point(near, points[start:start + DEPTH_BATCH])
+            depth[start:start + DEPTH_BATCH] = np.maximum(depth[start:start + DEPTH_BATCH], distance)
+    return float(depth.max())
 
 
 def _explain(check: str, *, measured, threshold, unit: str, requires: str, body_id: str | None,
@@ -191,6 +239,11 @@ def advise(spec: Mapping[str, Any], mesh: trimesh.Trimesh) -> dict[str, Any]:
     tolerances = {"contact_tolerance_mm": contact_tol, "interference_tolerance_mm3": volume_tol,
                   "interference_depth_tolerance_mm": depth_tol}
 
+    if len(mesh.faces) > MAX_FACES:
+        return {**base, "status": "incomplete", "family": FAMILY, "failures": [], "tolerances": tolerances,
+                "incomplete_reason": "too_large", "faces": int(len(mesh.faces)),
+                "error": f"{len(mesh.faces)} faces (more than {MAX_FACES} are not measured, to keep the "
+                         "advisory's memory bounded)"}
     bodies = list(mesh.split(only_watertight=False)) if len(mesh.faces) else []
     outward, owners, inverted = _parts_and_cavities(bodies)
     void_shells = sum(len(v) for v in owners.values())
@@ -247,9 +300,13 @@ def advise(spec: Mapping[str, Any], mesh: trimesh.Trimesh) -> dict[str, Any]:
                 unmeasured.append([ids[i], ids[j]])
                 gap[i, j] = gap[j, i] = 0.0
                 continue
-            volume, area = shared
+            volume, solid = shared
             if volume > 0.0:
-                depth = 2.0 * volume / area if area > 0.0 else 0.0
+                depth = _penetration_depth(solid, parts[i], parts[j])
+                if depth is None:
+                    unmeasured.append([ids[i], ids[j]])
+                    gap[i, j] = gap[j, i] = 0.0
+                    continue
                 raw_overlaps.append((i, j, volume, depth))
                 overlaps.append({"parts": [ids[i], ids[j]], "volume_mm3": round(volume, 6),
                                  "depth_mm": round(depth, 4)})
@@ -314,12 +371,11 @@ def advise(spec: Mapping[str, Any], mesh: trimesh.Trimesh) -> dict[str, Any]:
         a, b = ids[i], ids[j]
         failures.append(_explain(
             "part_interference", measured=round(volume, 6), threshold=volume_tol, unit="mm3",
-            requires=f"shared volume <= threshold, or its mean thickness <= {depth_tol:g} mm, "
+            requires=f"shared volume <= threshold, or penetration depth <= {depth_tol:g} mm, "
                      "for every pair of parts", body_id=a, other_body_id=b,
             depth_mm=round(depth, 4), depth_threshold_mm=depth_tol,
-            detail=f"{a} and {b} interpenetrate by {volume:.4g} mm3 of shared volume, {depth:.3g} mm "
-                   f"deep on average (tolerances {volume_tol:g} mm3, {depth_tol:g} mm): one part runs "
-                   f"into the other"))
+            detail=f"{a} and {b} interpenetrate by {volume:.4g} mm3 of shared volume, up to {depth:.3g} mm "
+                   f"deep (tolerances {volume_tol:g} mm3, {depth_tol:g} mm): one part runs into the other"))
 
     status = "inconsistent" if failures else ("incomplete" if unmeasured else "consistent")
     return {
@@ -338,12 +394,13 @@ def advise(spec: Mapping[str, Any], mesh: trimesh.Trimesh) -> dict[str, Any]:
                                  "measured (non-watertight part or failed boolean)"} if unmeasured else {}),
         "method": "connected outward bodies as parts, each with its enclosed cavity shells; triangle-level "
                   "gaps (manifold3d min_gap); contact groups by gap <= tolerance; interference as the "
-                  "manifold intersection volume and its mean thickness 2V/A",
+                  "manifold intersection volume and its penetration depth (deepest point of the shared surface "
+                  "from the other part's surface)",
         "assumptions": [
             f"parts in contact when they overlap or come within {contact_tol:g} mm; the contact group "
             "holding the most material is the assembly",
-            f"interference allowed up to {volume_tol:g} mm3 of shared volume or {depth_tol:g} mm mean "
-            "thickness per pair (the default depth allowance covers printed press fits)",
+            f"interference allowed up to {volume_tol:g} mm3 of shared volume or {depth_tol:g} mm penetration "
+            "depth per pair (the default depth allowance covers printed press fits; approved 2026-10-04)",
             "not modelled: intended clearance fits, fasteners, glue lines, part function",
         ],
     }

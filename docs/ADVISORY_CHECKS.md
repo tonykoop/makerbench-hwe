@@ -187,11 +187,11 @@ inside another part, is an inverted solid: the result is `not measurable` and li
 | check | compares | tolerance |
 |---|---|---|
 | `floating_part` | parts are grouped by contact (they overlap or their surfaces come within the tolerance); the group holding the most material is the assembly and every other part floats, reported with its gap to the nearest part outside its own group | `contact_tolerance_mm` (spec or `constraints`), default 0.5 mm |
-| `part_interference` | every pair's shared volume (manifold intersection; touching faces share none) and its mean thickness `2V/A`, the interference depth: an over-sized tenon, or a neck running through the bowl wall | fails when the volume exceeds `interference_tolerance_mm3` AND the depth exceeds `interference_depth_tolerance_mm` (spec or `constraints`). Defaults: 1 mm³ and 0.2 mm, the press-fit interference range of printed parts, so a press fit over a long engagement passes. A spec that declares only one of the two is judged on it alone; the other is 0. |
+| `part_interference` | every pair's shared volume (manifold intersection; touching faces share none) and its penetration depth: the deepest point of the shared solid's surface, measured from the other part's surface, so a deep tab is not averaged away by a broad shallow overlap. Examples: an over-sized tenon, or a neck running through the bowl wall | fails when the volume exceeds `interference_tolerance_mm3` AND the penetration depth exceeds `interference_depth_tolerance_mm` (spec or `constraints`). Defaults: 1 mm³ and 0.2 mm, the press-fit interference range of printed parts, so a press fit over a long engagement passes (allowance approved 2026-10-04). A spec that declares only one of the two is judged on it alone; the other is 0. |
 
 Each part is a manifold3d solid. Contact is decided with a triangle-level gap
 (`Manifold.min_gap`, a bounded search in C++). Nothing is point-sampled, and memory does not
-grow with Python-side candidate arrays: a 524k-face, four-part assembly peaks under 600 MB.
+grow with Python-side candidate arrays: a 524k-face, four-part assembly peaks under 700 MB. Inputs over 600,000 faces are not measured: `incomplete` with `incomplete_reason: too_large`.
 A floating part's gap is measured triangle by triangle. If the pair is too dense (face-pair
 product over 5×10⁷), it is reported as a labelled lower bound (`gap_kind: lower_bound`) with an
 upper bound (`gap_upper_bound_mm`) from the closest vertex pair. Tolerances compare raw

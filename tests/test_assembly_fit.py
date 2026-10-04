@@ -283,9 +283,10 @@ def test_press_fit_passes_the_default_depth_allowance_but_a_declared_depth_flags
     assert [f["check"] for f in af.advise(ASSEMBLY, _press_fit(2.0))["failures"]] == ["part_interference"]
 
 
-def test_dense_assembly_memory_stays_bounded(tmp_path):
-    """The point-sampled proximity query took a 32k-face lyre past 1.2 GB. A 131k-face assembly
-    (contact, interference and a floating part) must stay well under that, in a fresh process."""
+def test_dense_assembly_peak_memory_stays_under_a_gigabyte(tmp_path):
+    """#982 review: the absolute peak, not growth. A four-torus assembly of 524k faces, just under
+    MAX_FACES, with contact, interference (penetration depth measured) and a floating part,
+    must peak under 1 GiB RSS in a fresh process."""
     import os
     import subprocess
     import sys
@@ -296,17 +297,51 @@ def test_dense_assembly_memory_stays_bounded(tmp_path):
         "import resource, trimesh\n"
         "from makerbench import assembly_fit as af\n"
         f"assert af.__file__.startswith({root!r}), af.__file__\n"
-        "a = trimesh.creation.torus(major_radius=40, minor_radius=8, major_sections=128, minor_sections=128)\n"
+        "a = trimesh.creation.torus(major_radius=40, minor_radius=8, major_sections=256, minor_sections=256)\n"
         "parts = [a]\n"
         "for offset in ([0, 0, 16.2], [0, 0, 50], [30, 0, 8]):\n"
         "    p = a.copy(); p.apply_translation(offset); parts.append(p)\n"
         "mesh = trimesh.util.concatenate(parts)\n"
-        "before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss\n"
+        "assert len(mesh.faces) <= af.MAX_FACES, len(mesh.faces)\n"
         "r = af.advise({'assembly': True}, mesh)\n"
-        "print(r['status'], (resource.getrusage(resource.RUSAGE_SELF).ru_maxrss - before) // 1024)\n")
+        "print(r['status'], resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024)\n")
     env = {**os.environ, "PYTHONPATH": os.pathsep.join([root, os.environ.get("PYTHONPATH", "")])}
-    out = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=300,
+    out = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=600,
                          cwd=root, env=env, check=True).stdout.split()
-    status, growth_mib = out[0], int(out[-1])
+    status, peak_mib = out[0], int(out[-1])
     assert status == "inconsistent"
-    assert growth_mib < 400, growth_mib
+    assert peak_mib < 1024, peak_mib
+
+
+def test_oversized_assembly_is_incomplete_too_large(monkeypatch):
+    """Above MAX_FACES nothing is measured: incomplete, too_large, never consistent."""
+    body, neck = _body_and_neck(neck_x=80.0)
+    mesh = trimesh.util.concatenate([body, neck])
+    monkeypatch.setattr(af, "MAX_FACES", len(mesh.faces) - 1)
+    result = af.advise(ASSEMBLY, mesh)
+    assert result["status"] == "incomplete" and result["incomplete_reason"] == "too_large"
+    assert result["failures"] == []
+
+
+def test_deep_tab_is_not_averaged_away_by_a_broad_shallow_overlap():
+    """#982 review: a 100x100 mm plate overlapping the base by 0.05 mm, with a 5x5 mm tab running
+    5 mm into it: the mean thickness 2V/A read 0.062 mm and passed. Penetration depth is 5 mm."""
+    base = trimesh.creation.box(bounds=[[-50, -50, -20], [50, 50, 0]])
+    plate = trimesh.creation.box(bounds=[[-50, -50, -0.05], [50, 50, 0.05]])
+    tab = trimesh.creation.box(bounds=[[-2.5, -2.5, -5], [2.5, 2.5, 5]])
+    other = trimesh.boolean.union([plate, tab], engine="manifold")
+    result = af.advise(ASSEMBLY, trimesh.util.concatenate([base, other]))
+    (failure,) = result["failures"]
+    assert failure["check"] == "part_interference"
+    assert failure["depth_mm"] == pytest.approx(5.0, abs=1e-3)
+
+
+@pytest.mark.parametrize("overlap, fails", [(0.201, True), (0.19, False)])
+def test_penetration_just_over_the_allowance_fails(overlap, fails):
+    """Two 10 mm cubes overlapping by 0.201 mm read 0.1932 mm mean thickness and passed."""
+    a = _box([10, 10, 10], [0, 0, 0])
+    b = _box([10, 10, 10], [0, 0, 10 - overlap])
+    result = af.advise(ASSEMBLY, trimesh.util.concatenate([a, b]))
+    (pair,) = result["overlaps"]
+    assert pair["depth_mm"] == pytest.approx(overlap, abs=1e-6)
+    assert bool(result["failures"]) is fails
