@@ -355,6 +355,7 @@ def test_zero_webgl_turntable_turns_and_steps(studio_url: str, screenshot_dir: P
         assert orbit.is_disabled()
         assert "needs WebGL" in page.locator("#viewer-note").inner_text()
         assert page.locator("model-viewer").count() == 0
+        assert page.get_by_role("button", name="Wireframe", exact=True).count() == 0
         # The 3D viewer script loads only on demand in a WebGL browser (#722).
         assert not [url for url in session.requests if "model-viewer" in url]
 
@@ -374,6 +375,14 @@ def test_zero_webgl_turntable_turns_and_steps(studio_url: str, screenshot_dir: P
         page.keyboard.press("ArrowLeft")
         assert int(turntable.get_attribute("data-frame")) == (paused_at - 1) % 24
         assert "/vote_pages/blind/" in turntable.locator("img").get_attribute("src")
+        # Wireframe lifecycle changes must not remount the zero-WebGL turntable
+        # when a new pair arrives: preserve its existing DOM/focus behavior.
+        page.evaluate("() => { window.originalTurntable = document.querySelector('.turntable'); }")
+        pair_id = page.locator(".stage").get_attribute("data-pair-id")
+        page.keyboard.press("s")
+        page.wait_for_function(
+            "id => document.querySelector('.stage').dataset.pairId !== id", arg=pair_id)
+        assert page.evaluate("() => window.originalTurntable === document.querySelector('.turntable')")
         assert session.errors == []
         session.close()
         browser.close()
@@ -396,7 +405,11 @@ def test_3d_orbit_falls_back_to_the_turntable_on_context_loss(studio_url: str, s
             pytest.skip("fixture meshes produced no GLB for 3D orbit")
         page.keyboard.press("v")
         page.locator("model-viewer").nth(1).wait_for(state="attached")
-        page.wait_for_timeout(500)
+        wireframe = page.get_by_role("button", name="Wireframe", exact=True)
+        wireframe.wait_for()
+        wireframe.click()
+        page.wait_for_function(_MATERIAL_STATE, arg=True)
+        wireframe.focus()
         page.screenshot(path=str(screenshot_dir / "f2-vote-3d-orbit.png"), full_page=True)
         page.locator("model-viewer").first.evaluate(
             "el => el.dispatchEvent(new CustomEvent('error', {detail: {type: 'webglcontextlost'}}))"
@@ -404,6 +417,93 @@ def test_3d_orbit_falls_back_to_the_turntable_on_context_loss(studio_url: str, s
         page.locator(".turntable").first.wait_for()
         assert "stopped working" in page.locator("#viewer-note").inner_text()
         assert page.locator("model-viewer").count() == 0
+        assert wireframe.count() == 0
+        assert page.get_by_role("button", name="Turntable", exact=True).evaluate(
+            "button => button === document.activeElement")
+        session.close()
+        browser.close()
+
+
+# Inspect the real vendor's materials independently of the application adapter.
+_MATERIAL_STATE = """enabled => {
+  const viewers = [...document.querySelectorAll('model-viewer')];
+  return viewers.length === 2 && viewers.every(viewer => {
+    const materials = (viewer.model?.materials || []).filter(m => m.isActive);
+    return materials.length > 0 && materials.every(material => {
+      const key = Object.getOwnPropertySymbols(material).find(s => s.description === 'correlatedObjects');
+      const backing = key && [...material[key]];
+      return backing?.length > 0 && backing.every(m => m.isMaterial && m.wireframe === enabled);
+    });
+  });
+}"""
+
+
+@pytest.mark.parametrize("theme,width", [("light", 1440), ("dark", 1440), ("light", 400), ("dark", 400)])
+def test_wireframe_changes_real_materials_and_line_draws_with_keyboard(
+    studio_url: str, screenshot_dir: Path, theme: str, width: int,
+):
+    with sync_playwright() as playwright:
+        browser = _launch(playwright, "webgl")
+        session = Session(browser, f"{studio_url}/#/vote/{RUN_ID}",
+                          viewport={"width": width, "height": 1000}, color_scheme=theme)
+        page = session.page
+        session.wait_for_stage()
+        # Required-browser runs must execute this proof, not quietly skip it.
+        assert page.evaluate("() => !!document.createElement('canvas').getContext('webgl2')")
+        assert page.locator("model-viewer").count() == 0
+        wireframe = page.get_by_role("button", name="Wireframe", exact=True)
+        assert wireframe.count() == 0
+        assert not [url for url in session.requests if "model-viewer" in url]
+        page.evaluate("""() => {
+          window.wireframeDrawModes = [];
+          for (const name of ['drawElements', 'drawArrays', 'drawElementsInstanced', 'drawArraysInstanced']) {
+            const original = WebGL2RenderingContext.prototype[name];
+            WebGL2RenderingContext.prototype[name] = function(mode, ...args) {
+              if (window.wireframeDrawModes.length < 1000) window.wireframeDrawModes.push(mode);
+              return original.call(this, mode, ...args);
+            };
+          }
+        }""")
+        orbit = page.get_by_role("button", name="3D orbit", exact=True)
+        orbit.focus()
+        page.keyboard.press("Enter")
+        wireframe.wait_for()
+        page.wait_for_function(_MATERIAL_STATE, arg=False)
+        assert wireframe.get_attribute("aria-pressed") == "false"
+        assert not page.evaluate("() => window.wireframeDrawModes.includes(1)")
+        page.keyboard.press("Tab")
+        assert wireframe.evaluate("button => button === document.activeElement")
+        page.evaluate("() => { window.wireframeDrawModes = []; }")
+        page.keyboard.press("Space")
+        page.wait_for_function(_MATERIAL_STATE, arg=True)
+        assert wireframe.get_attribute("aria-pressed") == "true"
+        page.wait_for_function("() => window.wireframeDrawModes.includes(1)")  # WebGL LINES
+        assert wireframe.evaluate("button => button === document.activeElement")
+        assert wireframe.evaluate("button => getComputedStyle(button).outlineStyle") != "none"
+        if width == 400:
+            # model-viewer pauses drawing off-screen models. Reveal the lower
+            # plate and prove it draws lines too before capturing the full page.
+            page.evaluate("() => { window.wireframeDrawModes = []; }")
+            page.locator("model-viewer").nth(1).evaluate("el => el.scrollIntoView({block: 'start'})")
+            page.wait_for_function("() => document.querySelectorAll('model-viewer')[1].modelIsVisible && window.wireframeDrawModes.includes(1)")
+            wireframe.focus()
+        page.screenshot(path=str(screenshot_dir / f"wireframe-{theme}-{width}.png"), full_page=True)
+        assert page.evaluate("() => document.scrollingElement.scrollWidth - document.scrollingElement.clientWidth") <= 0
+        page.keyboard.press("Enter")
+        page.wait_for_function(_MATERIAL_STATE, arg=False)
+        assert wireframe.get_attribute("aria-pressed") == "false"
+        # A fresh orbit session never inherits the previous wireframe state.
+        page.keyboard.press("Space")
+        page.wait_for_function(_MATERIAL_STATE, arg=True)
+        page.get_by_role("button", name="Turntable", exact=True).click()
+        assert wireframe.count() == 0
+        assert page.locator("model-viewer").count() == 0
+        orbit.click()
+        wireframe.wait_for()
+        page.wait_for_function(_MATERIAL_STATE, arg=False)
+        assert wireframe.get_attribute("aria-pressed") == "false"
+        assert session.errors == []
+        assert all(url.startswith(studio_url) for url in session.requests)
         session.close()
         browser.close()
 
