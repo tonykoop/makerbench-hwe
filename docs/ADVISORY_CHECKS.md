@@ -119,3 +119,29 @@ the body, so if it sits in the bore it reads as an obstruction or a closed end.
 
 Embouchure and edge tones, windway geometry, open tone holes, wall compliance and humidity.
 These are first-order screens, not tuning predictions.
+
+## String geometry (`advisory.strings`, #981)
+
+`makerbench/string_geometry.py`, for every `family: strings` spec; other families report
+`not modelled`.
+
+**Detection works on a unioned mesh.** OpenSCAD unions every top-level object, so strings
+arrive fused to their nut, bridge or pegs rather than as separate bodies. Each face casts one
+ray inward along its normal (its shape diameter: the thickness of the part under it). Faces
+thinner than 4 mm (`constraints.string_max_diameter_mm` overrides) are grouped by edge
+adjacency; a group is a string when its oriented bounding box is at least 40 mm long, 15
+times longer than wide and no wider than 1.5 x the maximum diameter. A thin soundboard is thin
+but wide, so it is not a string. A string's length is its bounding-box length, anchor to anchor.
+
+| check | compares | tolerance |
+|---|---|---|
+| `string_count` | detected strings vs `string_count` (or an integer `strings`) | exact; up to `sympathetic_string_count` extra |
+| `string_length` | shortest and longest string vs `string_length_range_mm`, `shortest/longest_speaking_length_mm` or `speaking_length_min/max_mm`; the median string vs a single `scale_length_mm` / `speaking_length_mm` | -15 % / +30 % (a modelled string runs past its speaking length to its anchors) |
+| `string_clearance` | 17 points on each string's axis over its middle 80 % vs the rest of the assembly | under 1 mm over more than 20 % of the span fails: the string lies on or in the soundboard or body |
+
+Each failure names the string (`string_N`, longest first) or `assembly`. On the measured
+sambuca meshes from the string matchups the check finds all 13 strings with lengths from about
+180 to 550 mm against the declared 200-580 mm range.
+
+Not modelled: tension, gauge, break angle, frets and action. A string buried entirely inside
+material leaves no surface and shows up as a missing string (`string_count`).
