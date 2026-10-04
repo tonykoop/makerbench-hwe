@@ -232,6 +232,8 @@ def _read_small(dir_fd: int, rel: str) -> str | None:
         fd = _open_beneath(dir_fd, rel, directory=False)
     except FileNotFoundError:
         return None
+    except OSError as exc:  # ELOOP (symlink), ENOTDIR, EACCES, ...: refuse
+        raise ScaffoldError(f"refusing git metadata {rel}: {exc.strerror}") from exc
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             raise ScaffoldError(f"git metadata {rel} is not a regular file")
@@ -243,22 +245,53 @@ def _read_small(dir_fd: int, rel: str) -> str | None:
         os.close(fd)
 
 
-_SECTION = re.compile(r'^\s*\[\s*([A-Za-z0-9.-]+)(?:\s+"([^"]*)")?\s*\]')
-_KEY = re.compile(r"^\s*([A-Za-z][A-Za-z0-9-]*)\s*=\s*(.*?)\s*$")
+NORMAL_CLONE_ONLY = ("only a plain .git directory at the repo root is supported "
+                     "(not a linked worktree, submodule or symlinked .git); run the scaffold from a normal clone")
+_HEADER = re.compile(r'\[\s*([A-Za-z0-9-]+)(?:\s+"([^"\\]*)")?\s*\]\s*(?:[#;].*)?')
+_KEYVAL = re.compile(r"([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*(.*?))?\s*")
+_REFUSED_KEYS = {"insteadof", "pushinsteadof"}
+_REFUSED_SECTIONS = {"include", "includeif"}
 
 
-def _config_value(text: str, section: str, subsection: str | None, key: str) -> str | None:
-    """First ``key`` in ``[section "subsection"]`` of a git config (plain form only)."""
-    current = None
-    for line in text.splitlines():
-        head = _SECTION.match(line)
-        if head:
-            current = (head.group(1).lower(), head.group(2))
+def origin_url_from_config(text: str) -> str:
+    """The single plain ``url`` of ``[remote "origin"]``, from a STRICT subset of
+    git config syntax. Anything git might read differently is refused: include /
+    includeIf sections, any insteadOf / pushInsteadOf, more than one origin url,
+    a url value containing ``"`` ``#`` ``;`` or ``\\``, old-style ``[a.b]``
+    headers, keys on a header line, and line continuations."""
+    section: tuple[str, str | None] | None = None
+    urls: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line[0] in "#;":
             continue
-        kv = _KEY.match(line)
-        if kv and current == (section, subsection) and kv.group(1).lower() == key:
-            return kv.group(2).strip('"')
-    return None
+        if line.endswith("\\"):
+            raise ScaffoldError("git config line continuations are not supported")
+        if line.startswith("["):
+            head = _HEADER.fullmatch(line)
+            if not head:
+                raise ScaffoldError(f"unsupported git config section header: {line[:60]!r}")
+            name = head.group(1).lower()
+            if name in _REFUSED_SECTIONS:
+                raise ScaffoldError(f"git config [{name}] is not supported")
+            section = (name, head.group(2))
+            continue
+        kv = _KEYVAL.fullmatch(line)
+        if not kv:
+            raise ScaffoldError(f"unsupported git config line: {line[:60]!r}")
+        key = kv.group(1).lower()
+        if key in _REFUSED_KEYS:
+            raise ScaffoldError(f"git config {key} is not supported")
+        if section == ("remote", "origin") and key == "url":
+            value = kv.group(2) or ""
+            if any(ch in value for ch in '"#;\\'):
+                raise ScaffoldError("origin url contains a quote, comment or escape character")
+            urls.append(value)
+    if len(urls) != 1:
+        raise ScaffoldError(f"expected exactly one [remote \"origin\"] url, found {len(urls)}")
+    return urls[0]
+
+
 _SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
 
@@ -270,10 +303,9 @@ class PinnedRoot:
     validation uses :attr:`ops_path`, the ``/proc/<pid>/fd/<fd>`` link to that
     open directory. The CSV is reached by walking the validated, symlink-free
     inner path from the fd, each component ``O_NOFOLLOW`` relative to its
-    parent. Git metadata is read through the fd too (no ``git`` subprocess, no
-    pathname discovery): ``.git`` is opened beneath the root; for a linked
-    worktree its gitfile's target must point back (``gitdir``) to that same
-    ``.git`` inode. Hosts without ``dir_fd`` or ``/proc`` fail closed.
+    parent. Git metadata is read through the fd too, from a strict allowlist
+    (see :meth:`git_metadata`); there is no ``git`` subprocess. Hosts without
+    ``dir_fd`` or ``/proc`` fail closed.
     """
 
     def __init__(self, root: Path):
@@ -296,15 +328,20 @@ class PinnedRoot:
     def _ops_path(self) -> Path:
         link = Path(_PROC_FD.format(pid=os.getpid(), fd=self.fd))
         try:
-            st = os.stat(link)
+            probe = os.open(link, os.O_RDONLY | os.O_DIRECTORY | _CLOEXEC)
         except OSError:
             raise ScaffoldError(UNSUPPORTED_HOST) from None
-        if (st.st_dev, st.st_ino) != self._identity:
-            raise ScaffoldError(UNSUPPORTED_HOST)
+        try:
+            if _fd_id(probe) != self._identity:
+                raise ScaffoldError(UNSUPPORTED_HOST)
+        finally:
+            os.close(probe)
         return link
 
     def check_unchanged(self) -> None:
-        """The root path still names the pinned directory."""
+        """Tamper detector: the user-given root path (``lstat``, i.e. fstatat with
+        AT_SYMLINK_NOFOLLOW) still names the pinned directory. Nothing is trusted
+        from this pathname; it only turns a detected swap into a refusal."""
         try:
             st = os.stat(self.path, follow_symlinks=False)
         except OSError as exc:
@@ -324,110 +361,44 @@ class PinnedRoot:
             os.close(fd)
 
     # ----- git metadata, read through the pinned fd ----------------------
-    def _git_dirs(self) -> tuple[int, int]:
-        """(gitdir fd, common dir fd) for the pinned checkout; caller closes both."""
-        try:
-            dot = os.open(".git", os.O_RDONLY | os.O_NOFOLLOW | _NONBLOCK | _CLOEXEC, dir_fd=self.fd)
-        except OSError as exc:
-            raise ScaffoldError(f"no usable .git in the pinned checkout: {exc}") from exc
-        try:
-            st = os.fstat(dot)
-            if stat.S_ISDIR(st.st_mode):
-                gitdir = os.dup(dot)
-            elif stat.S_ISREG(st.st_mode):
-                gitdir = self._linked_gitdir(dot, (st.st_dev, st.st_ino))
-            else:
-                raise ScaffoldError(".git is neither a directory nor a gitfile")
-        finally:
-            os.close(dot)
-        try:
-            common_rel = _read_small(gitdir, "commondir")
-            if common_rel is None:
-                return gitdir, os.dup(gitdir)
-            common = os.open(common_rel.strip(), os.O_RDONLY | os.O_DIRECTORY | _CLOEXEC, dir_fd=gitdir)
-            return gitdir, common
-        except BaseException:
-            os.close(gitdir)
-            raise
-
-    def _linked_gitdir(self, dot: int, dot_id: tuple[int, int]) -> int:
-        raw = os.read(dot, 4097).decode("utf-8")
-        match = re.fullmatch(r"gitdir:\s*(.+?)\s*", raw)
-        if not match:
-            raise ScaffoldError(".git file is not a gitfile")
-        try:
-            gitdir = os.open(match.group(1), os.O_RDONLY | os.O_DIRECTORY | _CLOEXEC, dir_fd=self.fd)
-        except OSError as exc:
-            raise ScaffoldError(f"gitfile target unavailable: {exc}") from exc
-        try:
-            # The admin dir must point back at THIS checkout: a linked worktree's
-            # ``gitdir`` file names its .git file (same inode as the one opened
-            # beneath the pinned root); a submodule's ``core.worktree`` opens,
-            # relative to the admin dir, to the pinned root itself.
-            back = _read_small(gitdir, "gitdir")
-            if back is not None:
-                try:
-                    st = os.stat(back.strip())
-                except OSError as exc:
-                    raise ScaffoldError(f"linked worktree back-pointer is stale: {exc}") from exc
-                if (st.st_dev, st.st_ino) != dot_id:
-                    raise ScaffoldError("gitfile target belongs to another checkout (gitfile swap?)")
-                return gitdir
-            worktree = _config_value(_read_small(gitdir, "config") or "", "core", None, "worktree")
-            if worktree is None:
-                raise ScaffoldError("gitfile target has no back-pointer to this checkout")
-            try:
-                wt = os.open(worktree, os.O_RDONLY | os.O_DIRECTORY | _CLOEXEC, dir_fd=gitdir)
-            except OSError as exc:
-                raise ScaffoldError(f"submodule core.worktree unavailable: {exc}") from exc
-            try:
-                if _fd_id(wt) != self._identity:
-                    raise ScaffoldError("gitfile target belongs to another checkout (gitfile swap?)")
-            finally:
-                os.close(wt)
-            return gitdir
-        except BaseException:
-            os.close(gitdir)
-            raise
-
-    def _resolve_ref(self, gitdir: int, common: int, ref: str) -> str:
-        for _ in range(8):
-            ref = ref.strip()
-            if _SHA.fullmatch(ref):
-                return ref
-            if not ref.startswith("ref:"):
-                raise ScaffoldError("unreadable git HEAD")
-            name = ref[4:].strip()
-            if not name.startswith("refs/") or ".." in PurePosixPath(name).parts:
-                raise ScaffoldError(f"unexpected ref name {name!r}")
-            loose = _read_small(gitdir, name) if not name.startswith("refs/heads/") else None
-            loose = loose if loose is not None else _read_small(common, name)
-            if loose is not None:
-                ref = loose
-                continue
-            packed = _read_small(common, "packed-refs") or ""
-            for line in packed.splitlines():
-                bits = line.split()
-                if len(bits) == 2 and bits[1] == name and _SHA.fullmatch(bits[0]):
-                    return bits[0]
-            raise ScaffoldError(f"cannot resolve {name} (unsupported ref storage?)")
-        raise ScaffoldError("git ref chain too deep")
-
     def git_metadata(self) -> tuple[str, str]:
-        """(origin URL, HEAD commit) of the pinned checkout."""
-        gitdir, common = self._git_dirs()
+        """(origin URL, HEAD commit) of the pinned checkout, from a STRICT
+        allowlist: a plain ``.git`` directory beneath the pinned root (opened
+        ``O_NOFOLLOW``), its ``config`` (see :func:`origin_url_from_config`) and
+        HEAD as a detached SHA or ``ref: refs/...`` resolved by a loose ref or
+        ``packed-refs`` in that same directory. Everything else is refused."""
         try:
-            head = _read_small(gitdir, "HEAD")
-            if head is None:
-                raise ScaffoldError("pinned checkout has no HEAD")
-            commit = self._resolve_ref(gitdir, common, head)
-            url = _config_value(_read_small(common, "config") or "", "remote", "origin", "url")
-            if not url:
-                raise ScaffoldError("pinned checkout has no origin remote URL")
-            return url, commit
+            gitdir = os.open(".git", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | _CLOEXEC,
+                             dir_fd=self.fd)
+        except OSError as exc:
+            raise ScaffoldError(f"{NORMAL_CLONE_ONLY} ({exc.strerror})") from exc
+        try:
+            if _read_small(gitdir, "commondir") is not None:
+                raise ScaffoldError(NORMAL_CLONE_ONLY)
+            url = origin_url_from_config(_read_small(gitdir, "config") or "")
+            head = (_read_small(gitdir, "HEAD") or "").strip()
+            return url, self._head_commit(gitdir, head)
         finally:
             os.close(gitdir)
-            os.close(common)
+
+    @staticmethod
+    def _head_commit(gitdir: int, head: str) -> str:
+        if _SHA.fullmatch(head):
+            return head
+        match = re.fullmatch(r"ref:\s*(refs/[A-Za-z0-9._/-]+)", head)
+        if not match or ".." in match.group(1) or "//" in match.group(1):
+            raise ScaffoldError("unsupported git HEAD (expected a detached SHA or ref: refs/...)")
+        name = match.group(1)
+        loose = _read_small(gitdir, name)
+        if loose is not None:
+            if not _SHA.fullmatch(loose.strip()):
+                raise ScaffoldError(f"unsupported loose ref {name} (symbolic refs are not supported)")
+            return loose.strip()
+        for line in (_read_small(gitdir, "packed-refs") or "").splitlines():
+            bits = line.split()
+            if len(bits) == 2 and bits[1] == name and _SHA.fullmatch(bits[0]):
+                return bits[0]
+        raise ScaffoldError(f"cannot resolve {name} from loose refs or packed-refs (unsupported ref storage?)")
 
     def close(self) -> None:
         if self.fd is not None:

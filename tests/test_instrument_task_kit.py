@@ -678,21 +678,16 @@ def test_git_metadata_matches_git(tmp_path, layout):
     assert _meta(repo) == (_git(repo, "remote", "get-url", "origin"), _git(repo, "rev-parse", "HEAD"))
 
 
-def test_git_metadata_of_a_linked_worktree(tmp_path):
+def test_linked_worktree_is_refused(tmp_path):
     _require_supported()
     main = tmp_path / "main"
     _git_checkout(main, "tonykoop/checkout-a", CSV)
-    wt = tmp_path / "wt"
-    _git(main, "worktree", "add", "-q", "-b", "side", str(wt))
-    (wt / "y.txt").write_text("y", encoding="utf-8")
-    _git(wt, "add", ".")
-    _git(wt, "commit", "-qm", "side commit")
-    assert (wt / ".git").is_file()
-    assert _meta(wt) == ("https://github.com/tonykoop/checkout-a.git", _git(wt, "rev-parse", "HEAD"))
-    assert _meta(wt)[1] != _git(main, "rev-parse", "HEAD")
+    _git(main, "worktree", "add", "-q", "-b", "side", str(tmp_path / "wt"))
+    with pytest.raises(scaffold_mod.ScaffoldError, match="normal clone"):
+        _meta(tmp_path / "wt")
 
 
-def test_git_metadata_of_a_submodule_checkout(tmp_path):
+def test_submodule_checkout_is_refused(tmp_path):
     _require_supported()
     upstream = tmp_path / "upstream"
     _git_checkout(upstream, "tonykoop/checkout-a", CSV)
@@ -700,38 +695,111 @@ def test_git_metadata_of_a_submodule_checkout(tmp_path):
     sup.mkdir()
     _git(sup, "init", "-q")
     _git(sup, "submodule", "add", "-q", str(upstream), "instruments/a")
-    sub = sup / "instruments" / "a"
-    assert (sub / ".git").is_file()
-    _git(sub, "remote", "set-url", "origin", "https://github.com/tonykoop/checkout-a.git")
-    assert _meta(sub) == ("https://github.com/tonykoop/checkout-a.git", _git(sub, "rev-parse", "HEAD"))
+    assert (sup / "instruments" / "a" / ".git").is_file()
+    with pytest.raises(scaffold_mod.ScaffoldError, match="normal clone"):
+        _meta(sup / "instruments" / "a")
 
 
-def test_linked_worktree_gitfile_swap_is_refused(tmp_path, monkeypatch):
-    # After the root is pinned, worktree A's .git file is rewritten to point at
-    # worktree B's admin dir (B's slug/commit). The admin dir's back-pointer
-    # names B's .git, not the .git beneath the pinned root, so this is refused.
+def test_dot_git_swapped_for_a_gitfile_after_pinning_is_refused(tmp_path, monkeypatch):
     _require_supported()
     _git_checkout(tmp_path / "a", "tonykoop/checkout-a", CSV)
     _git_checkout(tmp_path / "b", "tonykoop/checkout-b", SECRET)
-    _git(tmp_path / "a", "worktree", "add", "-q", "-b", "wa", str(tmp_path / "wa"))
-    _git(tmp_path / "b", "worktree", "add", "-q", "-b", "wb", str(tmp_path / "wb"))
-    wb_gitfile = (tmp_path / "wb" / ".git").read_text(encoding="utf-8")
     original_init = scaffold_mod.PinnedRoot.__init__
-    swapped = []
 
     def init_then_swap(self, root):
         original_init(self, root)
-        (tmp_path / "wa" / ".git").write_text(wb_gitfile, encoding="utf-8")
-        swapped.append(True)
+        (tmp_path / "a" / ".git").rename(tmp_path / "a-git-moved")
+        (tmp_path / "a" / ".git").write_text(f"gitdir: {tmp_path / 'b' / '.git'}\n", encoding="utf-8")
 
     monkeypatch.setattr(scaffold_mod.PinnedRoot, "__init__", init_then_swap)
     lookups = []
-    with pytest.raises(scaffold_mod.ScaffoldError, match="another checkout"):
-        scaffold_mod.scaffold(repo_dir=tmp_path / "wa", task_id="instrument_x", columns=["member_id"],
+    with pytest.raises(scaffold_mod.ScaffoldError, match="normal clone"):
+        scaffold_mod.scaffold(repo_dir=tmp_path / "a", task_id="instrument_x", columns=["member_id"],
                               tasks_root=tmp_path / "tasks",
                               visibility_lookup=lambda s: lookups.append(s) or "PUBLIC")
-    assert swapped == [True] and lookups == []
-    assert not (tmp_path / "tasks").exists()
+    assert lookups == [] and not (tmp_path / "tasks").exists()
+
+
+def test_comment_redirect_in_origin_url_is_refused_end_to_end(tmp_path):
+    # Sol's repro: git reads the url as ".../private.git" (everything after an
+    # unquoted '#' is a comment); a naive parser would take the public slug.
+    _require_supported()
+    repo = tmp_path / "a"
+    _git_checkout(repo, "tonykoop/private-repo", CSV)
+    cfg = repo / ".git" / "config"
+    text = cfg.read_text(encoding="utf-8").replace(
+        "url = https://github.com/tonykoop/private-repo.git",
+        "url = https://github.com/tonykoop/private-repo.git # https://github.com/tonykoop/public-repo.git")
+    assert "# https" in text
+    cfg.write_text(text, encoding="utf-8")
+    lookups = []
+    with pytest.raises(scaffold_mod.ScaffoldError, match="comment"):
+        scaffold_mod.scaffold(repo_dir=repo, task_id="instrument_x", columns=["member_id"],
+                              tasks_root=tmp_path / "tasks",
+                              visibility_lookup=lambda s: lookups.append(s) or "PUBLIC")
+    assert lookups == [] and not (tmp_path / "tasks").exists()
+
+
+_ORIGIN = '[remote "origin"]\n\turl = https://github.com/tonykoop/a.git\n'
+
+
+@pytest.mark.parametrize("config,match", [
+    (_ORIGIN.replace(".git\n", ".git # https://github.com/tonykoop/b.git\n"), "comment"),
+    (_ORIGIN.replace(".git\n", ".git ; https://github.com/tonykoop/b.git\n"), "comment"),
+    (_ORIGIN.replace("url = h", 'url = "h').replace(".git\n", '.git"\n'), "quote"),
+    (_ORIGIN.replace("tonykoop/a", "tonykoop\\a"), "escape"),
+    (_ORIGIN + '[url "https://github.com/tonykoop/b"]\n\tinsteadOf = https://github.com/tonykoop/a\n',
+     "insteadof"),
+    (_ORIGIN + '[url "https://github.com/tonykoop/b"]\n\tpushInsteadOf = https://x\n', "pushinsteadof"),
+    (_ORIGIN + "[include]\n\tpath = other.cfg\n", r"\[include\]"),
+    (_ORIGIN + '[includeIf "gitdir:/x/"]\n\tpath = other.cfg\n', r"\[includeif\]"),
+    (_ORIGIN + "\turl = https://github.com/tonykoop/b.git\n", "exactly one"),
+    (_ORIGIN + '[remote "origin"]\n\turl = https://github.com/tonykoop/b.git\n', "exactly one"),
+    ("[core]\n\tbare = false\n", "exactly one"),
+    ("[remote.origin]\n\turl = https://github.com/tonykoop/a.git\n", "section header"),
+    ('[remote "origin"] url = https://github.com/tonykoop/a.git\n', "section header"),
+    (_ORIGIN.replace(".git\n", ".git \\\n"), "continuation"),
+], ids=["hash-comment", "semicolon-comment", "quoted", "backslash", "insteadOf", "pushInsteadOf",
+        "include", "includeIf", "two-urls", "two-sections", "no-origin", "old-style-header",
+        "key-on-header", "continuation"])
+def test_origin_url_config_allowlist_refuses(config, match):
+    with pytest.raises(scaffold_mod.ScaffoldError, match=match):
+        scaffold_mod.origin_url_from_config(config)
+
+
+def test_origin_url_config_allowlist_accepts_plain_git_config():
+    config = ("[core]\n\trepositoryformatversion = 0\n\tbare = false\n# a comment\n; another\n"
+              '[remote "origin"]\n\turl = https://github.com/tonykoop/a.git\n'
+              "\tfetch = +refs/heads/*:refs/remotes/origin/*\n"
+              '[branch "main"]\n\tremote = origin\n')
+    assert scaffold_mod.origin_url_from_config(config) == "https://github.com/tonykoop/a.git"
+
+
+def test_commondir_and_symbolic_loose_refs_are_refused(tmp_path):
+    _require_supported()
+    repo = tmp_path / "a"
+    _git_checkout(repo, "tonykoop/checkout-a", CSV)
+    (repo / ".git" / "commondir").write_text("..\n", encoding="utf-8")
+    with pytest.raises(scaffold_mod.ScaffoldError, match="normal clone"):
+        _meta(repo)
+    (repo / ".git" / "commondir").unlink()
+    branch = _git(repo, "branch", "--show-current")
+    (repo / ".git" / "refs" / "heads" / branch).write_text("ref: refs/heads/other\n", encoding="utf-8")
+    with pytest.raises(scaffold_mod.ScaffoldError, match="symbolic"):
+        _meta(repo)
+
+
+def test_git_ref_file_swapped_for_a_symlink_is_refused(tmp_path):
+    _require_supported()
+    repo = tmp_path / "a"
+    sha = _git_checkout(repo, "tonykoop/checkout-a", CSV)
+    branch = _git(repo, "branch", "--show-current")
+    ref = repo / ".git" / "refs" / "heads" / branch
+    (tmp_path / "elsewhere").write_text(sha + "\n", encoding="utf-8")
+    ref.unlink()
+    ref.symlink_to(tmp_path / "elsewhere")
+    with pytest.raises(scaffold_mod.ScaffoldError, match="refusing git metadata"):
+        _meta(repo)
 
 
 def test_dot_git_swapped_for_a_symlink_is_refused(tmp_path, monkeypatch):
