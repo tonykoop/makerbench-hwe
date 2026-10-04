@@ -251,6 +251,45 @@ _HEADER = re.compile(r'\[\s*([A-Za-z0-9-]+)(?:\s+"([^"\\]*)")?\s*\]\s*(?:[#;].*)
 _KEYVAL = re.compile(r"([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*(.*?))?\s*")
 _REFUSED_KEYS = {"insteadof", "pushinsteadof"}
 _REFUSED_SECTIONS = {"include", "includeif"}
+#: Environment variables that make git read config or a repository other than the
+#: pinned checkout's own .git; the scaffold refuses to run while any is set.
+REFUSED_GIT_ENV = ("GIT_DIR", "GIT_COMMON_DIR", "GIT_CONFIG", "GIT_CONFIG_COUNT",
+                   "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM")
+_URL_REWRITE_KEYS = r"^url\..*\.(push)?insteadof$"
+
+
+def check_git_environment(environ=None) -> None:
+    """Refuse when git would see configuration from outside the checkout's own .git."""
+    environ = os.environ if environ is None else environ
+    present = [name for name in REFUSED_GIT_ENV if name in environ]
+    if present:
+        raise ScaffoldError(f"refusing to run while {', '.join(present)} is set: it can redirect git "
+                            "configuration or repository discovery; unset it and retry")
+
+
+def _git_config_rewrites(scope: str) -> str:
+    """``url.*.(push)insteadOf`` entries in the global or system git config ("" if none).
+    These files live outside the checkout, so reading them by name is not exposed to the
+    checkout swap race."""
+    try:
+        proc = subprocess.run(["git", "config", f"--{scope}", "--get-regexp", _URL_REWRITE_KEYS],
+                              capture_output=True, text=True, cwd="/", check=False)
+    except OSError as exc:
+        raise ScaffoldError(f"cannot inspect {scope} git config: {exc}") from exc
+    if proc.returncode == 1:
+        return ""  # no matching key (or no such file)
+    if proc.returncode != 0:
+        raise ScaffoldError(f"cannot inspect {scope} git config: {proc.stderr.strip()[:200]}")
+    return proc.stdout
+
+
+def check_url_rewrites() -> None:
+    """Refuse when the global or system git config rewrites URLs (insteadOf /
+    pushInsteadOf): the origin git would use is then not the one in .git/config."""
+    for scope in ("global", "system"):
+        if _git_config_rewrites(scope).strip():
+            raise ScaffoldError(f"refusing: the {scope} git config defines url.*.insteadOf or "
+                                "pushInsteadOf, which can rewrite the origin URL; remove it and retry")
 
 
 def origin_url_from_config(text: str) -> str:
@@ -282,6 +321,9 @@ def origin_url_from_config(text: str) -> str:
         key = kv.group(1).lower()
         if key in _REFUSED_KEYS:
             raise ScaffoldError(f"git config {key} is not supported")
+        if section is not None and section[0] == "extensions" and key == "worktreeconfig":
+            raise ScaffoldError("git config extensions.worktreeConfig is not supported "
+                                "(per-worktree config can override the origin)")
         if section == ("remote", "origin") and key == "url":
             value = kv.group(2) or ""
             if any(ch in value for ch in '"#;\\'):
@@ -366,7 +408,11 @@ class PinnedRoot:
         allowlist: a plain ``.git`` directory beneath the pinned root (opened
         ``O_NOFOLLOW``), its ``config`` (see :func:`origin_url_from_config`) and
         HEAD as a detached SHA or ``ref: refs/...`` resolved by a loose ref or
-        ``packed-refs`` in that same directory. Everything else is refused."""
+        ``packed-refs`` in that same directory. Everything else is refused, including any
+        GIT_DIR / GIT_CONFIG* override in the environment and global or system URL
+        rewrites (insteadOf / pushInsteadOf)."""
+        check_git_environment()
+        check_url_rewrites()
         try:
             gitdir = os.open(".git", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | _CLOEXEC,
                              dir_fd=self.fd)
