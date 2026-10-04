@@ -164,8 +164,8 @@ def _normalize_gate_result(result: Mapping[str, object]) -> dict:
         normalized["checks"] = dict(checks)
     method = result.get("min_wall_method")
     if isinstance(method, str) and method:
-        # #901: a non-default min_wall policy is part of the result's identity. Absent for the
-        # default estimator, so existing objective payloads keep their exact shape.
+        # #901/T2: the min_wall policy is part of the result's identity. New gate results always
+        # carry it; results that predate the marker were scored with the legacy "min".
         normalized["min_wall_method"] = method
     failures = result.get("failures")
     if isinstance(failures, list):

@@ -31,7 +31,11 @@ from typing import Callable, Mapping, Optional
 from . import render
 from .code_cad_arena_runner import (
     evaluate_objective_trial,
+    gate_min_wall_policy,
     mesh_objective_gate,
+    raise_with_trial_meta,
+    stamp_min_wall_policy,
+    trial_min_wall_policy,
 )
 from .code_cad_generator import instrument_spec_from_registry
 from .code_cad_objective import RenderArtifacts
@@ -308,7 +312,21 @@ def make_live_execute_trial(
     """
 
     def execute(trial: ArenaTrial) -> dict:
+        try:
+            return _execute_body(trial)
+        except Exception as exc:
+            # #997 P1: a live build that failed (driver error, no STL) keeps its gate's
+            # min_wall policy, so the failure stays in that policy's scoreline row.
+            # The row also keeps its backend/tier, or it would land in the run config's row.
+            meta = {"backend": config.backend, "tier": "live", "context_tier": config.context_tier}
+            policy = trial_min_wall_policy(registry, trial.instrument_id, gate_factory)
+            if policy:
+                meta["min_wall_method"] = policy
+            raise_with_trial_meta(exc, meta)
+
+    def _execute_body(trial: ArenaTrial) -> dict:
         spec = instrument_spec_from_registry(registry, trial.instrument_id)
+        objective_gate = gate_factory(spec)
         gen_dir = run_dir / "gen" / trial.trial_id
         stl = run_live_agent(spec, gen_dir, config)      # may raise CompileError
         preview = gen_dir / "preview.png"
@@ -331,10 +349,11 @@ def make_live_execute_trial(
             seed=trial.seed,
             scad_path=gen_dir / "build_transcript.txt",   # provenance stand-in
             out_dir=run_dir / "render" / trial.trial_id,
-            objective_gate=gate_factory(spec),
+            objective_gate=objective_gate,
             compiler=compiler,
         )
         payload["rep"] = trial.rep
+        stamp_min_wall_policy(payload, gate_min_wall_policy(objective_gate, spec))
         payload["gen"] = {"transcript_path": (gen_dir / "build_transcript.txt").as_posix(),
                           "assignment_path": (gen_dir / "assignment.md").as_posix()}
         payload["backend"] = config.backend

@@ -62,7 +62,7 @@
         },
         "min_wall_method": {
           "type": "string",
-          "description": "Present only when the rows' trials were scored with a non-default min_wall estimator (#901, e.g. 'robust-v1'). Trials scored with different policies never share a row."
+          "description": "The min_wall estimator that scored the row's trials, when it is not the legacy minimum (#901; 'robust-v1' is the default since #979). Absent means the legacy 'min' estimator, which scored every scoreline committed before #979. Trials scored with different estimators never share a row."
         }
       }
     },

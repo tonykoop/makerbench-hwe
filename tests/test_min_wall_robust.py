@@ -1,4 +1,4 @@
-"""min_wall "robust-v1" (#901): opt-in, seed-stable, and the default is untouched."""
+"""min_wall "robust-v1" (#901): seed-stable, the default since epic T2; the legacy "min" stays selectable."""
 from __future__ import annotations
 
 import glob
@@ -66,11 +66,28 @@ def _payload(tmp_path, mesh, **kw):
     return runner.mesh_objective_gate(spec, **kw)(ctx)
 
 
-def test_default_gate_is_unchanged_and_carries_no_method_marker(tmp_path, plate_with_a_tiny_blade):
+def test_default_gate_is_robust_v1_and_marks_the_method(tmp_path, plate_with_a_tiny_blade):
     default = _payload(tmp_path, plate_with_a_tiny_blade)
-    explicit = _payload(tmp_path, plate_with_a_tiny_blade, min_wall_estimator="min")
+    explicit = _payload(tmp_path, plate_with_a_tiny_blade, min_wall_estimator="robust-v1")
     assert default == explicit
-    assert "min_wall_method" not in default["metrics"]
+    assert default["min_wall_method"] == default["metrics"]["min_wall_method"] == "robust-v1"
+    assert geometry.MIN_WALL_METHOD_DEFAULT == "robust-v1"
+
+
+def test_legacy_min_is_still_selectable_and_marked(tmp_path, plate_with_a_tiny_blade):
+    legacy = _payload(tmp_path, plate_with_a_tiny_blade, min_wall_estimator="min")
+    from_spec = _payload(tmp_path, plate_with_a_tiny_blade, spec={**SPEC, "min_wall_estimator": "min"})
+    assert legacy == from_spec
+    assert legacy["min_wall_method"] == legacy["metrics"]["min_wall_method"] == "min"
+    # the legacy number is the old estimator's: minimum over 4,000 samples at seed 0
+    body = plate_with_a_tiny_blade
+    assert legacy["metrics"]["min_wall_mm"] == round(geometry.estimate_min_wall_mm(body, seed=0), 4)
+
+
+def test_override_beats_the_spec(tmp_path, plate_with_a_tiny_blade):
+    result = _payload(tmp_path, plate_with_a_tiny_blade, spec={**SPEC, "min_wall_estimator": "robust-v1"},
+                      min_wall_estimator="min")
+    assert result["min_wall_method"] == "min"
 
 
 def test_robust_gate_passes_the_blade_plate_and_marks_the_method(tmp_path, plate_with_a_tiny_blade):
@@ -81,6 +98,13 @@ def test_robust_gate_passes_the_blade_plate_and_marks_the_method(tmp_path, plate
 def test_robust_gate_can_be_selected_from_the_spec(tmp_path, plate_with_a_tiny_blade):
     result = _payload(tmp_path, plate_with_a_tiny_blade, spec={**SPEC, "min_wall_estimator": "robust-v1"})
     assert result["metrics"]["min_wall_method"] == "robust-v1"
+
+
+def test_legacy_failure_explanation_keeps_its_committed_shape(tmp_path):
+    result = _payload(tmp_path, trimesh.creation.box(extents=[50, 50, 0.4]), min_wall_estimator="min")
+    (fail,) = [f for f in result["failures"] if f["check"] == "min_wall"]
+    assert "method" not in fail and "thinnest ray-cast wall" in fail["detail"]
+    assert result["metrics"]["min_wall_method"] == "min"  # the result itself still names it
 
 
 def test_robust_failure_explanation_names_the_method_and_the_raw_minimum(tmp_path):
@@ -163,36 +187,40 @@ def _persisted(tmp_path, mesh, method):
 
 
 @pytest.mark.parametrize("mesh_kind", ["passing", "failing"])
-def test_persisted_objective_records_the_method_only_when_it_is_not_the_default(tmp_path, mesh_kind):
+def test_persisted_objective_always_records_the_method(tmp_path, mesh_kind):
     mesh = trimesh.creation.box(extents=[50, 50, 5 if mesh_kind == "passing" else 0.4])
     (tmp_path / "d").mkdir()
-    (tmp_path / "r").mkdir()
+    (tmp_path / "l").mkdir()
     default = _persisted(tmp_path / "d", mesh, None)
-    robust = _persisted(tmp_path / "r", mesh, "robust-v1")
-    assert "min_wall_method" not in default["objective"]          # legacy payload untouched
-    assert robust["objective"]["min_wall_method"] == "robust-v1"  # durable, even when it passes
+    legacy = _persisted(tmp_path / "l", mesh, "min")
+    assert default["objective"]["min_wall_method"] == "robust-v1"  # durable, even when it passes
+    assert legacy["objective"]["min_wall_method"] == "min"
 
 
 def test_scoreline_never_mixes_estimator_policies_in_one_row(tmp_path):
     mesh = trimesh.creation.box(extents=[50, 50, 5])
-    (tmp_path / "d").mkdir()
+    (tmp_path / "l").mkdir()
     (tmp_path / "r").mkdir()
-    default = _persisted(tmp_path / "d", mesh, None)
-    robust = _persisted(tmp_path / "r", mesh, "robust-v1")
+    legacy = _persisted(tmp_path / "l", mesh, "min")
+    robust = _persisted(tmp_path / "r", mesh, None)  # the default
+    # a result persisted before the marker existed (every committed bundle) was scored with "min"
+    unversioned = {**legacy, "objective": {k: v for k, v in legacy["objective"].items() if k != "min_wall_method"}}
 
     def trial(payload, tid):
         return {"trial_id": tid, "model_id": "same-entrant", "instrument_id": "i", "seed": 0,
                 "status": "scored", "result": payload}
 
     rows = runner.collect_objective_scoreline({"config": {"backend": "openscad"},
-                                                "trials": [trial(default, "a"), trial(robust, "b")]})
+                                                "trials": [trial(legacy, "a"), trial(robust, "b"),
+                                                           trial(unversioned, "c")]})
     assert len(rows) == 2
     by_method = {r.get("min_wall_method", "min"): r for r in rows}
     assert set(by_method) == {"min", "robust-v1"}
-    assert "min_wall_method" not in by_method["min"] and by_method["robust-v1"]["n_objective_trials"] == 1
-    # default-only logs keep the exact legacy row shape
-    (legacy,) = runner.collect_objective_scoreline({"trials": [trial(default, "a")]})
-    assert set(legacy) == {"entrant", "backend", "objective_pass_rate", "n_objective_trials"}
+    assert "min_wall_method" not in by_method["min"] and by_method["min"]["n_objective_trials"] == 2
+    assert by_method["robust-v1"]["n_objective_trials"] == 1
+    # legacy-only logs keep the exact committed row shape
+    (row,) = runner.collect_objective_scoreline({"trials": [trial(unversioned, "a")]})
+    assert set(row) == {"entrant", "backend", "objective_pass_rate", "n_objective_trials"}
 
 
 # --- real pipeline: failures before scoring, and the public boundary (#918 review, round 2) ---
@@ -259,13 +287,22 @@ def test_compile_failure_stays_in_the_configured_policy_row(tmp_path):
     assert len(rows) == 1 and rows[0]["min_wall_method"] == "robust-v1" and rows[0]["objective_pass_rate"] == 0.0
 
 
-def test_default_registry_failures_keep_the_legacy_row_shape(tmp_path):
+def test_default_registry_failures_stay_in_the_robust_row(tmp_path):
     registry = {"instruments": [{k: v for k, v in ROBUST_REGISTRY["instruments"][0].items() if k != "min_wall_estimator"}]}
     log = _run(tmp_path, registry, _flaky_generator(0), _fake_box_compiler())
     failed = next(e for e in log["trials"] if e["status"] == "error")
-    assert "min_wall_method" not in (failed.get("meta") or {})
+    assert failed["meta"]["min_wall_method"] == "robust-v1"
     (row,) = runner.collect_objective_scoreline(log)
-    assert "min_wall_method" not in row
+    assert row["min_wall_method"] == "robust-v1" and row["n_objective_trials"] == 2
+
+
+def test_legacy_registry_failures_keep_the_legacy_row_shape(tmp_path):
+    registry = {"instruments": [{**ROBUST_REGISTRY["instruments"][0], "min_wall_estimator": "min"}]}
+    log = _run(tmp_path, registry, _flaky_generator(0), _fake_box_compiler())
+    failed = next(e for e in log["trials"] if e["status"] == "error")
+    assert failed["meta"]["min_wall_method"] == "min"
+    (row,) = runner.collect_objective_scoreline(log)
+    assert "min_wall_method" not in row and row["n_objective_trials"] == 2
 
 
 def _build_data():
@@ -280,8 +317,9 @@ def _build_data():
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
-def test_public_pages_withhold_non_default_policy_rows(tmp_path):
-    """Native scoreline -> the real publishers: a robust row is never shown as default evidence."""
+def test_public_pages_withhold_robust_policy_rows(tmp_path):
+    """Native scoreline -> the real publishers: a robust row is never shown unlabelled next to the
+    legacy rows every published round was scored with (labelling it is a follow-up)."""
     (tmp_path / "robust").mkdir()
     log = _run(tmp_path / "robust", ROBUST_REGISTRY, _flaky_generator(-1), _fake_box_compiler())
     robust_rows = runner.collect_objective_scoreline(log)
@@ -306,3 +344,39 @@ def test_public_pages_withhold_non_default_policy_rows(tmp_path):
     entry = build_data._arena_run_entry("r", {"scoreline": robust_rows + default_rows,
                                               "run_log": {"config": {"model_ids": ["claude-code-sonnet"]}}})
     assert [r["entrant"] for r in entry["objective_pass_rate"]] == ["claude-code-sonnet"]
+
+
+@pytest.mark.parametrize("samples, seed", [(4000, 0), (4000, 7), (20000, 0)])
+def test_batched_wall_ray_cast_is_identical_to_one_cast(monkeypatch, samples, seed):
+    """#997: wall rays are cast in batches (a single 20,000-ray robust-v1 cast on a large
+    mesh peaked at ~18 GB and killed CI runners). Batching must not change a single value
+    or the order the hits come back in (min_wall_sample's argmin depends on it)."""
+    tube = trimesh.creation.annulus(r_min=9, r_max=12, height=400, sections=96)
+    monkeypatch.setattr(geometry, "WALL_RAY_BATCH", 10**9)
+    whole = geometry._wall_samples(tube, samples, seed)
+    monkeypatch.setattr(geometry, "WALL_RAY_BATCH", 997)  # uneven batches
+    batched = geometry._wall_samples(tube, samples, seed)
+    for one, many in zip(whole, batched):
+        assert np.array_equal(one, many)
+
+
+def test_default_gate_casts_wall_rays_in_bounded_batches(tmp_path, monkeypatch, plate_with_a_tiny_blade):
+    """#997 memory guard: the production default (robust-v1, 20,000 rays) must reach the
+    underlying trimesh ray cast in batches of at most 1,000 rays with multiple_hits=False.
+    One unbatched 20,000-ray cast peaked at ~18 GB on a large mesh and OOM-killed CI; this
+    fails if _first_hits ever goes back to a single cast, without a flaky RSS threshold."""
+    intersector = type(plate_with_a_tiny_blade.ray)
+    real = intersector.intersects_location
+    calls: list[tuple[int, object]] = []
+
+    def spy(self, ray_origins, ray_directions, *args, **kwargs):
+        calls.append((len(ray_origins), kwargs.get("multiple_hits", args[0] if args else None)))
+        return real(self, ray_origins, ray_directions, *args, **kwargs)
+
+    monkeypatch.setattr(intersector, "intersects_location", spy)
+    result = _payload(tmp_path, plate_with_a_tiny_blade)  # no estimator named: the default
+    assert result["min_wall_method"] == "robust-v1"
+    assert sum(n for n, _ in calls) >= geometry.ROBUST_V1_SAMPLES
+    assert len(calls) >= geometry.ROBUST_V1_SAMPLES // 1000
+    assert all(n <= 1000 for n, _ in calls), sorted({n for n, _ in calls})[-3:]
+    assert all(multiple_hits is False for _, multiple_hits in calls)
