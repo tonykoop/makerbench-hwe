@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "preact/hooks";
 
 import { html } from "../html.js";
+import { sectionController, SECTION_OFF } from "../lib/section.js";
 import { wireframeController } from "../lib/wireframe.js";
 
 // <model-viewer> probes for WebGL the moment the element exists, logging errors
@@ -13,11 +14,14 @@ export function loadModelViewer() {
   return loading;
 }
 
-export function ModelViewer({ src, label, onFailure, wireframe = false, onReady }) {
+export function ModelViewer({ src, label, onFailure, wireframe = false, section = SECTION_OFF, onReady }) {
   const host = useRef(null);
   const controller = useRef(null);
+  const sectioner = useRef(null);
   const enabled = useRef(wireframe);
   enabled.current = wireframe;
+  const cut = useRef(section);
+  cut.current = section;
   const ready = useRef(onReady);
   ready.current = onReady;
   const failure = useRef(onFailure);
@@ -32,13 +36,19 @@ export function ModelViewer({ src, label, onFailure, wireframe = false, onReady 
     const onLoad = () => {
       try {
         controller.current?.restore();
+        sectioner.current?.restore();
         controller.current = wireframeController(element.model);
         controller.current.set(enabled.current);
+        sectioner.current = sectionController(element);
+        sectioner.current.set(cut.current);
         ready.current?.(true);
       } catch {
         onError();
       }
     };
+    // The plane re-projects itself on every draw (lib/section.js); a camera
+    // move only needs a fresh frame.
+    const onCamera = () => sectioner.current?.refresh();
     ready.current?.(false);
     loadModelViewer()
       .then(() => {
@@ -54,6 +64,7 @@ export function ModelViewer({ src, label, onFailure, wireframe = false, onReady 
         element.setAttribute("interaction-prompt", "none");
         element.addEventListener("error", onError);
         element.addEventListener("load", onLoad);
+        element.addEventListener("camera-change", onCamera);
         host.current.appendChild(element);
       })
       .catch(onError);
@@ -62,8 +73,11 @@ export function ModelViewer({ src, label, onFailure, wireframe = false, onReady 
       if (element) {
         element.removeEventListener("error", onError);
         element.removeEventListener("load", onLoad);
+        element.removeEventListener("camera-change", onCamera);
         controller.current?.restore();
         controller.current = null;
+        sectioner.current?.restore();
+        sectioner.current = null;
         element.remove();
       }
     };
@@ -76,6 +90,14 @@ export function ModelViewer({ src, label, onFailure, wireframe = false, onReady 
       failure.current?.();
     }
   }, [wireframe]);
+
+  useEffect(() => {
+    try {
+      sectioner.current?.set(section);
+    } catch {
+      failure.current?.();
+    }
+  }, [section.axis, section.offset, section.flip]);
 
   return html`<div class="model-host" ref=${host}></div>`;
 }

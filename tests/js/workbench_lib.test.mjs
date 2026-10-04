@@ -14,6 +14,7 @@ import {
   offsetOfLine,
   originText,
   parseLogEvent,
+  previewIdentity,
   revisionTree,
   saveTargetText,
 } from "../../makerbench/arena_studio/static/app/lib/workbench.js";
@@ -93,4 +94,14 @@ test("save target and origin text", () => {
   assert.equal(originText({ kind: "master", file: "uke.scad", instrument_id: "ukulele" }), "Master uke.scad of ukulele");
   assert.equal(originText({ kind: "blank" }), "Blank design");
   assert.equal(originText(null), "Unknown origin");
+});
+
+test("preview identity changes with the shown artifact, not with list order (#985)", () => {
+  const saved = previewIdentity("d-1", "revisions", "r-1", ["preview.png", "model.glb"]);
+  assert.equal(saved, previewIdentity("d-1", "revisions", "r-1", ["model.glb", "preview.png"]));
+  assert.notEqual(saved, previewIdentity("d-1", "drafts", "x-1", ["preview.png", "model.glb"]));
+  assert.notEqual(saved, previewIdentity("d-1", "revisions", "r-2", ["preview.png", "model.glb"]));
+  assert.notEqual(saved, previewIdentity("d-2", "revisions", "r-1", ["preview.png", "model.glb"]));
+  assert.notEqual(saved, previewIdentity("d-1", "revisions", "r-1", ["preview.png"]));
+  assert.equal(previewIdentity("d-1", "drafts", "x", null), previewIdentity("d-1", "drafts", "x", []));
 });

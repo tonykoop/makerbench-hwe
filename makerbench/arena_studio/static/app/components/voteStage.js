@@ -8,7 +8,9 @@ import {
   toggleFlag,
   voteActionForKey,
 } from "../lib/voteKeys.js";
+import { SECTION_OFF } from "../lib/section.js";
 import { ModelViewer } from "./modelViewer.js";
+import { SectionControls } from "./sectionControls.js";
 import { Turntable } from "./turntable.js";
 
 const SIDES = [
@@ -16,7 +18,7 @@ const SIDES = [
   { side: "right", name: "Candidate B", key: "B" },
 ];
 
-function Plate({ side, name, pairId, candidate, viewMode, onViewerFailure, wireframe, onViewerReady, flags, onToggleFlag }) {
+function Plate({ side, name, pairId, candidate, viewMode, onViewerFailure, wireframe, section, onViewerReady, flags, onToggleFlag }) {
   const flagged = flags[side] || [];
   return html`
     <figure class="plate" aria-label=${name}>
@@ -29,6 +31,7 @@ function Plate({ side, name, pairId, candidate, viewMode, onViewerFailure, wiref
               label=${`${name}, 3D model`}
               onFailure=${onViewerFailure}
               wireframe=${wireframe}
+              section=${section}
               onReady=${(ready) => onViewerReady(side, ready)}
             />`
           : html`<${Turntable} frames=${candidate.frames} still=${candidate.render_path} label=${name} />`}
@@ -109,6 +112,7 @@ export function VoteStage({
   const [viewMode, setViewMode] = useState("turntable");
   const [viewerNotice, setViewerNotice] = useState("");
   const [wireframe, setWireframe] = useState(false);
+  const [section, setSection] = useState(SECTION_OFF);
   const [viewerReady, setViewerReady] = useState({ left: false, right: false });
   const turntableRef = useRef(null);
   const wireframeRef = useRef(null);
@@ -125,13 +129,16 @@ export function VoteStage({
 
   useEffect(() => {
     setWireframe(false);
+    setSection(SECTION_OFF);
     setViewerReady({ left: false, right: false });
     setViewMode("turntable");
   }, [pair.pair_id]);
 
   const showTurntable = () => {
-    if (document.activeElement === wireframeRef.current) turntableRef.current?.focus();
+    const focused = document.activeElement;
+    if (focused === wireframeRef.current || focused?.closest?.(".section-controls")) turntableRef.current?.focus();
     setWireframe(false);
+    setSection(SECTION_OFF);
     setViewMode("turntable");
     setViewerReady({ left: false, right: false });
   };
@@ -214,6 +221,9 @@ export function VoteStage({
             : null}
         </div>
         <p id="viewer-note" class="viewer-note" role="status">${viewerNote}</p>
+        ${viewMode === "3d" && can3d && viewerReady.left && viewerReady.right
+          ? html`<${SectionControls} section=${section} onChange=${setSection} idPrefix="vote-section" />`
+          : null}
       </div>
 
       <div class="plates">
@@ -228,6 +238,7 @@ export function VoteStage({
               viewMode=${viewMode}
               onViewerFailure=${fallBack}
               wireframe=${wireframe}
+              section=${section}
               onViewerReady=${onViewerReady}
               flags=${flags}
               onToggleFlag=${toggle}

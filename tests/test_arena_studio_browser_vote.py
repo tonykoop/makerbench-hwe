@@ -537,3 +537,181 @@ def test_vote_stage_dark_theme_and_phone_width(studio_url: str, screenshot_dir: 
         assert phone.errors == []
         phone.close()
         browser.close()
+
+
+# Section plane (#973): inspect the real vendor's backing materials, like the
+# wireframe proof above, and count drawn model pixels on the first plate.
+_SECTION_STATE = """active => {
+  const viewers = [...document.querySelectorAll('model-viewer')];
+  return viewers.length === 2 && viewers.every(viewer => {
+    const materials = (viewer.model?.materials || []).filter(m => m.isActive);
+    return materials.length > 0 && materials.every(material => {
+      const key = Object.getOwnPropertySymbols(material).find(s => s.description === 'correlatedObjects');
+      const backing = key && [...material[key]];
+      return backing?.length > 0 && backing.every(m => active
+        ? m.clippingPlanes?.length === 1 && m.side === 2
+        : !(m.clippingPlanes?.length));
+    });
+  });
+}"""
+
+
+def _model_pixels(page) -> int:
+    """Pixels on the first plate that differ clearly from its stage background."""
+    import io
+
+    viewer = page.locator("model-viewer").first
+    viewer.evaluate("el => { el.autoRotate = false; }")
+    page.wait_for_timeout(400)
+    image = Image.open(io.BytesIO(viewer.screenshot())).convert("RGB")
+    counts = image.getcolors(maxcolors=1 << 24)
+    background = max(counts)[1]  # the stage colour fills most of the plate
+    return sum(
+        count for count, pixel in counts
+        if sum(abs(a - b) for a, b in zip(pixel, background)) > 40
+    )
+
+
+@pytest.mark.parametrize("theme,width", [("light", 1440), ("dark", 400)])
+def test_section_plane_clips_real_materials_and_resets(
+    studio_url: str, screenshot_dir: Path, theme: str, width: int,
+):
+    with sync_playwright() as playwright:
+        browser = _launch(playwright, "webgl")
+        session = Session(browser, f"{studio_url}/#/vote/{RUN_ID}",
+                          viewport={"width": width, "height": 1000}, color_scheme=theme)
+        page = session.page
+        session.wait_for_stage()
+        assert page.evaluate("() => !!document.createElement('canvas').getContext('webgl2')")
+        axis = page.get_by_label("Cut along")
+        assert axis.count() == 0
+        page.get_by_role("button", name="3D orbit", exact=True).click()
+        axis.wait_for()
+        page.wait_for_function(_SECTION_STATE, arg=False)
+        offset = page.get_by_label("Position")
+        assert offset.is_disabled()
+        whole = _model_pixels(page)
+        assert whole > 200, "the fixture model should be visible before any cut"
+
+        axis.select_option("z")
+        page.wait_for_function(_SECTION_STATE, arg=True)
+        assert offset.is_enabled()
+        offset.fill("0")
+        page.wait_for_timeout(300)
+        assert _model_pixels(page) < whole * 0.05, "0% removes the whole model"
+        offset.fill("100")
+        page.wait_for_timeout(300)
+        assert _model_pixels(page) > whole * 0.8, "100% keeps the whole model"
+        offset.focus()
+        page.keyboard.press("Home")
+        for _ in range(55):
+            page.keyboard.press("ArrowRight")
+        assert offset.input_value() == "55"
+        # Arrow keys on the slider never vote or flip the viewer.
+        assert page.locator("model-viewer").count() == 2
+        assert page.get_by_label("Keep the other side").is_enabled()
+        if width < 600:
+            page.locator(".section-controls").scroll_into_view_if_needed()
+        page.screenshot(path=str(screenshot_dir / f"section-{theme}-{width}.png"), full_page=True)
+        assert page.evaluate(
+            "() => document.scrollingElement.scrollWidth - document.scrollingElement.clientWidth") <= 0
+
+        axis.select_option("")
+        page.wait_for_function(_SECTION_STATE, arg=False)
+        axis.select_option("x")
+        page.wait_for_function(_SECTION_STATE, arg=True)
+        # Leaving 3D resets the cut; a fresh orbit session starts uncut.
+        axis.focus()
+        page.get_by_role("button", name="Turntable", exact=True).click()
+        assert axis.count() == 0
+        page.get_by_role("button", name="3D orbit", exact=True).click()
+        axis.wait_for()
+        page.wait_for_function(_SECTION_STATE, arg=False)
+        assert axis.input_value() == ""
+        assert session.errors == []
+        assert all(url.startswith(studio_url) for url in session.requests)
+        session.close()
+        browser.close()
+
+
+def test_zero_webgl_shows_no_section_controls(studio_url: str):
+    with sync_playwright() as playwright:
+        browser = _launch(playwright, "zero-webgl")
+        session = Session(browser, f"{studio_url}/#/vote/{RUN_ID}")
+        page = session.page
+        session.wait_for_stage()
+        assert page.get_by_label("Cut along").count() == 0
+        assert page.locator(".section-controls").count() == 0
+        assert not [url for url in session.requests if "model-viewer" in url]
+        assert session.errors == []
+        session.close()
+        browser.close()
+
+
+# #985 review: the vendor auto-rotates the model without a camera-change
+# event. With rotation left ON, sample the live plane against the first
+# plate's real mesh corners (in world space, as last drawn) across a turn.
+_ROTATING_CUT = """() => {
+  const viewer = document.querySelector('model-viewer');
+  const sym = (o, d) => { for (let c = o; c; c = Object.getPrototypeOf(c)) {
+    const k = Object.getOwnPropertySymbols(c).find(s => s.description === d); if (k) return o[k]; } };
+  const scene = sym(viewer, 'scene');
+  const corners = [];
+  let plane = null;
+  scene.model.traverse(node => {
+    if (!node.isMesh) return;
+    plane = plane || [].concat(node.material)[0].clippingPlanes?.[0];
+    const box = node.geometry.boundingBox;
+    const V = box.min.constructor;
+    for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z])
+      corners.push(new V(x, y, z).applyMatrix4(node.matrixWorld));
+  });
+  const n = plane.normal;
+  return { yaw: scene.yaw, sides: corners.map(c => n.x * c.x + n.y * c.y + n.z * c.z + plane.constant),
+           size: Math.max(...corners.map(c => c.length())) };
+}"""
+
+
+def test_section_plane_follows_the_model_while_auto_rotating(studio_url: str, screenshot_dir: Path):
+    with sync_playwright() as playwright:
+        browser = _launch(playwright, "webgl")
+        session = Session(browser, f"{studio_url}/#/vote/{RUN_ID}", viewport={"width": 1440, "height": 1000})
+        page = session.page
+        session.wait_for_stage()
+        page.get_by_role("button", name="3D orbit", exact=True).click()
+        axis = page.get_by_label("Cut along")
+        axis.wait_for()
+        page.wait_for_function(_SECTION_STATE, arg=False)
+        viewer = page.locator("model-viewer").first
+        assert viewer.evaluate("el => el.autoRotate") is True
+        # Turn quickly and right away so a few samples span a large angle.
+        viewer.evaluate("el => { el.autoRotateDelay = 0; el.rotationPerSecond = '120deg'; }")
+        axis.select_option("x")
+        page.wait_for_function(_SECTION_STATE, arg=True)
+        offset = page.get_by_label("Position")
+        offset.fill("100")
+        yaws = set()
+        for _ in range(8):
+            page.wait_for_timeout(350)
+            sample = page.evaluate(_ROTATING_CUT)
+            yaws.add(round(sample["yaw"], 3))
+            tolerance = 1e-3 * sample["size"]
+            # 100% along the model's own X keeps every corner at every angle.
+            assert min(sample["sides"]) >= -tolerance, sample
+        import math
+
+        assert len(yaws) >= 4, f"the model never turned: {yaws}"
+        assert max(abs(math.sin(yaw)) for yaw in yaws) > 0.5, f"the model never turned far: {yaws}"
+
+        # 50%: exactly half the model's corners stay, whatever the angle.
+        offset.fill("50")
+        for _ in range(5):
+            page.wait_for_timeout(350)
+            sample = page.evaluate(_ROTATING_CUT)
+            kept = sum(side > 0 for side in sample["sides"])
+            assert kept * 2 == len(sample["sides"]), sample
+        page.screenshot(path=str(screenshot_dir / "section-rotating-1440.png"))
+        assert viewer.evaluate("el => el.autoRotate") is True, "the cut does not need to stop the turntable"
+        assert session.errors == []
+        session.close()
+        browser.close()

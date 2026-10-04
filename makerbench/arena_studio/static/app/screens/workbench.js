@@ -17,6 +17,7 @@ import {
   latestRevision,
   originText,
   parseLogEvent,
+  previewIdentity,
   revisionTree,
   saveTargetText,
 } from "../lib/workbench.js";
@@ -37,6 +38,8 @@ import { FEEDBACK_LIMIT, canStart, confirmText, entrantOptionText, modelProvenan
 import { useResource } from "../hooks/useResource.js";
 import { CodeEditor } from "../components/codeEditor.js";
 import { ModelViewer } from "../components/modelViewer.js";
+import { SectionControls } from "../components/sectionControls.js";
+import { SECTION_OFF } from "../lib/section.js";
 import { Empty, ErrorState, Loading } from "../components/states.js";
 
 const enc = encodeURIComponent;
@@ -204,7 +207,15 @@ function JobLog({ designId, draftId, finished }) {
 function Preview({ designId, kind, itemId, artifacts, label }) {
   const [view, setView] = useState("image");
   const [viewerFailed, setViewerFailed] = useState(false);
+  const [section, setSection] = useState(SECTION_OFF);
+  const [viewerReady, setViewerReady] = useState(false);
   const names = artifacts || [];
+  // Reset the cut whenever the shown artifact changes: this component is not
+  // keyed, so a finished draft replacing the saved model reuses its state.
+  const identity = previewIdentity(designId, kind, itemId, names);
+  useEffect(() => {
+    setSection(SECTION_OFF);
+  }, [identity]);
   const png = names.includes("preview.png") ? `${base(designId)}/${kind}/${enc(itemId)}/artifacts/preview.png` : null;
   const glb = names.includes("model.glb") ? `${base(designId)}/${kind}/${enc(itemId)}/artifacts/model.glb` : null;
   const canWebgl = glb && !viewerFailed && webgl2Available();
@@ -228,7 +239,14 @@ function Preview({ designId, kind, itemId, artifacts, label }) {
         ${!canWebgl && html`<span class="hint">3D needs WebGL; the image is shown instead.</span>`}
       </div>`}
       ${view === "3d" && canWebgl
-        ? html`<${ModelViewer} src=${glb} label=${label} onFailure=${() => setViewerFailed(true)} />`
+        ? html`<${ModelViewer}
+              src=${glb}
+              label=${label}
+              section=${section}
+              onReady=${setViewerReady}
+              onFailure=${() => setViewerFailed(true)}
+            />
+            ${viewerReady && html`<${SectionControls} section=${section} onChange=${setSection} idPrefix="workbench-section" />`}`
         : png
           ? html`<img class="workbench-image" src=${png} alt=${label} />`
           : html`<p class="viewer-note" role="note">Render unavailable without WebGL.</p>`}

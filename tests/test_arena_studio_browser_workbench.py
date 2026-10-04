@@ -411,3 +411,89 @@ def test_design_view_at_phone_width_stacks_without_horizontal_scroll(studio_url:
             assert session.errors == []
             session.close()
         browser.close()
+
+
+# #985 review: the workbench preview is not keyed, so a finished draft that
+# replaces the shown model must not inherit the previous model's section cut.
+# The workbench compile emits no GLB yet, so the route layer adds one to the
+# draft/revision artifact lists and serves a real box mesh for it.
+_CLIPPED = """() => {
+  const viewer = document.querySelector('.workbench-preview model-viewer');
+  const materials = (viewer?.model?.materials || []).filter(m => m.isActive);
+  if (!materials.length) return null;
+  return materials.every(material => {
+    const key = Object.getOwnPropertySymbols(material).find(s => s.description === 'correlatedObjects');
+    return [...material[key]].every(m => m.clippingPlanes?.length === 1);
+  });
+}"""
+
+
+@needs_sandbox
+def test_section_cut_resets_when_a_new_model_replaces_the_preview(studio_url: str, tmp_path: Path, screenshot_dir: Path):
+    import io
+    import re
+    import urllib.request
+
+    trimesh = pytest.importorskip("trimesh")
+    glb = io.BytesIO()
+    trimesh.creation.box(extents=(10, 10, 10)).export(glb, file_type="glb")
+    body = json.dumps({"master": {"instrument_id": "boxolin", "file": "boxolin.scad"}}).encode()
+    req = urllib.request.Request(f"{studio_url}/api/workbench/designs", data=body, method="POST",
+                                 headers={"Content-Type": "application/json", "Origin": studio_url})
+    created = json.loads(urllib.request.urlopen(req).read())
+
+    def add_glb(route):
+        if route.request.method != "GET":
+            route.fallback()
+            return
+        response = route.fetch()
+        data = response.json()
+        if "preview.png" in (data.get("artifacts") or []):
+            data["artifacts"] = [*data["artifacts"], "model.glb"]
+        route.fulfill(response=response, json=data)
+
+    with sync_playwright() as playwright:
+        browser = _launch(playwright, "webgl")
+        session = Session(browser, "about:blank", viewport={"width": 1440, "height": 1000})
+        page = session.page
+        page.route(re.compile(r".*/api/workbench/designs/[^/]+/(drafts|revisions)/[^/?]+$"), add_glb)
+        page.route(re.compile(r".*/artifacts/model\.glb$"),
+                   lambda route: route.fulfill(body=glb.getvalue(), content_type="model/gltf-binary"))
+        page.goto(f"{studio_url}/#/workbench/{created['design_id']}")
+        page.locator("[data-action='save']").wait_for(timeout=120_000)
+        assert page.locator(".workbench-result h3").inner_text().startswith("Result of the succeeded compile")
+
+        page.locator("[data-action='save']").click()
+        page.locator("[data-action='confirm-save']").click()
+        page.wait_for_function("() => (document.querySelector('.workbench-head .panel-status')?.textContent || '').startsWith('Saved revision 1')")
+
+        # Cut the saved model, then compile an edit. The unkeyed preview stays
+        # mounted while the finished draft replaces the saved model.
+        preview = page.locator(".workbench-preview")
+        three_d = preview.get_by_role("button", name="3D", exact=True)
+        if three_d.get_attribute("aria-pressed") != "true":
+            three_d.click()
+        axis = page.get_by_label("Cut along")
+        axis.wait_for()
+        page.wait_for_function(f"() => ({_CLIPPED})() === false")
+        axis.select_option("z")
+        page.get_by_label("Position").fill("40")
+        page.wait_for_function(f"() => ({_CLIPPED})() === true")
+        page.evaluate("() => { document.querySelector('.workbench-preview').dataset.marker = 'kept'; }")
+        page.locator(".code-editor-text").click()
+        page.keyboard.press("Control+End")
+        page.keyboard.type("\ntranslate([20, 0, 0]) cube(5);\n")
+        page.keyboard.press("Control+Enter")
+        page.locator("[data-action='cancel']").wait_for(timeout=10_000)
+        page.locator("[data-action='save']").wait_for(timeout=120_000)
+        assert three_d.get_attribute("aria-pressed") == "true", "the preview stays in 3D"
+        axis.wait_for()
+        page.wait_for_function(f"() => ({_CLIPPED})() === false")
+        assert page.locator(".workbench-result h3").inner_text().startswith("Result of the succeeded compile")
+        assert page.locator(".workbench-preview[data-marker=kept]").count() == 1, "the preview was not remounted"
+        assert axis.input_value() == "", "the new model starts uncut"
+        assert page.get_by_label("Position").is_disabled()
+        page.screenshot(path=str(screenshot_dir / "section-workbench-reset.png"), full_page=True)
+        assert session.errors == []
+        session.close()
+        browser.close()

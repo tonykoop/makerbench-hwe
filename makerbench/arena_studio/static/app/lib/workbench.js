@@ -149,3 +149,11 @@ export function originText(origin) {
   if (origin.kind === "blank") return `Blank ${origin.instrument_id || "design"}`;
   return String(origin.kind);
 }
+
+// Which artifact a preview shows. A completed draft replacing the saved model
+// (or a different revision) is a new identity, so per-model view state such
+// as a section cut must not carry over (#985 review).
+export function previewIdentity(designId, kind, itemId, artifacts) {
+  const names = [...(artifacts || [])].map(String).sort();
+  return JSON.stringify([String(designId ?? ""), String(kind ?? ""), String(itemId ?? ""), names]);
+}
