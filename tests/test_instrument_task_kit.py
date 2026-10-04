@@ -303,14 +303,9 @@ def test_stub_agents_replay_gold_and_perturb_params():
 # fail because the swapped content is ACCEPTED, not on a missing attribute.
 
 SECRET = "member_id,target_hz\nSECRET,1\n"
-MODES = [True, False]
-MODE_IDS = ["dirfd", "handle-path"]
-
-
-def _set_mode(monkeypatch, dirfd):
-    if dirfd and not getattr(scaffold_mod, "_DIRFD_OK", True):
-        pytest.skip("platform has no O_NOFOLLOW / dir_fd")
-    monkeypatch.setattr(scaffold_mod, "_DIRFD_OK", dirfd, raising=False)
+def _require_supported():
+    if not getattr(scaffold_mod, "_DIRFD_OK", True) or not Path("/proc/self/fd").is_dir():
+        pytest.skip("scaffold needs dir_fd and /proc (it fails closed elsewhere)")
 
 
 def _swap_file_to_outside(tmp_path, repo):
@@ -378,10 +373,9 @@ def _scaffold_with_swap(tmp_path, repo, csv_rel, swap, **kw):
         assert ran == ["tonykoop/x"], "the swap callback must have run (race window reached)"
 
 
-@pytest.mark.parametrize("dirfd", MODES, ids=MODE_IDS)
 @pytest.mark.parametrize("csv_rel,swap", SWAPS, ids=SWAP_IDS)
-def test_scaffold_symlink_swap_after_validation_is_refused(tmp_path, monkeypatch, dirfd, csv_rel, swap):
-    _set_mode(monkeypatch, dirfd)
+def test_scaffold_symlink_swap_after_validation_is_refused(tmp_path, monkeypatch, csv_rel, swap):
+    _require_supported()
     repo = _swap_repo(tmp_path)
     with pytest.raises(scaffold_mod.ScaffoldError, match="changed"):
         _scaffold_with_swap(tmp_path, repo, csv_rel, swap)
@@ -400,9 +394,8 @@ def test_control_legacy_pathname_read_accepts_the_swapped_content(tmp_path, csv_
     assert [r["member_id"] for r in rows] == ["SECRET"]
 
 
-@pytest.mark.parametrize("dirfd", MODES, ids=MODE_IDS)
-def test_scaffold_bound_read_without_swap_still_works(tmp_path, monkeypatch, dirfd):
-    _set_mode(monkeypatch, dirfd)
+def test_scaffold_bound_read_without_swap_still_works(tmp_path, monkeypatch):
+    _require_supported()
     repo = _swap_repo(tmp_path)
     (repo / "data" / "spec.csv").write_text("\ufeff" + CSV, encoding="utf-8")  # BOM is stripped
     out = scaffold_mod.scaffold(repo_dir=repo, task_id="instrument_x", columns=["member_id"],
@@ -417,11 +410,10 @@ CRLF_CSV = (b'member_id,target_hz,notes\r\n'
             b'B,523.251,"x\ry"\r\n')
 
 
-@pytest.mark.parametrize("dirfd", MODES, ids=MODE_IDS)
-def test_scaffold_crlf_and_multiline_cell_hashes_match_text_mode_read(tmp_path, monkeypatch, dirfd):
+def test_scaffold_crlf_and_multiline_cell_hashes_match_text_mode_read(tmp_path, monkeypatch):
     # The bound reader must decode exactly like Path.read_text (universal
     # newlines), so csv_sha256 / rows_sha256 match snapshots made before #984.
-    _set_mode(monkeypatch, dirfd)
+    _require_supported()
     repo = _plain_repo(tmp_path)
     (repo / "family-spec.csv").write_bytes(b"\xef\xbb\xbf" + CRLF_CSV)
     common = dict(repo_dir=repo, task_id="instrument_x", columns=["member_id", "target_hz", "notes"],
@@ -447,9 +439,8 @@ def test_scaffold_in_repo_symlink_is_still_allowed(tmp_path):
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no mkfifo")
-@pytest.mark.parametrize("dirfd", MODES, ids=MODE_IDS)
-def test_scaffold_rejects_fifo_swapped_in_without_blocking(tmp_path, monkeypatch, dirfd):
-    _set_mode(monkeypatch, dirfd)
+def test_scaffold_rejects_fifo_swapped_in_without_blocking(tmp_path, monkeypatch):
+    _require_supported()
     repo = _plain_repo(tmp_path)
 
     import errno
@@ -488,21 +479,24 @@ def test_scaffold_rejects_fifo_swapped_in_without_blocking(tmp_path, monkeypatch
     assert not released, "the CSV open blocked on a FIFO (missing O_NONBLOCK)"
 
 
-def test_handle_path_fallback_fails_closed_without_a_handle_path(tmp_path, monkeypatch):
-    _set_mode(monkeypatch, False)
-    monkeypatch.setattr(scaffold_mod, "_handle_path", lambda fd: None)
+@pytest.mark.parametrize("break_host", ["no-dir_fd", "no-proc"])
+def test_scaffold_fails_closed_without_dirfd_or_proc(tmp_path, monkeypatch, break_host):
+    if break_host == "no-dir_fd":
+        monkeypatch.setattr(scaffold_mod, "_DIRFD_OK", False)
+    else:
+        monkeypatch.setattr(scaffold_mod, "_PROC_FD", str(tmp_path / "no-proc" / "{pid}" / "{fd}"))
     repo = _plain_repo(tmp_path)
-    with pytest.raises(scaffold_mod.ScaffoldError, match="refusing"):
+    lookups = []
+    with pytest.raises(scaffold_mod.ScaffoldError, match="requires a POSIX host"):
         scaffold_mod.scaffold(repo_dir=repo, task_id="instrument_x", columns=["member_id"],
-                              tasks_root=tmp_path / "tasks", visibility_lookup=lambda s: "PUBLIC",
+                              tasks_root=tmp_path / "tasks", visibility_lookup=lambda s: lookups.append(s) or "PUBLIC",
                               slug="tonykoop/x", commit="c")
-    assert not (tmp_path / "tasks").exists()
+    assert lookups == [] and not (tmp_path / "tasks").exists()
 
 
 @pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="needs /proc/self/fd to count fds")
-@pytest.mark.parametrize("dirfd", MODES, ids=MODE_IDS)
-def test_read_does_not_leak_fds_when_decoding_setup_fails(tmp_path, monkeypatch, dirfd):
-    _set_mode(monkeypatch, dirfd)
+def test_read_does_not_leak_fds_when_decoding_setup_fails(tmp_path, monkeypatch):
+    _require_supported()
     repo = _plain_repo(tmp_path)
 
     def boom(*a, **k):
@@ -578,12 +572,11 @@ def _git_checkout(path: Path, slug: str, csv_text: str) -> str:
     return run("rev-parse", "HEAD").stdout.strip()
 
 
-@pytest.mark.parametrize("dirfd", MODES, ids=MODE_IDS)
-def test_slug_commit_and_csv_all_come_from_the_pinned_checkout(tmp_path, monkeypatch, dirfd):
+def test_slug_commit_and_csv_all_come_from_the_pinned_checkout(tmp_path, monkeypatch):
     # repo_dir is a symlink to checkout A; right after the root is pinned it is
     # retargeted to checkout B. Validation, the slug (and so the PUBLIC lookup),
     # the commit and the CSV must all still come from A, never a mix.
-    _set_mode(monkeypatch, dirfd)
+    _require_supported()
     commit_a = _git_checkout(tmp_path / "a", "tonykoop/checkout-a", CSV)
     _git_checkout(tmp_path / "b", "tonykoop/checkout-b", SECRET)
     link = tmp_path / "repo"
@@ -610,11 +603,10 @@ def test_slug_commit_and_csv_all_come_from_the_pinned_checkout(tmp_path, monkeyp
     assert [r["member_id"] for r in data["rows"]] == ["A", "B", "C"]
 
 
-@pytest.mark.parametrize("dirfd", MODES, ids=MODE_IDS)
-def test_rename_swap_of_another_checkout_into_the_root_is_refused(tmp_path, monkeypatch, dirfd):
+def test_rename_swap_of_another_checkout_into_the_root_is_refused(tmp_path, monkeypatch):
     # No symlinks: after the PUBLIC approval the approved checkout is renamed
     # away and a different checkout is renamed into the very same path.
-    _set_mode(monkeypatch, dirfd)
+    _require_supported()
     repo = _plain_repo(tmp_path)
     other = tmp_path / "other"
     other.mkdir()
@@ -630,21 +622,131 @@ def test_rename_swap_of_another_checkout_into_the_root_is_refused(tmp_path, monk
 
 
 @pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="needs /proc/self/fd to count fds")
-@pytest.mark.parametrize("failure", ["identity", "check"])
+@pytest.mark.parametrize("failure", ["identity", "check", "ops_path"])
 def test_pinned_root_closes_its_fd_when_construction_fails(tmp_path, monkeypatch, failure):
     if not getattr(scaffold_mod, "_DIRFD_OK", False):
         pytest.skip("no dir_fd: nothing is held open")
     repo = _plain_repo(tmp_path)
     if failure == "identity":
-        def boom(st):
+        def boom(fd):
             raise OSError("synthetic fstat failure")
-        monkeypatch.setattr(scaffold_mod.PinnedRoot, "_id", staticmethod(boom))
-    else:
+        monkeypatch.setattr(scaffold_mod, "_fd_id", boom)
+    elif failure == "check":
         def boom(self):
             raise scaffold_mod.ScaffoldError("synthetic check failure")
         monkeypatch.setattr(scaffold_mod.PinnedRoot, "check_unchanged", boom)
+    else:
+        def boom(self):
+            raise scaffold_mod.ScaffoldError("synthetic ops_path failure")
+        monkeypatch.setattr(scaffold_mod.PinnedRoot, "_ops_path", boom)
     before = len(os.listdir("/proc/self/fd"))
     for _ in range(5):
         with pytest.raises(scaffold_mod.ScaffoldError, match="synthetic"):
             scaffold_mod.PinnedRoot(repo.resolve())
     assert len(os.listdir("/proc/self/fd")) == before
+
+
+# ----- #1001 round 3: git metadata read through the pinned root fd -----
+
+def _git(path, *args):
+    return subprocess.run(["git", "-C", str(path), "-c", "user.email=t@t", "-c", "user.name=t",
+                           "-c", "protocol.file.allow=always", *args],
+                          check=True, capture_output=True, text=True).stdout.strip()
+
+
+def _meta(path):
+    pinned = scaffold_mod.PinnedRoot(Path(path).resolve())
+    try:
+        return pinned.git_metadata()
+    finally:
+        pinned.close()
+
+
+@pytest.mark.parametrize("layout", ["loose", "packed", "detached"])
+def test_git_metadata_matches_git(tmp_path, layout):
+    _require_supported()
+    repo = tmp_path / "a"
+    _git_checkout(repo, "tonykoop/checkout-a", CSV)
+    (repo / "x.txt").write_text("x", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "second")
+    if layout == "packed":
+        _git(repo, "pack-refs", "--all")
+        assert not (repo / ".git" / "refs" / "heads" / _git(repo, "branch", "--show-current")).exists()
+    if layout == "detached":
+        _git(repo, "checkout", "-q", "--detach", "HEAD~1")
+    assert _meta(repo) == (_git(repo, "remote", "get-url", "origin"), _git(repo, "rev-parse", "HEAD"))
+
+
+def test_git_metadata_of_a_linked_worktree(tmp_path):
+    _require_supported()
+    main = tmp_path / "main"
+    _git_checkout(main, "tonykoop/checkout-a", CSV)
+    wt = tmp_path / "wt"
+    _git(main, "worktree", "add", "-q", "-b", "side", str(wt))
+    (wt / "y.txt").write_text("y", encoding="utf-8")
+    _git(wt, "add", ".")
+    _git(wt, "commit", "-qm", "side commit")
+    assert (wt / ".git").is_file()
+    assert _meta(wt) == ("https://github.com/tonykoop/checkout-a.git", _git(wt, "rev-parse", "HEAD"))
+    assert _meta(wt)[1] != _git(main, "rev-parse", "HEAD")
+
+
+def test_git_metadata_of_a_submodule_checkout(tmp_path):
+    _require_supported()
+    upstream = tmp_path / "upstream"
+    _git_checkout(upstream, "tonykoop/checkout-a", CSV)
+    sup = tmp_path / "super"
+    sup.mkdir()
+    _git(sup, "init", "-q")
+    _git(sup, "submodule", "add", "-q", str(upstream), "instruments/a")
+    sub = sup / "instruments" / "a"
+    assert (sub / ".git").is_file()
+    _git(sub, "remote", "set-url", "origin", "https://github.com/tonykoop/checkout-a.git")
+    assert _meta(sub) == ("https://github.com/tonykoop/checkout-a.git", _git(sub, "rev-parse", "HEAD"))
+
+
+def test_linked_worktree_gitfile_swap_is_refused(tmp_path, monkeypatch):
+    # After the root is pinned, worktree A's .git file is rewritten to point at
+    # worktree B's admin dir (B's slug/commit). The admin dir's back-pointer
+    # names B's .git, not the .git beneath the pinned root, so this is refused.
+    _require_supported()
+    _git_checkout(tmp_path / "a", "tonykoop/checkout-a", CSV)
+    _git_checkout(tmp_path / "b", "tonykoop/checkout-b", SECRET)
+    _git(tmp_path / "a", "worktree", "add", "-q", "-b", "wa", str(tmp_path / "wa"))
+    _git(tmp_path / "b", "worktree", "add", "-q", "-b", "wb", str(tmp_path / "wb"))
+    wb_gitfile = (tmp_path / "wb" / ".git").read_text(encoding="utf-8")
+    original_init = scaffold_mod.PinnedRoot.__init__
+    swapped = []
+
+    def init_then_swap(self, root):
+        original_init(self, root)
+        (tmp_path / "wa" / ".git").write_text(wb_gitfile, encoding="utf-8")
+        swapped.append(True)
+
+    monkeypatch.setattr(scaffold_mod.PinnedRoot, "__init__", init_then_swap)
+    lookups = []
+    with pytest.raises(scaffold_mod.ScaffoldError, match="another checkout"):
+        scaffold_mod.scaffold(repo_dir=tmp_path / "wa", task_id="instrument_x", columns=["member_id"],
+                              tasks_root=tmp_path / "tasks",
+                              visibility_lookup=lambda s: lookups.append(s) or "PUBLIC")
+    assert swapped == [True] and lookups == []
+    assert not (tmp_path / "tasks").exists()
+
+
+def test_dot_git_swapped_for_a_symlink_is_refused(tmp_path, monkeypatch):
+    _require_supported()
+    _git_checkout(tmp_path / "a", "tonykoop/checkout-a", CSV)
+    _git_checkout(tmp_path / "b", "tonykoop/checkout-b", SECRET)
+    original_init = scaffold_mod.PinnedRoot.__init__
+
+    def init_then_swap(self, root):
+        original_init(self, root)
+        (tmp_path / "a" / ".git").rename(tmp_path / "a-git-moved")
+        (tmp_path / "a" / ".git").symlink_to(tmp_path / "b" / ".git", target_is_directory=True)
+
+    monkeypatch.setattr(scaffold_mod.PinnedRoot, "__init__", init_then_swap)
+    with pytest.raises(scaffold_mod.ScaffoldError, match=r"\.git"):
+        scaffold_mod.scaffold(repo_dir=tmp_path / "a", task_id="instrument_x", columns=["member_id"],
+                              tasks_root=tmp_path / "tasks", visibility_lookup=lambda s: "PUBLIC")
+    assert not (tmp_path / "tasks").exists()
