@@ -406,3 +406,58 @@ def test_cdata_reported_as_bogus_comment_is_normalized_too():
     parser.handle_comment("[CDATA[**Syn**thetic]]")
     parser.handle_comment(" a real comment ")
     assert "".join(parser.parts).split() == ["Synthetic"]
+
+
+# #1002 round 6: strict superset of main (legacy views + parser view, union of hits).
+@pytest.mark.parametrize("text", [
+    '<script>if (a<b) { const s = "**Syn**thetic"; }</script>',
+    '<style>.x::after { content: "x<!--y **Syn**thetic" }</style>',
+])
+def test_raw_text_bodies_still_hit_via_the_legacy_view(text):
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [1]
+
+
+def _main_views(text):
+    """Verbatim copy of main's views() (pre-#964) as an independent reference."""
+    import re as _re
+    tag = _re.compile(r"</?[A-Za-z][^<>]*>")
+    comment = _re.compile(r"<!--.*?-->", _re.DOTALL)
+    inline = _re.compile(r"</?(?:b|i|em|strong|span|a|code|mark|sup|sub|u|s|small)(?=[\s/>])[^<>]*>",
+                         _re.IGNORECASE)
+    link = _re.compile(r"!?\[([^\[\]\n]*)\]\([^()\n]*\)")
+    emphasis = _re.compile(r"[*_~`]+")
+
+    def keep(pattern, value, filler):
+        return pattern.sub(lambda m: filler + "\n" * m.group().count("\n"), value)
+
+    base = checker._decode(text)
+    links = link.sub(lambda m: m.group(1), base)
+    spaced = keep(tag, keep(comment, links, " "), " ")
+    joined = keep(emphasis, keep(tag, keep(inline, keep(comment, links, ""), ""), " "), "")
+    return [base, spaced, joined]
+
+
+SUPERSET_CORPUS = [
+    "Synthetic", "**Syn**thetic", "Syn<b>thetic</b>", "Syn<!-- x -->thetic", "Syn<!--\n-->thetic",
+    '<script>if (a<b) { const s = "**Syn**thetic"; }</script>',
+    '<style>.x::after { content: "x<!--y **Syn**thetic" }</style>',
+    "<script>Syn<b>thetic</b></script>", "<style>**Syn**thetic</style>", "<textarea>Syn<i>thetic</i></textarea>",
+    "<script>var t = '<b>Syn</b>thetic';</script>", "<script>x = 1 < 2 && 'Synthetic';</script>",
+    "<style>/* Syn<!-- */thetic</style>", "Use `<script>` here.\n\n**Syn**thetic",
+    "<![CDATA[**Syn**thetic]]>", "<![CDATA[Syn<b>thetic</b>]]>", '<span title="a>b">Syn</span>thetic',
+    "<span title='a>b\nc'>Syn</span>thetic", 'Syn<span title="a>b" data-x=O\'Reilly>thetic</span>',
+    "a<b and c's\nSynthetic, it's>", "<p>Syn</p><p>thetic</p>", "Syn<br>thetic", "[Syn](u)thetic",
+    "<img alt=\"Synthetic\">", "&lt;b&gt;Syn&lt;/b&gt;thetic", "Syn\\u003cb\\u003ethetic", "<!-- Synthetic -->",
+    "<div\n class=\"x\">Syn</div>thetic", "<a\n href='x'>Syn</a>thetic", "<?php echo 'Synthetic'; ?>",
+    "<!DOCTYPE html><title>Syn<b>thetic</b></title>", "x <y Syn</y>thetic", "<<b>Syn</b>thetic",
+    "Syn</b>thetic", "<b>Syn<b>the</b>tic</b>", "Syn<i>the<!--\n-->tic</i>",
+]
+
+
+@pytest.mark.parametrize("text", SUPERSET_CORPUS)
+def test_every_main_hit_is_still_a_hit(text):
+    hashes = fingerprints("synthetic")
+    main_lines = set()
+    for view in _main_views(text):
+        main_lines |= checker._view_lines(view, hashes, lambda start, v=view: v.count("\n", 0, start) + 1)
+    assert main_lines <= set(checker.matched_lines(text, hashes))

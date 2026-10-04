@@ -61,6 +61,10 @@ JSON_ESCAPE = re.compile(r"\\(u[0-9a-fA-F]{4}|[nrtbf\"\\/])")
 _ATTRS = r"""(?:[^<>"']|"[^"\n]*"|'[^'\n]*')*"""
 HTML_TAG = re.compile(rf"</?[A-Za-z]{_ATTRS}>|</?[A-Za-z][^<>]*>")
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+# main's original patterns, kept verbatim for the legacy views (see _views_with_lines)
+LEGACY_HTML_TAG = re.compile(r"</?[A-Za-z][^<>]*>")
+LEGACY_INLINE_TAG = re.compile(
+    r"</?(?:b|i|em|strong|span|a|code|mark|sup|sub|u|s|small)(?=[\s/>])[^<>]*>", re.IGNORECASE)
 INLINE_TAG = re.compile(
     rf"</?(?:b|i|em|strong|span|a|code|mark|sup|sub|u|s|small)(?=[\s/>])(?:{_ATTRS}>|[^<>]*>)",
     re.IGNORECASE)
@@ -275,24 +279,31 @@ def views(text: str) -> list[str]:
 def _views_with_lines(text: str) -> list[tuple[str, Callable[[int], int]]]:
     """Normalized views of ``text``, each with an offset -> original-line map.
 
-    Raw (decoded) text; tags/comments as separators; and a "joined" view where
-    HTML comments, inline tags (b, span, a, ...) and Markdown emphasis are
-    removed so formatting inside a word rejoins it (also across lines, e.g. a
-    multi-line comment inside a word), while block tags (p, br, div, li, td,
-    headings, ...) still separate words. Markdown links and images are reduced
-    to their text in the last two views. Every token is reported on the line
-    where its first character sits in the source.
+    The first three are EXACTLY the views main has always scanned (same regexes,
+    newlines kept so lines count directly): raw (decoded) text; tags/comments as
+    separators; and a regex "joined" view with comments, inline tags and
+    Markdown emphasis removed. A fourth, tokenizer-built joined view
+    (:func:`_joined_view`) is added on top. Hits are the union over all views,
+    so the checker is a strict superset of main by construction: the legacy
+    joined view still covers raw-text bodies such as ``<script>if (a<b) ...``,
+    and the parser view covers multi-line comments and quoted attributes inside
+    a word.
     """
     base = _decode(text)
     links = MD_LINK.sub(lambda m: m.group(1), base)
-    spaced = _replace_keeping_lines(HTML_TAG, _replace_keeping_lines(HTML_COMMENT, links, " "), " ")
-    joined_text, joined_line_of = _joined_view(links)
+    spaced = _replace_keeping_lines(LEGACY_HTML_TAG, _replace_keeping_lines(HTML_COMMENT, links, " "), " ")
+    legacy = _replace_keeping_lines(HTML_COMMENT, links, "")
+    legacy = _replace_keeping_lines(LEGACY_INLINE_TAG, legacy, "")
+    legacy = _replace_keeping_lines(LEGACY_HTML_TAG, legacy, " ")
+    legacy = _replace_keeping_lines(EMPHASIS, legacy, "")
+    parsed_text, parsed_line_of = _joined_view(links)
 
     def counted(view: str) -> Callable[[int], int]:
         return lambda start: view.count("\n", 0, start) + 1
 
     result = [(base, counted(base))]
-    for view, line_of in ((spaced, counted(spaced)), (joined_text, joined_line_of)):
+    for view, line_of in ((spaced, counted(spaced)), (legacy, counted(legacy)),
+                          (parsed_text, parsed_line_of)):
         if all(view != seen for seen, _ in result):
             result.append((view, line_of))
     return result
@@ -368,10 +379,35 @@ def _view_lines(text: str, hashes: frozenset[str], line_of: Callable[[int], int]
 
 
 def matched_lines(text: str, hashes: frozenset[str]) -> list[int]:
-    """Return 1-based line numbers where a denied fingerprint starts."""
-    lines: set[int] = set()
+    """Return 1-based line numbers where a denied fingerprint starts (union over views).
+
+    The views of one file are mostly identical, and the grams starting at a token
+    depend only on that token and the next MAX_NGRAM - 1, so grams are generated
+    once per distinct token window across all views and each distinct gram is
+    hashed once; line numbers are resolved only for windows that hit.
+    """
+    windows: dict[tuple, list[tuple[Callable[[int], int], int]]] = {}
+    samples: dict[tuple, tuple[list, int]] = {}
     for view, line_of in _views_with_lines(text):
-        lines |= _view_lines(view, hashes, line_of)
+        tokens = _tokens(view)
+        for index, (start, _) in enumerate(tokens):
+            key = tuple(tuple(map(tuple, readings)) for _, readings in tokens[index:index + MAX_NGRAM])
+            hits = windows.get(key)
+            if hits is None:
+                windows[key] = hits = []
+                samples[key] = (tokens, index)
+            hits.append((line_of, start))
+    lines: set[int] = set()
+    denied: dict[str, bool] = {}
+    for key, occurrences in windows.items():
+        tokens, index = samples[key]
+        for gram in _grams_from(tokens, index):
+            hit = denied.get(gram)
+            if hit is None:
+                denied[gram] = hit = _digest(gram) in hashes
+            if hit:
+                lines.update(line_of(start) for line_of, start in occurrences)
+                break
     return sorted(lines)
 
 
