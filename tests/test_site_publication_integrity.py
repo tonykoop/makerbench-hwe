@@ -9,12 +9,14 @@ import pytest
 
 SITE = Path(__file__).resolve().parents[1] / "site"
 FIELD = re.compile(
-    r"(?:^|_)(?:elos?\d*|elo(?:ratings?|scores?)|votes?|"
-    r"vote(?:counts?|totals?)|voters?|voted|ratings?|ballots?|subjective)(?:_|$)",
+    r"(?:^|_)(?:elos?|elo(?:ratings?|scores?)|votes?|"
+    r"vote(?:counts?|totals?)|voters?|voted|ratings?|ballots?|subjective)\d*(?:_|$)",
     re.IGNORECASE,
 )
 # Quoted and JavaScript bare object keys, including embedded HTML script data.
 TEXT_FIELD = re.compile(r'''["']([^"'\n]+)["']\s*:|\b([A-Za-z_$][\w$]*)\s*:''')
+# In HTML only script bodies carry data; visible prose such as "Elo: withheld" is policy text.
+SCRIPT = re.compile(r"<script\b[^>]*>(.*?)</script\s*>", re.IGNORECASE | re.DOTALL)
 
 
 def forbidden_field(key):
@@ -40,6 +42,8 @@ def audit_file(path):
     if path.suffix == ".json":
         audit_json(json.loads(text), str(path))
     else:
+        if path.suffix == ".html":
+            text = "\n".join(SCRIPT.findall(text))
         for match in TEXT_FIELD.finditer(text):
             key = match.group(1) or match.group(2)
             assert not forbidden_field(key), f"Forbidden publication field in {path}: {key}"
@@ -55,7 +59,8 @@ def test_committed_site_has_no_subjective_ranking_fields():
 @pytest.mark.parametrize("key", ["elo", "subjective_elo", "vote_count", "voteCount",
                                  "vote-count", "rating", "ratings", "voters", "eloRating",
                                  "ELOLeaderboard", "ELO", "elos", "votecount", "eloratings",
-                                 "elo2", "votecounts", "votetotal", "nVotes", "eloScore"])
+                                 "elo2", "votecounts", "votetotal", "nVotes", "eloScore",
+                                 "rating2", "votecount2", "votes_3"])
 def test_guard_rejects_nested_fields(key):
     with pytest.raises(AssertionError, match="Forbidden publication field"):
         audit_json({"rounds": [{"nested": {key: 123}}]})
@@ -65,6 +70,7 @@ def test_guard_rejects_nested_fields(key):
     (".json", '{"rows": [{"vote_count": 1}]}'),
     (".js", 'const payload = {eloRating: 1500};'),
     (".html", '<script type="application/json">{"rating":1500}</script>'),
+    (".html", '<p>ok</p><SCRIPT>window.d = {voteCount2: 4};</SCRIPT>'),
 ])
 def test_guard_rejects_fields_in_public_files(tmp_path, suffix, text):
     path = tmp_path / ("injected" + suffix)
@@ -77,3 +83,10 @@ def test_policy_prose_and_unrelated_fields_are_allowed():
     audit_json({"policy": "Elo and votes are withheld", "development": 1,
                 "velocity": 2, "develop": 3,
                 "objective_pass_rate": 0.5, "agreement": {"rho": 0.07}})
+
+
+def test_html_policy_prose_is_allowed(tmp_path):
+    path = tmp_path / "policy.html"
+    path.write_text("<p>Elo: withheld by policy.</p><dl><dt>Votes:</dt><dd>not published</dd></dl>"
+                    '<script>const rows = {objective_pass_rate: 0.5};</script>', encoding="utf-8")
+    audit_file(path)
