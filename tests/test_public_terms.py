@@ -333,3 +333,22 @@ def test_camel_prefix_join_counts_as_one_word_toward_the_limit(text):
 def test_camel_prefix_join_still_respects_the_word_limit():
     assert checker.matched_lines("one two three four SyntheticWidgetAcme",
                                  fingerprints("one-two-three-four-syntheticwidget")) == []
+
+
+# #1002 round 3: quoted ">" inside tag attributes.
+@pytest.mark.parametrize("text", ['Syn<!--\n--><span title="a>b">thetic</span>',
+                                  "Syn<!--\n--><span title='a>b'>thetic</span>",
+                                  'Syn<span title="a>b">thetic</span>',
+                                  "Syn<b data-x='>'>the</b>tic"])
+def test_quoted_gt_in_tag_attribute_does_not_split_the_word(text):
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [1]
+
+
+@pytest.mark.parametrize("text", ['<p title="a>b">Syn</p>thetic', "<div class='x>y'>Syn</div>thetic"])
+def test_quoted_gt_in_block_tag_still_separates(text):
+    assert checker.matched_lines(text, fingerprints("synthetic")) == []
+
+
+def test_unbalanced_apostrophe_in_prose_does_not_swallow_text():
+    text = "if a<b and c's\nnext line\nSynthetic here, it's fine>"
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [3]

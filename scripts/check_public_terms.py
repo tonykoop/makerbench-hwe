@@ -54,10 +54,15 @@ HASH_LINE = re.compile(r"[0-9a-f]{64}")
 TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
 CAMEL = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")
 JSON_ESCAPE = re.compile(r"\\(u[0-9a-fA-F]{4}|[nrtbf\"\\/])")
-HTML_TAG = re.compile(r"</?[A-Za-z][^<>]*>")
+# Tag attributes may hold quoted ">" (title="a>b"); quoted values are matched
+# whole (single-line, so a stray apostrophe in prose cannot swallow text), with
+# the plain unquoted form as the fallback when a quote is left unbalanced.
+_ATTRS = r"""(?:[^<>"']|"[^"\n]*"|'[^'\n]*')*"""
+HTML_TAG = re.compile(rf"</?[A-Za-z]{_ATTRS}>|</?[A-Za-z][^<>]*>")
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 INLINE_TAG = re.compile(
-    r"</?(?:b|i|em|strong|span|a|code|mark|sup|sub|u|s|small)(?=[\s/>])[^<>]*>", re.IGNORECASE)
+    rf"</?(?:b|i|em|strong|span|a|code|mark|sup|sub|u|s|small)(?=[\s/>])(?:{_ATTRS}>|[^<>]*>)",
+    re.IGNORECASE)
 MD_LINK = re.compile(r"!?\[([^\[\]\n]*)\]\([^()\n]*\)")
 EMPHASIS = re.compile(r"[*_~`]+")
 PUBLIC_DIRS = ("docs", "site")
