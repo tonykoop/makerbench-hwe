@@ -229,6 +229,14 @@ def floor_survey(mesh, centre, bore_mm: float, z_bottom: float, z_top: float) ->
             "floors": (top - under) if closed else None}
 
 
+def is_closed_cup(mesh) -> bool:
+    """True when ``mesh`` is one watertight shell of sphere topology (Euler
+    characteristic 2). A stopped tube is such a cup; ANY through-hole, in the
+    floor or the wall and however small or close to the wall, adds a handle
+    (genus >= 1, Euler <= 0), so this closure test has no ray-spacing blind spots."""
+    return bool(mesh.is_watertight) and int(mesh.euler_number) == 2
+
+
 def bore_at_stations(mesh, z_top: float, depth: float, *, max_diameter_mm: float) -> list:
     """Bore diameter at each of :data:`STATIONS` down from the rim (``None`` where
     the section does not show exactly one circular opening)."""
