@@ -344,3 +344,17 @@ def test_public_pages_withhold_robust_policy_rows(tmp_path):
     entry = build_data._arena_run_entry("r", {"scoreline": robust_rows + default_rows,
                                               "run_log": {"config": {"model_ids": ["claude-code-sonnet"]}}})
     assert [r["entrant"] for r in entry["objective_pass_rate"]] == ["claude-code-sonnet"]
+
+
+@pytest.mark.parametrize("samples, seed", [(4000, 0), (4000, 7), (20000, 0)])
+def test_batched_wall_ray_cast_is_identical_to_one_cast(monkeypatch, samples, seed):
+    """#997: wall rays are cast in batches (a single 20,000-ray robust-v1 cast on a large
+    mesh peaked at ~18 GB and killed CI runners). Batching must not change a single value
+    or the order the hits come back in (min_wall_sample's argmin depends on it)."""
+    tube = trimesh.creation.annulus(r_min=9, r_max=12, height=400, sections=96)
+    monkeypatch.setattr(geometry, "WALL_RAY_BATCH", 10**9)
+    whole = geometry._wall_samples(tube, samples, seed)
+    monkeypatch.setattr(geometry, "WALL_RAY_BATCH", 997)  # uneven batches
+    batched = geometry._wall_samples(tube, samples, seed)
+    for one, many in zip(whole, batched):
+        assert np.array_equal(one, many)

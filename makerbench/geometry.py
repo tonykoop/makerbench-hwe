@@ -130,6 +130,38 @@ def any_interference(parts: Iterable[PartMesh], tol_mm3: float = 1.0) -> list[tu
     return hits
 
 
+#: Rays cast per batch by the wall estimators. trimesh's pure-Python ray caster (no embree)
+#: builds every ray x candidate-triangle pair up front, so one 20,000-ray robust-v1 cast on a
+#: large mesh peaked at ~18 GB and got CI runners killed (#997). Per-ray results do not depend
+#: on the other rays in a batch, and the combined hits are put back in the order an unbatched
+#: cast returns, so batching changes memory, not values.
+WALL_RAY_BATCH = 1000
+
+
+def _first_hits(mesh: trimesh.Trimesh, origins: np.ndarray, directions: np.ndarray
+                ) -> tuple[np.ndarray, np.ndarray]:
+    """``(locations, index_ray)`` of each ray's first hit, cast in ``WALL_RAY_BATCH`` batches,
+    in the same order as one unbatched ``intersects_location(..., multiple_hits=False)``."""
+    if len(origins) <= WALL_RAY_BATCH:
+        locations, index_ray, _ = mesh.ray.intersects_location(
+            ray_origins=origins, ray_directions=directions, multiple_hits=False)
+        return np.asarray(locations), np.asarray(index_ray)
+    locs, rays = [], []
+    for start in range(0, len(origins), WALL_RAY_BATCH):
+        stop = start + WALL_RAY_BATCH
+        locations, index_ray, _ = mesh.ray.intersects_location(
+            ray_origins=origins[start:stop], ray_directions=directions[start:stop], multiple_hits=False)
+        locs.append(np.asarray(locations, dtype=float).reshape(-1, 3))
+        rays.append(np.asarray(index_ray, dtype=np.int64) + start)
+    locations, index_ray = np.concatenate(locs), np.concatenate(rays)
+    if len(index_ray) and isinstance(mesh.ray, trimesh.ray.ray_triangle.RayMeshIntersector):
+        # the unbatched pure-Python cast returns its hits in unique_rows order over
+        # (location, ray); the same rows give the same order
+        order = trimesh.grouping.unique_rows(np.column_stack((locations, index_ray)))[0]
+        locations, index_ray = locations[order], index_ray[order]
+    return locations, index_ray
+
+
 def _wall_samples(
     mesh: trimesh.Trimesh, samples: int, seed: int | None
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -153,9 +185,7 @@ def _wall_samples(
     normals = mesh.face_normals[face_idx]
     origins = pts - normals * 1e-3
     directions = -normals
-    locations, index_ray, _ = mesh.ray.intersects_location(
-        ray_origins=origins, ray_directions=directions, multiple_hits=False
-    )
+    locations, index_ray = _first_hits(mesh, origins, directions)
     if len(locations) == 0:
         empty = np.empty((0, 3))
         return np.empty(0), empty, empty
