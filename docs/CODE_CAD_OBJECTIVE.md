@@ -100,10 +100,21 @@ that row's denominator. A failed `min_wall` explanation (#903) under `robust-v1`
 method and reports the raw minimum of the same samples, so the old reading stays visible;
 legacy explanations keep their committed shape.
 
-**Public pages fail closed.** The site's arena page and run entries still withhold any row
-with a `min_wall_method`: every published round was scored with the legacy minimum, and the
-page has no estimator label yet, so a `robust-v1` row is never shown next to legacy rows as if
-comparable. Publishing labelled `robust-v1` rows is story #983.
+**Public pages label the estimator (#983).** Every committed round was scored with the
+legacy minimum, so a `robust-v1` row is never shown in the same table as legacy rows. The
+arena page publishes it in its own table, labelled with its estimator
+(`estimator_scorelines`, with `legacy_scoreline_label` on the legacy table), and run entries
+carry it as `objective_pass_rate_by_estimator`, separate from `objective_pass_rate`. A round
+or run with no marked rows keeps its exact published entry. A row with an estimator the site
+has no label for stays withheld (fail closed). Tiers stay separate as before.
+
+`agreement.json` holds one ρ computed over every objective row of a round, and the site never
+re-derives it. So the agreement is published only when every row (withheld ones too) was
+scored with one estimator the site can label. A non-legacy estimator adds `min_wall_method`
+and `label`; legacy keeps its exact shape. Otherwise ρ and n are withheld with a
+`withheld_reason`. The page `headline` averages legacy-attributed rounds only, and each
+labelled estimator gets its own entry in `estimator_headlines`. ρ values from different
+estimators are never averaged together.
 
 **What changes and what does not.** Committed results, attested bundles and showcase
 scorelines are **not** rewritten. Re-scoring them under `robust-v1` changes some numbers; the

@@ -411,7 +411,7 @@ class TestExecuteTrialEndToEnd:
             "entrant": "codex-gpt-5.6-sol", "backend": "openscad", "objective_pass_rate": 0.0,
             "n_objective_trials": 1, "confinement": "unconfined", "min_wall_method": "robust-v1",
         }]
-        # The site also withholds robust-v1 rows (T2); strip the marker so this test isolates
+        # The site publishes robust-v1 rows in their own table (#983); strip the marker so this test isolates
         # the confinement rule.
         rows = [{k: v for k, v in row.items() if k != "min_wall_method"} for row in rows]
 

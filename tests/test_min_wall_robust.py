@@ -317,9 +317,9 @@ def _build_data():
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
-def test_public_pages_withhold_robust_policy_rows(tmp_path):
-    """Native scoreline -> the real publishers: a robust row is never shown unlabelled next to the
-    legacy rows every published round was scored with (labelling it is a follow-up)."""
+def test_public_pages_label_robust_policy_rows_separately(tmp_path):
+    """#983: native scoreline -> the real publishers. A robust row is published under its own
+    estimator label, never in the legacy table every committed round was scored with."""
     (tmp_path / "robust").mkdir()
     log = _run(tmp_path / "robust", ROBUST_REGISTRY, _flaky_generator(-1), _fake_box_compiler())
     robust_rows = runner.collect_objective_scoreline(log)
@@ -334,16 +334,42 @@ def test_public_pages_withhold_robust_policy_rows(tmp_path):
         json.dumps({"schema": "makerbench-code-cad-objective-scoreline-v1", "rows": robust_rows + default_rows}),
         encoding="utf-8")
     page = build_data.build_arena_page(tmp_path / "runs")
-    assert [r["entrant"] for r in page["rounds"][0]["scoreline"]] == ["claude-code-sonnet"]  # robust row withheld
+    (published,) = page["rounds"]
+    assert [r["entrant"] for r in published["scoreline"]] == ["claude-code-sonnet"]  # legacy table unmixed
+    (table,) = published["estimator_scorelines"]
+    assert table["min_wall_method"] == "robust-v1" and "robust-v1" in table["label"]
+    assert [r["entrant"] for r in table["rows"]] == ["stub-a"]
+    assert table["rows"][0]["objective_pass_rate"] == robust_rows[0]["objective_pass_rate"]
+    assert "legacy" in published["legacy_scoreline_label"]
 
-    # only-robust round: nothing to publish at all
+    # only-robust round: published, with an empty legacy table and the labelled robust table
     (round_dir / "objective_scoreline.json").write_text(
         json.dumps({"schema": "makerbench-code-cad-objective-scoreline-v1", "rows": robust_rows}), encoding="utf-8")
+    (published,) = build_data.build_arena_page(tmp_path / "runs")["rounds"]
+    assert published["scoreline"] == [] and len(published["estimator_scorelines"]) == 1
+
+    # an unknown estimator still cannot be labelled: withheld (fail closed)
+    unknown = [{**row, "min_wall_method": "future-v9"} for row in robust_rows]
+    (round_dir / "objective_scoreline.json").write_text(
+        json.dumps({"schema": "makerbench-code-cad-objective-scoreline-v1", "rows": unknown}), encoding="utf-8")
     assert build_data.build_arena_page(tmp_path / "runs") is None
 
+    # legacy-only rounds keep their exact published entry (no new keys)
+    (round_dir / "objective_scoreline.json").write_text(
+        json.dumps({"schema": "makerbench-code-cad-objective-scoreline-v1", "rows": default_rows}), encoding="utf-8")
+    (published,) = build_data.build_arena_page(tmp_path / "runs")["rounds"]
+    assert "estimator_scorelines" not in published and "legacy_scoreline_label" not in published
+
     entry = build_data._arena_run_entry("r", {"scoreline": robust_rows + default_rows,
-                                              "run_log": {"config": {"model_ids": ["claude-code-sonnet"]}}})
+                                              "run_log": {"config": {"model_ids": ["claude-code-sonnet", "stub-a"]}}})
     assert [r["entrant"] for r in entry["objective_pass_rate"]] == ["claude-code-sonnet"]
+    (by_estimator,) = entry["objective_pass_rate_by_estimator"]
+    assert by_estimator["min_wall_method"] == "robust-v1"
+    assert [r["entrant"] for r in by_estimator["rows"]] == ["stub-a"]
+    assert entry["objective_complete"] is True  # every entrant has a (labelled) objective row
+    legacy_only = build_data._arena_run_entry("r", {"scoreline": default_rows,
+                                                    "run_log": {"config": {"model_ids": ["claude-code-sonnet"]}}})
+    assert "objective_pass_rate_by_estimator" not in legacy_only
 
 
 @pytest.mark.parametrize("samples, seed", [(4000, 0), (4000, 7), (20000, 0)])
@@ -380,3 +406,88 @@ def test_default_gate_casts_wall_rays_in_bounded_batches(tmp_path, monkeypatch, 
     assert len(calls) >= geometry.ROBUST_V1_SAMPLES // 1000
     assert all(n <= 1000 for n, _ in calls), sorted({n for n, _ in calls})[-3:]
     assert all(multiple_hits is False for _, multiple_hits in calls)
+
+
+# --- #983 review: agreement and headline are attributed to one estimator, or withheld ---------
+
+def _round(runs, number, rows, rho, n=3):
+    round_dir = runs / "code_cad_arena" / f"round{number}"
+    round_dir.mkdir(parents=True)
+    (round_dir / "objective_scoreline.json").write_text(
+        json.dumps({"schema": "makerbench-code-cad-objective-scoreline-v1", "rows": rows}), encoding="utf-8")
+    (round_dir / "agreement.json").write_text(
+        json.dumps({"agreement": {"rho": rho, "n": n, "interpretation": "x"}}), encoding="utf-8")
+    (round_dir / "run_log.json").write_text(
+        json.dumps({"config": {"model_ids": sorted({r["entrant"] for r in rows})}}), encoding="utf-8")
+
+
+def _rows(method, *entrants):
+    return [{"entrant": e, "objective_pass_rate": 0.5, "n_objective_trials": 2,
+             **({"min_wall_method": method} if method else {})} for e in entrants]
+
+
+def test_agreement_of_a_mixed_estimator_round_is_withheld(tmp_path):
+    build_data = _build_data()
+    _round(tmp_path, 5, _rows(None, "a") + _rows("robust-v1", "b", "c"), rho=1.0)
+    (published,) = build_data.build_arena_page(tmp_path)["rounds"]
+    assert published["agreement"]["rho"] is None and published["agreement"]["n"] is None
+    assert "more than one min_wall estimator" in published["agreement"]["withheld_reason"]
+
+
+def test_agreement_of_robust_plus_unknown_rows_is_withheld(tmp_path):
+    """Sol's repro: 2 robust-v1 rows publish, the future-v9 row is withheld, so an n=3 agreement
+    computed over all three cannot be shown."""
+    build_data = _build_data()
+    _round(tmp_path, 5, _rows("robust-v1", "a", "b") + _rows("future-v9", "c"), rho=1.0)
+    (published,) = build_data.build_arena_page(tmp_path)["rounds"]
+    assert [r["entrant"] for r in published["estimator_scorelines"][0]["rows"]] == ["a", "b"]
+    assert published["agreement"]["n"] is None and published["agreement"]["rho"] is None
+    assert published["agreement"]["withheld_reason"]
+    assert build_data.build_arena_page(tmp_path)["headline"] is None
+    assert "estimator_headlines" not in build_data.build_arena_page(tmp_path)
+
+    entry = build_data._arena_run_entry("r", {
+        "scoreline": _rows("robust-v1", "a", "b") + _rows("future-v9", "c"),
+        "agreement": {"agreement": {"rho": 1.0, "n": 3}},
+        "run_log": {"config": {"model_ids": ["a", "b", "c"]}}})
+    assert entry["agreement"]["n"] is None and entry["agreement"]["withheld_reason"]
+
+
+def test_single_estimator_agreement_is_labelled_and_legacy_keeps_its_shape(tmp_path):
+    build_data = _build_data()
+    _round(tmp_path, 5, _rows(None, "a", "b", "c"), rho=0.5)
+    _round(tmp_path, 6, _rows("robust-v1", "a", "b", "c"), rho=-0.5)
+    legacy, robust = build_data.build_arena_page(tmp_path)["rounds"]
+    assert legacy["agreement"] == {"rho": 0.5, "n": 3, "interpretation": "x"}
+    assert robust["agreement"]["rho"] == -0.5 and robust["agreement"]["n"] == 3
+    assert robust["agreement"]["min_wall_method"] == "robust-v1" and "robust-v1" in robust["agreement"]["label"]
+
+    entry = build_data._arena_run_entry("r", {
+        "scoreline": _rows(None, "a") + _rows("robust-v1", "b"),
+        "agreement": {"agreement": {"rho": 1.0, "n": 2}},
+        "run_log": {"config": {"model_ids": ["a", "b"]}}})
+    assert entry["agreement"]["rho"] is None and entry["agreement"]["withheld_reason"]
+
+
+def test_headline_never_averages_across_estimators(tmp_path):
+    """Legacy rho=+1 and robust rho=-1 must not average into an unlabelled 0; a mixed round
+    counts in neither headline."""
+    build_data = _build_data()
+    _round(tmp_path, 5, _rows(None, "a", "b", "c"), rho=1.0)
+    _round(tmp_path, 6, _rows("robust-v1", "a", "b", "c"), rho=-1.0)
+    _round(tmp_path, 7, _rows(None, "a") + _rows("robust-v1", "b", "c"), rho=0.25)
+    page = build_data.build_arena_page(tmp_path)
+    assert page["headline"]["value"] == 1.0 and page["headline"]["rounds_used"] == [5]
+    assert page["headline"]["min_wall_method"] == "min" and "legacy" in page["headline"]["label"]
+    (robust,) = page["estimator_headlines"]
+    assert robust["value"] == -1.0 and robust["rounds_used"] == [6]
+    assert robust["min_wall_method"] == "robust-v1" and "robust-v1" in robust["label"]
+
+
+def test_legacy_only_headline_is_unchanged(tmp_path):
+    build_data = _build_data()
+    _round(tmp_path, 5, _rows(None, "a", "b", "c"), rho=1.0)
+    _round(tmp_path, 6, _rows(None, "a", "b", "c"), rho=0.0)
+    page = build_data.build_arena_page(tmp_path)
+    assert page["headline"]["value"] == 0.5 and page["headline"]["rounds_used"] == [5, 6]
+    assert "label" not in page["headline"] and "estimator_headlines" not in page

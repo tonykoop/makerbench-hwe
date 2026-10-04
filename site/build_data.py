@@ -430,6 +430,59 @@ def _arena_matrix_label(config: dict) -> str:
     )
 
 
+# #983: min_wall estimators whose scoreline rows the site publishes, each under its own label and
+# never in the same table as rows of another estimator. Unmarked rows were scored with the legacy
+# minimum (every committed round); a marked row whose estimator is not listed here stays withheld
+# (fail closed, #901).
+MIN_WALL_ESTIMATOR_LABELS: dict[str, str] = {
+    "robust-v1": "min_wall estimator robust-v1 (1st-percentile wall thickness, the default since T2)",
+}
+MIN_WALL_METHOD_LEGACY = "min"
+LEGACY_MIN_WALL_LABEL = "min_wall estimator min (legacy minimum)"
+
+
+def _split_by_min_wall_method(rows: list) -> tuple[list, dict[str, list]]:
+    """``(legacy rows, {estimator: rows})`` for the labelled estimators; rows of an unknown
+    estimator are dropped (#901/#983)."""
+    legacy: list = []
+    marked: dict[str, list] = {}
+    for row in rows:
+        method = row.get("min_wall_method")
+        if not method:
+            legacy.append(row)
+        elif method in MIN_WALL_ESTIMATOR_LABELS:
+            marked.setdefault(str(method), []).append(row)
+    return legacy, marked
+
+
+AGREEMENT_MIXED_ESTIMATORS_REASON = (
+    "Withheld: this run's objective rows were scored with more than one min_wall estimator, "
+    "and its rank agreement was computed over all of them, so it cannot be attributed to one.")
+AGREEMENT_UNKNOWN_ESTIMATOR_REASON = (
+    "Withheld: this run's objective rows were scored with a min_wall estimator the site cannot "
+    "label, so its rank agreement cannot be attributed.")
+
+
+def _public_agreement(stat: dict, rows: list) -> dict:
+    """The public rank-agreement statistic, attributed to the min_wall estimator it was computed
+    over (#983 review). ``agreement.json`` is one Spearman rho over every objective row of the
+    run, and the site never re-derives it. So it is published only when every row (withheld ones
+    included) was scored with ONE estimator the site can label: the legacy minimum keeps its
+    exact committed shape, a labelled estimator adds ``min_wall_method`` and ``label``. Otherwise
+    rho/n/interpretation are withheld, with the reason."""
+    methods = {str(row.get("min_wall_method") or MIN_WALL_METHOD_LEGACY)
+               for row in rows if isinstance(row, dict)}
+    public = {"rho": stat.get("rho"), "n": stat.get("n"), "interpretation": stat.get("interpretation")}
+    if len(methods) > 1 or not (methods <= {MIN_WALL_METHOD_LEGACY, *MIN_WALL_ESTIMATOR_LABELS}):
+        reason = (AGREEMENT_MIXED_ESTIMATORS_REASON if len(methods) > 1
+                  else AGREEMENT_UNKNOWN_ESTIMATOR_REASON)
+        return {"rho": None, "n": None, "interpretation": None, "withheld_reason": reason}
+    (method,) = methods or {MIN_WALL_METHOD_LEGACY}
+    if method != MIN_WALL_METHOD_LEGACY:
+        public.update(min_wall_method=method, label=MIN_WALL_ESTIMATOR_LABELS[method])
+    return public
+
+
 def _arena_run_entry(run_id: str, payloads: dict) -> dict | None:
     """Fold one run's payloads into a public, aggregate-only arena entry.
 
@@ -437,10 +490,10 @@ def _arena_run_entry(run_id: str, payloads: dict) -> dict | None:
     which fails the publication bar and is skipped entirely.
     """
     elo = payloads.get("elo") or {}
-    # #901/#979: rows scored with a marked min_wall estimator (robust-v1, the default since #979)
-    # are withheld from public entries until they can be labelled (#983); every published row
-    # was scored with the legacy minimum and must not be read alongside them.
-    scoreline = [row for row in (payloads.get("scoreline") or []) if not row.get("min_wall_method")]
+    # #901/#983: rows scored with a marked min_wall estimator (robust-v1, the default since #979)
+    # are published in their own labelled list, never alongside the legacy rows.
+    all_rows = [row for row in (payloads.get("scoreline") or []) if isinstance(row, dict)]
+    scoreline, by_estimator = _split_by_min_wall_method(all_rows)
     agreement = payloads.get("agreement") or {}
     config = ((payloads.get("run_log") or {}).get("config")) or {}
 
@@ -475,7 +528,25 @@ def _arena_run_entry(run_id: str, payloads: dict) -> dict | None:
         for row in scoreline
     ]
 
+    estimator_pass_rates = [
+        {
+            "min_wall_method": method,
+            "label": MIN_WALL_ESTIMATOR_LABELS[method],
+            "rows": [
+                {
+                    "entrant": row.get("entrant"),
+                    "objective_pass_rate": row.get("objective_pass_rate"),
+                    "n_objective_trials": row.get("n_objective_trials", 0),
+                }
+                for row in rows
+            ],
+        }
+        for method, rows in sorted(by_estimator.items())
+    ]
+
+    # An entrant has an objective row under any published (labelled) estimator.
     objective_entrants = {str(row.get("entrant")) for row in scoreline}
+    objective_entrants |= {str(row.get("entrant")) for rows in by_estimator.values() for row in rows}
     objective_complete = set(entrants_expected) <= objective_entrants
 
     # Elo publication bar: strictly more than one voter (population claim) AND
@@ -494,7 +565,7 @@ def _arena_run_entry(run_id: str, payloads: dict) -> dict | None:
         withheld_reason = None
 
     agreement_stat = agreement.get("agreement") or {}
-    return {
+    entry = {
         "run_id": run_id,
         "provenance": {
             "matrix": _arena_matrix_label(config),
@@ -516,12 +587,15 @@ def _arena_run_entry(run_id: str, payloads: dict) -> dict | None:
         "objective_pass_rate": objective_pass_rate,
         # Agreement is a correlation between the two rankings, reported as its own
         # statistic — it is evidence, never folded back into a composite score.
-        "agreement": {
-            "rho": agreement_stat.get("rho"),
-            "n": agreement_stat.get("n"),
-            "interpretation": agreement_stat.get("interpretation"),
-        },
+        # #983 review: attributed to its min_wall estimator, or withheld when it cannot be.
+        "agreement": _public_agreement(agreement_stat, all_rows),
     }
+    if estimator_pass_rates:
+        # #983: objective rows of a labelled non-legacy min_wall estimator, one list per
+        # estimator; never merged with ``objective_pass_rate`` (the legacy rows). Absent when
+        # empty, so runs scored with the legacy minimum keep their exact entry.
+        entry["objective_pass_rate_by_estimator"] = estimator_pass_rates
+    return entry
 
 
 def build_arena_section(runs_dir: Path) -> dict | None:
@@ -663,32 +737,37 @@ def _arena_page_round(number: int, run_dir: Path) -> dict | None:
     """
     scoreline = _arena_read_json(run_dir / "objective_scoreline.json")
     rows = []
-    for row in scoreline.get("rows") or []:
-        if not isinstance(row, dict) or not row.get("entrant"):
-            continue
+    marked: dict[str, list] = {}
+    scored = [row for row in scoreline.get("rows") or [] if isinstance(row, dict) and row.get("entrant")]
+    for row in scored:
         if row.get("confinement") == "unconfined":
             # #785: a non-blind trial whose entrant could read outside its staged
             # workspace is not integrity-safe; never publish its score.
             continue
-        if row.get("min_wall_method"):
-            # #901/#979: a row scored with a marked min_wall estimator (robust-v1) is not
-            # comparable with the legacy rows this page publishes and the page cannot label it
-            # yet (#983); withhold it (fail closed) rather than mix estimators.
-            continue
-        rows.append(
-            {
-                "entrant": str(row["entrant"]),
-                "objective_pass_rate": row.get("objective_pass_rate"),
-                "n_objective_trials": int(row.get("n_objective_trials") or 0),
-            }
-        )
-    if not rows:
+        public = {
+            "entrant": str(row["entrant"]),
+            "objective_pass_rate": row.get("objective_pass_rate"),
+            "n_objective_trials": int(row.get("n_objective_trials") or 0),
+        }
+        method = row.get("min_wall_method")
+        if not method:
+            rows.append(public)
+        elif method in MIN_WALL_ESTIMATOR_LABELS:
+            # #983: a row scored with a labelled non-legacy min_wall estimator (robust-v1) is
+            # published in its own labelled table, never in the legacy table.
+            marked.setdefault(str(method), []).append(public)
+        # #901: a row of an unknown estimator cannot be labelled; withhold it (fail closed).
+    if not rows and not marked:
         return None
-    rows.sort(key=lambda r: (-(r["objective_pass_rate"] or 0.0), r["entrant"]))
+
+    def _rank(table: list) -> list:
+        return sorted(table, key=lambda r: (-(r["objective_pass_rate"] or 0.0), r["entrant"]))
+
+    rows = _rank(rows)
 
     config = _arena_read_json(run_dir / "run_log.json").get("config") or {}
     stat = _arena_read_json(run_dir / "agreement.json").get("agreement") or {}
-    return {
+    entry = {
         "round": number,
         "round_id": f"round{number}",
         "modality": ARENA_ROUND_MODALITIES.get(number, ARENA_DEFAULT_MODALITY),
@@ -700,26 +779,30 @@ def _arena_page_round(number: int, run_dir: Path) -> dict | None:
         "scoreline": rows,
         # Rank agreement between the (off-site) blind preference ordering and
         # the objective ordering — a standalone statistic, never a score.
-        "agreement": {
-            "rho": stat.get("rho"),
-            "n": stat.get("n"),
-            "interpretation": stat.get("interpretation"),
-        },
+        # #983 review: computed over every scored row, so attributed to their one min_wall
+        # estimator, or withheld when the round mixes estimators or has an unlabelled one.
+        "agreement": _public_agreement(stat, scored),
     }
+    if marked:
+        # #983: one labelled table per non-legacy estimator. Absent when empty, so rounds
+        # scored with the legacy minimum keep their exact published entry.
+        entry["estimator_scorelines"] = [
+            {"min_wall_method": method, "label": MIN_WALL_ESTIMATOR_LABELS[method], "rows": _rank(table)}
+            for method, table in sorted(marked.items())
+        ]
+        entry["legacy_scoreline_label"] = LEGACY_MIN_WALL_LABEL
+    return entry
 
 
-def _arena_page_headline(rounds: list[dict]) -> dict | None:
-    """The decorrelation headline: mean Spearman rho over comparable rounds.
-
-    Matches the published finding (see blog/arena-elo-decorrelation.html): the
-    R5–R10 head-to-head window, keeping only rounds where the agreement rank
-    has at least three comparable entrants (two-entrant rho is degenerate).
-    """
+def _arena_headline_for(rounds: list[dict], method: str) -> dict | None:
+    """Mean Spearman rho over the comparable rounds whose agreement is attributed to ``method``."""
     used: list[dict] = []
     for entry in rounds:
         if not 5 <= entry["round"] <= 10:
             continue
         stat = entry["agreement"]
+        if stat.get("min_wall_method", MIN_WALL_METHOD_LEGACY) != method:
+            continue
         if stat.get("rho") is None or (stat.get("n") or 0) < 3:
             continue
         used.append(entry)
@@ -740,6 +823,32 @@ def _arena_page_headline(rounds: list[dict]) -> dict | None:
             "are different capabilities."
         ),
     }
+
+
+def _arena_page_headline(rounds: list[dict]) -> dict | None:
+    """The decorrelation headline: mean Spearman rho over comparable rounds.
+
+    Matches the published finding (see blog/arena-elo-decorrelation.html): the
+    R5–R10 head-to-head window, keeping only rounds where the agreement rank
+    has at least three comparable entrants (two-entrant rho is degenerate).
+
+    #983 review: only rounds whose agreement is attributed to the legacy minimum count, the
+    estimator every committed round and the published finding used. Rounds scored with another
+    estimator get their own labelled headline (:func:`_arena_estimator_headlines`) and are never
+    averaged into this one; rounds with a withheld agreement count nowhere.
+    """
+    return _arena_headline_for(rounds, MIN_WALL_METHOD_LEGACY)
+
+
+def _arena_estimator_headlines(rounds: list[dict]) -> list[dict]:
+    """One labelled headline per non-legacy min_wall estimator with comparable rounds (#983)."""
+    headlines = []
+    for method in sorted(MIN_WALL_ESTIMATOR_LABELS):
+        headline = _arena_headline_for(rounds, method)
+        if headline is not None:
+            headlines.append({**headline, "min_wall_method": method,
+                              "label": MIN_WALL_ESTIMATOR_LABELS[method]})
+    return headlines
 
 
 def build_arena_page(runs_dir: Path) -> dict | None:
@@ -791,6 +900,13 @@ def build_arena_page(runs_dir: Path) -> dict | None:
         "pending_rounds": [n for n in range(1, horizon + 1) if n not in published],
         "rounds": rounds,
     }
+    estimator_headlines = _arena_estimator_headlines(rounds)
+    if estimator_headlines:
+        # #983 review: absent when empty, so pages built from legacy rounds stay byte-identical.
+        payload["estimator_headlines"] = estimator_headlines
+        if payload["headline"] is not None:
+            payload["headline"]["min_wall_method"] = MIN_WALL_METHOD_LEGACY
+            payload["headline"]["label"] = LEGACY_MIN_WALL_LABEL
     audit_arena_page_public(payload)
     return payload
 
