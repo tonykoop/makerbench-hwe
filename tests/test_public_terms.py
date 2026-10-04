@@ -270,3 +270,39 @@ def test_ci_runs_the_checker():
 
 def test_committed_public_text_has_no_denied_fingerprints():
     assert checker.check(ROOT, checker.load_hashes(checker.DENYLIST)) == []
+
+
+# #964: multi-line HTML comments inside a word; partial CamelCase joins.
+@pytest.mark.parametrize("text", ["Syn<!--\nnote\n-->thetic", "Syn<!-- a\n-->the<!--\nb -->tic",
+                                  "Syn<!--\n-->the<b>tic</b>", "**Syn**<!--\n\n-->thetic"])
+def test_multiline_comment_inside_a_word_is_rejoined(text):
+    assert checker.matched_lines("ok\n" + text, fingerprints("synthetic")) == [2]
+
+
+def test_multiline_comment_keeps_later_line_numbers():
+    text = "Syn<!--\n\n-->thetic tail\nmid\nSynthetic\n<!--\n-->\nSynthetic"
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [1, 5, 8]
+
+
+def test_multiline_comment_between_words_still_separates():
+    assert checker.matched_lines("Syn <!--\n--> thetic", fingerprints("synthetic")) == []
+    assert checker.matched_lines("Syn<!--\n-->\nthetic", fingerprints("synthetic")) == []
+
+
+@pytest.mark.parametrize("text", ["AcmeSyntheticWidget SpareKit", "AcmeSyntheticWidget spare kit",
+                                  "xAcmeSyntheticWidget spare-kit", "AcmeSyntheticWidget SpareKitPlus",
+                                  "Acme_SyntheticWidget Spare_Kit"])
+def test_partial_camel_case_suffix_reads_as_one_word(text):
+    assert checker.matched_lines(text, fingerprints("syntheticwidget-spare-kit")) == [1]
+
+
+@pytest.mark.parametrize("text", ["Spare SyntheticWidgetAcme", "spare-SyntheticWidgetAcmeKit"])
+def test_partial_camel_case_prefix_reads_as_one_word(text):
+    assert checker.matched_lines(text, fingerprints("spare-syntheticwidget")) == [1]
+
+
+@pytest.mark.parametrize("text", ["Synthetic Widget Spare Kit", "AcmeSynthetic WidgetSpareKit",
+                                  "Synthetic WidgetSpare Kit"])
+def test_partial_camel_joins_do_not_merge_separate_words(text):
+    # Only parts of ONE CamelCase token may be read as one word.
+    assert checker.matched_lines(text, fingerprints("syntheticwidget-spare-kit")) == []

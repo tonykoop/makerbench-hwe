@@ -16,7 +16,9 @@ Public text is normalized before tokenizing:
 * the text is scanned three ways and the hits are unioned: as-is (so terms in
   tag attributes are seen), with HTML tags turned into separators, and with
   inline HTML tags and Markdown emphasis markers (``* _ ~ ` ``) removed so a
-  word split by formatting (``**Fo**o``, ``Fo<b>o</b>``) is rejoined.
+  word split by formatting (``**Fo**o``, ``Fo<b>o</b>``) is rejoined. HTML
+  comments are removed there too, even multi-line ones inside a word; their
+  line breaks move to the end of that word so line numbers stay exact.
 
 Each view is tokenized case-insensitively into two streams, whole alphanumeric
 tokens and CamelCase-split parts, and every run of 1..MAX_NGRAM consecutive
@@ -106,6 +108,32 @@ def _replace_keeping_lines(pattern: re.Pattern, text: str, filler: str) -> str:
     return pattern.sub(lambda m: filler + "\n" * m.group().count("\n"), text)
 
 
+def _drop_comments_deferring_lines(text: str) -> str:
+    """Remove HTML comments outright, so a comment inside a word rejoins it even
+    when it spans lines. Each comment's newlines are re-inserted at the next
+    whitespace after it (the end of the word), so every token still starts on
+    its original line."""
+    out: list[str] = []
+    pending = 0
+    pos = 0
+    while True:
+        match = HTML_COMMENT.search(text, pos)
+        stop = match.start() if match else len(text)
+        chunk = text[pos:stop]
+        if pending:
+            ws = re.search(r"\s", chunk)
+            if ws:
+                chunk = chunk[:ws.start()] + "\n" * pending + chunk[ws.start():]
+                pending = 0
+        out.append(chunk)
+        if not match:
+            break
+        pending += match.group().count("\n")
+        pos = match.end()
+    out.append("\n" * pending)
+    return "".join(out)
+
+
 def views(text: str) -> list[str]:
     """Normalized views of ``text``; all keep the original line numbering.
 
@@ -118,7 +146,7 @@ def views(text: str) -> list[str]:
     base = _decode(text)
     links = MD_LINK.sub(lambda m: m.group(1), base)
     spaced = _replace_keeping_lines(HTML_TAG, _replace_keeping_lines(HTML_COMMENT, links, " "), " ")
-    joined = _replace_keeping_lines(HTML_COMMENT, links, "")
+    joined = _drop_comments_deferring_lines(links)
     joined = _replace_keeping_lines(INLINE_TAG, joined, "")
     joined = _replace_keeping_lines(HTML_TAG, joined, " ")
     joined = _replace_keeping_lines(EMPHASIS, joined, "")
@@ -146,7 +174,10 @@ def _grams_from(tokens, index: int) -> set[str]:
     """Every <=MAX_NGRAM-word window starting in token ``index``.
 
     Each token may be read whole or as its CamelCase parts, independently,
-    so mixed forms such as ``FooBar BazQux`` yield ``foobar-baz-qux``.
+    so mixed forms such as ``FooBar BazQux`` yield ``foobar-baz-qux``. A window
+    that starts (ends) inside a CamelCase token may also read the rest (the
+    start) of it as one word: ``AcmeFooBar Baz`` yields ``foobar-baz`` and
+    ``Foo BarBazQux`` yields ``foo-barbaz``.
     """
     grams: set[str] = set()
 
@@ -161,12 +192,16 @@ def _grams_from(tokens, index: int) -> set[str]:
                     break
                 if size < len(reading):
                     grams.add("-".join(window))  # a window may end mid-token
+                    if size > 1:  # ... with that CamelCase prefix read as one word
+                        grams.add("-".join(words + ["".join(reading[:size])]))
                 else:
                     extend(window, nxt + 1)
 
     for reading in tokens[index][1]:
         for offset in range(len(reading)):  # a window may start mid-token
             tail = reading[offset:]
+            if offset and len(tail) > 1:  # ... with that CamelCase suffix read as one word
+                extend(["".join(tail)], index + 1)
             for size in range(1, min(len(tail), MAX_NGRAM) + 1):
                 if size < len(tail):
                     grams.add("-".join(tail[:size]))
