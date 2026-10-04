@@ -2021,6 +2021,83 @@ kbd {
   margin-bottom: var(--space-2);
 }
 
+/* Measure overlay (#975): the workbench 3D preview only. */
+.workbench-preview .model-host {
+  height: min(60vh, 28rem);
+  border-radius: 0.375rem;
+  overflow: hidden;
+}
+
+.model-host model-viewer.is-picking {
+  cursor: crosshair;
+}
+
+.measure-overlay {
+  margin-top: var(--space-3);
+}
+
+.measure-overlay h4 {
+  margin: 0 0 var(--space-2);
+}
+
+.measure-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.measure-row dt {
+  color: var(--muted);
+  font-size: var(--step--1);
+}
+
+.measure-row dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.measure-row[data-ok="false"] dd {
+  color: var(--muted);
+}
+
+.measure-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.measure-readout {
+  font-variant-numeric: tabular-nums;
+}
+
+.measure-hotspot {
+  display: grid;
+  place-items: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  border: 2px solid var(--stage);
+  background: var(--stage-ink);
+  color: var(--stage);
+  font: 700 0.75rem/1 var(--font-ui);
+  pointer-events: none;
+}
+
+.measure-hotspot[data-kind="wall"] {
+  width: 0.875rem;
+  min-width: 0;
+  height: 0.875rem;
+  padding: 0;
+  background: #e5484d;
+  border-color: #ffffff;
+  box-shadow: 0 0 0 3px rgb(229 72 77 / 0.35);
+}
+
 .job-status {
   margin-top: var(--space-3);
 }

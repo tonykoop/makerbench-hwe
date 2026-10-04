@@ -37,6 +37,7 @@ import { curationChanges, curationRows, exportSummary, pickText, writtenText } f
 import { FEEDBACK_LIMIT, canStart, confirmText, entrantOptionText, modelProvenanceText } from "../lib/revise.js";
 import { useResource } from "../hooks/useResource.js";
 import { CodeEditor } from "../components/codeEditor.js";
+import { DimensionOverlay } from "../components/dimensionOverlay.js";
 import { ModelViewer } from "../components/modelViewer.js";
 import { SectionControls } from "../components/sectionControls.js";
 import { SECTION_OFF } from "../lib/section.js";
@@ -209,6 +210,7 @@ function Preview({ designId, kind, itemId, artifacts, label }) {
   const [viewerFailed, setViewerFailed] = useState(false);
   const [section, setSection] = useState(SECTION_OFF);
   const [viewerReady, setViewerReady] = useState(false);
+  const [viewerElement, setViewerElement] = useState(null);
   const names = artifacts || [];
   // Reset the cut whenever the shown artifact changes: this component is not
   // keyed, so a finished draft replacing the saved model reuses its state.
@@ -244,9 +246,11 @@ function Preview({ designId, kind, itemId, artifacts, label }) {
               label=${label}
               section=${section}
               onReady=${setViewerReady}
+              onElement=${setViewerElement}
               onFailure=${() => setViewerFailed(true)}
             />
-            ${viewerReady && html`<${SectionControls} section=${section} onChange=${setSection} idPrefix="workbench-section" />`}`
+            ${viewerReady && html`<${SectionControls} section=${section} onChange=${setSection} idPrefix="workbench-section" />`}
+            ${viewerElement && html`<${DimensionOverlay} element=${viewerElement} url=${`${base(designId)}/${kind}/${enc(itemId)}/dimensions`} />`}`
         : png
           ? html`<img class="workbench-image" src=${png} alt=${label} />`
           : html`<p class="viewer-note" role="note">Render unavailable without WebGL.</p>`}

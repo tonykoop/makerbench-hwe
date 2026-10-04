@@ -975,7 +975,9 @@ class TestRealJobs:
         assert draft["objective"]["sandbox"] == {"kind": "bwrap", "verified": True, "xvfb": True}
         assert draft["objective"]["objective"]["declared"] is True
         assert draft["objective"]["objective"]["objective_pass_rate"] == 1.0
-        assert draft["artifacts"] == ["output.stl", "preview.png"]
+        assert draft["artifacts"] == ["model.glb", "output.stl", "preview.png"]  # #975: the 3D preview's GLB
+        glb = studio.get(f"/api/workbench/designs/{did}/drafts/{jid}/artifacts/model.glb")
+        assert glb.status_code == 200 and glb.content[:4] == b"glTF" and glb.headers["content-type"] == "model/gltf-binary"
         png = studio.get(f"/api/workbench/designs/{did}/drafts/{jid}/artifacts/preview.png")
         assert png.content[:8] == b"\x89PNG\r\n\x1a\n"
         stream = studio.get(f"/api/workbench/designs/{did}/drafts/{jid}/log/stream", params={"follow": "false"}).text

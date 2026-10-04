@@ -544,7 +544,7 @@ def test_full_evening_journey_through_every_screen(
             shot("14-workbench-export")
             rev2 = page.url.split("#/workbench/")[1].split("/")[1]
             exported = ocarina_repo / "arena" / "workbench" / design_id / rev2
-            assert sorted(p.name for p in exported.iterdir()) == ["README.md", "ocarina-workbench-r2.png", "ocarina-workbench-r2.scad", "ocarina-workbench-r2.stl", "provenance.json"]
+            assert sorted(p.name for p in exported.iterdir()) == ["README.md", "ocarina-workbench-r2.glb", "ocarina-workbench-r2.png", "ocarina-workbench-r2.scad", "ocarina-workbench-r2.stl", "provenance.json"]
             assert "translate([20, 0, 0]) cube(4);" in (exported / "ocarina-workbench-r2.scad").read_text(encoding="utf-8")
             assert "NOT a measured master" in (exported / "README.md").read_text(encoding="utf-8")
         else:  # pragma: no cover - local runs without bubblewrap

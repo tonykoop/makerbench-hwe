@@ -415,8 +415,8 @@ def test_design_view_at_phone_width_stacks_without_horizontal_scroll(studio_url:
 
 # #985 review: the workbench preview is not keyed, so a finished draft that
 # replaces the shown model must not inherit the previous model's section cut.
-# The workbench compile emits no GLB yet, so the route layer adds one to the
-# draft/revision artifact lists and serves a real box mesh for it.
+# Compiles now write model.glb (#975); the route layer still serves a known
+# box mesh for it and adds it to the artifact lists if missing.
 _CLIPPED = """() => {
   const viewer = document.querySelector('.workbench-preview model-viewer');
   const materials = (viewer?.model?.materials || []).filter(m => m.isActive);
@@ -448,7 +448,7 @@ def test_section_cut_resets_when_a_new_model_replaces_the_preview(studio_url: st
             return
         response = route.fetch()
         data = response.json()
-        if "preview.png" in (data.get("artifacts") or []):
+        if "preview.png" in (data.get("artifacts") or []) and "model.glb" not in data["artifacts"]:
             data["artifacts"] = [*data["artifacts"], "model.glb"]
         route.fulfill(response=response, json=data)
 
@@ -497,3 +497,148 @@ def test_section_cut_resets_when_a_new_model_replaces_the_preview(studio_url: st
         assert session.errors == []
         session.close()
         browser.close()
+
+
+# --- dimension overlay (#975) ---------------------------------------------------------
+
+def _create_master_design(studio_url: str) -> str:
+    import urllib.request
+
+    body = json.dumps({"master": {"instrument_id": "boxolin", "file": "boxolin.scad"}}).encode()
+    req = urllib.request.Request(f"{studio_url}/api/workbench/designs", data=body, method="POST",
+                                 headers={"Content-Type": "application/json", "Origin": studio_url})
+    return json.loads(urllib.request.urlopen(req).read())["design_id"]
+
+
+_VIEWER_PIXEL = """([fx, fy]) => {
+  const el = document.querySelector('.workbench-preview model-viewer');
+  el.scrollIntoView({ block: 'center' });
+  const r = el.getBoundingClientRect();
+  const x = r.left + fx * r.width, y = r.top + fy * r.height;
+  return document.elementFromPoint(x, y) === el ? [x, y] : null;
+}"""
+
+
+def _viewer_pixel(page, fx: float, fy: float) -> tuple[float, float]:
+    """A viewport pixel on the viewer, read after scrolling it into view."""
+    point = page.evaluate(_VIEWER_PIXEL, [fx, fy])
+    assert point, "the viewer is under that pixel"
+    return tuple(point)
+
+
+_PICK_AT = """([x, y]) => {
+  const hit = document.querySelector('.workbench-preview model-viewer').positionAndNormalFromPoint(x, y);
+  return hit ? [hit.position.x, hit.position.y, hit.position.z] : null;
+}"""
+
+
+@needs_sandbox
+@pytest.mark.parametrize("theme,width", [("light", 1440), ("dark", 400)])
+def test_dimension_overlay_shows_gate_metrics_and_measures_two_picked_points(
+    studio_url: str, screenshot_dir: Path, theme: str, width: int,
+):
+    design_id = _create_master_design(studio_url)
+    with sync_playwright() as playwright:
+        browser = _launch(playwright, "webgl")
+        session = Session(browser, f"{studio_url}/#/workbench/{design_id}",
+                          viewport={"width": width, "height": 1000}, color_scheme=theme)
+        page = session.page
+        page.locator("[data-action='save']").wait_for(timeout=120_000)
+        requests: list[str] = []
+        page.on("request", lambda request: requests.append(request.url))
+        assert page.locator(".measure-overlay").count() == 0, "image view shows no overlay"
+        page.locator(".workbench-preview").get_by_role("button", name="3D", exact=True).click()
+        overlay = page.locator(".measure-overlay")
+        overlay.locator(".measure-row").first.wait_for(timeout=30_000)
+        assert any(url.endswith("/dimensions") for url in requests)
+        text = {row.get_attribute("data-metric"): row.locator("dd").inner_text() for row in overlay.locator(".measure-row").all()}
+        assert text["bbox"] == "10.0 × 10.0 × 10.0 mm"  # boxolin master: cube(10)
+        assert text["volume"] == "1.00 cm³"
+        assert text["wall"].startswith(("9.9", "10.0")) and "marked on the model" in text["wall"]
+        viewer = page.locator(".workbench-preview model-viewer")
+        wall = viewer.locator(".measure-hotspot[data-kind=wall]")
+        assert wall.count() == 1
+        page.wait_for_function("() => document.querySelector('.measure-hotspot[data-kind=wall]').getBoundingClientRect().width > 0")
+
+        # Pick two points with real clicks; the turntable pauses while picking.
+        measure = overlay.get_by_role("button", name="Measure distance")
+        measure.click()
+        assert measure.get_attribute("aria-pressed") == "true"
+        page.wait_for_function("() => document.querySelector('.workbench-preview model-viewer').autoRotate === false")
+        page.wait_for_timeout(1500)  # let the turntable's damping settle
+        first = _viewer_pixel(page, 0.32, 0.62)
+        expected = [page.evaluate(_PICK_AT, list(first))]
+        assert expected[0], "the pixel is on the model"
+        readout = overlay.locator(".measure-readout")
+        page.mouse.click(*first)
+        assert readout.inner_text() == "Click a second point."
+        # A drag orbits and never picks.
+        second = _viewer_pixel(page, 0.6, 0.4)
+        page.mouse.move(*second)
+        page.mouse.down()
+        page.mouse.move(second[0] + 40, second[1], steps=4)
+        page.mouse.up()
+        assert readout.inner_text() == "Click a second point."
+        page.wait_for_timeout(200)
+        assert viewer.locator(".measure-hotspot[data-kind=pick]").count() == 1
+        # The drag turned the camera, not the model, so the same pixel now maps
+        # elsewhere: let the orbit settle, then re-read the expected hit.
+        page.wait_for_timeout(1500)
+        second = _viewer_pixel(page, 0.62, 0.38)
+        expected.append(page.evaluate(_PICK_AT, list(second)))
+        assert expected[1], "the pixel is on the model after the orbit"
+        page.mouse.click(*second)
+        page.wait_for_function("() => document.querySelector('.measure-readout').dataset.distance !== ''")
+        distance = float(readout.get_attribute("data-distance"))
+        want = sum((a - b) ** 2 for a, b in zip(*expected)) ** 0.5
+        assert abs(distance - want) < 1e-3 and 1.0 < distance <= 300 ** 0.5  # float32 picking
+        assert readout.inner_text() == f"Distance A–B: {distance:.2f} mm"
+        for point in expected:
+            # The picked frame is the STL's frame: every surface point of
+            # cube(10) has a coordinate on 0 or 10 mm.
+            assert any(abs(v) < 1e-3 or abs(v - 10) < 1e-3 for v in point), point
+        page.wait_for_function("() => document.querySelectorAll('.workbench-preview model-viewer > .measure-hotspot[data-kind=pick]').length === 2")
+        page.wait_for_timeout(300)
+        if width < 600:
+            overlay.scroll_into_view_if_needed()
+        page.screenshot(path=str(screenshot_dir / f"dimensions-{theme}-{width}.png"), full_page=True)
+        assert page.evaluate("() => document.scrollingElement.scrollWidth - document.scrollingElement.clientWidth") <= 0
+
+        overlay.get_by_role("button", name="Clear").click()
+        page.wait_for_function("() => !document.querySelector('.workbench-preview model-viewer > .measure-hotspot[data-kind=pick]')")
+        measure.click()
+        # Leaving pick mode restores the turntable.
+        page.wait_for_function("() => document.querySelector('.workbench-preview model-viewer').autoRotate === true")
+        assert session.errors == []
+        session.close()
+        browser.close()
+
+
+@needs_sandbox
+def test_zero_webgl_never_requests_dimensions(studio_url: str):
+    design_id = _create_master_design(studio_url)
+    with sync_playwright() as playwright:
+        browser = _launch(playwright, "zero-webgl")
+        session = Session(browser, f"{studio_url}/#/workbench/{design_id}", viewport={"width": 1440, "height": 1000})
+        page = session.page
+        requests: list[str] = []
+        page.on("request", lambda request: requests.append(request.url))
+        page.locator("[data-action='save']").wait_for(timeout=120_000)
+        page.locator(".workbench-image").wait_for()
+        three_d = page.locator(".workbench-preview").get_by_role("button", name="3D", exact=True)
+        assert three_d.get_attribute("aria-disabled") == "true"
+        three_d.dispatch_event("click")
+        page.wait_for_timeout(300)
+        assert page.locator(".measure-overlay").count() == 0
+        assert not [url for url in requests if url.endswith("/dimensions") or "model-viewer" in url]
+        assert session.errors == []
+        session.close()
+        browser.close()
+
+
+def test_blind_vote_surfaces_never_load_the_dimension_overlay():
+    """Measurements on a blind vote could bias it (#975)."""
+    static = Path(__file__).resolve().parents[1] / "makerbench" / "arena_studio" / "static" / "app"
+    users = sorted(p.relative_to(static).as_posix() for p in static.rglob("*.js")
+                   if "DimensionOverlay" in p.read_text(encoding="utf-8"))
+    assert users == ["components/dimensionOverlay.js", "screens/workbench.js"]

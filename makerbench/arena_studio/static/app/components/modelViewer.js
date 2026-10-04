@@ -14,7 +14,7 @@ export function loadModelViewer() {
   return loading;
 }
 
-export function ModelViewer({ src, label, onFailure, wireframe = false, section = SECTION_OFF, onReady }) {
+export function ModelViewer({ src, label, onFailure, wireframe = false, section = SECTION_OFF, onReady, onElement }) {
   const host = useRef(null);
   const controller = useRef(null);
   const sectioner = useRef(null);
@@ -26,6 +26,9 @@ export function ModelViewer({ src, label, onFailure, wireframe = false, section 
   ready.current = onReady;
   const failure = useRef(onFailure);
   failure.current = onFailure;
+  // The loaded element, for overlays that add hotspots or pick points (#975).
+  const exposed = useRef(onElement);
+  exposed.current = onElement;
 
   useEffect(() => {
     let element = null;
@@ -42,6 +45,7 @@ export function ModelViewer({ src, label, onFailure, wireframe = false, section 
         sectioner.current = sectionController(element);
         sectioner.current.set(cut.current);
         ready.current?.(true);
+        exposed.current?.(element);
       } catch {
         onError();
       }
@@ -50,6 +54,7 @@ export function ModelViewer({ src, label, onFailure, wireframe = false, section 
     // move only needs a fresh frame.
     const onCamera = () => sectioner.current?.refresh();
     ready.current?.(false);
+    exposed.current?.(null);
     loadModelViewer()
       .then(() => {
         if (cancelled || !host.current) return;
@@ -78,6 +83,7 @@ export function ModelViewer({ src, label, onFailure, wireframe = false, section 
         controller.current = null;
         sectioner.current?.restore();
         sectioner.current = null;
+        exposed.current?.(null);
         element.remove();
       }
     };
