@@ -306,3 +306,30 @@ def test_partial_camel_case_prefix_reads_as_one_word(text):
 def test_partial_camel_joins_do_not_merge_separate_words(text):
     # Only parts of ONE CamelCase token may be read as one word.
     assert checker.matched_lines(text, fingerprints("syntheticwidget-spare-kit")) == []
+
+
+# #1002 review repros.
+@pytest.mark.parametrize("text", ['Syn<!--\n--><span class="x">thetic</span>',
+                                  'Syn<!--\n--><a\n href="u">the</a>tic'])
+def test_multiline_comment_then_attribute_tag_inside_a_word(text):
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [1]
+
+
+@pytest.mark.parametrize("text,lines", [
+    ("<!--\n-->**Syn**thetic", [2]),
+    ("Syn<!--\n-->thetic,**Syn**thetic", [1, 2]),
+    ("a\n<!--\n\n-->Syn<b\n>thetic</b> x\nSynthetic", [4, 6]),
+    ('<span\n  class="x">Syn</span>thetic <!--\n--> Synthetic', [2, 3]),
+])
+def test_joined_view_reports_each_token_on_its_source_line(text, lines):
+    assert checker.matched_lines(text, fingerprints("synthetic")) == lines
+
+
+@pytest.mark.parametrize("text", ["one two three SyntheticWidgetAcme", "one two-three SyntheticWidgetAcmeKit"])
+def test_camel_prefix_join_counts_as_one_word_toward_the_limit(text):
+    assert checker.matched_lines(text, fingerprints("one-two-three-syntheticwidget")) == [1]
+
+
+def test_camel_prefix_join_still_respects_the_word_limit():
+    assert checker.matched_lines("one two three four SyntheticWidgetAcme",
+                                 fingerprints("one-two-three-four-syntheticwidget")) == []

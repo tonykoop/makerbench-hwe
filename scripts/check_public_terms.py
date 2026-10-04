@@ -17,8 +17,8 @@ Public text is normalized before tokenizing:
   tag attributes are seen), with HTML tags turned into separators, and with
   inline HTML tags and Markdown emphasis markers (``* _ ~ ` ``) removed so a
   word split by formatting (``**Fo**o``, ``Fo<b>o</b>``) is rejoined. HTML
-  comments are removed there too, even multi-line ones inside a word; their
-  line breaks move to the end of that word so line numbers stay exact.
+  comments are removed there too, even multi-line ones inside a word; an
+  offset map keeps every token on its original source line.
 
 Each view is tokenized case-insensitively into two streams, whole alphanumeric
 tokens and CamelCase-split parts, and every run of 1..MAX_NGRAM consecutive
@@ -37,12 +37,14 @@ never opened. Diagnostics name file and line only and never echo matched text.
 from __future__ import annotations
 
 import argparse
+import bisect
 import hashlib
 import html
 import os
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -108,52 +110,82 @@ def _replace_keeping_lines(pattern: re.Pattern, text: str, filler: str) -> str:
     return pattern.sub(lambda m: filler + "\n" * m.group().count("\n"), text)
 
 
-def _drop_comments_deferring_lines(text: str) -> str:
-    """Remove HTML comments outright, so a comment inside a word rejoins it even
-    when it spans lines. Each comment's newlines are re-inserted at the next
-    whitespace after it (the end of the word), so every token still starts on
-    its original line."""
-    out: list[str] = []
-    pending = 0
-    pos = 0
-    while True:
-        match = HTML_COMMENT.search(text, pos)
-        stop = match.start() if match else len(text)
-        chunk = text[pos:stop]
-        if pending:
-            ws = re.search(r"\s", chunk)
-            if ws:
-                chunk = chunk[:ws.start()] + "\n" * pending + chunk[ws.start():]
-                pending = 0
-        out.append(chunk)
-        if not match:
-            break
-        pending += match.group().count("\n")
-        pos = match.end()
-    out.append("\n" * pending)
-    return "".join(out)
+class _OffsetMap:
+    """Text plus a map from its offsets back to 1-based ORIGINAL line numbers.
+
+    ``sub`` deletes or replaces matches outright (newlines inside them are
+    dropped, so a word split across lines by a comment or tag rejoins), while
+    every surviving character keeps the line it came from: each step records
+    piecewise (new offset -> old offset) segments, composed back to the source.
+    """
+
+    def __init__(self, text: str):
+        self.text = text
+        self._source_newlines = [m.start() for m in re.finditer("\n", text)]
+        self._steps: list[tuple[list[int], list[int]]] = []
+
+    def sub(self, pattern: re.Pattern, repl: str) -> None:
+        parts: list[str] = []
+        new_starts: list[int] = []
+        old_starts: list[int] = []
+        pos = out = 0
+        for match in pattern.finditer(self.text):
+            new_starts.append(out)
+            old_starts.append(pos)
+            parts.append(self.text[pos:match.start()])
+            out += match.start() - pos
+            new_starts.append(out)
+            old_starts.append(match.start())  # replacement chars map to the match start
+            parts.append(repl)
+            out += len(repl)
+            pos = match.end()
+        if not parts:
+            return
+        new_starts.append(out)
+        old_starts.append(pos)
+        parts.append(self.text[pos:])
+        self.text = "".join(parts)
+        self._steps.append((new_starts, old_starts))
+
+    def line_of(self, offset: int) -> int:
+        for new_starts, old_starts in reversed(self._steps):
+            i = bisect.bisect_right(new_starts, offset) - 1
+            offset = old_starts[i] + (offset - new_starts[i])
+        return bisect.bisect_left(self._source_newlines, offset) + 1
 
 
 def views(text: str) -> list[str]:
-    """Normalized views of ``text``; all keep the original line numbering.
+    """Normalized views of ``text`` (see :func:`_views_with_lines`)."""
+    return [view for view, _ in _views_with_lines(text)]
+
+
+def _views_with_lines(text: str) -> list[tuple[str, Callable[[int], int]]]:
+    """Normalized views of ``text``, each with an offset -> original-line map.
 
     Raw (decoded) text; tags/comments as separators; and a "joined" view where
     HTML comments, inline tags (b, span, a, ...) and Markdown emphasis are
-    removed so formatting inside a word rejoins it, while block tags (p, br,
-    div, li, td, headings, ...) still separate words. Markdown links and
-    images are reduced to their text in the last two views.
+    removed so formatting inside a word rejoins it (also across lines, e.g. a
+    multi-line comment inside a word), while block tags (p, br, div, li, td,
+    headings, ...) still separate words. Markdown links and images are reduced
+    to their text in the last two views. Every token is reported on the line
+    where its first character sits in the source.
     """
     base = _decode(text)
     links = MD_LINK.sub(lambda m: m.group(1), base)
     spaced = _replace_keeping_lines(HTML_TAG, _replace_keeping_lines(HTML_COMMENT, links, " "), " ")
-    joined = _drop_comments_deferring_lines(links)
-    joined = _replace_keeping_lines(INLINE_TAG, joined, "")
-    joined = _replace_keeping_lines(HTML_TAG, joined, " ")
-    joined = _replace_keeping_lines(EMPHASIS, joined, "")
-    result = [base]
-    for view in (spaced, joined):
-        if view not in result:
-            result.append(view)
+    joined = _OffsetMap(links)
+    joined.sub(HTML_COMMENT, "")
+    joined.sub(INLINE_TAG, "")
+    joined.sub(HTML_TAG, " ")
+    joined.sub(EMPHASIS, "")
+
+    def counted(view: str) -> Callable[[int], int]:
+        return lambda start: view.count("\n", 0, start) + 1
+
+    result = [(base, counted(base))]
+    for view, line_of in ((spaced, counted(spaced)), (joined.text, joined.line_of)):
+        if all(view != seen for seen, _ in result):
+            result.append((view, line_of))
     return result
 
 
@@ -187,13 +219,15 @@ def _grams_from(tokens, index: int) -> set[str]:
             return
         for reading in tokens[nxt][1]:
             for size in range(1, len(reading) + 1):
+                if 1 < size < len(reading):
+                    # A window may end mid-token with that CamelCase prefix read
+                    # as ONE word; the word limit applies after joining.
+                    grams.add("-".join(words + ["".join(reading[:size])]))
                 window = words + reading[:size]
                 if len(window) > MAX_NGRAM:
-                    break
+                    continue
                 if size < len(reading):
                     grams.add("-".join(window))  # a window may end mid-token
-                    if size > 1:  # ... with that CamelCase prefix read as one word
-                        grams.add("-".join(words + ["".join(reading[:size])]))
                 else:
                     extend(window, nxt + 1)
 
@@ -210,7 +244,7 @@ def _grams_from(tokens, index: int) -> set[str]:
     return grams
 
 
-def _view_lines(text: str, hashes: frozenset[str]) -> set[int]:
+def _view_lines(text: str, hashes: frozenset[str], line_of: Callable[[int], int]) -> set[int]:
     # Collect each distinct n-gram once (public JSON repeats a lot), then hash.
     grams: dict[str, list[int]] = {}
     tokens = _tokens(text)
@@ -218,7 +252,7 @@ def _view_lines(text: str, hashes: frozenset[str]) -> set[int]:
         for gram in _grams_from(tokens, index):
             grams.setdefault(gram, []).append(start)
     return {
-        text.count("\n", 0, start) + 1
+        line_of(start)
         for gram, starts in grams.items() if _digest(gram) in hashes
         for start in starts
     }
@@ -227,8 +261,8 @@ def _view_lines(text: str, hashes: frozenset[str]) -> set[int]:
 def matched_lines(text: str, hashes: frozenset[str]) -> list[int]:
     """Return 1-based line numbers where a denied fingerprint starts."""
     lines: set[int] = set()
-    for view in views(text):
-        lines |= _view_lines(view, hashes)
+    for view, line_of in _views_with_lines(text):
+        lines |= _view_lines(view, hashes, line_of)
     return sorted(lines)
 
 
