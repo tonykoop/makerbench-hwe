@@ -634,3 +634,17 @@ def test_welding_coincident_vertices_is_sampling_only():
     assert np.isfinite(want["wall_mm"]) and want["wall_mm"] > 1.9
     for seed in range(3):
         assert geometry.estimate_wall_robust_v1(_reordered(mesh, seed)) == want
+
+
+def test_tie_break_key_is_computed_from_the_canonical_mesh():
+    """#1008 review: the tie-break volume must come from the canonical mesh. A raw
+    ``mesh.volume`` sums in face order, and far from the origin that noise survives the
+    9-decimal rounding (160.0 vs 160.000000001 vs 160.000000002 across shuffles here), so
+    it, not geometry, would decide between equal-volume bodies."""
+    body = trimesh.creation.box(extents=[20.0, 20.0, 0.4])
+    body.apply_transform(trimesh.transformations.euler_matrix(0.3, 0.7, 1.1))
+    body.apply_translation([3.0e4, 3.0e4, 3.0e4])
+    raw = {round(abs(float(_reordered(body, s).volume)), 9) for s in range(8)}
+    assert len(raw) > 1  # the hazard is real for raw volumes
+    keys = {geometry.canonical_order_key(_reordered(body, s)) for s in range(8)}
+    assert len(keys) == 1

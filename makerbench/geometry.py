@@ -299,14 +299,16 @@ def _smallest_rotation(faces: np.ndarray) -> np.ndarray:
 
 def canonical_order_key(mesh: trimesh.Trimesh) -> tuple:
     """A deterministic, order-independent sort key for choosing between bodies: face count,
-    then volume, then the canonical vertex and face bytes. Used by robust-v1 to break ties
+    then volume, then the canonical vertex and face bytes, all taken from the canonical mesh. Used by robust-v1 to break ties
     between equally large bodies regardless of the order a mesh lists them in."""
     canon = canonical_mesh(mesh)
     try:
-        volume = round(abs(float(mesh.volume)), 9)
+        # from the CANONICAL mesh: a raw mesh.volume sums in face order, and that noise
+        # can survive the rounding and override the canonical-bytes tie-break
+        volume = round(abs(float(canon.volume)), 9)
     except Exception:  # noqa: BLE001 - degenerate bodies still need a key
         volume = 0.0
-    return (len(mesh.faces), volume, canon.vertices.tobytes(), canon.faces.tobytes())
+    return (len(canon.faces), volume, canon.vertices.tobytes(), canon.faces.tobytes())
 
 
 def estimate_wall_robust_v1(mesh: trimesh.Trimesh) -> dict:
