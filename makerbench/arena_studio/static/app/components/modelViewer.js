@@ -14,7 +14,7 @@ export function loadModelViewer() {
   return loading;
 }
 
-export function ModelViewer({ src, label, onFailure, wireframe = false, section = SECTION_OFF, onReady, onElement }) {
+export function ModelViewer({ src, label, onFailure, wireframe = false, section = SECTION_OFF, onReady, onElement, autoRotate = true }) {
   const host = useRef(null);
   const controller = useRef(null);
   const sectioner = useRef(null);
@@ -65,7 +65,8 @@ export function ModelViewer({ src, label, onFailure, wireframe = false, section 
         element.setAttribute("loading", "eager");
         element.setAttribute("alt", label);
         element.setAttribute("camera-controls", "");
-        element.setAttribute("auto-rotate", "");
+        // A shared-camera compare (#974) holds both models still.
+        if (autoRotate) element.setAttribute("auto-rotate", "");
         element.setAttribute("interaction-prompt", "none");
         element.addEventListener("error", onError);
         element.addEventListener("load", onLoad);

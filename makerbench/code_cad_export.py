@@ -33,12 +33,15 @@ BODY_COLORS: tuple[tuple[int, int, int, int], ...] = (
 )
 
 
-def stl_to_glb(stl_path: Path, glb_path: Path) -> Path:
-    """Convert an STL to a GLB scene with one distinctly-colored mesh per body."""
+def stl_to_glb_bytes(stl_path: Path) -> bytes:
+    """An STL as GLB bytes, in memory: one distinctly-colored mesh per body.
+    Coordinates are kept (mm)."""
 
     import trimesh
 
     mesh = trimesh.load(Path(stl_path).as_posix(), force="mesh")
+    if not isinstance(mesh, trimesh.Trimesh) or len(mesh.faces) == 0:
+        raise ValueError(f"{Path(stl_path).name}: no triangles to convert")
     try:
         bodies = list(mesh.split(only_watertight=False))
     except Exception:  # noqa: BLE001 - degenerate meshes still get a viewer.
@@ -51,9 +54,16 @@ def stl_to_glb(stl_path: Path, glb_path: Path) -> Path:
             body, face_colors=BODY_COLORS[index % len(BODY_COLORS)]
         )
         scene.add_geometry(body, node_name=f"body_{index}")
+    return scene.export(file_type="glb")
+
+
+def stl_to_glb(stl_path: Path, glb_path: Path) -> Path:
+    """Convert an STL to a GLB scene with one distinctly-colored mesh per body."""
+
+    data = stl_to_glb_bytes(stl_path)
     glb_path = Path(glb_path)
     glb_path.parent.mkdir(parents=True, exist_ok=True)
-    glb_path.write_bytes(scene.export(file_type="glb"))
+    glb_path.write_bytes(data)
     return glb_path
 
 

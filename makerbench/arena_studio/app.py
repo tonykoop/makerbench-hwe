@@ -8,7 +8,7 @@ from typing import Any, Optional, Sequence
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -222,6 +222,25 @@ def create_studio_app(
         if asset is None:
             raise HTTPException(status_code=404, detail="Render not found")
         return FileResponse(str(asset), media_type="image/png", headers={"X-Content-Type-Options": "nosniff"})
+
+    @app.get("/api/runs/{run_id}/matchup-mesh/{trial_id}")
+    def get_matchup_mesh(run_id: str, trial_id: str):
+        """Read-only (#974): the trial's in-run STL as GLB, converted in memory."""
+        run_path = _resolve_run_dir(run_id)
+        data = service.matchup_mesh_glb(run_path, trial_id)
+        if data is None:
+            raise HTTPException(status_code=404, detail="Mesh not found")
+        return Response(content=data, media_type="model/gltf-binary",
+                        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
+
+    @app.get("/api/runs/{run_id}/matchup-dimensions/{trial_id}")
+    def get_matchup_dimensions(run_id: str, trial_id: str):
+        """Read-only (#974/#975): gate metrics for the dimension overlay."""
+        run_path = _resolve_run_dir(run_id)
+        payload = service.matchup_dimensions(run_path, trial_id)
+        if payload is None:
+            raise HTTPException(status_code=404, detail="Mesh not found")
+        return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/runs/{run_id}/leaderboard")
     def get_run_leaderboard(run_id: str):

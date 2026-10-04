@@ -62,7 +62,7 @@ export function transformPlane(local, elements) {
   return { normal: { x, y, z }, constant: -(x * world[0] + y * world[1] + z * world[2]) };
 }
 
-function symbolValue(object, description) {
+export function symbolValue(object, description) {
   for (let current = object; current; current = Object.getPrototypeOf(current)) {
     const key = Object.getOwnPropertySymbols(current).find((symbol) => symbol.description === description);
     if (key) return object[key];

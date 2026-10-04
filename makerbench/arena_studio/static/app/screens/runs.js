@@ -6,6 +6,8 @@ import { useResource } from "../hooks/useResource.js";
 import { Empty, ErrorState, Loading } from "../components/states.js";
 import { formatWhen, UNKNOWN_GRADE_COUNT } from "../lib/format.js";
 import { buildHash } from "../lib/route.js";
+import { toggleSelection } from "../lib/matchupCompare.js";
+import { MatchupCompare } from "../components/matchupCompare.js";
 
 function RunsTable({ runs, selected }) {
   if (runs.status === "loading" || runs.status === "idle") {
@@ -116,8 +118,18 @@ function OpenInWorkbench({ runId, trials }) {
 }
 
 function MatchupResults({ metadata, trials }) {
+  const [selected, setSelected] = useState([]);
+  const [comparing, setComparing] = useState(false);
+  const openRef = useRef(null);
   if (!metadata) return null;
   const varied = (metadata.varied_axes || [metadata.varied_axis]).join(", ");
+  const rows = trials || [];
+  const chosen = selected.map((id) => rows.find((trial) => trial.trial_id === id)).filter(Boolean);
+  const close = () => {
+    setComparing(false);
+    // focus returns once the button is back in the layout
+    setTimeout(() => openRef.current?.focus(), 0);
+  };
   return html`
     <section class="matchup-results" aria-labelledby="matchup-results-title">
       <h3 id="matchup-results-title">Matchup results</h3>
@@ -125,7 +137,7 @@ function MatchupResults({ metadata, trials }) {
       <p class="hint">Held: ${Object.entries(metadata.held || {}).map(([key, value]) => `${key}: ${value}`).join(" · ")}</p>
       <p class="hint">Objective mesh gates only. Wall time is the latest recorded attempt, excluding rate-limit waiting.</p>
       <div class="matchup-grid">
-        ${(trials || []).map((trial) => html`
+        ${rows.map((trial) => html`
           <article class="matchup-entrant" key=${trial.trial_id}>
             <h4>${trial.entrant}</h4>
             <p>${trial.instrument_id} · seed ${trial.seed} · repetition ${trial.rep}</p>
@@ -142,9 +154,32 @@ function MatchupResults({ metadata, trials }) {
                 <li key=${name}><span>${name}</span>: <strong>${value == null ? "Not recorded" : value >= 1 ? "Pass" : "Fail"}</strong></li>
               `)}
             </ul>
+            ${rows.length > 1 && html`<label class="compare-pick">
+              <input
+                type="checkbox"
+                data-compare-trial=${trial.trial_id}
+                checked=${selected.includes(trial.trial_id)}
+                onChange=${() => setSelected((current) => toggleSelection(current, trial.trial_id))}
+              />
+              Compare
+            </label>`}
           </article>
         `)}
       </div>
+      ${rows.length > 1 && html`<div class="compare-launch">
+        <button
+          type="button"
+          class="button"
+          ref=${openRef}
+          aria-disabled=${chosen.length === 2 ? "false" : "true"}
+          onClick=${() => chosen.length === 2 && setComparing(true)}
+        >
+          Compare side by side
+        </button>
+        <span class="hint" role="status">${chosen.length === 2 ? `${chosen[0].entrant} and ${chosen[1].entrant} selected.` : `Choose two trials to compare (${chosen.length} of 2).`}</span>
+      </div>`}
+      ${comparing && chosen.length === 2
+        && html`<${MatchupCompare} key=${selected.join("|")} trials=${chosen} onClose=${close} />`}
     </section>
   `;
 }
