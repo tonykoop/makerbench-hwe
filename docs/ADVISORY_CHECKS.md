@@ -132,16 +132,24 @@ thinner than 4 mm (`constraints.string_max_diameter_mm` overrides) are grouped b
 adjacency; a group is a string when its oriented bounding box is at least 40 mm long, 15
 times longer than wide and no wider than 1.5 x the maximum diameter. A thin soundboard is thin
 but wide, so it is not a string. On a unioned mesh a string that runs over a nut and a bridge
-is cut into several free stretches; collinear stretches (parallel within 2 degrees, on one axis
-within a string diameter) are merged, so strings are counted, not stretches.
+is cut into several free stretches. Stretches are joined end to end, each end at most once and
+best match first. A straight continuation must be parallel within 2 degrees and on one axis
+within a string diameter. A run-out bent up to 20 degrees joins only across a gap of up to 25 mm
+inside a shared nut or bridge. Stretches that overlap along their axis are side by side, as in a
+doubled course, and never join, unless their axes are within 0.75 of a diameter: then they are
+partial surfaces of one fused rod. Strings are counted, not stretches. A bent run-out belongs to
+its string but not to its straight path.
 
 **Contacts, supports and speaking length.** Each string's whole path, anchor to anchor, is
 sampled (every 4 mm, refined to 0.5 mm wherever the clearance is low), ends included. A point is
 in contact where no free stretch covers it (the string is fused into something) or its clearance
-to the rest of the assembly is under 1 mm. Short contact runs at the ends are anchors; short runs
-(up to max(25 mm, 5 %)) within the outer 35 % at either end are supports (nut, bridge, saddle),
-and with declared intermediate bridges (`bridges`, `bridge_ring*`) a short run anywhere is a
-support. Any other contact is a fault. The speaking length is the longest free interval between
+to the rest of the assembly is under 1 mm. The outermost contact run at each end of the path
+terminates the string. It is either an anchor (at the end, up to max(40 mm, 10 %)) or a support:
+a nut or bridge up to max(25 mm, 5 %) that the string runs over before a free or bent run-out.
+Contacts between the two terminating runs lie on the speaking part. They are faults, unless
+the spec declares intermediate bridges (`bridges`, `bridge_ring*`) and they are short. A
+support set in from an anchor needs a break angle, so that the bent run-out ends the straight
+path there. A straight afterlength fused to an anchor reads as a contact. The speaking length is the longest free interval between
 neighbouring supports or anchors.
 
 | check | compares | tolerance |

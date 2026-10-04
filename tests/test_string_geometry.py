@@ -220,6 +220,59 @@ def test_separate_string_bodies_resting_on_the_top_are_flagged():
     assert len([f for f in result["failures"] if f["check"] == "string_clearance"]) == 6
 
 
+@pytest.mark.parametrize("runouts", [False, True])
+def test_doubled_courses_count_every_string(runouts):
+    """#995 review: six 0.4 mm strings in three courses of two, 0.8 mm apart. Side-by-side
+    stretches overlap along their axis, so they are never merged; with run-outs past the nut
+    and bridge, each run-out joins its own string, not its course partner."""
+    parts = [_instrument(0)]
+    z = BOX_TOP + 8
+    for x in (-20.0, 0.0, 20.0):
+        for dx in (-0.4, 0.4):
+            if runouts:
+                parts.append(_string(x + dx, z, z, length=SCALE + 120, y0=-SCALE / 2 - 60, r=0.2))
+            else:
+                parts.append(_string(x + dx, z, z, length=SCALE + 4, y0=-SCALE / 2 - 2, r=0.2))
+    result = sg.advise(_spec(), trimesh.boolean.union(parts, engine="manifold"))
+    assert result["detected"] == 6
+    assert result["status"] == "consistent", result["failures"]
+    if runouts:
+        assert all(s["segments"] == 3 for s in result["strings"])
+
+
+def test_run_outs_bent_over_the_nut_and_bridge_belong_to_their_string():
+    """#995 review: 60 mm run-outs leaving the nut and the bridge at about 9.5 degrees are the
+    same six strings (not 18), and the speaking length is still nut to bridge."""
+    parts = [_instrument(6)]
+    z = BOX_TOP + 8
+    tilt = np.radians(9.5)
+    for x in np.linspace(-25, 25, 6):
+        for sign in (-1.0, 1.0):
+            start = np.array([x, sign * SCALE / 2, z])
+            end = start + 60.0 * np.array([0.0, sign * np.cos(tilt), np.sin(tilt)])
+            parts.append(trimesh.creation.cylinder(radius=0.6, segment=[start, end], sections=8))
+    result = sg.advise(_spec(), trimesh.boolean.union(parts, engine="manifold"))
+    assert result["detected"] == 6 and result["measured"]["segments"] == 18
+    assert result["status"] == "consistent", result["failures"]
+    for s in result["strings"]:
+        assert s["segments"] == 3
+        assert s["speaking_length_mm"] == pytest.approx(SCALE - 6, abs=3.0)
+
+
+def test_protrusion_touching_every_string_near_an_end_is_flagged():
+    """#995 review: a block 30 mm inside the nut, touching every string, is not a support: the
+    nut the strings are fused into terminates them, so the block is a contact fault."""
+    result = sg.advise(_spec(), _with(_instrument(), _block(160, 170, BOX_TOP + 8)))
+    assert result["detected"] == 6
+    clearance = [f for f in result["failures"] if f["check"] == "string_clearance"]
+    assert len(clearance) == 6, result["failures"]
+    for f in clearance:
+        (contact,) = f["contacts"]
+        # 30-42 mm inside the nut end of the 404 mm path, whichever way the axis runs
+        assert f["measured"] <= 0.0 and min(contact["from"], 1.0 - contact["to"]) == pytest.approx(0.08, abs=0.03)
+    _explained(clearance)
+
+
 def test_thin_soundboard_is_not_a_string():
     plate = trimesh.creation.box(extents=[200, 400, 3])
     assert sg.detect_strings(plate)["strings"] == []

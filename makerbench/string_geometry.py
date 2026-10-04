@@ -15,17 +15,20 @@ String detection (works on a unioned mesh)
     edge adjacency, and a group is a free stretch of string when its oriented bounding box
     is long (``>= MIN_STRING_LENGTH_MM``), slender (``length / width >= MIN_ASPECT``) and
     narrow (``width <= 1.5 * max_diameter_mm``). A thin soundboard is thin too, but wide.
-    A string fused to a nut and a bridge is cut into several stretches, so collinear
-    stretches (parallel within 2 degrees, on one axis within a string diameter) are merged:
-    strings are counted, not stretches.
+    A string fused to a nut and a bridge is cut into several stretches, which are joined end
+    to end: straight on (parallel within 2 degrees, on one axis within a string diameter), or
+    bent up to 20 degrees across a short gap inside a shared nut or bridge (a run-out at a
+    break angle). Stretches that overlap along their axis are side by side (a doubled course)
+    and never join. Strings are counted, not stretches.
 
 Contacts, supports and speaking length (``string_profile``)
     Each string's whole path, anchor to anchor, is sampled. A point is in contact when no
     free stretch covers it (fused into something) or its clearance to the rest of the
-    assembly is below ``MIN_CLEARANCE_MM``. Short contacts at the ends are anchors, short
-    contacts within the outer ``SUPPORT_ZONE`` are supports (nut, bridge, saddle; with
-    declared intermediate bridges, anywhere), everything else is a contact fault. The
-    speaking length is the longest free interval between neighbouring supports.
+    assembly is below ``MIN_CLEARANCE_MM``. The outermost contact at each end of the path
+    terminates the string: an anchor (fused into it) or a support (a nut or bridge it runs
+    over). Short contacts between them are supports only when the spec declares intermediate
+    bridges; everything else is a contact fault. The speaking length is the longest free
+    interval between neighbouring supports.
 
 Checks (each failure is explained in the #903 shape)
     ``string_count``
@@ -65,7 +68,13 @@ LENGTH_TOL_BELOW = 0.15
 LENGTH_TOL_ABOVE = 0.30
 MIN_CLEARANCE_MM = 1.0
 COLLINEAR_COS = float(np.cos(np.radians(2.0)))
-SUPPORT_ZONE = 0.35
+#: Run-outs (#995 review): a stretch leaving a nut or bridge at a break angle up to this many
+#: degrees, across a gap up to ``JOIN_MAX_MM`` inside that support, is the same string.
+RUNOUT_MAX_DEG = 20.0
+RUNOUT_MAX_COS = float(np.cos(np.radians(RUNOUT_MAX_DEG)))
+JOIN_MAX_MM = 25.0
+OVERLAP_TOL_MM = 1.0
+SAME_ROD_FRAC = 0.75
 SUPPORT_MAX_MM, SUPPORT_MAX_FRAC = 25.0, 0.05
 ANCHOR_MAX_MM, ANCHOR_MAX_FRAC = 40.0, 0.10
 COARSE_STEP_MM, MAX_COARSE_SAMPLES, FINE_STEP_MM = 4.0, 400, 0.5
@@ -153,28 +162,103 @@ def _segments(mesh: trimesh.Trimesh, sdf: np.ndarray, max_diameter_mm: float) ->
     return segments
 
 
-def _same_string(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
-    """Two segments lie on one straight line: parallel and the second's centre on the
-    first's axis (within a string diameter)."""
+def _ends(seg: Mapping[str, Any]) -> list[tuple[np.ndarray, np.ndarray]]:
+    """The segment's two ends along its axis, each with its outward direction."""
+    t = (seg["points"] - seg["center"]) @ seg["axis"]
+    return [(seg["center"] + float(t.min()) * seg["axis"], -seg["axis"]),
+            (seg["center"] + float(t.max()) * seg["axis"], seg["axis"])]
+
+
+def _link_cost(mesh: trimesh.Trimesh, a: Mapping[str, Any], end_a: tuple, b: Mapping[str, Any],
+               end_b: tuple) -> float | None:
+    """How well end ``end_a`` of segment ``a`` continues into end ``end_b`` of ``b`` as one string
+    (#995 review), or ``None`` when it cannot. The two ends must face each other with no
+    longitudinal overlap, so parallel strings side by side (a doubled course) never join. A
+    straight continuation (parallel within 2 degrees, the other end on this axis within a string
+    diameter) may cross any fused stretch. A bend (a run-out leaving the nut or bridge at a
+    break angle up to ``RUNOUT_MAX_DEG``) joins only across a short gap inside material: the two
+    stretches share that nut or bridge."""
+    (pa, da), (pb, db) = end_a, end_b
+    if float(np.dot(da, db)) >= 0.0:
+        return None  # not facing each other
+    gap = pb - pa
+    if float(np.dot(gap, da)) < -OVERLAP_TOL_MM or float(np.dot(-gap, db)) < -OVERLAP_TOL_MM:
+        return None  # overlapping along the axis: side by side, not end to end
+    cos = abs(float(np.dot(a["axis"], b["axis"])))
+    if cos < RUNOUT_MAX_COS:
+        return None
+    off_a = float(np.linalg.norm(gap - float(np.dot(gap, a["axis"])) * a["axis"]))
+    off_b = float(np.linalg.norm(gap - float(np.dot(gap, b["axis"])) * b["axis"]))
+    tolerance = max(a["diameter_mm"], b["diameter_mm"], 1.0)
+    distance = float(np.linalg.norm(gap))
+    if cos >= COLLINEAR_COS:
+        if max(off_a, off_b) > tolerance:
+            return None
+    else:
+        sine = float(np.sqrt(max(0.0, 1.0 - cos * cos)))
+        if distance > JOIN_MAX_MM or max(off_a, off_b) > tolerance + distance * sine:
+            return None
+        middle = (pa + pb) / 2.0
+        if float(trimesh.proximity.signed_distance(mesh, middle[None, :])[0]) < -0.05:
+            return None  # the bend is in the air, not on a shared support
+    return off_a + off_b + 1e-3 * distance
+
+
+def _same_rod(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
+    """Two stretches that overlap along one axis are partial surfaces of ONE rod (a fused
+    contact strips one side of a string) when their axes are closer than ``SAME_ROD_FRAC`` of a
+    string diameter. Two separate strings are at least a diameter apart centre to centre, so a
+    doubled course never qualifies (#995 review)."""
     if abs(float(np.dot(a["axis"], b["axis"]))) < COLLINEAR_COS:
         return False
-    tolerance = max(a["diameter_mm"], b["diameter_mm"], 1.0)
+    ta = (a["points"] - a["center"]) @ a["axis"]
+    tb = (b["points"] - a["center"]) @ a["axis"]
+    if min(ta.max(), tb.max()) - max(ta.min(), tb.min()) <= OVERLAP_TOL_MM:
+        return False
+    limit = SAME_ROD_FRAC * max(a["diameter_mm"], b["diameter_mm"])
     for one, two in ((a, b), (b, a)):
         offset = two["center"] - one["center"]
-        perpendicular = offset - float(np.dot(offset, one["axis"])) * one["axis"]
-        if float(np.linalg.norm(perpendicular)) > tolerance:
+        if float(np.linalg.norm(offset - float(np.dot(offset, one["axis"])) * one["axis"])) > limit:
             return False
     return True
+
+
+def _link_segments(mesh: trimesh.Trimesh, segments: list[dict]) -> list[tuple[int, int]]:
+    """Segment pairs of one string: partial surfaces of the same rod, and end-to-end
+    continuations with each segment end used at most once (best first), so a run-out joins its
+    own string, never a neighbour's in the same course."""
+    candidates = []
+    links = []
+    ends = [_ends(seg) for seg in segments]
+    for i in range(len(segments)):
+        for j in range(i + 1, len(segments)):
+            if _same_rod(segments[i], segments[j]):
+                links.append((i, j))
+                continue
+            for ei in range(2):
+                for ej in range(2):
+                    cost = _link_cost(mesh, segments[i], ends[i][ei], segments[j], ends[j][ej])
+                    if cost is not None:
+                        candidates.append((cost, i, ei, j, ej))
+    used: set[tuple[int, int]] = set()
+    for _, i, ei, j, ej in sorted(candidates):
+        if (i, ei) in used or (j, ej) in used:
+            continue
+        used |= {(i, ei), (j, ej)}
+        links.append((i, j))
+    return links
 
 
 def detect_strings(mesh: trimesh.Trimesh, *, max_diameter_mm: float = DEFAULT_MAX_DIAMETER_MM) -> dict:
     """Strings of a mesh, longest first (#981).
 
     Thin face groups are the free stretches of a string; on a unioned mesh a string that
-    runs over a nut and a bridge (or touches anything) is cut into several stretches, so
-    collinear stretches are merged into one string. Each string carries its axis, its
-    extent along the axis (``t0``..``t1``, anchor to anchor) and the intervals its free
-    stretches cover.
+    runs over a nut and a bridge (or touches anything) is cut into several stretches, which
+    are joined end to end into one string (straight on, or bent over a shared nut or bridge;
+    see :func:`_link_cost`). Each string's path is its straight part through its longest
+    stretch, with its axis, its extent along the axis (``t0``..``t1``, anchor to anchor) and the
+    intervals its free stretches cover; run-outs bent away beyond a support belong to the
+    string (counted once) but not to its path.
     """
     sdf = shape_diameter(mesh)
     segments = _segments(mesh, sdf, max_diameter_mm)
@@ -186,18 +270,25 @@ def detect_strings(mesh: trimesh.Trimesh, *, max_diameter_mm: float = DEFAULT_MA
             i = parent[i]
         return i
 
-    for i in range(len(segments)):
-        for j in range(i + 1, len(segments)):
-            if _same_string(segments[i], segments[j]):
-                parent[find(i)] = find(j)
+    for i, j in _link_segments(mesh, segments):
+        parent[find(i)] = find(j)
     chains: dict[int, list[dict]] = {}
     for i, seg in enumerate(segments):
         chains.setdefault(find(i), []).append(seg)
     strings = []
-    for members in chains.values():
-        points = np.vstack([m["points"] for m in members])
-        longest = max(members, key=lambda m: m["length_mm"])
+    for chain in chains.values():
+        longest = max(chain, key=lambda m: m["length_mm"])
         axis = longest["axis"]
+        tolerance = max(longest["diameter_mm"], 1.0)
+
+        def straight(m: Mapping[str, Any], longest=longest, axis=axis, tolerance=tolerance) -> bool:
+            offset = m["center"] - longest["center"]
+            across = offset - float(np.dot(offset, axis)) * axis
+            return (abs(float(np.dot(m["axis"], axis))) >= COLLINEAR_COS
+                    and float(np.linalg.norm(across)) <= tolerance)
+
+        members = [m for m in chain if straight(m)]
+        points = np.vstack([m["points"] for m in members])
         # the axis line runs through the middle of the cross-section's bounding box (a partly
         # fused string keeps only part of its surface, so the point mean is biased)
         mean = points.mean(axis=0)
@@ -211,7 +302,8 @@ def detect_strings(mesh: trimesh.Trimesh, *, max_diameter_mm: float = DEFAULT_MA
         t0, t1 = float(t.min()), float(t.max())
         free = sorted((float(((m["points"] - center) @ axis).min()), float(((m["points"] - center) @ axis).max()))
                       for m in members)
-        strings.append({"faces": np.concatenate([m["faces"] for m in members]), "segments": len(members),
+        strings.append({"faces": np.concatenate([m["faces"] for m in chain]), "segments": len(chain),
+                        "runouts": len(chain) - len(members),
                         "length_mm": t1 - t0, "width_mm": max(m["width_mm"] for m in members),
                         "diameter_mm": float(np.median([m["diameter_mm"] for m in members])),
                         "axis": axis, "center": center, "t0": t0, "t1": t1, "free": free})
@@ -245,11 +337,12 @@ def string_profile(rest: trimesh.Trimesh | None, string: Mapping[str, Any], *,
     * an **anchor**: touches an end of the path and is at most ``max(ANCHOR_MAX_MM,
       ANCHOR_MAX_FRAC * length)`` long;
     * a **support** (nut, bridge, saddle): short (``max(SUPPORT_MAX_MM, SUPPORT_MAX_FRAC *
-      length)``) and inside the outer ``SUPPORT_ZONE`` of the path at either end; with
-      declared intermediate bridges (a guzheng's moveable bridges) a short contact anywhere
-      is a support;
+      length)``), not at an end, and the outermost contact on its side of the path (#995
+      review: a string runs over its nut or bridge and on to a free or bent-away run-out);
+    * with declared intermediate bridges (a guzheng's moveable bridges), a short contact
+      between the terminating ones is an ``intermediate_bridge``;
     * anything else is a **contact fault**: the string touches or lies on the body between
-      its supports.
+      its terminating supports.
 
     The speaking length is the longest free interval between neighbouring supports or
     anchors (the path ends count as anchors).
@@ -300,20 +393,36 @@ def string_profile(rest: trimesh.Trimesh | None, string: Mapping[str, Any], *,
 
     anchor_max = max(ANCHOR_MAX_MM, ANCHOR_MAX_FRAC * total)
     support_max = max(SUPPORT_MAX_MM, SUPPORT_MAX_FRAC * total)
-    zone = SUPPORT_ZONE * total
+
+    def terminating(a: float, b: float) -> str | None:
+        """``anchor`` or ``support`` when this run can end the string's speaking part."""
+        if (a - t0 <= coarse_step or t1 - b <= coarse_step) and b - a <= anchor_max:
+            return "anchor"
+        if not (a - t0 <= coarse_step or t1 - b <= coarse_step) and b - a <= support_max:
+            return "support"
+        return None
+
+    # #995 review: the string is terminated by the OUTERMOST contact at each end of its path
+    # (the anchor it is fused into, or the nut or bridge it runs over before a free end).
+    # Every other contact lies between them, on the speaking part: a fault, unless the spec
+    # declares intermediate bridges and the contact is short. Supports past an anchor need a
+    # break angle; the bent run-out then ends the straight path at that support (detect_strings).
+    ends = {}
+    if runs and terminating(*runs[0]):
+        ends[0] = terminating(*runs[0])
+    if len(runs) > 1 and terminating(*runs[-1]):
+        ends[len(runs) - 1] = terminating(*runs[-1])
     supports, faults = [], []
-    for a, b in runs:
+    for k, (a, b) in enumerate(runs):
         length = b - a
-        at_end = a - t0 <= coarse_step or t1 - b <= coarse_step
-        in_zone = b - t0 <= zone or t1 - a <= zone
         mask = (ts >= a) & (ts <= b)
         lowest = float(np.min(np.where(inside[mask], clear[mask], 0.0)))
         run = {"from": round((a - t0) / total, 3), "to": round((b - t0) / total, 3),
                "length_mm": round(length, 2), "min_clearance_mm": round(lowest, 2)}
-        if at_end and length <= anchor_max:
-            supports.append({**run, "kind": "anchor"})
-        elif not at_end and length <= support_max and (in_zone or intermediate_bridges):
-            supports.append({**run, "kind": "support" if in_zone else "intermediate_bridge"})
+        if k in ends:
+            supports.append({**run, "kind": ends[k]})
+        elif intermediate_bridges and length <= support_max:
+            supports.append({**run, "kind": "intermediate_bridge"})
         else:
             faults.append({**run, "kind": "contact"})
     bounds = sorted([(t0, t0)] + [(t0 + r["from"] * total, t0 + r["to"] * total) for r in supports] + [(t1, t1)])
@@ -430,8 +539,9 @@ def advise(spec: Mapping[str, Any], mesh: trimesh.Trimesh) -> dict[str, Any]:
             where = ", ".join(f"{f['from']:.0%}-{f['to']:.0%}" for f in prof["faults"])
             failures.append(_explain(
                 "string_clearance", measured=worst["min_clearance_mm"], threshold=MIN_CLEARANCE_MM, unit="mm",
-                requires=f"clearance >= threshold along the whole path except at its supports "
-                         f"(short contacts within the outer {SUPPORT_ZONE:.0%} at either end)",
+                requires="clearance >= threshold along the whole path except at its terminating "
+                         "supports (the outermost contact at each end)"
+                         + (" and declared intermediate bridges" if intermediate else ""),
                 body_id=body, contacts=prof["faults"],
                 detail=f"{body} ({st['length_mm']:.0f} mm) touches or comes within {MIN_CLEARANCE_MM:g} mm of "
                        f"the rest of the assembly away from its supports at {where} of its path "
@@ -458,9 +568,9 @@ def advise(spec: Mapping[str, Any], mesh: trimesh.Trimesh) -> dict[str, Any]:
         "assumptions": [
             f"a string is thinner than {max_diameter:g} mm, its free stretches at least "
             f"{MIN_STRING_LENGTH_MM:g} mm long and {MIN_ASPECT:g}x longer than wide, and straight",
-            f"supports: contacts up to max({SUPPORT_MAX_MM:g} mm, {SUPPORT_MAX_FRAC:.0%}) long within the "
-            f"outer {SUPPORT_ZONE:.0%} at either end; anchors: end contacts up to max({ANCHOR_MAX_MM:g} mm, "
-            f"{ANCHOR_MAX_FRAC:.0%})" + ("; declared intermediate bridges anywhere" if intermediate else ""),
+            f"terminating supports: the outermost contact at each end, an anchor (end contact up to "
+            f"max({ANCHOR_MAX_MM:g} mm, {ANCHOR_MAX_FRAC:.0%})) or a support (up to max({SUPPORT_MAX_MM:g} mm, "
+            f"{SUPPORT_MAX_FRAC:.0%}))" + ("; declared intermediate bridges between them" if intermediate else ""),
             "speaking length = longest free interval between neighbouring supports or anchors",
             f"clearance >= {MIN_CLEARANCE_MM:g} mm everywhere else on the path",
             "not modelled: tension, gauge, break angle, frets, action",
