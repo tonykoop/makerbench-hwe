@@ -137,15 +137,32 @@ def declared_lengths(constraints: Mapping[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+#: Rays per cast in :func:`shape_diameter`. trimesh's pure-Python ray caster (no embree) builds
+#: every ray x candidate-triangle pair up front, so one cast of a ray per face took a 91k-face
+#: harpsichord to 18 GB in the scoring gate (the #997 wall-ray problem again). Each ray's first
+#: hit does not depend on the other rays in its batch, so batching changes memory, not values:
+#: 1000 rays per cast peaked at 2.5 GB on that mesh, 256 at under 1 GB, at the same speed.
+SDF_RAY_BATCH = 256
+#: Meshes above this many faces are not measured: one ray per face makes the check's time grow
+#: with the mesh (the 91k-face harpsichord takes ~80 s), so a larger candidate reports
+#: ``not measurable`` (too large) instead of stalling the scoring run.
+MAX_FACES = 150_000
+
+
 def shape_diameter(mesh: trimesh.Trimesh) -> np.ndarray:
-    """Per-face thickness: distance from the face centre to the first surface hit inward."""
+    """Per-face thickness: distance from the face centre to the first surface hit inward,
+    cast in ``SDF_RAY_BATCH`` batches."""
     centers = mesh.triangles_center
     normals = mesh.face_normals
     origins = centers - normals * 1e-3
-    _, ray_ids, locations = mesh.ray.intersects_id(origins, -normals, multiple_hits=False,
-                                                   return_locations=True)
     sdf = np.full(len(centers), np.inf)
-    sdf[ray_ids] = np.linalg.norm(locations - origins[ray_ids], axis=1)
+    for start in range(0, len(origins), SDF_RAY_BATCH):
+        stop = start + SDF_RAY_BATCH
+        _, ray_ids, locations = mesh.ray.intersects_id(origins[start:stop], -normals[start:stop],
+                                                       multiple_hits=False, return_locations=True)
+        if len(ray_ids):
+            ray_ids = np.asarray(ray_ids, dtype=np.int64) + start
+            sdf[ray_ids] = np.linalg.norm(np.asarray(locations) - origins[ray_ids], axis=1)
     return sdf
 
 
@@ -524,6 +541,9 @@ def advise(spec: Mapping[str, Any], mesh: trimesh.Trimesh) -> dict[str, Any]:
     reason = modelled_reason(spec)
     if reason:
         return {**base, "status": NOT_MODELLED, "reason": reason}
+    if len(mesh.faces) > MAX_FACES:
+        return {**base, "status": "not measurable", "family": FAMILY, "failures": [], "reason": "too_large",
+                "error": f"{len(mesh.faces)} faces (more than {MAX_FACES} are not measured)"}
     problem = measure.mesh_problem(mesh)
     if problem:
         return {**base, "status": "not measurable", "family": FAMILY, "error": problem, "failures": []}
