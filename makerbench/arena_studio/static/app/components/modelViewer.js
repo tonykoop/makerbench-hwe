@@ -46,7 +46,8 @@ export function ModelViewer({ src, label, onFailure, wireframe = false, section 
         onError();
       }
     };
-    // model-viewer may move the model in world space as the camera moves.
+    // The plane re-projects itself on every draw (lib/section.js); a camera
+    // move only needs a fresh frame.
     const onCamera = () => sectioner.current?.refresh();
     ready.current?.(false);
     loadModelViewer()

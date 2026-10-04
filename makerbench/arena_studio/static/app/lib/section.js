@@ -40,6 +40,28 @@ export function sectionPlane(box, section) {
   return { normal: { x, y, z }, constant: -sign * at, position: at - lo, extent: hi - lo };
 }
 
+// Carry a plane from the model's own frame into world space. `elements` is a
+// column-major 4x4 (Three's Matrix4.elements). Normals transform by the
+// inverse transpose of the linear part, so non-uniform scale stays correct.
+export function transformPlane(local, elements) {
+  const e = elements;
+  const a = [[e[0], e[4], e[8]], [e[1], e[5], e[9]], [e[2], e[6], e[10]]];
+  const c = [
+    [a[1][1] * a[2][2] - a[1][2] * a[2][1], a[1][2] * a[2][0] - a[1][0] * a[2][2], a[1][0] * a[2][1] - a[1][1] * a[2][0]],
+    [a[0][2] * a[2][1] - a[0][1] * a[2][2], a[0][0] * a[2][2] - a[0][2] * a[2][0], a[0][1] * a[2][0] - a[0][0] * a[2][1]],
+    [a[0][1] * a[1][2] - a[0][2] * a[1][1], a[0][2] * a[1][0] - a[0][0] * a[1][2], a[0][0] * a[1][1] - a[0][1] * a[1][0]],
+  ];
+  const det = a[0][0] * c[0][0] + a[0][1] * c[0][1] + a[0][2] * c[0][2];
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return null;
+  const n = [local.normal.x, local.normal.y, local.normal.z];
+  const point = n.map((component) => -local.constant * component);
+  const world = a.map((row, i) => row[0] * point[0] + row[1] * point[1] + row[2] * point[2] + e[12 + i]);
+  const m = c.map((row) => (row[0] * n[0] + row[1] * n[1] + row[2] * n[2]) / det);
+  const length = Math.hypot(m[0], m[1], m[2]);
+  const [x, y, z] = m.map((component) => component / length + 0);
+  return { normal: { x, y, z }, constant: -(x * world[0] + y * world[1] + z * world[2]) };
+}
+
 function symbolValue(object, description) {
   for (let current = object; current; current = Object.getPrototypeOf(current)) {
     const key = Object.getOwnPropertySymbols(current).find((symbol) => symbol.description === description);
@@ -54,18 +76,31 @@ function boxArrays(box) {
 
 // `element` is a loaded <model-viewer>. Throws before changing anything when
 // the pinned bridge is missing, so the caller can fall back to the turntable.
+//
+// The plane lives in the model's own frame (#985 review): auto-rotate and
+// framing move the model in world space without a camera-change event, so
+// each mesh re-projects the plane through the model's current world matrix
+// just before it draws. The cut turns with the model and never drifts.
 export function sectionController(element) {
   const renderer = symbolValue(element, "renderer")?.threeRenderer;
   const scene = symbolValue(element, "scene");
   const model = scene?.model;
   const Box3 = scene?.boundingBox?.constructor;
+  const Matrix4 = model?.matrixWorld?.constructor;
   if (!renderer || typeof renderer.localClippingEnabled !== "boolean" || !model?.traverse
-    || typeof Box3 !== "function" || typeof scene.queueRender !== "function") {
+    || typeof Box3 !== "function" || typeof scene.queueRender !== "function"
+    || typeof Matrix4 !== "function" || typeof model.updateWorldMatrix !== "function"
+    || model.matrixWorld.elements?.length !== 16) {
     throw new Error("The pinned viewer's clipping bridge is unavailable.");
   }
   const materials = new Map();
+  const meshes = [];
   model.traverse((node) => {
     if (!node.isMesh) return;
+    if (!node.geometry || typeof node.geometry.computeBoundingBox !== "function") {
+      throw new Error("The viewer mesh has no measurable geometry.");
+    }
+    meshes.push(node);
     for (const material of [].concat(node.material || [])) {
       if (!material?.isMaterial || !("clippingPlanes" in material)) {
         throw new Error("The viewer material does not support clipping.");
@@ -76,25 +111,64 @@ export function sectionController(element) {
   if (!materials.size) throw new Error("The model has no clippable materials.");
 
   // One plane object, shared by every material and updated in place. Three
-  // copies its `normal` and `constant` into view space on every frame.
+  // copies its `normal` and `constant` into view space for each draw.
   const plane = { normal: { x: 0, y: 0, z: -1 }, constant: 0 };
+  let local = null;
   let current = SECTION_OFF;
   let state = null;
+  const hooks = new Map();
+
+  // The model's extent in its own frame, so the slider means the same
+  // physical cut whatever the turntable angle.
+  const localBox = () => {
+    model.updateWorldMatrix(true, true);
+    const inverse = new Matrix4().copy(model.matrixWorld).invert();
+    const box = new Box3().makeEmpty();
+    for (const mesh of meshes) {
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+      const relative = new Matrix4().multiplyMatrices(inverse, mesh.matrixWorld);
+      box.union(new Box3().copy(mesh.geometry.boundingBox).applyMatrix4(relative));
+    }
+    return box.isEmpty() ? null : boxArrays(box);
+  };
+
+  const sync = () => {
+    if (!local) return;
+    const world = transformPlane(local, model.matrixWorld.elements);
+    if (!world) return;
+    plane.normal = world.normal;
+    plane.constant = world.constant;
+  };
+
+  const hook = (on) => {
+    for (const mesh of meshes) {
+      if (on && !hooks.has(mesh)) {
+        const original = mesh.onBeforeRender;
+        hooks.set(mesh, original);
+        mesh.onBeforeRender = function onBeforeRender(...args) {
+          sync();
+          return original?.apply(this, args);
+        };
+      } else if (!on && hooks.has(mesh)) {
+        mesh.onBeforeRender = hooks.get(mesh);
+        hooks.delete(mesh);
+      }
+    }
+  };
 
   const apply = () => {
-    if (!sectionActive(current)) return;
-    const next = sectionPlane(boxArrays(new Box3().setFromObject(model)), current);
+    const box = localBox();
+    const next = box && sectionPlane(box, current);
     if (!next) return;
-    plane.normal = next.normal;
-    plane.constant = next.constant;
+    local = { normal: next.normal, constant: next.constant };
+    sync();
     state = next;
   };
 
   return {
-    // Re-run on camera changes: model-viewer can move the model in world space.
     refresh() {
       if (!sectionActive(current)) return;
-      apply();
+      sync();
       scene.queueRender();
     },
     set(section) {
@@ -106,8 +180,10 @@ export function sectionController(element) {
         apply();
       } else {
         state = null;
+        local = null;
       }
       if (active !== wasActive) {
+        hook(active);
         for (const [material, original] of materials) {
           material.clippingPlanes = active ? [plane] : original.planes;
           material.side = active ? DOUBLE_SIDE : original.side;

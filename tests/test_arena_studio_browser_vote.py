@@ -646,3 +646,72 @@ def test_zero_webgl_shows_no_section_controls(studio_url: str):
         assert session.errors == []
         session.close()
         browser.close()
+
+
+# #985 review: the vendor auto-rotates the model without a camera-change
+# event. With rotation left ON, sample the live plane against the first
+# plate's real mesh corners (in world space, as last drawn) across a turn.
+_ROTATING_CUT = """() => {
+  const viewer = document.querySelector('model-viewer');
+  const sym = (o, d) => { for (let c = o; c; c = Object.getPrototypeOf(c)) {
+    const k = Object.getOwnPropertySymbols(c).find(s => s.description === d); if (k) return o[k]; } };
+  const scene = sym(viewer, 'scene');
+  const corners = [];
+  let plane = null;
+  scene.model.traverse(node => {
+    if (!node.isMesh) return;
+    plane = plane || [].concat(node.material)[0].clippingPlanes?.[0];
+    const box = node.geometry.boundingBox;
+    const V = box.min.constructor;
+    for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z])
+      corners.push(new V(x, y, z).applyMatrix4(node.matrixWorld));
+  });
+  const n = plane.normal;
+  return { yaw: scene.yaw, sides: corners.map(c => n.x * c.x + n.y * c.y + n.z * c.z + plane.constant),
+           size: Math.max(...corners.map(c => c.length())) };
+}"""
+
+
+def test_section_plane_follows_the_model_while_auto_rotating(studio_url: str, screenshot_dir: Path):
+    with sync_playwright() as playwright:
+        browser = _launch(playwright, "webgl")
+        session = Session(browser, f"{studio_url}/#/vote/{RUN_ID}", viewport={"width": 1440, "height": 1000})
+        page = session.page
+        session.wait_for_stage()
+        page.get_by_role("button", name="3D orbit", exact=True).click()
+        axis = page.get_by_label("Cut along")
+        axis.wait_for()
+        page.wait_for_function(_SECTION_STATE, arg=False)
+        viewer = page.locator("model-viewer").first
+        assert viewer.evaluate("el => el.autoRotate") is True
+        # Turn quickly and right away so a few samples span a large angle.
+        viewer.evaluate("el => { el.autoRotateDelay = 0; el.rotationPerSecond = '120deg'; }")
+        axis.select_option("x")
+        page.wait_for_function(_SECTION_STATE, arg=True)
+        offset = page.get_by_label("Position")
+        offset.fill("100")
+        yaws = set()
+        for _ in range(8):
+            page.wait_for_timeout(350)
+            sample = page.evaluate(_ROTATING_CUT)
+            yaws.add(round(sample["yaw"], 3))
+            tolerance = 1e-3 * sample["size"]
+            # 100% along the model's own X keeps every corner at every angle.
+            assert min(sample["sides"]) >= -tolerance, sample
+        import math
+
+        assert len(yaws) >= 4, f"the model never turned: {yaws}"
+        assert max(abs(math.sin(yaw)) for yaw in yaws) > 0.5, f"the model never turned far: {yaws}"
+
+        # 50%: exactly half the model's corners stay, whatever the angle.
+        offset.fill("50")
+        for _ in range(5):
+            page.wait_for_timeout(350)
+            sample = page.evaluate(_ROTATING_CUT)
+            kept = sum(side > 0 for side in sample["sides"])
+            assert kept * 2 == len(sample["sides"]), sample
+        page.screenshot(path=str(screenshot_dir / "section-rotating-1440.png"))
+        assert viewer.evaluate("el => el.autoRotate") is True, "the cut does not need to stop the turntable"
+        assert session.errors == []
+        session.close()
+        browser.close()
