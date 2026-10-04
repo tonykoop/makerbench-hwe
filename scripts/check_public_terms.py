@@ -169,7 +169,8 @@ class _JoinedParser(html.parser.HTMLParser):
 
     Text outside markup is kept (Markdown emphasis markers removed); comments
     and inline tags vanish, so formatting inside a word rejoins it; block tags,
-    declarations and processing instructions become a space. Quoted attribute
+    declarations and processing instructions become a space. CDATA payloads
+    and script/style bodies are treated as ordinary text and markup. Quoted attribute
     values (multi-line, containing ``>``, unquoted values with apostrophes) are
     tokenized by the parser, not by regexes. Each emitted segment records the
     source line it starts on, so tokens keep their original line numbers.
@@ -210,13 +211,37 @@ class _JoinedParser(html.parser.HTMLParser):
     def handle_charref(self, name):
         self._emit(f"&#{name};")
 
-    def handle_comment(self, data):
+    def set_cdata_mode(self, *args, **kwargs):
+        # No raw-text mode: <script>/<style>/<textarea>/<title> bodies are
+        # tokenized like any other markup, so formatting inside them still
+        # rejoins words, and a literal "<script>" (e.g. in a Markdown code
+        # span) cannot swallow the rest of the file waiting for its end tag.
         pass
+
+    def _cdata(self, payload: str) -> None:
+        # CDATA payloads are text: normalize them like the rest of the view
+        # (inline tags and emphasis dropped, other tags a space; newlines kept,
+        # so the segment's line mapping stays exact).
+        payload = _replace_keeping_lines(INLINE_TAG, payload, "")
+        payload = _replace_keeping_lines(HTML_TAG, payload, " ")
+        self._emit(" " + EMPHASIS.sub("", payload) + " ")
+
+    def handle_comment(self, data):
+        # Some html.parser versions report CDATA outside foreign content as a
+        # bogus comment "[CDATA[...]]".
+        if data.startswith("[CDATA[") and data.endswith("]]"):
+            self._cdata(data[7:-2])
+
+    def unknown_decl(self, data):
+        if data.startswith("CDATA["):
+            self._cdata(data[6:])
+        else:
+            self._emit(" ")
 
     def handle_decl(self, decl):
         self._emit(" ")
 
-    handle_pi = unknown_decl = handle_decl
+    handle_pi = handle_decl
 
     def line_of(self, offset: int) -> int:
         i = bisect.bisect_right(self.starts, offset) - 1

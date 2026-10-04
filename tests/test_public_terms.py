@@ -375,3 +375,34 @@ def test_joined_view_falls_back_to_regexes_if_the_parser_raises(monkeypatch):
 
     monkeypatch.setattr(checker._JoinedParser, "feed", boom)
     assert checker.matched_lines("x\nSyn<!-- c -->thetic", fingerprints("synthetic")) == [2]
+
+
+# #1002 round 5: raw-text elements and CDATA.
+@pytest.mark.parametrize("text", ["<script>Syn<b>thetic</b></script>", "<style>Syn<b>thetic</b></style>",
+                                  "<script>**Syn**thetic</script>", "<textarea>Syn<i>thetic</i></textarea>"])
+def test_script_and_style_bodies_are_normalized(text):
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [1]
+
+
+@pytest.mark.parametrize("opener", ["`<script>`", "`<style>`", "`<textarea>`"])
+def test_literal_raw_text_tag_in_a_code_span_does_not_swallow_later_text(opener):
+    text = f"Use {opener} for that.\n\nLater: **Syn**thetic and Syn<b>thetic</b>\n"
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [3]
+
+
+@pytest.mark.parametrize("text,lines", [
+    ("<![CDATA[**Syn**thetic]]>", [1]),
+    ("x\n<![CDATA[a\nSyn<b>thetic</b>]]>", [3]),
+    ("<![CDATA[Syn]]>thetic", []),   # a CDATA boundary is a word boundary
+])
+def test_cdata_payload_is_normalized(text, lines):
+    assert checker.matched_lines(text, fingerprints("synthetic")) == lines
+
+
+def test_cdata_reported_as_bogus_comment_is_normalized_too():
+    # Newer html.parser builds may report CDATA outside foreign content as a
+    # comment "[CDATA[...]]"; both paths emit the normalized payload.
+    parser = checker._JoinedParser()
+    parser.handle_comment("[CDATA[**Syn**thetic]]")
+    parser.handle_comment(" a real comment ")
+    assert "".join(parser.parts).split() == ["Synthetic"]
