@@ -241,7 +241,7 @@ measured master"; keep the "what it missed" callouts — they are the credibilit
 >
 > Test case: one museum photo of a reconstructed Sumerian boat harp, one AI CAD pipeline (CADAM + Claude Fable 5 → OpenSCAD).
 >
-> It returned a fully parametric 13-string model after about two minutes of model thinking (113 s), and it fit the target envelope within a few percent (668 × 150 × 842 mm vs 650 × 150 × 810 mm).
+> It returned a fully parametric 13-string model after about two minutes of model thinking (113 s), and it fit the target envelope within a few percent (669 × 150 × 842 mm vs 650 × 150 × 810 mm).
 >
 > Our objective mesh gate passed 5 of 6 checks. It failed minimum wall thickness: 0.015 mm vs a 1 mm floor.
 >
@@ -250,6 +250,12 @@ measured master"; keep the "what it missed" callouts — they are the credibilit
 > Caveats: single run, generated model not a measured master, and I don't claim this is the best pipeline for this task.
 >
 > #AI #CAD #Benchmarks #MakerBench
+
+<!-- claim: 669 source: docs/showcase/sambuca/CASE_STUDY.md#re:bbox ([\d.]+) × [\d.]+ × [\d.]+ mm -->
+<!-- claim: 150 source: docs/showcase/sambuca/CASE_STUDY.md#re:bbox [\d.]+ × ([\d.]+) × [\d.]+ mm -->
+<!-- claim: 842 source: docs/showcase/sambuca/CASE_STUDY.md#re:bbox [\d.]+ × [\d.]+ × ([\d.]+) mm -->
+<!-- claim: 650 source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/body_length_mm -->
+<!-- claim: 810 source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/instrument_height_mm -->
 
 Notes on the drafts: "4,600 years" = c. 2600 BC + 2026; the repo says "~4500", so
 either is fine — pick one. Draft C's ρ figure is `site/data/arena.json`
