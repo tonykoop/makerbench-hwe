@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -217,6 +218,9 @@ def test_normalized_objective_keeps_checks(tmp_path):
 PRE_FEATURE_SCORELINE = Path(__file__).parent / "fixtures" / "topology_undeclared_registry_scoreline.json"
 #: The same scoreline with the #903 ``failed_checks`` explanations (measured, threshold, body).
 EXPLAINED_SCORELINE = Path(__file__).parent / "fixtures" / "objective_scoreline_failed_checks.json"
+#: Both pins above were made with the legacy ``min`` estimator, so the test scores with it
+#: explicitly. This one pins the same registry sweep under the ``robust-v1`` default (epic T2).
+ROBUST_DEFAULT_SCORELINE = Path(__file__).parent / "fixtures" / "objective_scoreline_robust_v1_default.json"
 
 
 def _without_stochastic_wall(rows):
@@ -232,6 +236,31 @@ def _without_stochastic_wall(rows):
     return out
 
 
+def _registry_sweep(tmp_path, specs, **spec_overrides):
+    mesh = _flute()
+    trials = []
+    for index, spec in enumerate(specs):
+        sub = tmp_path / f"{index}"
+        sub.mkdir()
+        objective = _normalize_gate_result(_gate_result(sub, mesh, {**spec, **spec_overrides}))
+        trials.append({"trial_id": f"t{index}", "model_id": f"model-{index % 3}",
+                       "status": "scored", "result": {"objective": objective}})
+    return runner.collect_objective_scoreline({"trials": trials})
+
+
+def test_registry_scoreline_under_the_robust_default_is_pinned(tmp_path):
+    """The same sweep with no estimator named, i.e. the ``robust-v1`` default. Rows are marked
+    with the method and never share a row with the legacy pins above."""
+
+    registry = runner.load_arena_registry(Path("tasks/code_cad_arena/registry.json"))
+    rows = _registry_sweep(tmp_path, registry["instruments"])
+    assert rows and all(row["min_wall_method"] == "robust-v1" for row in rows)
+    got = json.dumps(_without_stochastic_wall(rows), indent=2, sort_keys=True) + "\n"
+    if os.environ.get("MAKERBENCH_REGEN_FIXTURES"):
+        ROBUST_DEFAULT_SCORELINE.write_text(got)
+    assert got == ROBUST_DEFAULT_SCORELINE.read_text()
+
+
 def test_existing_registry_scorelines_match_the_pre_feature_baseline(tmp_path):
     """Every shipped spec (none declare topology/interfaces), scored by the current
     gate, gives exactly the scoreline bytes main produced before this feature.
@@ -245,15 +274,7 @@ def test_existing_registry_scorelines_match_the_pre_feature_baseline(tmp_path):
     specs = registry["instruments"]
     assert specs and not any("topology" in s or "interfaces" in s for s in specs)
 
-    mesh = _flute()
-    trials = []
-    for index, spec in enumerate(specs):
-        sub = tmp_path / f"{index}"
-        sub.mkdir()
-        objective = _normalize_gate_result(_gate_result(sub, mesh, dict(spec)))
-        trials.append({"trial_id": f"t{index}", "model_id": f"model-{index % 3}",
-                       "status": "scored", "result": {"objective": objective}})
-    rows = runner.collect_objective_scoreline({"trials": trials})
+    rows = _registry_sweep(tmp_path, specs, min_wall_estimator="min")
 
     # #903 added an optional per-row ``failed_checks`` explanation. It is additive: with it
     # removed the rows are still byte-identical to the pre-feature baseline, so the pin is

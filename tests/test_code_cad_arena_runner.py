@@ -404,13 +404,16 @@ class TestExecuteTrialEndToEnd:
         )
         entry = log["trials"][0]
         assert entry["status"] == "error" and entry["result"] is None
-        assert entry["meta"] == {"context_tier": "repo", "confinement": "unconfined"}
+        assert entry["meta"] == {"context_tier": "repo", "confinement": "unconfined", "min_wall_method": "robust-v1"}
 
         rows = runner.collect_objective_scoreline(log)
         assert rows == [{
             "entrant": "codex-gpt-5.6-sol", "backend": "openscad", "objective_pass_rate": 0.0,
-            "n_objective_trials": 1, "confinement": "unconfined",
+            "n_objective_trials": 1, "confinement": "unconfined", "min_wall_method": "robust-v1",
         }]
+        # The site also withholds robust-v1 rows (T2); strip the marker so this test isolates
+        # the confinement rule.
+        rows = [{k: v for k, v in row.items() if k != "min_wall_method"} for row in rows]
 
         root = Path(__file__).resolve().parents[1]
         spec = importlib.util.spec_from_file_location("mb_site_build_data_785", root / "site" / "build_data.py")
@@ -472,7 +475,8 @@ class TestExecuteTrialEndToEnd:
         log = run_orchestration(
             config=config, run_log_path=tmp_path / "run_log.json", execute_trial=execute,
         )
-        assert log["trials"][0]["meta"] == {"context_tier": "repo", "confinement": expected}
+        assert log["trials"][0]["meta"] == {"context_tier": "repo", "confinement": expected,
+                                            "min_wall_method": "robust-v1"}
 
     def test_scored_codex_trial_is_verified_only_when_sandboxed(self, tmp_path):
         registry = self._stage_instrument(tmp_path)

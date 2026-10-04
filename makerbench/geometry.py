@@ -208,15 +208,20 @@ def estimate_min_wall_mm(
     return float(dists.min()) if len(dists) else float("inf")
 
 
-# --- robust min_wall option ("robust-v1", #901) --------------------------------------
-# The default estimator above is a minimum over a few thousand random samples, so one grazing
+# --- min_wall estimator policy (#901 option; default since epic T2) ------------------
+# The legacy estimator above is a minimum over a few thousand random samples, so one grazing
 # or sliver sample decides pass/fail and the verdict flips with the sample seed (see
-# docs/showcase/strings/min-wall-analysis.md). "robust-v1" is opt-in: a fixed seed, more
-# samples and a low percentile instead of the minimum, so it fails only when at least
+# docs/showcase/strings/min-wall-analysis.md). "robust-v1" uses a fixed seed, more samples
+# and a low percentile instead of the minimum, so it fails only when at least
 # ROBUST_V1_PERCENTILE percent of the sampled surface is thinner than the floor.
-MIN_WALL_METHOD_DEFAULT = "min"
+# "robust-v1" is the DEFAULT policy of the arena mesh gate; "min" (the legacy minimum) stays
+# selectable so older results can be reproduced exactly. Every new gate result records which
+# policy scored it (min_wall_method); a persisted result with no marker predates this
+# versioning and was scored with "min". See docs/MIN_WALL_RESCORE.md.
+MIN_WALL_METHOD_LEGACY = "min"
 MIN_WALL_METHOD_ROBUST_V1 = "robust-v1"
-MIN_WALL_METHODS = (MIN_WALL_METHOD_DEFAULT, MIN_WALL_METHOD_ROBUST_V1)
+MIN_WALL_METHOD_DEFAULT = MIN_WALL_METHOD_ROBUST_V1
+MIN_WALL_METHODS = (MIN_WALL_METHOD_LEGACY, MIN_WALL_METHOD_ROBUST_V1)
 ROBUST_V1_PERCENTILE = 1.0
 ROBUST_V1_SAMPLES = 20000
 ROBUST_V1_SEED = 0

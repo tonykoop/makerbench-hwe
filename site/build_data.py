@@ -437,8 +437,9 @@ def _arena_run_entry(run_id: str, payloads: dict) -> dict | None:
     which fails the publication bar and is skipped entirely.
     """
     elo = payloads.get("elo") or {}
-    # #901: rows scored under a non-default min_wall policy are withheld from public entries
-    # (they cannot be labelled here and must not read as default evidence).
+    # #901/#979: rows scored with a marked min_wall estimator (robust-v1, the default since #979)
+    # are withheld from public entries until they can be labelled (#983); every published row
+    # was scored with the legacy minimum and must not be read alongside them.
     scoreline = [row for row in (payloads.get("scoreline") or []) if not row.get("min_wall_method")]
     agreement = payloads.get("agreement") or {}
     config = ((payloads.get("run_log") or {}).get("config")) or {}
@@ -670,9 +671,9 @@ def _arena_page_round(number: int, run_dir: Path) -> dict | None:
             # workspace is not integrity-safe; never publish its score.
             continue
         if row.get("min_wall_method"):
-            # #901: a row scored under a non-default min_wall policy is not comparable with
-            # default rows and this page has no way to label it; withhold it (fail closed)
-            # rather than show it as default evidence.
+            # #901/#979: a row scored with a marked min_wall estimator (robust-v1) is not
+            # comparable with the legacy rows this page publishes and the page cannot label it
+            # yet (#983); withhold it (fail closed) rather than mix estimators.
             continue
         rows.append(
             {
