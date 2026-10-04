@@ -24,7 +24,14 @@ import shutil
 from pathlib import Path
 from typing import Callable, Mapping
 
-from .code_cad_arena_runner import evaluate_objective_trial, mesh_objective_gate
+from .code_cad_arena_runner import (
+    evaluate_objective_trial,
+    gate_min_wall_policy,
+    mesh_objective_gate,
+    raise_with_trial_meta,
+    stamp_min_wall_policy,
+    trial_min_wall_policy,
+)
 from .code_cad_generator import instrument_spec_from_registry
 from .code_cad_objective import RenderArtifacts
 from .code_cad_orchestrator import ArenaTrial, TrialExecutor
@@ -62,7 +69,21 @@ def make_parametric_execute_trial(
     """
 
     def execute(trial: ArenaTrial) -> dict:
+        try:
+            return _execute_body(trial)
+        except Exception as exc:
+            # #997 P1: a trial that failed before scoring keeps its gate's min_wall policy,
+            # so it never lands in another policy's scoreline row.
+            # The row also keeps its backend/tier, or it would land in the run config's row.
+            meta = {"backend": PARAMETRIC_BACKEND, "tier": "parametric"}
+            policy = trial_min_wall_policy(registry, trial.instrument_id, gate_factory)
+            if policy:
+                meta["min_wall_method"] = policy
+            raise_with_trial_meta(exc, meta)
+
+    def _execute_body(trial: ArenaTrial) -> dict:
         spec = instrument_spec_from_registry(registry, trial.instrument_id)
+        objective_gate = gate_factory(spec)
         generator = generator_for(trial.instrument_id, spec)
         if generator is None:
             raise KeyError(f"no parametric generator for {trial.instrument_id!r}")
@@ -86,10 +107,11 @@ def make_parametric_execute_trial(
             seed=trial.seed,
             scad_path=stl,                    # the generated STL stands in as provenance
             out_dir=run_dir / "render" / trial.trial_id,
-            objective_gate=gate_factory(spec),
+            objective_gate=objective_gate,
             compiler=compiler,
         )
         payload["rep"] = trial.rep
+        stamp_min_wall_policy(payload, gate_min_wall_policy(objective_gate, spec))
         payload["backend"] = PARAMETRIC_BACKEND
         payload["tier"] = "parametric"
         payload["gen"] = {
