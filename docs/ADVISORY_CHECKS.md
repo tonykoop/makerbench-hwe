@@ -71,8 +71,10 @@ axis are classified:
 | `blocked` | solid section, no air path | `bore_continuity` |
 | `missing` | no material: the body is broken | `bore_continuity` |
 
-A radius step larger than `max(1 mm, 20 % of r)` between neighbouring bore stations is a
-`bore_continuity` failure. The taper is the least-squares slope of radius along the axis; a
+A radius change larger than `max(1 mm, 20 % of r)` between neighbouring bore stations is a
+`bore_continuity` failure when it is a step. Extra cross-sections bisect the span until the change
+is either within the tolerance (a smooth taper or bell flare, not a failure) or still larger than
+it over 1 mm of axis or less (an abrupt step). The taper is the least-squares slope of radius along the axis; a
 bore declared cylindrical (the word in `bore` or the brief, or a declared `bore_id_mm`) may
 change by at most `max(0.5 mm, 5 % of r)` over its length (`bore_taper`). A bore described as
 conical or tapered reports its slope without a verdict. A declared `bore_id_mm` must match the
@@ -83,7 +85,10 @@ between stations would pass. Thirteen probe rays (the bore centre, four points a
 radius, and an outer ring of eight at 0.8 of the bore radius, so a lip or ridge that narrows the
 bore near the wall is hit too) therefore run between every pair of neighbouring bore stations and, unless the spec
 declares a closed, stopped or capped end, from the first and last bore station out past both
-ends of the body. Any material on a probe is a `bore_continuity` failure: `obstruction` (inside
+ends of the body. The end probes aim at the bore measured 0.5 mm inside each end, so a cone
+narrowing to its tip or a bell flaring to its rim is followed. A bore there much narrower than
+the trend of the two outermost stations is a lip, so the probes keep the trend radius and hit
+it. A capped end has no bore there, so the probes keep the station radius and hit the cap. Any material on a probe is a `bore_continuity` failure: `obstruction` (inside
 the bore, with the station interval) or `closed_end` (a declared open end is closed).
 The probes are in `bore.through_path`.
 

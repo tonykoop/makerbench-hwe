@@ -518,6 +518,68 @@ def measure_bore_profile(mesh: trimesh.Trimesh) -> dict[str, Any]:
             "taper_change_mm": slope * float(extents[axis])}
 
 
+def _bore_ring(mesh: trimesh.Trimesh, axis: int, coord: float) -> tuple[np.ndarray, float] | None:
+    """``(centre, equivalent radius)`` of the largest interior loop of the cross-section at
+    ``coord`` along ``axis``, or ``None`` where the section has no bore loop."""
+    from shapely.geometry import Polygon
+
+    lo, hi = mesh.bounds
+    origin = (lo + hi) / 2.0
+    origin[axis] = coord
+    normal = np.zeros(3)
+    normal[axis] = 1.0
+    section = mesh.section(plane_origin=origin, plane_normal=normal)
+    if section is None:
+        return None
+    path_2d, to_3d = section.to_2D()
+    rings = [Polygon(ring) for polygon in path_2d.polygons_full for ring in polygon.interiors]
+    if not rings:
+        return None
+    largest = max(rings, key=lambda ring: abs(ring.area))
+    c = largest.centroid
+    return (to_3d @ np.array([c.x, c.y, 0.0, 1.0]))[:3], math.sqrt(abs(largest.area) / math.pi)
+
+
+#: How far inside each end of the body the end probes fit the bore (#994 review): the end
+#: probes run from the outermost bore station to the bore measured here, so a taper that
+#: keeps narrowing (or a bell that keeps flaring) to the end is followed, not cut through.
+END_FIT_INSET_MM = 0.5
+#: A radius change between bore stations is a step only if it is still larger than the step
+#: tolerance over an axial span this short (#994 review). Larger station-to-station changes
+#: are bisected with extra cross-sections, so a smooth flare spread over the span is not a step.
+STEP_RESOLUTION_MM = 1.0
+
+
+def _end_fit(mesh: trimesh.Trimesh, axis: int, stations: list, centers: list, bore_idx: list,
+             end: str) -> tuple[np.ndarray, float, float]:
+    """``(centre, radius, axis coordinate)`` the end probes aim at, at ``END_FIT_INSET_MM``
+    inside the ``"lower"`` or ``"upper"`` end. The measured bore there is used when it follows
+    the trend of the two outermost bore stations (or is wider); a bore much narrower than that
+    trend is a lip closing the end, so the probes keep the trend radius and hit it. With no bore
+    at the end (a cap), the outermost station's radius is kept, as before."""
+    lo, hi = mesh.bounds
+    outer = bore_idx[:2] if end == "lower" else bore_idx[::-1][:2]
+    first = outer[0]
+    c0, r0 = np.asarray(centers[first], float), float(stations[first]["radius_mm"])
+    coord = lo[axis] + END_FIT_INSET_MM if end == "lower" else hi[axis] - END_FIT_INSET_MM
+    trend = r0
+    if len(outer) == 2:
+        second = outer[1]
+        z0, z1 = float(c0[axis]), float(centers[second][axis])
+        if abs(z1 - z0) > 1e-9:
+            trend = r0 + (float(stations[second]["radius_mm"]) - r0) / (z1 - z0) * (coord - z0)
+    trend = max(trend, 0.0)
+    ring = _bore_ring(mesh, axis, coord)
+    at_end = c0.copy()
+    at_end[axis] = coord
+    if ring is None:
+        return at_end, r0, coord
+    centre, radius = ring
+    if radius >= trend - max(STEP_MIN_MM, STEP_REL * trend):
+        return centre, radius, coord
+    return at_end, trend, coord
+
+
 #: Radius (fraction of the bore's equivalent radius) of the outer probe ring (#994 review):
 #: near the wall, so a lip or ridge that narrows the bore between stations is hit, yet inside
 #: any round or square bore (a square's inscribed radius is 0.886 of its equivalent radius).
@@ -562,31 +624,35 @@ def probe_through_path(mesh: trimesh.Trimesh, profile: Mapping[str, Any], *,
     e1[(axis + 1) % 3] = 1.0
     e2 = np.cross(e_axis, e1)
     bore_idx = [i for i, st in enumerate(stations) if st["kind"] == "bore" and centers[i] is not None]
-    segments = []  # (label, start_center, start_r, end_center, end_r, (frac_a, frac_b))
+    # (label, start_center, start_r, end_center, end_r, (frac_a, frac_b), extend_to): an end
+    # probe continues along its line to the axis coordinate ``extend_to``, past the body.
+    segments = []
     for a, b in zip(bore_idx, bore_idx[1:]):
         if any(stations[k]["kind"] in ("blocked", "missing") for k in range(a + 1, b)):
             continue
         segments.append(("interior", centers[a], stations[a]["radius_mm"], centers[b],
-                         stations[b]["radius_mm"], (stations[a]["fraction"], stations[b]["fraction"])))
+                         stations[b]["radius_mm"], (stations[a]["fraction"], stations[b]["fraction"]), None))
     if open_ends and bore_idx:
         first, last = bore_idx[0], bore_idx[-1]
+        # #994 review: aim the end probes at the bore actually measured just inside each end
+        # (a cone narrowing to its tip, a bell flaring to its rim), then on past the end.
         if not any(stations[k]["kind"] in ("blocked", "missing") for k in range(0, first)):
-            out = np.array(centers[first], dtype=float)
-            out[axis] = lo[axis] - 1.0
-            segments.append(("end", centers[first], stations[first]["radius_mm"], out,
-                             stations[first]["radius_mm"], (stations[first]["fraction"], 0.0)))
+            c_end, r_end, _ = _end_fit(mesh, axis, stations, centers, bore_idx, "lower")
+            segments.append(("end", centers[first], stations[first]["radius_mm"], c_end,
+                             r_end, (stations[first]["fraction"], 0.0), lo[axis] - 1.0))
         if not any(stations[k]["kind"] in ("blocked", "missing") for k in range(last + 1, len(stations))):
-            out = np.array(centers[last], dtype=float)
-            out[axis] = hi[axis] + 1.0
-            segments.append(("end", centers[last], stations[last]["radius_mm"], out,
-                             stations[last]["radius_mm"], (stations[last]["fraction"], 1.0)))
+            c_end, r_end, _ = _end_fit(mesh, axis, stations, centers, bore_idx, "upper")
+            segments.append(("end", centers[last], stations[last]["radius_mm"], c_end,
+                             r_end, (stations[last]["fraction"], 1.0), hi[axis] + 1.0))
     if not segments:
         return []
     origins, dirs, lengths, owner = [], [], [], []
-    for si, (_, c0, r0, c1, r1, _) in enumerate(segments):
+    for si, (_, c0, r0, c1, r1, _, extend_to) in enumerate(segments):
         for u, v in PROBE_OFFSETS:
             start = np.asarray(c0, float) + r0 * (u * e1 + v * e2)
             end = np.asarray(c1, float) + r1 * (u * e1 + v * e2)
+            if extend_to is not None and abs(end[axis] - start[axis]) > 1e-9:
+                end = start + (end - start) * (extend_to - start[axis]) / (end[axis] - start[axis])
             vec = end - start
             length = float(np.linalg.norm(vec))
             if length <= 1e-9:
@@ -606,7 +672,7 @@ def probe_through_path(mesh: trimesh.Trimesh, profile: Mapping[str, Any], *,
             rays_hit.setdefault(owner[ri], set()).add(int(ri))
     found = []
     for si, positions in sorted(hits.items()):
-        kind, _, _, _, _, (fa, fb) = segments[si]
+        kind, _, _, _, _, (fa, fb), _ = segments[si]
         found.append({"kind": "closed_end" if kind == "end" else "obstruction",
                       "between": [fa, fb], "at_mm": round(min(positions) if fb >= fa else max(positions), 2),
                       "probes_hit": len(rays_hit[si]), "probes": len(PROBE_OFFSETS)})
@@ -637,6 +703,26 @@ def _declares_cylindrical(spec: Mapping[str, Any]) -> bool:
     if "conical" in text or "taper" in text:
         return False
     return "cylindrical" in text or _positive(constraints.get("bore_id_mm")) is not None
+
+
+def _abrupt_step(mesh: trimesh.Trimesh, axis: int, lo_axis: float, za: float, ra: float,
+                 zb: float, rb: float, limit: float) -> tuple[float, float] | None:
+    """Where (``(z_from, z_to)`` mm along the axis) a radius change of more than ``limit``
+    happens within ``STEP_RESOLUTION_MM``, found by bisecting ``za..zb`` with extra cross-sections;
+    ``None`` when the change is spread out (a smooth taper or flare). A span that cannot be
+    resolved (no bore loop near its middle) is reported as abrupt, the conservative answer."""
+    if abs(rb - ra) <= limit:
+        return None
+    if zb - za <= STEP_RESOLUTION_MM:
+        return za, zb
+    span = zb - za
+    for zm in (za + span / 2, za + span / 4, za + 3 * span / 4):
+        ring = _bore_ring(mesh, axis, lo_axis + zm)
+        if ring is not None:
+            rm = ring[1]
+            return (_abrupt_step(mesh, axis, lo_axis, za, ra, zm, rm, limit)
+                    or _abrupt_step(mesh, axis, lo_axis, zm, rm, zb, rb, limit))
+    return za, zb
 
 
 def bore_report(spec: Mapping[str, Any], mesh: trimesh.Trimesh, *, body_id: str) -> dict[str, Any]:
@@ -681,15 +767,24 @@ def bore_report(spec: Mapping[str, Any], mesh: trimesh.Trimesh, *, body_id: str)
                       "a declared open end is closed")))
     step_limit = max(STEP_MIN_MM, STEP_REL * r_med)
     bores = [s for s in profile["stations"] if s["kind"] == "bore"]
+    axis, lo_axis, length = int(profile["axis_index"]), float(profile["bounds"][0][profile["axis_index"]]), \
+        profile["length_mm"]
     for prev, cur in zip(bores, bores[1:]):
         step = abs(cur["radius_mm"] - prev["radius_mm"])
         if step > step_limit:
+            # #994 review: a smooth flare changes the radius across the whole span; a step
+            # does it within STEP_RESOLUTION_MM. Only the latter breaks continuity.
+            abrupt = _abrupt_step(mesh, axis, lo_axis, prev["fraction"] * length, prev["radius_mm"],
+                                  cur["fraction"] * length, cur["radius_mm"], step_limit)
+            if abrupt is None:
+                continue
             failures.append(_explain(
                 "bore_continuity", measured=round(step, 3), threshold=round(step_limit, 3), unit="mm",
                 requires="measured <= threshold (radius step between neighbouring bore stations)",
                 body_id=body_id, station=cur["fraction"],
                 detail=f"bore radius jumps {prev['radius_mm']:g} -> {cur['radius_mm']:g} mm between "
-                       f"{prev['fraction']:.0%} and {cur['fraction']:.0%} of the length"))
+                       f"{prev['fraction']:.0%} and {cur['fraction']:.0%} of the length, abruptly "
+                       f"(within {abrupt[0]:.1f}-{abrupt[1]:.1f} mm along the axis)"))
     taper_limit = max(TAPER_MIN_MM, TAPER_REL * r_med)
     change = profile["taper_change_mm"]
     cylindrical = _declares_cylindrical(spec)

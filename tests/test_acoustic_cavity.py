@@ -233,6 +233,55 @@ def test_taper_on_a_declared_cylindrical_bore_is_flagged_and_a_declared_conical_
     assert report["declared_cylindrical"] is False
     assert not [f for f in report["failures"] if f["check"] == "bore_taper"]
     assert report["taper_slope_mm_per_mm"] > 0
+    # #994 review: no other check may fail a clean declared cone either
+    assert report["status"] == "consistent", report["failures"]
+
+
+def _revolved(zs, r_in, wall=3.0, sections=96):
+    """A pipe of revolution about z with bore radius ``r_in`` at each ``zs``."""
+    zs, r_in = np.asarray(zs, float), np.asarray(r_in, float)
+    loop = np.vstack([np.c_[r_in, zs], np.c_[r_in[::-1] + wall, zs[::-1]]])
+    mesh = trimesh.creation.revolve(np.vstack([loop, loop[:1]])[::-1], sections=sections)
+    assert mesh.is_watertight and mesh.volume > 0
+    return mesh
+
+
+CONICAL_OPEN = {**KENA_LIKE, "constraints": {**KENA_LIKE["constraints"], "bore": "conical, open both ends"}}
+
+
+def test_steep_cone_narrowing_to_its_open_tip_is_fully_consistent():
+    """#994 review: a 400 mm cone, bore radius 2 -> 15 mm. The end probes follow the bore to
+    the narrow tip instead of keeping the first station's radius and hitting the wall."""
+    z = np.linspace(0, 400, 81)
+    report = acoustic.bore_report(CONICAL_OPEN, _revolved(z, 2 + 13 * z / 400), body_id="body")
+    assert report["status"] == "consistent", report["failures"]
+    assert report["through_path"] == []
+
+
+def test_smooth_bell_flare_is_not_a_step_but_an_abrupt_one_is():
+    """#994 review: an 18 mm bore flaring smoothly to 36 mm over the last 80 mm changes more
+    than the step tolerance between stations, but over the whole span, not at a step."""
+    z = np.linspace(0, 400, 401)
+    flare = np.where(z < 320, 9.0, 9.0 + 9.0 * ((z - 320) / 80) ** 2)
+    bell = {**KENA_LIKE, "constraints": {**KENA_LIKE["constraints"], "bore": "tapered bell, open both ends"}}
+    report = acoustic.bore_report(bell, _revolved(z, flare), body_id="body")
+    assert report["status"] == "consistent", report["failures"]
+    # the same 9 -> 18 mm radius change made as a step at 360 mm is still a discontinuity
+    stepped = np.where(z < 360, 9.0, 18.0)
+    zs = np.r_[z[z < 360], 360.0, 360.0, z[z > 360]]
+    rs = np.r_[stepped[z < 360], 9.0, 18.0, stepped[z > 360]]
+    report = acoustic.bore_report(bell, _revolved(zs, rs), body_id="body")
+    steps = [f for f in report["failures"] if f["check"] == "bore_continuity" and f["unit"] == "mm"]
+    assert len(steps) == 1 and "abruptly" in steps[0]["detail"]
+    _explained(steps)
+
+
+def test_lip_narrowing_an_open_end_is_still_a_closed_end():
+    """The end probes follow a taper, not a lip: an 18 mm bore whose last 2 mm narrows to
+    8 mm is still closed at that end."""
+    z = np.array([0.0, 398.0, 398.0, 400.0])
+    report = acoustic.bore_report(KENA_LIKE, _revolved(z, [9.0, 9.0, 4.0, 4.0]), body_id="body")
+    assert [(b["kind"], b["between"][1]) for b in report["through_path"]] == [("closed_end", 1.0)]
 
 
 DUDUK_LIKE = {"id": "duduk-like", "task_kind": "multi_part_assembly", "assembly": True, "min_bodies": 2,
