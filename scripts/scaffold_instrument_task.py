@@ -228,39 +228,61 @@ def _handle_path(fd: int) -> str | None:
 
 
 class PinnedRoot:
-    """The repo root, pinned BEFORE the visibility lookup.
+    """The repo root, pinned BEFORE validation, the slug/commit lookups and the
+    visibility lookup; every one of those, and the read, goes through the pin.
 
-    With ``dir_fd`` support the root is held open as a directory fd and the CSV
-    is reached by walking the validated, symlink-free inner path from that fd,
-    each component opened with ``O_NOFOLLOW`` relative to its parent. A root
-    swapped for another checkout after the PUBLIC approval is never consulted;
-    a component swapped for a symlink fails (ELOOP / ENOTDIR).
+    With ``dir_fd`` support the root is held open as a directory fd. Path-based
+    work (``resolve_csv``, ``git -C``) uses :attr:`ops_path`, the
+    ``/proc/<pid>/fd/<fd>`` link to that open directory (it cannot be
+    retargeted by swapping ``repo_dir``), and the CSV is reached by walking the
+    validated, symlink-free inner path from the fd, each component opened with
+    ``O_NOFOLLOW`` relative to its parent. A component swapped for a symlink
+    fails (ELOOP / ENOTDIR).
 
-    Without ``dir_fd`` (Windows) the file is opened by name and containment is
-    checked from the OPEN handle's own path (GetFinalPathNameByHandle, or
-    ``/proc/self/fd``), never by re-resolving the name. If the platform cannot
-    report a handle's path, the read fails closed.
+    Without ``dir_fd`` (Windows) the resolved root path and its identity
+    (``st_dev``/``st_ino``) are pinned up front; the file is opened by name and
+    containment is checked from the OPEN handle's own path (GetFinalPathNameByHandle,
+    or ``/proc/self/fd``) plus the root identity, so a symlink retarget or a
+    rename-swap of another checkout into the same path is refused. If the
+    platform cannot report a handle's path, the read fails closed.
     """
 
     def __init__(self, root: Path):
         self.path = root
         self.fd: int | None = None
-        if _DIRFD_OK:
-            try:
+        try:
+            if _DIRFD_OK:
                 self.fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | _CLOEXEC)
-            except OSError as exc:
-                raise ScaffoldError(f"cannot open repo root {root}: {exc}") from exc
-            self._identity = self._id(os.fstat(self.fd))
+                self._identity = self._id(os.fstat(self.fd))
+            else:
+                self._identity = self._id(os.stat(root, follow_symlinks=False))
             self.check_unchanged()
+        except OSError as exc:
+            self.close()
+            raise ScaffoldError(f"cannot pin repo root {root}: {exc}") from exc
+        except BaseException:
+            self.close()
+            raise
+        self.ops_path = self._ops_path()
+
+    def _ops_path(self) -> Path:
+        if self.fd is not None:
+            link = Path(f"/proc/{os.getpid()}/fd/{self.fd}")
+            try:
+                if self._id(os.stat(link)) == self._identity:
+                    return link
+            except OSError:
+                pass
+            # dir_fd but no /proc (e.g. BSD/macOS): name-based work uses the
+            # resolved path, and check_unchanged() re-verifies it after the read.
+        return self.path
 
     @staticmethod
     def _id(st) -> tuple[int, int]:
         return (st.st_dev, st.st_ino)
 
     def check_unchanged(self) -> None:
-        """The root path still names the pinned directory (dir_fd mode)."""
-        if self.fd is None:
-            return
+        """The root path still names the pinned directory (identity unchanged)."""
         try:
             now = self._id(os.stat(self.path, follow_symlinks=False))
         except OSError as exc:
@@ -302,6 +324,7 @@ class PinnedRoot:
                 raise ScaffoldError("cannot verify the opened --csv handle's path on this platform; refusing")
             if os.path.normcase(actual) != os.path.normcase(expected):
                 raise ScaffoldError(f"--csv changed after validation (symlink swap?): {inner}")
+            self.check_unchanged()  # a checkout renamed into the same path is another inode
             return _read_fd(fd)
         finally:
             os.close(fd)
@@ -323,9 +346,10 @@ def scaffold(*, repo_dir: Path, task_id: str, columns: Sequence[str], csv_rel: s
     # PUBLIC approval, the read) is bound to this one directory.
     pinned = PinnedRoot(repo_dir.resolve()) if read_csv is None else None
     try:
-        csv_file, csv_path = resolve_csv(repo_dir, csv_rel)
+        ops_dir = pinned.ops_path if pinned is not None else repo_dir
+        csv_file, csv_path = resolve_csv(ops_dir, csv_rel)
         where_pairs = parse_where(where)
-        slug = slug or repo_slug(repo_dir)
+        slug = slug or repo_slug(ops_dir)
         # Visibility gate BEFORE any content read: PRIVATE, unknown, or a failed
         # lookup all refuse without opening the CSV.
         try:
@@ -334,7 +358,7 @@ def scaffold(*, repo_dir: Path, task_id: str, columns: Sequence[str], csv_rel: s
             raise ScaffoldError(f"visibility lookup failed for {slug}: {exc}") from exc
         if visibility != "PUBLIC":
             raise ScaffoldError(f"{slug} is {visibility or 'UNKNOWN'}; only PUBLIC repos may be snapshotted")
-        commit = commit or git_out(repo_dir, "rev-parse", "HEAD")
+        commit = commit or git_out(ops_dir, "rev-parse", "HEAD")
         if pinned is None:
             csv_text = read_csv(csv_file)
         else:
