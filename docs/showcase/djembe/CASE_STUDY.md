@@ -49,6 +49,8 @@ generation, compile, render and gate; not model-thinking time; raw record in
 | min_wall | **fail** (score 0.0) |
 | Objective pass rate | 0.833 |
 
+<!-- claim: 0.833 at: "| Objective pass rate | 0.833 |" source: docs/showcase/djembe/assets/objective_scoreline.json#/rows/0/objective_pass_rate -->
+
 What the file shows, by inspection of the script and render: a 600 mm tall goblet
 with a 320 mm head, 14 staves, 10 mm shell wall, crown and flesh hoops, base ring,
 and 14 rope segments at 4 mm diameter. Named parameters include `stave_count`, `H`,
@@ -66,6 +68,8 @@ height/radius points.
 | Generated design has 14 staves, 10 mm wall, a `stave_count` parameter (12-16), hoops, base ring and 4 mm ropes | **Verified** by reading the generated script (kept in ignored `runs/`, not committed) | `stave_count = 14`, `wall = 10`, `rope_d = 4`, modules `stave`, `shell`, `flesh_hoop`, `crown_hoop`, `base_ring`, `ropes` |
 | Recorded grade: 0.833, `min_wall` fails, other five checks pass | **Verified** | `assets/objective_scoreline.json`; run log sub-scores |
 | Wall time 108 s | **Verified as a single sample, scope stated** | `assets/timing.json` |
+
+<!-- claim: 108 at: "| Wall time 108 s |" source: docs/showcase/djembe/assets/timing.json#/elapsed_s -->
 | The photo was given to the model | **Assumed from configuration**: the image tier was requested with an image map | Trial provenance shows the tier, not a tool call or image read |
 | The photo shaped the design | **Unknown**: not demonstrated | No no-image control run |
 | Why `min_wall` failed | **Unknown** | Not investigated; floor is provisional |

@@ -1,9 +1,10 @@
 # Case study 3: a kora, reference photo to parametric CAD
 
-Story #911 (epic #907). This is a manager-approved substitution to a public repo (`tonykoop/kora`). It is
-the same instrument as the separately live-built 28-body kora (built in a CAD connector),
-shown here from a reference photo to parametric code-CAD. One model, one brief, three
-seeds per arm; a first draft of geometry, not a measured master or a build packet.
+Story #911 (epic #907). This is a manager-approved substitution to a public repo
+(`tonykoop/kora`). It is the same instrument as a kora built separately and live in a CAD
+connector (its reported 28-body count is unverified and still needs confirmation against a
+screenshot), shown here from a reference photo to parametric code-CAD. One model, one brief,
+three seeds per arm; a first draft of geometry, not a measured master or a build packet.
 
 ## Plain-English summary
 
@@ -61,6 +62,10 @@ Photo-conditioned design, seed 1 (`assets/image-seed1.png`), and brief-only desi
 | Photo + brief (`image`) | 1.000 | 1.000 | 0.833 (`min_wall`) | 0.944 | 45.2 / 49.7 / 71.1 |
 | Brief only (`blind`) | 1.000 | 1.000 | 1.000 | 1.000 | 72.3 / 68.0 / 89.3 |
 
+<!-- claim: 1.000 at: "(`image`) | 1.000" source: docs/showcase/kora/assets/scoreline-image-seed0.json#/rows/0/objective_pass_rate -->
+<!-- claim: 0.833 at: "0.833 (`min_wall`) | 0.944" source: docs/showcase/kora/assets/scoreline-image-seed2.json#/rows/0/objective_pass_rate -->
+<!-- claim: 1.000 at: "(`blind`) | 1.000" source: docs/showcase/kora/assets/scoreline-blind-seed0.json#/rows/0/objective_pass_rate -->
+
 By eye (six renders): in the blind arm all three designs have the neck lying horizontally
 out of a hemispherical bowl; in the photo arm seed 0 does the same but seeds 1 and 2
 stand the neck upright, as it does in the photograph. The designs are stylised: a
@@ -98,13 +103,7 @@ and no significance analysis was performed.
 - Passing the checks says almost nothing here: the same brief without the photo passes too,
   and the results look rough. Use the renders, not the scores, to judge quality.
 - One instrument, one model, three seeds per arm; no significance analysis was performed.
-- The live-built 28-body kora is a different artifact (built live in a CAD connector); this
-  study does not compare against it.
+- The live-built kora is a different artifact (built live in a CAD connector); its reported
+  28-body count is **unverified** (not confirmed against a screenshot), and this study does
+  not compare against it.
 - Turn counts and token usage were not recorded.
-
-## Caption suggestion
-
-"A kora from a reference photo: an editable OpenSCAD model, with and without the photo. Five of
-six runs pass every automatic mesh check (one fails the provisional wall-thickness check),
-which mostly shows how little those checks say about resemblance. The photo seems to change how the model orients the neck. Small sample, a first
-draft." Credit the photo to `tonykoop/kora` (CC BY 4.0).

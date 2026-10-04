@@ -451,3 +451,29 @@ def test_same_marker_thematic_break_ends_the_quote(repo, capsys, rule):
     body = f"## Notes\n\n> The headline:\n{rule}\nClaimed pass rate: 0.99.\n"
     code, out = run(repo, body, "--strict", capsys=capsys)
     assert code == 0, out
+
+
+# ------------------------------- real-doc mutations must fail under --strict
+
+
+@pytest.mark.parametrize(
+    ("doc", "before", "after"),
+    [
+        ("docs/showcase/djembe/CASE_STUDY.md", "| Objective pass rate | 0.833 |", "| Objective pass rate | 0.999 |"),
+        ("docs/showcase/kora/CASE_STUDY.md", "0.833 (`min_wall`) | 0.944", "1.000 (`min_wall`) | 0.944"),
+        ("docs/showcase/post3/matchup-backend.md", "| CadQuery | 0.778 |", "| CadQuery | 0.889 |"),
+        ("docs/showcase/strings/matchup-model.md", "| 0.833 | 0.778 |", "| 0.833 | 0.878 |"),
+    ],
+)
+def test_mutating_a_cited_result_fails_strict(tmp_path, capsys, doc, before, after):
+    text = (REPO_ROOT / doc).read_text(encoding="utf-8")
+    # The visible table cell comes first; later copies sit inside citation comments.
+    assert text.index(before) < text.index("<!-- claim:")
+    assert claims.main([str(REPO_ROOT / doc), "--root", str(REPO_ROOT), "--strict"]) == 0
+    mutated = tmp_path / "mutated.md"
+    mutated.write_text(text.replace(before, after, 1), encoding="utf-8")
+    capsys.readouterr()
+    code = claims.main([str(mutated), "--root", str(REPO_ROOT), "--strict"])
+    out = capsys.readouterr().out
+    assert code == 1, out
+    assert "STALE" in out or "MISMATCH" in out
