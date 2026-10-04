@@ -22,10 +22,15 @@ function syncHotspots(element, hotspots) {
       node.className = "measure-hotspot";
       node.setAttribute("slot", spot.slot);
       node.setAttribute("role", "img");
+      node.dataset.position = spot.position;
       element.appendChild(node);
+    } else if (node.dataset.position !== spot.position) {
+      // model-viewer reads data-position only when a hotspot is added; moving
+      // an existing one must go through updateHotspot (#996 review).
+      node.dataset.position = spot.position;
+      element.updateHotspot?.({ name: spot.slot, position: spot.position });
     }
     node.dataset.kind = spot.kind;
-    node.dataset.position = spot.position;
     node.textContent = spot.text;
     node.setAttribute("aria-label", spot.label);
   }
@@ -68,11 +73,16 @@ export function DimensionOverlay({ element, url }) {
 
   useEffect(() => () => element && syncHotspots(element, []), [element]);
 
-  // Picking pauses the turntable so the model holds still under the cursor.
+  // Picking pauses the turntable and tap-to-recenter, so the model holds still
+  // under the cursor.
   useEffect(() => {
     if (!element || !picking) return undefined;
     const rotating = element.autoRotate;
     element.autoRotate = false;
+    // A click on the model would also re-target the camera (tap-to-recenter),
+    // moving the view under the next pick; picks must leave the camera alone.
+    const tapping = element.disableTap;
+    element.disableTap = true;
     element.classList.add("is-picking");
     const onDown = (event) => {
       down.current = { x: event.clientX, y: event.clientY };
@@ -92,6 +102,7 @@ export function DimensionOverlay({ element, url }) {
       element.removeEventListener("pointerup", onUp);
       element.classList.remove("is-picking");
       element.autoRotate = rotating;
+      element.disableTap = tapping;
     };
   }, [element, picking]);
 

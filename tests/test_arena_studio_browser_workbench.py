@@ -519,6 +519,34 @@ _VIEWER_PIXEL = """([fx, fy]) => {
 }"""
 
 
+_MARKERS = """() => {
+  const el = document.querySelector('.workbench-preview model-viewer');
+  const out = {};
+  for (const name of ['a', 'b']) {
+    const hit = el.queryHotspot(`hotspot-measure-${name}`);
+    if (hit) out[name] = [hit.position.x, hit.position.y, hit.position.z];
+  }
+  return out;
+}"""
+
+
+def _mm(value: float) -> str:
+    """lib/dimensions.js formatMm: two decimals under 10 mm, else one."""
+    return f"{value:.2f} mm" if abs(value) < 10 else f"{value:.1f} mm"
+
+
+def _gap(p, q) -> float:
+    return sum((a - b) ** 2 for a, b in zip(p, q)) ** 0.5
+
+
+def _assert_markers(page, want: dict) -> None:
+    """The viewer's own idea of each A/B marker matches the picked point."""
+    markers = page.evaluate(_MARKERS)
+    assert sorted(markers) == sorted(want), markers
+    for name, point in want.items():
+        assert _gap(markers[name], point) < 1e-2, (name, markers[name], point)  # float32
+
+
 def _viewer_pixel(page, fx: float, fy: float) -> tuple[float, float]:
     """A viewport pixel on the viewer, read after scrolling it into view."""
     point = page.evaluate(_VIEWER_PIXEL, [fx, fy])
@@ -565,6 +593,7 @@ def test_dimension_overlay_shows_gate_metrics_and_measures_two_picked_points(
         measure.click()
         assert measure.get_attribute("aria-pressed") == "true"
         page.wait_for_function("() => document.querySelector('.workbench-preview model-viewer').autoRotate === false")
+        assert viewer.evaluate("el => el.disableTap") is True, "picks never re-target the camera"
         page.wait_for_timeout(1500)  # let the turntable's damping settle
         first = _viewer_pixel(page, 0.32, 0.62)
         expected = [page.evaluate(_PICK_AT, list(first))]
@@ -592,7 +621,7 @@ def test_dimension_overlay_shows_gate_metrics_and_measures_two_picked_points(
         distance = float(readout.get_attribute("data-distance"))
         want = sum((a - b) ** 2 for a, b in zip(*expected)) ** 0.5
         assert abs(distance - want) < 1e-3 and 1.0 < distance <= 300 ** 0.5  # float32 picking
-        assert readout.inner_text() == f"Distance A–B: {distance:.2f} mm"
+        assert readout.inner_text() == f"Distance A–B: {_mm(distance)}"
         for point in expected:
             # The picked frame is the STL's frame: every surface point of
             # cube(10) has a coordinate on 0 or 10 mm.
@@ -603,12 +632,43 @@ def test_dimension_overlay_shows_gate_metrics_and_measures_two_picked_points(
             overlay.scroll_into_view_if_needed()
         page.screenshot(path=str(screenshot_dir / f"dimensions-{theme}-{width}.png"), full_page=True)
         assert page.evaluate("() => document.scrollingElement.scrollWidth - document.scrollingElement.clientWidth") <= 0
+        _assert_markers(page, {"a": expected[0], "b": expected[1]})
+
+        # Pick again (#996 review): a third click starts A', a fourth sets B',
+        # and both markers move to the new points with the distance.
+        third = _viewer_pixel(page, 0.4, 0.3)
+        again = [page.evaluate(_PICK_AT, list(third))]
+        assert again[0] and _gap(again[0], expected[0]) > 1.0, "A' is a different point from A"
+        page.mouse.click(*third)
+        page.wait_for_function("() => document.querySelector('.measure-readout').dataset.distance === ''")
+        assert readout.inner_text() == "Click a second point."
+        page.wait_for_function("() => document.querySelectorAll('.workbench-preview model-viewer > .measure-hotspot[data-kind=pick]').length === 1")
+        _assert_markers(page, {"a": again[0]})
+        # Read B' right before its click: the A' re-render can shift the page.
+        fourth = _viewer_pixel(page, 0.55, 0.7)
+        again.append(page.evaluate(_PICK_AT, list(fourth)))
+        assert again[1]
+        page.mouse.click(*fourth)
+        page.wait_for_function("() => document.querySelector('.measure-readout').dataset.distance !== ''")
+        redo = float(readout.get_attribute("data-distance"))
+        assert abs(redo - _gap(*again)) < 1e-3 and redo > 1.0
+        assert readout.inner_text() == f"Distance A–B: {_mm(redo)}"
+        page.wait_for_function("() => document.querySelectorAll('.workbench-preview model-viewer > .measure-hotspot[data-kind=pick]').length === 2")
+        _assert_markers(page, {"a": again[0], "b": again[1]})
+        # On screen, each marker sits on the pixel that was clicked.
+        page.wait_for_timeout(300)
+        for name, (fx, fy) in (("a", (0.4, 0.3)), ("b", (0.55, 0.7))):
+            pixel = _viewer_pixel(page, fx, fy)  # same scroll as the box below
+            box = viewer.locator(f".measure-hotspot[slot=hotspot-measure-{name}]").bounding_box()
+            centre = (box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+            assert _gap(centre, pixel) < 3, (name, centre, pixel)
 
         overlay.get_by_role("button", name="Clear").click()
         page.wait_for_function("() => !document.querySelector('.workbench-preview model-viewer > .measure-hotspot[data-kind=pick]')")
         measure.click()
         # Leaving pick mode restores the turntable.
         page.wait_for_function("() => document.querySelector('.workbench-preview model-viewer').autoRotate === true")
+        assert viewer.evaluate("el => el.disableTap") is False
         assert session.errors == []
         session.close()
         browser.close()
