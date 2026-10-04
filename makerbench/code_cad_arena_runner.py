@@ -415,7 +415,13 @@ def mesh_objective_gate(
             volume = 0.0
 
         if watertight_bodies:
-            biggest_solid = max(watertight_bodies, key=lambda body: len(body.faces))
+            if robust_wall:
+                # robust-v1 must not depend on body order: equally large bodies are told
+                # apart by volume, then canonical geometry (#1007). Legacy "min" keeps the
+                # first-listed body so older results still reproduce exactly.
+                biggest_solid = max(watertight_bodies, key=geometry.canonical_order_key)
+            else:
+                biggest_solid = max(watertight_bodies, key=lambda body: len(body.faces))
             if robust_wall:
                 robust = geometry.estimate_wall_robust_v1(biggest_solid)
                 measured_wall = robust["wall_mm"]

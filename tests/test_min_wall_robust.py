@@ -570,3 +570,67 @@ def test_robust_v1_casts_in_bounded_batches(monkeypatch):
     monkeypatch.setattr(geometry, "WALL_RAY_BATCH", 1000)
     geometry.estimate_wall_robust_v1(trimesh.creation.annulus(r_min=9, r_max=12, height=40, sections=64))
     assert sizes and max(sizes) <= 1000 and sum(sizes) == geometry.ROBUST_V1_SAMPLES
+
+
+def _two_boxes(first_thin: bool) -> trimesh.Trimesh:
+    """Two disjoint watertight 12-face boxes (a 0.4 mm plate and a 5 mm cube), listed in
+    either order: a face-count tie between bodies."""
+    thin = trimesh.creation.box(extents=[20.0, 20.0, 0.4])
+    cube = trimesh.creation.box(extents=[5.0, 5.0, 5.0])
+    cube.apply_translation([40.0, 0.0, 0.0])
+    pair = [thin, cube] if first_thin else [cube, thin]
+    return trimesh.util.concatenate(pair)
+
+
+def test_robust_gate_breaks_body_ties_independently_of_order(tmp_path):
+    """#1007 review: with two equally large (12-face) solids, robust-v1 measured the
+    first-listed one (0.399 mm FAIL vs 4.999 mm PASS for the same geometry). The tie-break
+    (face count, volume, canonical geometry) makes the gate order-independent."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    a = _payload(tmp_path / "a", _two_boxes(first_thin=True))
+    b = _payload(tmp_path / "b", _two_boxes(first_thin=False))
+    assert a["min_wall_method"] == b["min_wall_method"] == "robust-v1"
+    assert a["metrics"]["min_wall_mm"] == b["metrics"]["min_wall_mm"]
+    assert a["objective_pass_rate"] == b["objective_pass_rate"]
+    # the larger-volume body (the 20 x 20 x 0.4 plate) is the one measured
+    assert a["metrics"]["min_wall_mm"] < 1.0
+
+
+def test_legacy_min_gate_keeps_first_listed_body_selection(tmp_path):
+    """Legacy "min" is unchanged (older results must reproduce): it still measures the
+    first-listed of equally large bodies."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    a = _payload(tmp_path / "a", _two_boxes(first_thin=True), min_wall_estimator="min")
+    b = _payload(tmp_path / "b", _two_boxes(first_thin=False), min_wall_estimator="min")
+    assert a["min_wall_method"] == b["min_wall_method"] == "min"
+    assert a["metrics"]["min_wall_mm"] < 1.0 < b["metrics"]["min_wall_mm"]
+
+
+def test_canonical_rotation_is_unique_for_degenerate_faces():
+    faces = np.array([[2, 0, 0], [0, 2, 0], [0, 0, 2], [1, 3, 1], [3, 1, 1], [1, 1, 3]])
+    rotated = geometry._smallest_rotation(faces)
+    assert rotated.tolist() == [[0, 0, 2]] * 3 + [[1, 1, 3]] * 3
+    verts = np.array([[0.0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    one = geometry.canonical_mesh(trimesh.Trimesh(verts, faces[[0, 3]], process=False))
+    two = geometry.canonical_mesh(trimesh.Trimesh(verts, faces[[4, 2]], process=False))
+    assert np.array_equal(one.faces, two.faces) and np.array_equal(one.vertices, two.vertices)
+
+
+def test_welding_coincident_vertices_is_sampling_only():
+    """Documented limitation: two closed boxes touching along an edge are watertight as
+    listed, but exact-coordinate welding joins the shared edge, so the canonical copy is
+    not. Watertightness is judged on the original mesh, and the robust-v1 reading stays
+    finite and order-independent."""
+    a = trimesh.creation.box(extents=[2.0, 2.0, 2.0])
+    b = trimesh.creation.box(extents=[2.0, 2.0, 2.0])
+    b.apply_translation([2.0, 2.0, 0.0])  # shares the x=1, y=1 edge with a
+    mesh = trimesh.Trimesh(np.vstack([a.vertices, b.vertices]),
+                           np.vstack([a.faces, b.faces + len(a.vertices)]), process=False)
+    assert mesh.is_watertight
+    assert not geometry.canonical_mesh(mesh).is_watertight
+    want = geometry.estimate_wall_robust_v1(mesh)
+    assert np.isfinite(want["wall_mm"]) and want["wall_mm"] > 1.9
+    for seed in range(3):
+        assert geometry.estimate_wall_robust_v1(_reordered(mesh, seed)) == want
