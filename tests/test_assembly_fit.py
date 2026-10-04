@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import trimesh
 
@@ -175,3 +177,136 @@ def test_advisory_failure_never_breaks_scoring_and_report_is_per_tier(tmp_path, 
     assert broken["advisory"]["assembly_fit"]["status"] == "error"
     assert broken["sub_scores"] == payload["sub_scores"]
     assert broken["objective_pass_rate"] == payload["objective_pass_rate"]
+
+
+# --- #982 review regressions -------------------------------------------------------------------
+
+def _hollow_box(outer=100.0, inner=94.0):
+    shell = _box([outer] * 3, [0, 0, 0])
+    cavity = _box([inner] * 3, [0, 0, 0])
+    cavity.invert()
+    return trimesh.util.concatenate([shell, cavity])
+
+
+def test_cavity_stays_with_its_part_so_a_block_inside_touching_the_wall_does_not_interfere():
+    """Removing the cavity shell filled the cavity: a 10 mm block touching the inner wall read
+    1,000 mm3 of interference. The cavity stays with its part."""
+    block = _box([10, 10, 10], [0, 0, -42])  # inner floor at z = -47: the block sits on it
+    result = af.advise(ASSEMBLY, trimesh.util.concatenate([_hollow_box(), block]))
+    assert result["void_shells"] == 1 and result["parts"] == 2
+    assert result["status"] == "consistent", result["failures"]
+    assert result["overlaps"] == []
+
+
+def test_block_through_the_wall_of_a_hollow_part_reports_only_the_wall_volume():
+    block = _box([10, 10, 10], [0, 0, -50])  # z -55..-45: 3 mm of it is in the wall (-50..-47)
+    result = af.advise(ASSEMBLY, trimesh.util.concatenate([_hollow_box(), block]))
+    (failure,) = result["failures"]
+    assert failure["check"] == "part_interference"
+    assert failure["measured"] == pytest.approx(300.0, rel=1e-6)
+
+
+def test_inverted_solid_penetrating_a_part_is_not_hidden_as_a_cavity():
+    """A reversed-winding solid that penetrates a part, plus a third face-touching part, read
+    consistent. An inward shell must be enclosed by a part to be its cavity."""
+    body, neck = _body_and_neck(neck_x=80.0)
+    inverted = _box([20, 20, 20], [0, 0, 25])  # pokes 5 mm into the body top (z = 20)
+    inverted.invert()
+    result = af.advise(ASSEMBLY, trimesh.util.concatenate([body, neck, inverted]))
+    assert result["status"] == "not measurable" and result["inverted_shells"]
+    assert "inverted" in result["error"]
+
+
+def test_perpendicular_rods_are_measured_at_the_triangles_not_sampled_points():
+    """Rods crossing with a true 0.3 mm gap read 6.17 mm from surface samples and floated."""
+    a = _box([100, 1, 1], [0, 0, 0])
+    b = _box([1, 100, 1], [0, 0, 1.3])
+    result = af.advise(ASSEMBLY, trimesh.util.concatenate([a, b]))
+    assert result["status"] == "consistent", result["failures"]
+    touching = af.advise(ASSEMBLY, trimesh.util.concatenate([a, _box([1, 100, 1], [0, 0, 1.0])]))
+    assert touching["status"] == "consistent", touching["failures"]
+    far = af.advise(ASSEMBLY, trimesh.util.concatenate([a, _box([1, 100, 1], [0, 0, 3.0])]))
+    (failure,) = far["failures"]
+    assert failure["gap_kind"] == "measured" and failure["measured"] == pytest.approx(2.0, abs=1e-6)
+
+
+def test_a_failed_boolean_is_incomplete_never_consistent(monkeypatch):
+    body = _box([20, 20, 20], [0, 0, 0])
+    other = _box([20, 20, 20], [10, 0, 0])  # 4,000 mm3 shared
+    monkeypatch.setattr(af, "_overlap", lambda a, b: None)
+    result = af.advise(ASSEMBLY, trimesh.util.concatenate([body, other]))
+    assert result["status"] == "incomplete" and result["unmeasured_pairs"] == [["body_0", "body_1"]]
+    assert result["incomplete_reason"]
+
+
+def test_reported_gap_is_measured_not_a_bounding_box_bound():
+    """Two spheres whose boxes are 7.07 mm apart are really ~15.6 mm apart."""
+    a = trimesh.creation.icosphere(subdivisions=2, radius=10.0)
+    b = trimesh.creation.icosphere(subdivisions=2, radius=10.0)
+    b.apply_translation([25, 25, 0])
+    (failure,) = af.advise(ASSEMBLY, trimesh.util.concatenate([a, b]))["failures"]
+    assert failure["check"] == "floating_part" and failure["gap_kind"] == "measured"
+    assert failure["measured"] == pytest.approx(25 * 2 ** 0.5 - 20, abs=0.3)  # facets sit inside the sphere
+
+
+def test_tolerances_compare_raw_values_not_rounded_ones():
+    """A 0.0004 mm3 overlap rounded to 0 and passed a declared zero tolerance."""
+    body, neck = _body_and_neck(neck_x=80.0 - 1e-6)  # 1e-6 mm x 20 x 20 = 0.0004 mm3
+    mesh = trimesh.util.concatenate([body, neck])
+    strict = af.advise({**ASSEMBLY, "interference_tolerance_mm3": 0.0}, mesh)
+    (failure,) = strict["failures"]
+    assert failure["check"] == "part_interference" and 0.0 < failure["measured"] < 0.001
+
+
+def _press_fit(radial_interference):
+    """A 10 mm deep, 10 mm hole in a block and a peg pressed into it."""
+    block = trimesh.creation.box(extents=[30, 30, 20])
+    hole = trimesh.creation.cylinder(radius=5.0, height=10.02, sections=128)
+    hole.apply_translation([0, 0, 5.0])
+    block = block.difference(hole)
+    peg = trimesh.creation.cylinder(radius=5.0 + radial_interference, height=30, sections=128)
+    peg.apply_translation([0, 0, 15.0])  # z 0..30: 10 mm engaged
+    return trimesh.util.concatenate([block, peg])
+
+
+def test_press_fit_passes_the_default_depth_allowance_but_a_declared_depth_flags_it():
+    """A 0.05 mm radial press fit over 10 mm shares ~16 mm3 but is 0.05 mm deep: a fit, not a
+    collision. A spec that declares a tighter depth tolerance still flags it."""
+    mesh = _press_fit(0.05)
+    result = af.advise(ASSEMBLY, mesh)
+    (overlap,) = result["overlaps"]
+    assert overlap["volume_mm3"] > 10.0 and overlap["depth_mm"] == pytest.approx(0.05, abs=0.02)
+    assert result["status"] == "consistent", result["failures"]
+    strict = af.advise({**ASSEMBLY, "interference_depth_tolerance_mm": 0.01}, mesh)
+    assert [f["check"] for f in strict["failures"]] == ["part_interference"]
+    # a peg 2 mm oversize is a collision under the defaults
+    assert [f["check"] for f in af.advise(ASSEMBLY, _press_fit(2.0))["failures"]] == ["part_interference"]
+
+
+def test_dense_assembly_memory_stays_bounded(tmp_path):
+    """The point-sampled proximity query took a 32k-face lyre past 1.2 GB. A 131k-face assembly
+    (contact, interference and a floating part) must stay well under that, in a fresh process."""
+    import os
+    import subprocess
+    import sys
+
+    root = str(Path(__file__).resolve().parents[1])
+    script = tmp_path / "dense.py"
+    script.write_text(
+        "import resource, trimesh\n"
+        "from makerbench import assembly_fit as af\n"
+        f"assert af.__file__.startswith({root!r}), af.__file__\n"
+        "a = trimesh.creation.torus(major_radius=40, minor_radius=8, major_sections=128, minor_sections=128)\n"
+        "parts = [a]\n"
+        "for offset in ([0, 0, 16.2], [0, 0, 50], [30, 0, 8]):\n"
+        "    p = a.copy(); p.apply_translation(offset); parts.append(p)\n"
+        "mesh = trimesh.util.concatenate(parts)\n"
+        "before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss\n"
+        "r = af.advise({'assembly': True}, mesh)\n"
+        "print(r['status'], (resource.getrusage(resource.RUSAGE_SELF).ru_maxrss - before) // 1024)\n")
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([root, os.environ.get("PYTHONPATH", "")])}
+    out = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=300,
+                         cwd=root, env=env, check=True).stdout.split()
+    status, growth_mib = out[0], int(out[-1])
+    assert status == "inconsistent"
+    assert growth_mib < 400, growth_mib
