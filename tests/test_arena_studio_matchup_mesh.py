@@ -181,3 +181,38 @@ def test_the_glb_cache_holds_a_byte_budget():
     for key in "pqr":
         small.get_or_make((key,), make(1))
     assert list(small._items) == [("q",), ("r",)]
+
+
+def test_components_are_counted_before_any_split(tmp_path, monkeypatch):
+    """#998 review: above the component budget, split() is never called, so
+    thousands of loose triangles never become thousands of submeshes."""
+    import numpy as np
+
+    from makerbench.code_cad_export import _component_count, stl_to_glb_bytes
+
+    loose = 2000
+    vertices = np.random.default_rng(0).random((loose * 3, 3)) * 100
+    faces = np.arange(loose * 3).reshape(-1, 3)
+    trimesh.Trimesh(vertices, faces, process=False).export(tmp_path / "loose.stl")
+    boxes = trimesh.util.concatenate([
+        trimesh.creation.box(extents=(1, 1, 1)).apply_translation((3 * i, 0, 0)) for i in range(5)])
+    boxes.export(tmp_path / "boxes.stl")
+    assert _component_count(trimesh.load(tmp_path / "boxes.stl", force="mesh")) == 5
+    assert _component_count(trimesh.load(tmp_path / "loose.stl", force="mesh")) == loose
+
+    original_split = trimesh.Trimesh.split
+    calls = []
+
+    def _counting_split(self, *args, **kwargs):
+        calls.append(len(self.faces))
+        if len(self.faces) >= loose:
+            raise AssertionError("split() called above the component budget")
+        return original_split(self, *args, **kwargs)
+
+    monkeypatch.setattr(trimesh.Trimesh, "split", _counting_split)
+    glb = trimesh.load(io.BytesIO(stl_to_glb_bytes(tmp_path / "loose.stl", max_bodies=64)), file_type="glb")
+    assert len(glb.geometry) == 1, "drawn as one mesh"
+    assert calls == [], "split() is never called above the budget"
+    split_boxes = trimesh.load(io.BytesIO(stl_to_glb_bytes(tmp_path / "boxes.stl", max_bodies=64)),
+                               file_type="glb")
+    assert len(split_boxes.geometry) == 5 and len(calls) == 1, "within the budget it splits once"

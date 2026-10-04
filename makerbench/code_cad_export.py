@@ -37,6 +37,32 @@ class GlbBudgetExceeded(ValueError):
     """The mesh is too large to convert within the caller's budget."""
 
 
+def _component_count(mesh) -> int:
+    """Connected components by shared edges, without building any submesh.
+    Same face-adjacency connectivity ``Trimesh.split`` uses."""
+
+    import numpy as np
+
+    faces = len(mesh.faces)
+    if faces == 0:
+        return 0
+    adjacency = np.asarray(mesh.face_adjacency)
+    try:
+        from scipy.sparse import coo_matrix
+        from scipy.sparse.csgraph import connected_components
+
+        graph = coo_matrix(
+            (np.ones(len(adjacency), dtype=bool), (adjacency[:, 0], adjacency[:, 1])) if len(adjacency)
+            else (np.zeros(0, dtype=bool), (np.zeros(0, dtype=int), np.zeros(0, dtype=int))),
+            shape=(faces, faces))
+        count, _labels = connected_components(graph, directed=False)
+        return int(count)
+    except ImportError:  # pragma: no cover - scipy ships with trimesh[easy]
+        import trimesh
+
+        return len(trimesh.graph.connected_components(adjacency, nodes=np.arange(faces), min_len=1))
+
+
 def stl_to_glb_bytes(
     stl_path: Path,
     *,
@@ -62,11 +88,16 @@ def stl_to_glb_bytes(
     if max_faces is not None and len(mesh.faces) > max_faces:
         raise GlbBudgetExceeded(f"{len(mesh.faces)} triangles exceeds the {max_faces} budget")
     mesh.metadata = {}
-    try:
-        bodies = list(mesh.split(only_watertight=False))
-    except Exception:  # noqa: BLE001 - degenerate meshes still get a viewer.
-        bodies = []
-    if not bodies or (max_bodies is not None and len(bodies) > max_bodies):
+    bodies: list = []
+    # Count connected components from face adjacency BEFORE splitting: split()
+    # materialises every submesh, so a mesh of thousands of loose triangles
+    # would cost hundreds of MiB just to be drawn as one mesh (#998 review).
+    if max_bodies is None or _component_count(mesh) <= max_bodies:
+        try:
+            bodies = list(mesh.split(only_watertight=False))
+        except Exception:  # noqa: BLE001 - degenerate meshes still get a viewer.
+            bodies = []
+    if not bodies:
         bodies = [mesh]
     scene = trimesh.Scene()
     scene.metadata = {}
