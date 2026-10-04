@@ -100,10 +100,13 @@ that row's denominator. A failed `min_wall` explanation (#903) under `robust-v1`
 method and reports the raw minimum of the same samples, so the old reading stays visible;
 legacy explanations keep their committed shape.
 
-**Public pages fail closed.** The site's arena page and run entries still withhold any row
-with a `min_wall_method`: every published round was scored with the legacy minimum, and the
-page has no estimator label yet, so a `robust-v1` row is never shown next to legacy rows as if
-comparable. Publishing labelled `robust-v1` rows is story #983.
+**Public pages label the estimator (#983).** Every committed round was scored with the
+legacy minimum, so a `robust-v1` row is never shown in the same table as legacy rows. The
+arena page publishes it in its own table, labelled with its estimator
+(`estimator_scorelines`, with `legacy_scoreline_label` on the legacy table), and run entries
+carry it as `objective_pass_rate_by_estimator`, separate from `objective_pass_rate`. A round
+or run with no marked rows keeps its exact published entry. A row with an estimator the site
+has no label for stays withheld (fail closed). Tiers stay separate as before.
 
 **What changes and what does not.** Committed results, attested bundles and showcase
 scorelines are **not** rewritten. Re-scoring them under `robust-v1` changes some numbers; the

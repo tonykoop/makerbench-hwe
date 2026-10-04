@@ -1348,16 +1348,35 @@
     return n.toFixed(digits == null ? 2 : digits);
   }
 
-  function arenaObjectiveTable(round) {
-    var rows = (round.scoreline || []).map(function (r) {
+  function arenaScoreTable(title, list, note) {
+    var rows = (list || []).map(function (r) {
       return "<tr><td class=\"mono\">" + escapeHTML(String(r.entrant)) + "</td>" +
         "<td class=\"num\">" + arenaNum(r.objective_pass_rate, 2) + "</td>" +
         "<td class=\"num\">" + escapeHTML(String(r.n_objective_trials || 0)) + "</td></tr>";
     }).join("");
-    return "<div class=\"arena-scoreline\"><h4>Objective — render / DFM mesh-gate pass-rate</h4>" +
+    return "<div class=\"arena-scoreline\"><h4>" + escapeHTML(title) + "</h4>" +
+      (note ? "<p class=\"muted-note\">" + escapeHTML(note) + "</p>" : "") +
       "<table><thead><tr><th>Entrant</th><th class=\"num\">Pass-rate</th>" +
       "<th class=\"num\">Trials</th></tr></thead>" +
       "<tbody>" + rows + "</tbody></table></div>";
+  }
+
+  // #983: rows scored with a non-legacy min_wall estimator (robust-v1) arrive in their own
+  // labelled tables (round.estimator_scorelines) and are never merged into the legacy table.
+  function arenaObjectiveTable(round) {
+    var title = "Objective — render / DFM mesh-gate pass-rate";
+    var extra = round.estimator_scorelines || [];
+    if (!extra.length) return arenaScoreTable(title, round.scoreline);
+    var html = "";
+    if ((round.scoreline || []).length) {
+      html += arenaScoreTable(title + " · " + (round.legacy_scoreline_label || "legacy min_wall"),
+        round.scoreline);
+    }
+    extra.forEach(function (table) {
+      html += arenaScoreTable(title + " · " + String(table.label || table.min_wall_method),
+        table.rows, "Scored with a different min_wall estimator: not comparable with other tables.");
+    });
+    return html;
   }
 
   function arenaRoundCard(round) {

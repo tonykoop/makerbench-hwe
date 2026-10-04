@@ -317,9 +317,9 @@ def _build_data():
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
-def test_public_pages_withhold_robust_policy_rows(tmp_path):
-    """Native scoreline -> the real publishers: a robust row is never shown unlabelled next to the
-    legacy rows every published round was scored with (labelling it is a follow-up)."""
+def test_public_pages_label_robust_policy_rows_separately(tmp_path):
+    """#983: native scoreline -> the real publishers. A robust row is published under its own
+    estimator label, never in the legacy table every committed round was scored with."""
     (tmp_path / "robust").mkdir()
     log = _run(tmp_path / "robust", ROBUST_REGISTRY, _flaky_generator(-1), _fake_box_compiler())
     robust_rows = runner.collect_objective_scoreline(log)
@@ -334,16 +334,42 @@ def test_public_pages_withhold_robust_policy_rows(tmp_path):
         json.dumps({"schema": "makerbench-code-cad-objective-scoreline-v1", "rows": robust_rows + default_rows}),
         encoding="utf-8")
     page = build_data.build_arena_page(tmp_path / "runs")
-    assert [r["entrant"] for r in page["rounds"][0]["scoreline"]] == ["claude-code-sonnet"]  # robust row withheld
+    (published,) = page["rounds"]
+    assert [r["entrant"] for r in published["scoreline"]] == ["claude-code-sonnet"]  # legacy table unmixed
+    (table,) = published["estimator_scorelines"]
+    assert table["min_wall_method"] == "robust-v1" and "robust-v1" in table["label"]
+    assert [r["entrant"] for r in table["rows"]] == ["stub-a"]
+    assert table["rows"][0]["objective_pass_rate"] == robust_rows[0]["objective_pass_rate"]
+    assert "legacy" in published["legacy_scoreline_label"]
 
-    # only-robust round: nothing to publish at all
+    # only-robust round: published, with an empty legacy table and the labelled robust table
     (round_dir / "objective_scoreline.json").write_text(
         json.dumps({"schema": "makerbench-code-cad-objective-scoreline-v1", "rows": robust_rows}), encoding="utf-8")
+    (published,) = build_data.build_arena_page(tmp_path / "runs")["rounds"]
+    assert published["scoreline"] == [] and len(published["estimator_scorelines"]) == 1
+
+    # an unknown estimator still cannot be labelled: withheld (fail closed)
+    unknown = [{**row, "min_wall_method": "future-v9"} for row in robust_rows]
+    (round_dir / "objective_scoreline.json").write_text(
+        json.dumps({"schema": "makerbench-code-cad-objective-scoreline-v1", "rows": unknown}), encoding="utf-8")
     assert build_data.build_arena_page(tmp_path / "runs") is None
 
+    # legacy-only rounds keep their exact published entry (no new keys)
+    (round_dir / "objective_scoreline.json").write_text(
+        json.dumps({"schema": "makerbench-code-cad-objective-scoreline-v1", "rows": default_rows}), encoding="utf-8")
+    (published,) = build_data.build_arena_page(tmp_path / "runs")["rounds"]
+    assert "estimator_scorelines" not in published and "legacy_scoreline_label" not in published
+
     entry = build_data._arena_run_entry("r", {"scoreline": robust_rows + default_rows,
-                                              "run_log": {"config": {"model_ids": ["claude-code-sonnet"]}}})
+                                              "run_log": {"config": {"model_ids": ["claude-code-sonnet", "stub-a"]}}})
     assert [r["entrant"] for r in entry["objective_pass_rate"]] == ["claude-code-sonnet"]
+    (by_estimator,) = entry["objective_pass_rate_by_estimator"]
+    assert by_estimator["min_wall_method"] == "robust-v1"
+    assert [r["entrant"] for r in by_estimator["rows"]] == ["stub-a"]
+    assert entry["objective_complete"] is True  # every entrant has a (labelled) objective row
+    legacy_only = build_data._arena_run_entry("r", {"scoreline": default_rows,
+                                                    "run_log": {"config": {"model_ids": ["claude-code-sonnet"]}}})
+    assert "objective_pass_rate_by_estimator" not in legacy_only
 
 
 @pytest.mark.parametrize("samples, seed", [(4000, 0), (4000, 7), (20000, 0)])
