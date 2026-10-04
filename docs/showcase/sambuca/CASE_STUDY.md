@@ -217,6 +217,15 @@ measured master"; keep the "what it missed" callouts — they are the credibilit
 >
 > #CAD #AI #Luthier #OpenSCAD #MakerBench
 
+<!-- claim: 650 at: "model: 650 × 150 mm hull" source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/body_length_mm -->
+<!-- claim: 150 at: "model: 650 × 150 mm hull" source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/body_width_mm -->
+<!-- claim: 13 at: "hull, 13 strings" source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/string_count -->
+<!-- claim: 5 at: "It passed 5 of 6" source: docs/showcase/sambuca/CASE_STUDY.md#re:= (\d) of 6 sub-gates pass -->
+<!-- claim: 6 at: "It passed 5 of 6" source: docs/showcase/sambuca/CASE_STUDY.md#re:= \d of (\d) sub-gates pass -->
+<!-- claim: 0.015 at: "thickness — 0.015 mm" source: docs/showcase/sambuca/CASE_STUDY.md#re:`min_wall`: ([\d.]+) mm measured -->
+<!-- claim: 1 at: "against a 1 mm floor" source: tasks/code_cad_arena/registry.json#/instruments/4/min_wall_mm -->
+<!-- nocheck: "4,600-year-old", "Claude Fable 5 → OpenSCAD/BOSL2" reason: derived date (c. 2600 BC to 2026, see the notes below) and a model name -->
+
 **Draft B — the maker angle**
 
 > Museum photo in. Parametric harp out.
@@ -235,6 +244,14 @@ measured master"; keep the "what it missed" callouts — they are the credibilit
 >
 > #Lutherie #CAD #AI #Engineering
 
+<!-- claim: 2600 at: "Ur (c. 2600 BC)" source: docs/showcase/sambuca/CASE_STUDY.md#re:Royal Cemetery at Ur, c\. (\d+) BC -->
+<!-- claim: 13 at: "a 13-string boat harp" source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/string_count -->
+<!-- claim: 650 at: "650 mm hull" source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/body_length_mm -->
+<!-- claim: 810 at: "810 mm tall" source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/instrument_height_mm -->
+<!-- claim: 5 at: "5 of 6 gates pass" source: docs/showcase/sambuca/CASE_STUDY.md#re:= (\d) of 6 sub-gates pass -->
+<!-- claim: 6 at: "5 of 6 gates pass" source: docs/showcase/sambuca/CASE_STUDY.md#re:= \d of (\d) sub-gates pass -->
+<!-- nocheck: "Claude Fable 5, OpenSCAD" reason: model name, not a result -->
+
 **Draft C — the benchmark angle (shortest)**
 
 > "Looks right" and "can be built" are different skills.
@@ -251,11 +268,22 @@ measured master"; keep the "what it missed" callouts — they are the credibilit
 >
 > #AI #CAD #Benchmarks #MakerBench
 
-<!-- claim: 669 source: docs/showcase/sambuca/CASE_STUDY.md#re:bbox ([\d.]+) × [\d.]+ × [\d.]+ mm -->
-<!-- claim: 150 source: docs/showcase/sambuca/CASE_STUDY.md#re:bbox [\d.]+ × ([\d.]+) × [\d.]+ mm -->
-<!-- claim: 842 source: docs/showcase/sambuca/CASE_STUDY.md#re:bbox [\d.]+ × [\d.]+ × ([\d.]+) mm -->
-<!-- claim: 650 source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/body_length_mm -->
-<!-- claim: 810 source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/instrument_height_mm -->
+<!-- claim: 13 at: "parametric 13-string model" source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/string_count -->
+<!-- claim: 113 at: "thinking (113 s)" source: docs/showcase/sambuca/CASE_STUDY.md#re:model thinking time \((\d+) s\) -->
+<!-- claim: 669 at: "(669 × 150" source: docs/showcase/sambuca/CASE_STUDY.md#re:bbox ([\d.]+) × [\d.]+ × [\d.]+ mm -->
+<!-- claim: 150 at: "(669 × 150" source: docs/showcase/sambuca/CASE_STUDY.md#re:bbox [\d.]+ × ([\d.]+) × [\d.]+ mm -->
+<!-- claim: 842 at: "× 842 mm vs" source: docs/showcase/sambuca/CASE_STUDY.md#re:bbox [\d.]+ × [\d.]+ × ([\d.]+) mm -->
+<!-- claim: 650 at: "vs 650 × 150" source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/body_length_mm -->
+<!-- claim: 150 at: "vs 650 × 150" source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/body_width_mm -->
+<!-- claim: 810 at: "× 810 mm)." source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/instrument_height_mm -->
+<!-- claim: 5 at: "gate passed 5 of 6" source: docs/showcase/sambuca/CASE_STUDY.md#re:= (\d) of 6 sub-gates pass -->
+<!-- claim: 6 at: "gate passed 5 of 6" source: docs/showcase/sambuca/CASE_STUDY.md#re:= \d of (\d) sub-gates pass -->
+<!-- claim: 0.015 at: "thickness: 0.015 mm" source: docs/showcase/sambuca/CASE_STUDY.md#re:`min_wall`: ([\d.]+) mm measured -->
+<!-- claim: 1 at: "vs a 1 mm floor" source: tasks/code_cad_arena/registry.json#/instruments/4/min_wall_mm -->
+<!-- claim: 0.07 at: "ρ ≈ 0.07" source: site/data/arena.json#/headline/value -->
+<!-- claim: 6 at: "over rounds 6–10, three" source: site/data/arena.json#/headline/rounds_used/0 -->
+<!-- claim: 10 at: "over rounds 6–10, three" source: site/data/arena.json#/headline/rounds_used/-1 -->
+<!-- nocheck: "Claude Fable 5 → OpenSCAD)" reason: model name, not a result -->
 
 Notes on the drafts: "4,600 years" = c. 2600 BC + 2026; the repo says "~4500", so
 either is fine — pick one. Draft C's ρ figure is `site/data/arena.json`

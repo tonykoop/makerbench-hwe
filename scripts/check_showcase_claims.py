@@ -1,32 +1,40 @@
 #!/usr/bin/env python3
 """Check numeric claims in showcase posts against the files they cite.
 
-Showcase drafts (``docs/showcase/linkedin-posts.md`` and friends) quote numbers
-from results files: rank-agreement rho, pass rates, body counts, bounding-box
-dimensions, costs. This script makes each quoted number point at its source and
-fails when the two disagree.
+Showcase drafts (``docs/showcase/linkedin-posts.md`` and the candidate posts in
+the case studies) quote numbers from results files: rank-agreement rho, pass
+rates, body counts, bounding-box dimensions, costs. This script binds each
+quoted number to its source and fails when the two disagree.
 
 Citation convention
 -------------------
 Citations are HTML comments, so they never render in the published text. Put
-them anywhere in the same ``## `` section as the number they back (by
-convention, right after the post's fenced block)::
+them in the same ``## `` section as the number they back (by convention, right
+after the post's fenced block or blockquote)::
 
     <!-- claim: 0.07 source: site/data/arena.json#/headline/value -->
-    <!-- claim: 52% source: site/data/arena.json#/rounds/1/scoreline/*/objective_pass_rate|min -->
-    <!-- claim: 5 source: docs/showcase/sambuca/CASE_STUDY.md#re:(\\d) of 6 sub-gates -->
-    <!-- nocheck: 2600, 5 reason: museum date and model version, not results -->
+    <!-- claim: 1.000 at: "OpenSCAD scored 1.000" source: results/x.json#/rows/0/rate -->
+    <!-- claim: 17 source: gallery.json#/designs/*/status|count=scored -->
+    <!-- nocheck: "c. 2600 BC", "Fable 5" reason: museum date and model name -->
 
-``claim: VALUE`` is the number exactly as displayed (``0.889``, ``669``,
-``52%``, ``$8.56``, ``1,300``, ``−0.40``, ``+0.55``). A sign counts only
-when it is attached to the digits: ``6–10`` is a range and ``2026-09-30`` a
-date, never negatives. The value must appear in the section, or the citation
-is reported as stale. ``source: PATH#SELECTOR`` resolves to one number:
+Each citation binds to **one occurrence** of the number:
 
-* ``file.json#/json/pointer``: an RFC 6901 pointer, extended with negative
-  list indices and ``*`` (fan out over a list or object). A fan-out must end in
-  an aggregate: ``|min``, ``|max``, ``|mean``, ``|sum``, ``|len`` or
-  ``|count=VALUE``.
+* ``claim: VALUE`` is the number exactly as displayed (``0.889``, ``669``,
+  ``52%``, ``$8.56``, ``1,300``, ``−0.40``, ``+0.55``). Matching is on the
+  displayed string, so ``0.0700`` does not satisfy a ``0.07`` citation; ASCII
+  ``-`` and Unicode ``−`` are interchangeable.
+* ``at: "CONTEXT"`` (optional) is a snippet of the visible text that occurs
+  exactly once in the section and contains exactly one number equal to VALUE;
+  that number is the bound occurrence. Without ``at:``, VALUE itself must occur
+  exactly once in the section. Missing → STALE, several → AMBIGUOUS.
+* Several citations may bind the same occurrence (one number, two sources).
+
+``source: PATH#SELECTOR`` resolves to one number:
+
+* ``file.json#/json/pointer``: an RFC 6901 pointer (``""`` is the root, ``"/"``
+  is the ``""`` key), extended with negative list indices and ``*`` (fan out
+  over a list or object). A fan-out must end in an aggregate: ``|min``,
+  ``|max``, ``|mean``, ``|sum``, ``|len`` or ``|count=VALUE``.
 * ``file.md#re:REGEX`` (any text file): the first match's first group (or the
   whole match if the regex has no group).
 * ``file.csv#row=N,col=NAME`` / ``.tsv``: a cell; ``row`` is the zero-based
@@ -37,14 +45,23 @@ unit of the displayed last digit (``0.07`` accepts 0.065 to 0.075), so a claim
 passes exactly when the source rounds to the displayed value. A ``%`` claim is
 divided by 100 when the source value is a fraction (at most 1).
 
-``nocheck: V1, V2 reason: ...`` acknowledges numbers that have no results file
-(dates, version names, facts only in private notes). The reason is required.
+``nocheck: ITEM, ... reason: ...`` acknowledges numbers that have no results
+file (dates, model names, facts only in private notes). Each ITEM is a quoted
+context (every number inside it is covered) or a bare value (bound like a
+claim without ``at:``). The reason is required.
 
-Uncited numbers inside fenced ``text`` blocks (the post bodies) are warnings,
-or errors under ``--strict``.
+Numbers: a sign (``-``, ``−``, ``+``) counts only when attached to the digits
+and not preceded by a word character, so ``6–10`` (en dash) and ``6-10`` are
+ranges with two positive endpoints, ``2026-09-30`` yields 2026, 09 and 30, and
+``r6-r10`` or ``v1.2`` yield nothing.
+
+Post bodies are fenced ``text`` blocks and blockquotes (``>`` lines). Every
+number occurrence in a post body that no citation binds is reported as
+UNCITED: a warning, or an error under ``--strict``.
 
 Exit status: 0 when every citation matches, 1 on any mismatch, missing source,
-bad selector or stale citation (and on uncited numbers with ``--strict``).
+bad selector, stale or ambiguous citation (and on uncited numbers with
+``--strict``).
 """
 
 from __future__ import annotations
@@ -62,31 +79,38 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GLOB = "docs/showcase/**/*.md"
-ALWAYS_CHECK = ("docs/showcase/linkedin-posts.md",)
+ALWAYS_CHECK = (
+    "docs/showcase/linkedin-posts.md",
+    "docs/showcase/sambuca/CASE_STUDY.md",
+)
 
 CLAIM_RE = re.compile(
-    r"<!--\s*claim:\s*(?P<value>\S+)\s+source:\s*(?P<source>.+?)"
+    r"<!--\s*claim:\s*(?P<value>\S+)"
+    r"(?:\s+at:\s*\"(?P<at>[^\"]*)\")?"
+    r"\s+source:\s*(?P<source>.+?)"
     r"(?:\s+tol:\s*(?P<tol>\S+))?\s*-->",
     re.DOTALL,
 )
 NOCHECK_RE = re.compile(
-    r"<!--\s*nocheck:\s*(?P<values>.+?)\s+reason:\s*(?P<reason>.*?)\s*-->",
+    r"<!--\s*nocheck:\s*(?P<items>.+?)\s+reason:\s*(?P<reason>.*?)\s*-->",
     re.DOTALL,
 )
-# A displayed number: optional sign (ASCII '-', Unicode minus U+2212, '+')
-# directly attached, optional $, digits with optional thousands commas and
-# decimals, optional %. Not part of a word, a hashtag/issue ref, a version, a
-# date or a hyphenated id: the character before the number (or its sign) may
-# not be a word character, '#', '.', '$', '/' or a sign, so "2026-09-30" and
-# "r6-r10" never yield negatives. An en dash ("6–10") is a range, not a
-# sign, so both ends stay positive.
+NOCHECK_ITEM_RE = re.compile(r"\"(?P<ctx>[^\"]*)\"|(?P<value>[^,\s]+)")
+_SIGNS = r"[-+−]"
+_NOT_BEFORE = r"[\w#.$/+\-−]"
+# A displayed number: optional attached sign, optional $, digits with optional
+# thousands commas and decimals, optional %. It may start:
+#   * with a sign, when the sign is not preceded by a word char/#/./$/sign;
+#   * without a sign, when not preceded by a word char, '#', '.', '$', '/' or a
+#     sign (hashtags, issue refs, versions, ids);
+#   * right after "<digit>-", the second endpoint of an ASCII range or date.
 NUMBER_RE = re.compile(
-    r"(?<![\w#.$/+\-\u2212])"
-    r"(?:[-+\u2212](?=\$?\d))?\$?"
-    r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?"
+    rf"(?:(?<!{_NOT_BEFORE}){_SIGNS}(?=\$?\d)|(?<!{_NOT_BEFORE})|(?<=\d-))"
+    r"\$?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?"
     r"(?![\w])"
 )
 FENCE_RE = re.compile(r"^```text\n(.*?)^```", re.DOTALL | re.MULTILINE)
+QUOTE_RE = re.compile(r"^>.*$", re.MULTILINE)
 AGGREGATES = ("min", "max", "mean", "sum", "len")
 
 
@@ -160,7 +184,7 @@ def compare(claim: str, source_value: float, tol: float | None) -> tuple[bool, f
 
 
 def _pointer_tokens(pointer: str) -> list[str]:
-    if pointer in ("", "/"):
+    if pointer == "":
         return []
     if not pointer.startswith("/"):
         raise SourceError(f"JSON pointer must start with '/': {pointer!r}")
@@ -196,7 +220,7 @@ def resolve_json(data: object, selector: str) -> float:
     pointer, _, aggregate = selector.partition("|")
     nodes: list[object] = [data]
     fanned = False
-    for token in _pointer_tokens(pointer.strip()):
+    for token in _pointer_tokens(pointer):
         nodes, fanned = _step(nodes, token, fanned)
     aggregate = aggregate.strip()
     if not aggregate:
@@ -301,53 +325,115 @@ def line_of(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
 
 
-def _token_key(token: str) -> str:
-    value, _, is_percent = parse_displayed(token)
-    value = abs(value) if value == 0 else value  # "-0.0" and "0" are the same number
-    return f"{value.normalize()}{'%' if is_percent else ''}"
-
-
 def displayed_numbers(text: str) -> list[re.Match[str]]:
     return list(NUMBER_RE.finditer(text))
+
+
+def canonical(token: str) -> str:
+    """The displayed string with the minus sign unified; precision is kept."""
+    return token.strip().replace("−", "-")
+
+
+@dataclass
+class Token:
+    start: int
+    end: int
+    text: str
+    in_post: bool
+    bound: bool = False
+
+
+def _post_spans(visible: str) -> list[tuple[int, int]]:
+    spans = [(m.start(1), m.end(1)) for m in FENCE_RE.finditer(visible)]
+    spans += [(m.start(), m.end()) for m in QUOTE_RE.finditer(visible)]
+    return spans
+
+
+def _bind(tokens: list[Token], visible: str, value: str, at: str | None) -> tuple[Token | None, str]:
+    """Find the one token a citation binds to, or explain why there is none."""
+    want = canonical(value)
+    if at is None:
+        hits = [tok for tok in tokens if canonical(tok.text) == want]
+        if not hits:
+            return None, f"STALE: {value} not found in the section text"
+        if len(hits) > 1:
+            return None, f"AMBIGUOUS: {value} occurs {len(hits)} times; add at: \"context\""
+        return hits[0], ""
+    starts = [m.start() for m in re.finditer(re.escape(at), visible)]
+    if not starts:
+        return None, f"STALE: context {at!r} not found in the section text"
+    if len(starts) > 1:
+        return None, f"AMBIGUOUS: context {at!r} occurs {len(starts)} times"
+    lo, hi = starts[0], starts[0] + len(at)
+    hits = [tok for tok in tokens if lo <= tok.start and tok.end <= hi and canonical(tok.text) == want]
+    if not hits:
+        return None, f"STALE: {value} not found inside context {at!r}"
+    if len(hits) > 1:
+        return None, f"AMBIGUOUS: {value} occurs {len(hits)} times inside context {at!r}"
+    return hits[0], ""
 
 
 def check_document(path: Path, root: Path, report: Report) -> None:
     rel = path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path)
     text = path.read_text(encoding="utf-8")
     for start, section in split_sections(text):
-        # Visible text: the section with every HTML comment blanked out, so a
-        # citation never "finds" its own value.
+        # Visible text: every HTML comment blanked out (offsets preserved), so
+        # a citation never binds to the value written in its own comment.
         visible = re.sub(r"<!--.*?-->", lambda m: " " * len(m.group(0)), section, flags=re.DOTALL)
-        visible_keys = {_token_key(m.group(0)) for m in displayed_numbers(visible)}
-        covered: set[str] = set()
+        spans = _post_spans(visible)
+        tokens = [
+            Token(m.start(), m.end(), m.group(0), any(a <= m.start() < b for a, b in spans))
+            for m in displayed_numbers(visible)
+        ]
 
         for m in NOCHECK_RE.finditer(section):
             line = line_of(text, start + m.start())
-            if not m.group("reason").strip():
+            reason = m.group("reason").strip()
+            if not reason:
                 report.add("error", rel, line, "nocheck needs a reason")
                 continue
-            for raw in m.group("values").split(","):
-                raw = raw.strip()
-                if not raw:
-                    continue
-                try:
-                    covered.add(_token_key(raw))
-                except ValueError:
-                    report.add("error", rel, line, f"nocheck value {raw!r} is not a number")
-            report.add("info", rel, line, f"nocheck {m.group('values').strip()}: {m.group('reason').strip()}")
+            for item in NOCHECK_ITEM_RE.finditer(m.group("items")):
+                if item.group("ctx") is not None:
+                    ctx = item.group("ctx")
+                    found = [x.start() for x in re.finditer(re.escape(ctx), visible)] if ctx else []
+                    if len(found) != 1:
+                        what = "not found" if not found else f"occurs {len(found)} times"
+                        report.add("error", rel, line, f"nocheck context {ctx!r} {what}")
+                        continue
+                    lo, hi = found[0], found[0] + len(ctx)
+                    covered = [tok for tok in tokens if lo <= tok.start and tok.end <= hi]
+                    if not covered:
+                        report.add("error", rel, line, f"nocheck context {ctx!r} contains no number")
+                    for tok in covered:
+                        tok.bound = True
+                else:
+                    raw = item.group("value")
+                    try:
+                        parse_displayed(raw)
+                    except ValueError:
+                        report.add("error", rel, line, f"nocheck value {raw!r} is not a number")
+                        continue
+                    tok, why = _bind(tokens, visible, raw, None)
+                    if tok is None:
+                        report.add("error", rel, line, f"nocheck {why}")
+                        continue
+                    tok.bound = True
+            report.add("info", rel, line, f"nocheck {m.group('items').strip()}: {reason}")
 
         for m in CLAIM_RE.finditer(section):
             line = line_of(text, start + m.start())
             claim = m.group("value")
             source = m.group("source").strip()
             try:
-                key = _token_key(claim)
+                parse_displayed(claim)
             except ValueError:
                 report.add("error", rel, line, f"claim value {claim!r} is not a number")
                 continue
-            covered.add(key)
-            if key not in visible_keys:
-                report.add("error", rel, line, f"STALE claim {claim}: value not found in the section text")
+            tok, why = _bind(tokens, visible, claim, m.group("at"))
+            if tok is None:
+                report.add("error", rel, line, f"{why} (claim {claim})")
+                continue
+            tok.bound = True
             tol = None
             if m.group("tol"):
                 try:
@@ -372,13 +458,9 @@ def check_document(path: Path, root: Path, report: Report) -> None:
                     f"tolerance {tolerance:g} ({source})",
                 )
 
-        for fence in FENCE_RE.finditer(section):
-            body_offset = start + fence.start(1)
-            for num in displayed_numbers(fence.group(1)):
-                if _token_key(num.group(0)) in covered:
-                    continue
-                line = line_of(text, body_offset + num.start())
-                report.add("warning", rel, line, f"UNCITED number {num.group(0)} in post text")
+        for tok in tokens:
+            if tok.in_post and not tok.bound:
+                report.add("warning", rel, line_of(text, start + tok.start), f"UNCITED number {tok.text} in post text")
 
 
 def default_targets(root: Path) -> list[Path]:

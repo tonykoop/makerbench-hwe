@@ -172,7 +172,7 @@ def test_stale_citation_when_value_not_in_text(repo, capsys):
     body = post("rho was about 0.08.", "<!-- claim: 0.07 source: results/score.json#/headline/value -->")
     code, out = run(repo, body, capsys=capsys)
     assert code == 1
-    assert "STALE claim 0.07" in out
+    assert "STALE: 0.07 not found" in out
 
 
 def test_hashtags_issue_refs_and_versions_are_not_numbers():
@@ -213,7 +213,7 @@ def test_dropped_sign_in_text_is_stale_not_silently_matched(signed, capsys):
     body = post("Round 6 rho was 0.5.", "<!-- claim: -0.5 source: ci.json#/rho -->")
     code, out = run(signed, body, capsys=capsys)
     assert code == 1
-    assert "STALE claim -0.5" in out
+    assert "STALE: -0.5 not found" in out
 
 
 @pytest.mark.parametrize("claim", ["−0.40", "-0.40"])
@@ -243,8 +243,9 @@ def test_en_dash_range_is_not_negative(signed, capsys):
     ("text", "expected"),
     [
         ("rounds r6-r10", []),
-        ("run on 2026-09-30", ["2026"]),
-        ("rounds 6-10", ["6"]),
+        ("run on 2026-09-30", ["2026", "09", "30"]),
+        ("rounds 6-10", ["6", "10"]),
+        ("rounds 6-999", ["6", "999"]),
         ("rho −0.5 then +0.866 and -1.0", ["−0.5", "+0.866", "-1.0"]),
         ("delta (-0.07)", ["-0.07"]),
         ("a - 3 spaced dash", ["3"]),
@@ -255,5 +256,122 @@ def test_sign_tokenization(text, expected):
     assert [m.group(0) for m in claims.displayed_numbers(text)] == expected
 
 
-def test_negative_zero_equals_zero():
-    assert claims._token_key("−0.0") == claims._token_key("0.0")
+def test_unicode_and_ascii_minus_are_the_same_display():
+    assert claims.canonical("\u22120.40") == claims.canonical("-0.40")
+    assert claims.canonical("0.0700") != claims.canonical("0.07")
+
+
+# ------------------------------------------- Codex review regressions (#962)
+
+
+def test_ascii_range_end_is_checked(repo, capsys):
+    """P1a: '6-10' has two endpoints; editing it to '6-999' must fail."""
+    cites = (
+        "<!-- claim: 6 source: results/score.json#/headline/rounds/0 -->",
+        "<!-- claim: 10 source: results/score.json#/headline/rounds/-1 -->",
+    )
+    code, out = run(repo, post("Rounds 6-10.", *cites), "--strict", capsys=capsys)
+    assert code == 0, out
+    code, out = run(repo, post("Rounds 6-999.", *cites), "--strict", capsys=capsys)
+    assert code == 1
+    assert "STALE: 10 not found" in out
+    assert "UNCITED number 999" in out
+
+
+def test_date_is_three_positive_numbers_not_negatives():
+    tokens = [m.group(0) for m in claims.displayed_numbers("posted 2026-09-30, rounds r6-r10")]
+    assert tokens == ["2026", "09", "30"]
+    assert all(claims.parse_displayed(t)[0] > 0 for t in tokens)
+
+
+def test_substituted_value_covered_elsewhere_fails(signed_scores, capsys):
+    """P1b: a value cited for one occurrence must not cover another occurrence."""
+    cites = (
+        '<!-- claim: 1.000 at: "OpenSCAD scored 1.000" source: s.json#/openscad -->',
+        '<!-- claim: 0.778 at: "CadQuery scored 0.778" source: s.json#/cadquery -->',
+    )
+    good = post("OpenSCAD scored 1.000. CadQuery scored 0.778.", *cites)
+    code, out = run(signed_scores, good, "--strict", capsys=capsys)
+    assert code == 0, out
+    bad = post("OpenSCAD scored 0.778. CadQuery scored 0.778.", *cites)
+    code, out = run(signed_scores, bad, "--strict", capsys=capsys)
+    assert code == 1
+    assert "STALE: context 'OpenSCAD scored 1.000' not found" in out
+    assert "UNCITED number 0.778" in out
+
+
+def test_precision_change_in_text_fails(repo, capsys):
+    """P1b: '0.07' displayed as '0.0700' is a different claim."""
+    cite = "<!-- claim: 0.07 source: results/score.json#/headline/value -->"
+    code, out = run(repo, post("rho averaged about 0.0700.", cite), "--strict", capsys=capsys)
+    assert code == 1
+    assert "STALE: 0.07 not found" in out
+    assert "UNCITED number 0.0700" in out
+
+
+def test_repeated_value_without_context_is_ambiguous(repo, capsys):
+    body = post("6 rounds, from 6 to 10.", "<!-- claim: 6 source: results/score.json#/headline/rounds/0 -->")
+    code, out = run(repo, body, capsys=capsys)
+    assert code == 1
+    assert "AMBIGUOUS: 6 occurs 2 times" in out
+
+
+def test_two_sources_can_back_one_occurrence(signed_scores, capsys):
+    body = post(
+        "The re-run scored 1.000 for both.",
+        '<!-- claim: 1.000 at: "scored 1.000 for both" source: s.json#/openscad -->',
+        '<!-- claim: 1.000 at: "scored 1.000 for both" source: s.json#/after -->',
+    )
+    code, out = run(signed_scores, body, "--strict", capsys=capsys)
+    assert code == 0, out
+    assert "2 matched" in out
+
+
+def test_blockquote_post_body_is_scanned(repo, capsys):
+    """P2a: blockquoted drafts count as post bodies under --strict."""
+    cite = '<!-- claim: 0.07 at: "rho ≈ 0.07" source: results/score.json#/headline/value -->'
+    good = "## Drafts\n\n> Mean rho ≈ 0.07 here.\n\n" + cite + "\n"
+    code, out = run(repo, good, "--strict", capsys=capsys)
+    assert code == 0, out
+    bad = "## Drafts\n\n> Mean rho ≈ 0.99 here.\n\n" + cite + "\n"
+    code, out = run(repo, bad, "--strict", capsys=capsys)
+    assert code == 1
+    assert "STALE" in out
+    assert "UNCITED number 0.99" in out
+    uncited = "## Drafts\n\n> Passed 5 of 6 checks.\n"
+    code, out = run(repo, uncited, "--strict", capsys=capsys)
+    assert code == 1
+    assert "UNCITED number 5" in out
+
+
+def test_nocheck_context_covers_its_numbers(repo, capsys):
+    body = post("Built 4 July with Claude Fable 5.", '<!-- nocheck: "4 July", "Fable 5" reason: date and model name -->')
+    code, out = run(repo, body, "--strict", capsys=capsys)
+    assert code == 0, out
+    body = post("Built 4 July.", '<!-- nocheck: "5 July" reason: stale -->')
+    code, out = run(repo, body, capsys=capsys)
+    assert code == 1
+    assert "nocheck context '5 July' not found" in out
+
+
+def test_rfc6901_root_and_empty_key():
+    """P2b: '' is the root document; '/' selects the '' key."""
+    assert claims.resolve_json(7, "") == 7
+    assert claims.resolve_json({"": 3, "a": 1}, "/") == 3
+    with pytest.raises(claims.SourceError):
+        claims.resolve_json({"a": 1}, "/")
+    assert claims.resolve_json({"a/b": 2, "m~n": 4}, "/a~1b") == 2
+    assert claims.resolve_json({"a/b": 2, "m~n": 4}, "/m~0n") == 4
+
+
+def test_real_docs_cover_blockquoted_drafts():
+    targets = [p.relative_to(REPO_ROOT).as_posix() for p in claims.default_targets(REPO_ROOT)]
+    assert "docs/showcase/sambuca/CASE_STUDY.md" in targets
+
+
+@pytest.fixture()
+def signed_scores(tmp_path: Path) -> Path:
+    (tmp_path / "s.json").write_text(
+        json.dumps({"openscad": 1.0, "cadquery": 0.777778, "after": 1.0}), encoding="utf-8"
+    )
+    return tmp_path
