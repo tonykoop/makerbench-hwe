@@ -423,7 +423,7 @@ def test_report_rows_split_advisories_and_tiers(tmp_path, good):
          "result": {"context_tier": "repo", "objective": objective}}]}
     rows = advisory_report.collect_advisory_report(log)["rows"]
     keys = {(r["context_tier"], r["advisory"]) for r in rows}
-    assert keys == {("blind", "acoustic"), ("blind", "strings"), ("repo", "acoustic"), ("repo", "strings")}
+    assert keys == {(tier, name) for tier in ("blind", "repo") for name in ("acoustic", "strings", "assembly_fit")}
     strings_blind = next(r for r in rows if r["context_tier"] == "blind" and r["advisory"] == "strings")
     assert strings_blind["status_counts"] == {"inconsistent": 1}
     assert strings_blind["failures"][0]["check"] == "string_length"
