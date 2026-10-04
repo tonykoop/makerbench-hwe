@@ -358,3 +358,25 @@ def test_batched_wall_ray_cast_is_identical_to_one_cast(monkeypatch, samples, se
     batched = geometry._wall_samples(tube, samples, seed)
     for one, many in zip(whole, batched):
         assert np.array_equal(one, many)
+
+
+def test_default_gate_casts_wall_rays_in_bounded_batches(tmp_path, monkeypatch, plate_with_a_tiny_blade):
+    """#997 memory guard: the production default (robust-v1, 20,000 rays) must reach the
+    underlying trimesh ray cast in batches of at most 1,000 rays with multiple_hits=False.
+    One unbatched 20,000-ray cast peaked at ~18 GB on a large mesh and OOM-killed CI; this
+    fails if _first_hits ever goes back to a single cast, without a flaky RSS threshold."""
+    intersector = type(plate_with_a_tiny_blade.ray)
+    real = intersector.intersects_location
+    calls: list[tuple[int, object]] = []
+
+    def spy(self, ray_origins, ray_directions, *args, **kwargs):
+        calls.append((len(ray_origins), kwargs.get("multiple_hits", args[0] if args else None)))
+        return real(self, ray_origins, ray_directions, *args, **kwargs)
+
+    monkeypatch.setattr(intersector, "intersects_location", spy)
+    result = _payload(tmp_path, plate_with_a_tiny_blade)  # no estimator named: the default
+    assert result["min_wall_method"] == "robust-v1"
+    assert sum(n for n, _ in calls) >= geometry.ROBUST_V1_SAMPLES
+    assert len(calls) >= geometry.ROBUST_V1_SAMPLES // 1000
+    assert all(n <= 1000 for n, _ in calls), sorted({n for n, _ in calls})[-3:]
+    assert all(multiple_hits is False for _, multiple_hits in calls)
