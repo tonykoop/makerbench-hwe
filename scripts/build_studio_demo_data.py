@@ -67,14 +67,14 @@ def validate_aggregate_seeds(content):
         if case["id"] in {"post3-models", "post3-backends"}:
             seeds = case["held"].get("seeds")
             if seeds != [0, 1, 2] or any(row["n_objective_trials"] != len(seeds) for row in case["rows"]):
-                raise ValueError("Post-3 aggregate trial counts must match seeds 0, 1, 2")
+                raise ValueError("Ocarina matchup aggregate trial counts must match seeds 0, 1, 2")
             for row in case["rows"]:
                 trials = row.get("trials", [])
                 if (sorted(trial["seed"] for trial in trials) != seeds
                         or len({trial["image"] for trial in trials}) != len(seeds)):
-                    raise ValueError("Post-3 render strips must contain distinct runs for seeds 0, 1, 2")
+                    raise ValueError("Ocarina matchup render strips must contain distinct runs for seeds 0, 1, 2")
                 if abs(sum(trial["objective_pass_rate"] for trial in trials) / len(seeds) - row["objective_pass_rate"]) > 1e-6:
-                    raise ValueError("Post-3 trial averages must match the recorded result")
+                    raise ValueError("Ocarina matchup trial averages must match the recorded result")
 
 
 def build(root: Path = ROOT) -> dict:

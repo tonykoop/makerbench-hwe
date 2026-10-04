@@ -6,7 +6,7 @@ matchups: context (`../matchup-context.md`), model (`../matchup-model.md`) and b
 (`../matchup-backend.md`).
 
 Files: `index.html` (the page), `grid.png` (1660 x 1892 px, one image of all 18 designs,
-for a carousel or a post), `gallery.json`, `img/` (metadata-free copies of each render) and
+for a single-image overview), `gallery.json`, `img/` (metadata-free copies of each render) and
 `alt-text.txt` (paste-ready alt text for the grid).
 
 ## What is in it

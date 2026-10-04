@@ -28,7 +28,7 @@ If Studio is already installed, run one command:
 makerbench studio --demo
 ```
 
-It opens your browser when the server is ready. Browse the Post 3 model/backend
+It opens your browser when the server is ready. Browse the model/backend
 matchups, strings gallery and kora study. These are committed public snapshots,
 with their measurement scope recorded alongside the images; no model calls or
 OpenSCAD installation are needed to browse them. No local runs are discovered

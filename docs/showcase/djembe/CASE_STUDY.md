@@ -49,6 +49,8 @@ generation, compile, render and gate; not model-thinking time; raw record in
 | min_wall | **fail** (score 0.0) |
 | Objective pass rate | 0.833 |
 
+<!-- claim: 0.833 at: "| Objective pass rate | 0.833 |" source: docs/showcase/djembe/assets/objective_scoreline.json#/rows/0/objective_pass_rate -->
+
 What the file shows, by inspection of the script and render: a 600 mm tall goblet
 with a 320 mm head, 14 staves, 10 mm shell wall, crown and flesh hoops, base ring,
 and 14 rope segments at 4 mm diameter. Named parameters include `stave_count`, `H`,
@@ -72,6 +74,8 @@ height/radius points.
 | Reference photo's reuse rights | **Not relied on**: photo not published | It shows a person and carries location metadata |
 | Buildability, sound, structure | **Not claimed** | Repo says not build-ready |
 
+<!-- claim: 108 at: "| Wall time 108 s |" source: docs/showcase/djembe/assets/timing.json#/elapsed_s -->
+
 ## What it does not show
 
 - **Why `min_wall` failed is unknown.** The 10 mm stave wall is well above the floor,
@@ -85,11 +89,3 @@ height/radius points.
 - Sound, tuning, head tension and structural strength are not modelled; the repo
   itself marks this instrument "not build-ready".
 - Turn count and token use were not recorded.
-
-## Caption suggestion (for a post)
-
-"Stave-built djembe from a reference photo: an editable OpenSCAD model with a
-stave-count parameter. It passed 5 of 6 automatic mesh checks and failed the
-provisional wall-thickness check; one run, a first draft." Credit the repo as
-`tonykoop/djembe` (CC BY 4.0) if the photo is ever shown; do not show the current hero
-photo without cropping out the person and stripping location metadata.

@@ -27,6 +27,13 @@ lapis band, and it **fails one of six objective gates** (minimum wall
 thickness). That gap is the interesting part — a model can make something that
 *looks* right and still fails a provisional buildability gate.
 
+<!-- claim: 13 at: "with 13
+strings" source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/string_count -->
+<!-- claim: 650 at: "(650 × 150 mm hull" source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/body_length_mm -->
+<!-- claim: 150 at: "650 × 150 mm hull" source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/body_width_mm -->
+<!-- claim: 810 at: "810 mm tall" source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/instrument_height_mm -->
+<!-- claim: 113 at: "time (113 s)" source: docs/showcase/sambuca/CASE_STUDY.md#re:then one generation \((\d+) s\) -->
+
 | | |
 |---|---|
 | Input | one museum photo (`images/SambucaPhotobyDonHitchcock_BritishMuseum.jpg`) + a text brief with the card dimensions |
@@ -99,7 +106,7 @@ supports "worth trying" rather than "best on sambuca".
 | "Egyptian" | **Not supported.** Do not use. The only Egyptian mention in the repo is a comparison to Egyptian arched harps' string-holder pattern | `reverse-engineering.md` |
 | Dimensions 650 × 150 mm, 810 mm height, 13 strings | From the BM display card as transcribed by Tony; card not re-checked | `reverse-engineering.md` "Measured Values" |
 
-**Caption rule for the post:** "Reconstruction of the boat-shaped harp from the
+**Caption rule for public use:** "Reconstruction of the boat-shaped harp from the
 Royal Cemetery at Ur (c. 2600 BC), British Museum." Call the CAD model "my
 sambuca-style model" or "a boat-harp model" — never call the museum object
 "sambuca", and never call the reconstruction ancient wood.
@@ -123,8 +130,8 @@ Three statements exist and they do not fully agree:
 3. **The museum object itself**: BM image licences and any gallery-photography
    rules were not readable (403). **Unknown.**
 
-**Does a LinkedIn post showcasing the technology count as "non-commercial"?**
-**Unclear.** The post is not a sale, but it promotes a project and its tooling
+**Does public showcase use of the technology count as "non-commercial"?**
+**Unclear.** Showcasing is not a sale, but it promotes a project and its tooling
 publicly, and there is no authoritative reading of that in our sources. If the
 NC-SA terms were the operative ones, we would have to treat it as possibly
 commercial, and share-alike would also apply. We are not offering a legal
@@ -133,19 +140,19 @@ default **unless Tony explicitly clears the photo**.
 
 **Verdict:** the photo *probably* may be reused with credit under Hitchcock's
 stated terms, but we cannot show that this file is covered, and if the repo's
-NC-SA claim is the operative one, a public promotional LinkedIn post may not count as
+NC-SA claim is the operative one, public promotional use may not count as
 "non-commercial" and would need share-alike. **Recommendation
 (fallback, in order):**
-1. Post **only our own renders**; describe the museum object in words and link to
+1. Show **only our own renders**; describe the museum object in words and link to
    the [BM record](https://www.britishmuseum.org/collection/object/W_1928-1010-1-b).
-2. If Tony wants the photo in the post, first get a one-line written OK from Don
+2. If Tony wants to show the photo publicly, first get a one-line written OK from Don
    Hitchcock (contact via donsmaps.com), then credit exactly
    "Photo: Don Hitchcock, donsmaps.com" and keep the BM-record link.
 3. The photo is **not** committed to this repo.
 
 ## 4. Photo → result side-by-side plan
 
-Layout (1200 × 627 or a 2-up carousel), left = reference, right = ours:
+Layout (1200 × 627 or a 2-up figure), left = reference, right = ours:
 
 | Slot | Left | Right |
 |---|---|---|
@@ -188,7 +195,7 @@ measured master"; keep the "what it missed" callouts — they are the credibilit
   calibration rather than the model alone (`docs/CODE_CAD_ARENA_ROUND1.md`).
 - n = 1 for the image-tier run; no repeat seeds.
 
-## 7. Honest limits (put these in the post or the comments)
+## 7. Honest limits
 
 - Generated model; **not** a measured master, not a build packet
   (`arena/*/README.md`).
@@ -197,68 +204,7 @@ measured master"; keep the "what it missed" callouts — they are the credibilit
 - "Best combination" is unproven on this instrument (n = 1).
 - Photo licence unresolved (section 3).
 
-## 8. Candidate LinkedIn posts (each ≤ 1,300 characters)
-
-**Draft A — the honest-gap hook**
-
-> I gave an AI a museum photo of a 4,600-year-old boat-shaped harp and asked for CAD.
->
-> After about two minutes of model thinking I had a parametric model: 650 × 150 mm hull, 13 strings, the key dimensions as sliders.
->
-> Then I ran it through an objective mesh gate. It passed 5 of 6 checks. The one it failed: minimum wall thickness — 0.015 mm against a 1 mm floor. Looked right on screen; failed a provisional wall-thickness gate.
->
-> That gap is why I build MakerBench: a benchmark that scores what AI-generated hardware designs can actually do, not just how they look.
->
-> Stack: CADAM + Claude Fable 5 → OpenSCAD/BOSL2 → mesh gate.
->
-> Honest limits: it's a generated model, not a measured master; the museum piece is itself a 1970s reconstruction of the Royal Cemetery of Ur harp (British Museum); and I've run this once, so I'm not claiming a best model.
->
-> Next: fix the neck curve and re-run.
->
-> #CAD #AI #Luthier #OpenSCAD #MakerBench
-
-**Draft B — the maker angle**
-
-> Museum photo in. Parametric harp out.
->
-> The British Museum displays a reconstruction of a boat-shaped harp from the Royal Cemetery at Ur (c. 2600 BC). I've been designing my own modern take on it.
->
-> Experiment: hand a photo plus the card dimensions to an AI CAD tool and see what comes back.
->
-> Result (CADAM + Claude Fable 5, OpenSCAD): a 13-string boat harp, 650 mm hull, 810 mm tall, the key dimensions as sliders. Recognisably a boat harp. Also clearly missing the J-curved neck, gold collar and lapis band.
->
-> Objective check: 5 of 6 gates pass. Wall thickness fails by a mile.
->
-> What I take from it: AI is a great first-draft partner for parametric CAD. The last mile — proportion, curvature, wall thickness, manufacturability — still needs an engineer.
->
-> Render below; link to the museum record in the comments.
->
-> #Lutherie #CAD #AI #Engineering
-
-**Draft C — the benchmark angle (shortest)**
-
-> "Looks right" and "can be built" are different skills.
->
-> Test case: one museum photo of a reconstructed Sumerian boat harp, one AI CAD pipeline (CADAM + Claude Fable 5 → OpenSCAD).
->
-> It returned a fully parametric 13-string model after about two minutes of model thinking (113 s), and it fit the target envelope within a few percent (668 × 150 × 842 mm vs 650 × 150 × 810 mm).
->
-> Our objective mesh gate passed 5 of 6 checks. It failed minimum wall thickness: 0.015 mm vs a 1 mm floor.
->
-> Across MakerBench Arena rounds, human preference and the objective gate rank models almost independently (mean Spearman ρ ≈ 0.07 over rounds 6–10, three entrants per round, so directional only). That's the point of measuring both.
->
-> Caveats: single run, generated model not a measured master, and I don't claim this is the best pipeline for this task.
->
-> #AI #CAD #Benchmarks #MakerBench
-
-Notes on the drafts: "4,600 years" = c. 2600 BC + 2026; the repo says "~4500", so
-either is fine — pick one. Draft C's ρ figure is `site/data/arena.json`
-`headline.value` 0.0732 (rounds 6–10); it comes from the arena's preference-vs-gate
-comparison, and the repo's public policy is to publish only that agreement
-number, not preference scores. Drafts assume Tony is the designer of the sambuca project (`README.md`) and owns MakerBench — edit if not. Character
-counts are checked in the PR description.
-
-## 9. Asset checklist
+## 8. Asset checklist
 
 Ours, in `docs/showcase/sambuca/assets/`:
 - [x] `round-image-tier-fable-cadam.png` — OpenSCAD preview render of
@@ -268,7 +214,7 @@ Ours, in `docs/showcase/sambuca/assets/`:
 
 Still needed (none exist yet):
 - [ ] A better hero render: shaded, matching camera angle to the photo (Blender or OpenSCAD `--render` with BOSL2)
-- [ ] Photo-vs-model annotated slide (blocked on photo licence decision)
+- [ ] Photo-vs-model annotated figure (blocked on photo licence decision)
 - [ ] A one-tile scoreboard graphic (5/6 gates, `min_wall`)
 - [ ] Decision: neck-curve fix + second run for a real "after" (would need a new run; none made here)
 

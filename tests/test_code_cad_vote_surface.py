@@ -133,7 +133,7 @@ def test_doc_names_twingrid_and_private_boundary():
     text = open("docs/CODE_CAD_VOTE_SURFACE.md", encoding="utf-8").read()
     assert "TwinGrid" in text
     assert "Partner-Peek" in text
-    assert "Selecta internals" in text
+    assert "private-integration internals" in text
 
 
 class TestModel3dVoteSurface:

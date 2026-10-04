@@ -25,7 +25,7 @@ So these `min_wall` failures are not "designs with thin strings". The working hy
 (from where the thin samples sit; I did not isolate the features in CAD) is that they are
 sparse knife-edge, sliver or grazing features that the estimator finds or misses depending on
 where its samples land. That changes what a fix should be (see the end) and it means the current
-sambuca `min_wall` numbers should not go in a public post as a design-quality finding.
+sambuca `min_wall` numbers should not be quoted publicly as a design-quality finding.
 
 ## How the gate measures (from the code, current `main`)
 

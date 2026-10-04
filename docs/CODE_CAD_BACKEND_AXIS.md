@@ -111,7 +111,7 @@ failure to compute one produces an `unavailable` warning.
 ### Why `brep_mesh_volume` used to disagree by up to 17x (#902)
 
 The first version read the volume back from the retained STEP and called that the B-rep
-volume. On the post-3 ocarina trials it disagreed with the mesh by up to 17x in 9 of 11 designs (for
+volume. On the ocarina backend-matchup trials it disagreed with the mesh by up to 17x in 9 of 11 designs (for
 example 3,536 mm³ against 61,982 mm³) and agreed in the other 2. The cause is **not** units, tessellation, multiple
 solids or open shells: for the 11 designs whose scripts could be re-run, the in-memory B-rep
 volume matches the mesh within 0.0% to 0.6%, and the mesh volume matches the analytic design.
@@ -133,7 +133,7 @@ divergence. Anyone relying on the retained STEP for downstream CAD should treat
 `step_roundtrip_volume` deltas above a percent or so as a defect in that STEP; this
 repository does not repair the export.
 
-Measured, post-3 CadQuery and build123d ocarina trials (in-memory volume / mesh volume /
+Measured, ocarina backend-matchup CadQuery and build123d ocarina trials (in-memory volume / mesh volume /
 STEP read-back, mm³): CadQuery 62,297 / 61,982 / 3,536; 66,432 / 66,229 / 7,825;
 63,154 / 62,765 / 5,559; 70,993 / 70,804 / 14,617; 61,002 / 60,848 / 191,001;
 67,626 / 67,408 / 8,609. build123d 63,263 / 63,260 / 52,814; 61,492 / 61,112 / 3,469;

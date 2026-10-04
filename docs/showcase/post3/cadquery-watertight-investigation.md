@@ -1,4 +1,4 @@
-# CadQuery `watertight` failures in the post-3 backend matchup: gate artifact or real geometry?
+# CadQuery `watertight` failures in the ocarina backend matchup: gate artifact or real geometry?
 
 Story #874 (epic #873). Objective evidence only; no votes, no Elo, $0 (re-analysis of the
 three existing meshes, no model calls). Source run: the CadQuery arm of the backend matchup

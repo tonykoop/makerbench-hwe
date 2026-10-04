@@ -37,5 +37,5 @@ trial provenance without unblinding the voter.
 recorded. That keeps the subjective vote blind while still making the resulting
 arena row auditable.
 
-No Selecta internals are embedded in the public payload, HTML, or vote log. Any
+No private-integration internals are embedded in the public payload, HTML, or vote log. Any
 private provenance interface remains outside this repository boundary.
