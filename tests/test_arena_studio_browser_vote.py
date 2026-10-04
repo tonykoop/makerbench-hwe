@@ -537,3 +537,112 @@ def test_vote_stage_dark_theme_and_phone_width(studio_url: str, screenshot_dir: 
         assert phone.errors == []
         phone.close()
         browser.close()
+
+
+# Section plane (#973): inspect the real vendor's backing materials, like the
+# wireframe proof above, and count drawn model pixels on the first plate.
+_SECTION_STATE = """active => {
+  const viewers = [...document.querySelectorAll('model-viewer')];
+  return viewers.length === 2 && viewers.every(viewer => {
+    const materials = (viewer.model?.materials || []).filter(m => m.isActive);
+    return materials.length > 0 && materials.every(material => {
+      const key = Object.getOwnPropertySymbols(material).find(s => s.description === 'correlatedObjects');
+      const backing = key && [...material[key]];
+      return backing?.length > 0 && backing.every(m => active
+        ? m.clippingPlanes?.length === 1 && m.side === 2
+        : !(m.clippingPlanes?.length));
+    });
+  });
+}"""
+
+
+def _model_pixels(page) -> int:
+    """Pixels on the first plate that differ clearly from its stage background."""
+    import io
+
+    viewer = page.locator("model-viewer").first
+    viewer.evaluate("el => { el.autoRotate = false; }")
+    page.wait_for_timeout(400)
+    image = Image.open(io.BytesIO(viewer.screenshot())).convert("RGB")
+    counts = image.getcolors(maxcolors=1 << 24)
+    background = max(counts)[1]  # the stage colour fills most of the plate
+    return sum(
+        count for count, pixel in counts
+        if sum(abs(a - b) for a, b in zip(pixel, background)) > 40
+    )
+
+
+@pytest.mark.parametrize("theme,width", [("light", 1440), ("dark", 400)])
+def test_section_plane_clips_real_materials_and_resets(
+    studio_url: str, screenshot_dir: Path, theme: str, width: int,
+):
+    with sync_playwright() as playwright:
+        browser = _launch(playwright, "webgl")
+        session = Session(browser, f"{studio_url}/#/vote/{RUN_ID}",
+                          viewport={"width": width, "height": 1000}, color_scheme=theme)
+        page = session.page
+        session.wait_for_stage()
+        assert page.evaluate("() => !!document.createElement('canvas').getContext('webgl2')")
+        axis = page.get_by_label("Cut along")
+        assert axis.count() == 0
+        page.get_by_role("button", name="3D orbit", exact=True).click()
+        axis.wait_for()
+        page.wait_for_function(_SECTION_STATE, arg=False)
+        offset = page.get_by_label("Position")
+        assert offset.is_disabled()
+        whole = _model_pixels(page)
+        assert whole > 200, "the fixture model should be visible before any cut"
+
+        axis.select_option("z")
+        page.wait_for_function(_SECTION_STATE, arg=True)
+        assert offset.is_enabled()
+        offset.fill("0")
+        page.wait_for_timeout(300)
+        assert _model_pixels(page) < whole * 0.05, "0% removes the whole model"
+        offset.fill("100")
+        page.wait_for_timeout(300)
+        assert _model_pixels(page) > whole * 0.8, "100% keeps the whole model"
+        offset.focus()
+        page.keyboard.press("Home")
+        for _ in range(55):
+            page.keyboard.press("ArrowRight")
+        assert offset.input_value() == "55"
+        # Arrow keys on the slider never vote or flip the viewer.
+        assert page.locator("model-viewer").count() == 2
+        assert page.get_by_label("Keep the other side").is_enabled()
+        if width < 600:
+            page.locator(".section-controls").scroll_into_view_if_needed()
+        page.screenshot(path=str(screenshot_dir / f"section-{theme}-{width}.png"), full_page=True)
+        assert page.evaluate(
+            "() => document.scrollingElement.scrollWidth - document.scrollingElement.clientWidth") <= 0
+
+        axis.select_option("")
+        page.wait_for_function(_SECTION_STATE, arg=False)
+        axis.select_option("x")
+        page.wait_for_function(_SECTION_STATE, arg=True)
+        # Leaving 3D resets the cut; a fresh orbit session starts uncut.
+        axis.focus()
+        page.get_by_role("button", name="Turntable", exact=True).click()
+        assert axis.count() == 0
+        page.get_by_role("button", name="3D orbit", exact=True).click()
+        axis.wait_for()
+        page.wait_for_function(_SECTION_STATE, arg=False)
+        assert axis.input_value() == ""
+        assert session.errors == []
+        assert all(url.startswith(studio_url) for url in session.requests)
+        session.close()
+        browser.close()
+
+
+def test_zero_webgl_shows_no_section_controls(studio_url: str):
+    with sync_playwright() as playwright:
+        browser = _launch(playwright, "zero-webgl")
+        session = Session(browser, f"{studio_url}/#/vote/{RUN_ID}")
+        page = session.page
+        session.wait_for_stage()
+        assert page.get_by_label("Cut along").count() == 0
+        assert page.locator(".section-controls").count() == 0
+        assert not [url for url in session.requests if "model-viewer" in url]
+        assert session.errors == []
+        session.close()
+        browser.close()

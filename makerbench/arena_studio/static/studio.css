@@ -1458,6 +1458,68 @@ kbd {
   color: var(--muted);
 }
 
+/* Section plane (#973): one row under the viewer toggle, wraps on phones. */
+.section-controls {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  min-width: 0;
+}
+
+.section-controls legend {
+  padding: 0 var(--space-1);
+  font-weight: 600;
+}
+
+.section-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.section-field select {
+  min-height: 2.25rem;
+  font: inherit;
+}
+
+.section-offset {
+  flex: 1 1 12rem;
+}
+
+.section-offset input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 6rem;
+  accent-color: var(--accent);
+}
+
+.section-offset output {
+  min-width: 3.5ch;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.section-flip input {
+  accent-color: var(--accent);
+}
+
+.section-note {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--muted);
+}
+
+.workbench-preview .section-controls {
+  margin-top: var(--space-2);
+}
+
 .plates {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
