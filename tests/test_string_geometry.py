@@ -427,3 +427,65 @@ def test_report_rows_split_advisories_and_tiers(tmp_path, good):
     strings_blind = next(r for r in rows if r["context_tier"] == "blind" and r["advisory"] == "strings")
     assert strings_blind["status_counts"] == {"inconsistent": 1}
     assert strings_blind["failures"][0]["check"] == "string_length"
+
+
+# --- memory: shape_diameter casts its rays in batches (strings advisory OOM fix) -------------
+
+def test_shape_diameter_batches_are_identical_to_one_cast(monkeypatch, good):
+    monkeypatch.setattr(sg, "SDF_RAY_BATCH", 10**9)
+    whole = sg.shape_diameter(good)
+    monkeypatch.setattr(sg, "SDF_RAY_BATCH", 97)  # uneven batches
+    assert np.array_equal(whole, sg.shape_diameter(good))
+
+
+def test_strings_advisory_casts_at_most_a_batch_of_rays_per_call(monkeypatch, good):
+    """The production path (advise) never hands the ray caster more than SDF_RAY_BATCH rays."""
+    intersector = type(good.ray)
+    real = intersector.intersects_id
+    sizes = []
+
+    def spy(self, ray_origins, ray_directions, *args, **kwargs):
+        sizes.append(len(ray_origins))
+        return real(self, ray_origins, ray_directions, *args, **kwargs)
+
+    monkeypatch.setattr(intersector, "intersects_id", spy)
+    result = sg.advise(_spec(), good)
+    assert result["status"] == "consistent"
+    assert sum(sizes) >= len(good.faces) and max(sizes) <= sg.SDF_RAY_BATCH <= 1000
+
+
+def test_oversized_mesh_is_not_measured(monkeypatch, good):
+    monkeypatch.setattr(sg, "MAX_FACES", len(good.faces) - 1)
+    result = sg.advise(_spec(), good)
+    assert result["status"] == "not measurable" and result["reason"] == "too_large"
+
+
+def test_strings_advisory_peak_memory_on_a_dense_instrument(tmp_path):
+    """Absolute peak in a fresh process on a 140k-face, 14-string instrument (just under
+    MAX_FACES, so the full per-face cast runs): under 2 GiB. Measured ~440 MiB and ~60 s batched;
+    the unbatched cast passed 15 GB on this mesh, and took a 91k-face frontier harpsichord to
+    18 GB in the scoring gate."""
+    import os
+    import subprocess
+    import sys
+
+    root = str(Path(__file__).resolve().parents[1])
+    script = tmp_path / "dense.py"
+    script.write_text(
+        "import resource, sys\n"
+        f"sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})\n"
+        "from makerbench import string_geometry as sg\n"
+        f"assert sg.__file__.startswith({root!r}), sg.__file__\n"
+        "from test_string_geometry import _instrument, _spec\n"
+        "mesh = _instrument(14)\n"
+        "for _ in range(4):\n"
+        "    mesh = mesh.subdivide()\n"
+        "assert len(mesh.faces) <= sg.MAX_FACES\n"
+        "r = sg.advise(_spec(string_count=14), mesh)\n"
+        "print(len(mesh.faces), r['status'], r['detected'], resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024)\n")
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([root, os.environ.get("PYTHONPATH", "")])}
+    out = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=900,
+                         cwd=root, env=env, check=True).stdout.split()
+    faces, status, detected, peak_mib = int(out[0]), out[1], int(out[2]), int(out[-1])
+    assert faces > 130_000 and status == "consistent" and detected == 14
+    assert peak_mib < 2048, (faces, peak_mib)
