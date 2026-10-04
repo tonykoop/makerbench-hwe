@@ -55,7 +55,8 @@ and not preceded by a word character, so ``6–10`` (en dash) and ``6-10`` are
 ranges with two positive endpoints, ``2026-09-30`` yields 2026, 09 and 30, and
 ``r6-r10`` or ``v1.2`` yield nothing.
 
-Post bodies are fenced ``text`` blocks and blockquotes (``>`` lines). Every
+Post bodies are fenced ``text`` blocks and blockquotes: ``>`` lines indented
+by up to three spaces, plus their lazy continuation lines. Every
 number occurrence in a post body that no citation binds is reported as
 UNCITED: a warning, or an error under ``--strict``.
 
@@ -110,7 +111,13 @@ NUMBER_RE = re.compile(
     r"(?![\w])"
 )
 FENCE_RE = re.compile(r"^```text\n(.*?)^```", re.DOTALL | re.MULTILINE)
-QUOTE_RE = re.compile(r"^>.*$", re.MULTILINE)
+# CommonMark blockquote marker: up to three spaces of indentation, then '>'.
+QUOTE_RE = re.compile(r"^ {0,3}>(?P<rest>.*)$")
+# Lines that start a new block, so they cannot be lazy paragraph continuations
+# of a blockquote: ATX headings, code fences, list items, thematic breaks.
+NEW_BLOCK_RE = re.compile(
+    r"^ {0,3}(?:#{1,6}(?:\s|$)|```|~~~|[-*+]\s|\d{1,9}[.)]\s|(?:[-*_][ \t]*){3,}$)"
+)
 AGGREGATES = ("min", "max", "mean", "sum", "len")
 
 
@@ -345,7 +352,33 @@ class Token:
 
 def _post_spans(visible: str) -> list[tuple[int, int]]:
     spans = [(m.start(1), m.end(1)) for m in FENCE_RE.finditer(visible)]
-    spans += [(m.start(), m.end()) for m in QUOTE_RE.finditer(visible)]
+    spans += _quote_spans(visible)
+    return spans
+
+
+def _quote_spans(visible: str) -> list[tuple[int, int]]:
+    """Spans of blockquote lines, including CommonMark lazy continuations.
+
+    A quote line has up to three spaces before '>'. An unprefixed, non-blank
+    line directly after a quote line that has paragraph text is a lazy
+    continuation of that paragraph (it renders inside the quote), unless it
+    starts a new block. A blank line (HTML comments are already blanked) ends
+    the quote.
+    """
+    spans: list[tuple[int, int]] = []
+    offset = 0
+    open_paragraph = False
+    for line in visible.splitlines(keepends=True):
+        body = line.rstrip("\r\n")
+        quote = QUOTE_RE.match(body)
+        if quote:
+            spans.append((offset, offset + len(body)))
+            open_paragraph = bool(quote.group("rest").strip())
+        elif open_paragraph and body.strip() and not NEW_BLOCK_RE.match(body):
+            spans.append((offset, offset + len(body)))
+        else:
+            open_paragraph = False
+        offset += len(line)
     return spans
 
 

@@ -375,3 +375,38 @@ def signed_scores(tmp_path: Path) -> Path:
         json.dumps({"openscad": 1.0, "cadquery": 0.777778, "after": 1.0}), encoding="utf-8"
     )
     return tmp_path
+
+
+@pytest.mark.parametrize("indent", [" ", "  ", "   "])
+def test_indented_blockquote_is_scanned(repo, capsys, indent):
+    """Codex re-review P2: up to three spaces before '>' is still a blockquote."""
+    body = f"## Drafts\n\n{indent}> Claimed pass rate: 0.99.\n"
+    code, out = run(repo, body, "--strict", capsys=capsys)
+    assert code == 1
+    assert "UNCITED number 0.99" in out
+
+
+def test_four_space_indent_is_code_not_quote(repo, capsys):
+    body = "## Drafts\n\n    > Claimed pass rate: 0.99.\n"
+    code, out = run(repo, body, "--strict", capsys=capsys)
+    assert code == 0, out
+
+
+def test_lazy_continuation_line_is_scanned(repo, capsys):
+    """Codex re-review P2: an unprefixed line after a '>' line stays in the quote."""
+    body = "## Drafts\n\n> The headline:\nClaimed pass rate: 0.99.\nand 42 more.\n\nOutside 7.\n"
+    code, out = run(repo, body, "--strict", capsys=capsys)
+    assert code == 1
+    assert "UNCITED number 0.99" in out
+    assert "UNCITED number 42" in out
+    assert "UNCITED number 7" not in out  # the blank line ended the quote
+
+
+def test_lazy_continuation_stops_at_new_block_or_empty_quote_line(repo, capsys):
+    body = (
+        "## Drafts\n\n> Quoted text.\n- list item 5\n\n"
+        "> Quoted text.\n>\nNew paragraph 9.\n\n"
+        "> Quoted text.\n### Heading 3\n"
+    )
+    code, out = run(repo, body, "--strict", capsys=capsys)
+    assert code == 0, out
