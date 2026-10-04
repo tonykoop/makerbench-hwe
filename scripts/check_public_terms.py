@@ -40,6 +40,7 @@ import argparse
 import bisect
 import hashlib
 import html
+import html.parser
 import os
 import re
 import subprocess
@@ -159,6 +160,88 @@ class _OffsetMap:
         return bisect.bisect_left(self._source_newlines, offset) + 1
 
 
+INLINE_TAGS = frozenset({"b", "i", "em", "strong", "span", "a", "code", "mark", "sup", "sub", "u", "s",
+                         "small"})
+
+
+class _JoinedParser(html.parser.HTMLParser):
+    """Build the "joined" view with a real HTML tokenizer.
+
+    Text outside markup is kept (Markdown emphasis markers removed); comments
+    and inline tags vanish, so formatting inside a word rejoins it; block tags,
+    declarations and processing instructions become a space. Quoted attribute
+    values (multi-line, containing ``>``, unquoted values with apostrophes) are
+    tokenized by the parser, not by regexes. Each emitted segment records the
+    source line it starts on, so tokens keep their original line numbers.
+    """
+
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.parts: list[str] = []
+        self.starts: list[int] = []
+        self.lines: list[int] = []
+        self._out = 0
+
+    def _emit(self, text: str) -> None:
+        if text:
+            self.starts.append(self._out)
+            self.lines.append(self.getpos()[0])
+            self.parts.append(text)
+            self._out += len(text)
+
+    def handle_data(self, data):
+        self._emit(EMPHASIS.sub("", data))
+
+    def _tag(self, tag: str) -> None:
+        self._emit("" if tag in INLINE_TAGS else " ")
+
+    def handle_starttag(self, tag, attrs):
+        self._tag(tag)
+
+    def handle_startendtag(self, tag, attrs):
+        self._tag(tag)
+
+    def handle_endtag(self, tag):
+        self._tag(tag)
+
+    def handle_entityref(self, name):
+        self._emit(f"&{name};")
+
+    def handle_charref(self, name):
+        self._emit(f"&#{name};")
+
+    def handle_comment(self, data):
+        pass
+
+    def handle_decl(self, decl):
+        self._emit(" ")
+
+    handle_pi = unknown_decl = handle_decl
+
+    def line_of(self, offset: int) -> int:
+        i = bisect.bisect_right(self.starts, offset) - 1
+        if i < 0:
+            return 1
+        return self.lines[i] + self.parts[i].count("\n", 0, offset - self.starts[i])
+
+
+def _joined_view(links: str) -> tuple[str, Callable[[int], int]]:
+    """The joined view via :class:`_JoinedParser`; the regex path only if the
+    parser itself raises."""
+    try:
+        parser = _JoinedParser()
+        parser.feed(links)
+        parser.close()
+        return "".join(parser.parts), parser.line_of
+    except Exception:  # noqa: BLE001 - malformed input: fall back to regex stripping
+        joined = _OffsetMap(links)
+        joined.sub(HTML_COMMENT, "")
+        joined.sub(INLINE_TAG, "")
+        joined.sub(HTML_TAG, " ")
+        joined.sub(EMPHASIS, "")
+        return joined.text, joined.line_of
+
+
 def views(text: str) -> list[str]:
     """Normalized views of ``text`` (see :func:`_views_with_lines`)."""
     return [view for view, _ in _views_with_lines(text)]
@@ -178,17 +261,13 @@ def _views_with_lines(text: str) -> list[tuple[str, Callable[[int], int]]]:
     base = _decode(text)
     links = MD_LINK.sub(lambda m: m.group(1), base)
     spaced = _replace_keeping_lines(HTML_TAG, _replace_keeping_lines(HTML_COMMENT, links, " "), " ")
-    joined = _OffsetMap(links)
-    joined.sub(HTML_COMMENT, "")
-    joined.sub(INLINE_TAG, "")
-    joined.sub(HTML_TAG, " ")
-    joined.sub(EMPHASIS, "")
+    joined_text, joined_line_of = _joined_view(links)
 
     def counted(view: str) -> Callable[[int], int]:
         return lambda start: view.count("\n", 0, start) + 1
 
     result = [(base, counted(base))]
-    for view, line_of in ((spaced, counted(spaced)), (joined.text, joined.line_of)):
+    for view, line_of in ((spaced, counted(spaced)), (joined_text, joined_line_of)):
         if all(view != seen for seen, _ in result):
             result.append((view, line_of))
     return result

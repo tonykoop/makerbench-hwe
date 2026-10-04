@@ -352,3 +352,26 @@ def test_quoted_gt_in_block_tag_still_separates(text):
 def test_unbalanced_apostrophe_in_prose_does_not_swallow_text():
     text = "if a<b and c's\nnext line\nSynthetic here, it's fine>"
     assert checker.matched_lines(text, fingerprints("synthetic")) == [3]
+
+
+# #1002 round 4: joined view built by an HTML tokenizer (html.parser).
+@pytest.mark.parametrize("text", ['Syn<!--\n--><span title="a>b\nc">thetic</span>',
+                                  "Syn<!--\n--><span title='a>b\nc'>thetic</span>",
+                                  'Syn<!--\n--><span title="a>b" data-x=O\'Reilly>thetic</span>',
+                                  "Syn<span data-x=O'Reilly title='a>b'>thetic</span>",
+                                  'Syn<a\n  href="x?a>b"\n  title=\'c>d\'>thet</a>ic'])
+def test_tokenizer_handles_multiline_and_mixed_quoted_attributes(text):
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [1]
+
+
+def test_tokenizer_keeps_lines_after_multiline_attributes():
+    text = 'a\n<span title="x\ny>z">Syn</span>thetic\n<p title="q>\nr">b</p>\nSynthetic'
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [3, 6]
+
+
+def test_joined_view_falls_back_to_regexes_if_the_parser_raises(monkeypatch):
+    def boom(self, data):
+        raise RuntimeError("synthetic parser failure")
+
+    monkeypatch.setattr(checker._JoinedParser, "feed", boom)
+    assert checker.matched_lines("x\nSyn<!-- c -->thetic", fingerprints("synthetic")) == [2]
