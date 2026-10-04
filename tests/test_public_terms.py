@@ -54,6 +54,41 @@ def test_multi_word_ngram_up_to_max():
     assert checker.matched_lines("alpha synthetic other delta", fingerprints(term)) == []
 
 
+# P1a: JSON escape separators and formatting inside a word must not hide a term.
+@pytest.mark.parametrize("text", ['"synthetic\\nwidget"', '"synthetic\\twidget"', '"synthetic\\rwidget"',
+                                  '"synthetic\\/widget"', '"synthetic\\"widget"', '"Synthetic\\u002DWidget"'])
+def test_json_escape_separators_are_decoded(text):
+    assert checker.matched_lines("{}\n" + text, fingerprints("synthetic-widget")) == [2]
+
+
+@pytest.mark.parametrize("text", ["**Syn**thetic", "Syn<b>thetic</b>", "Syn_thetic_", "*Syn*thetic",
+                                  "Syn<span class=\"x\">thet</span>ic", "`Syn`thetic", "~~Syn~~thetic",
+                                  "Syn&lt;b&gt;thetic&lt;/b&gt;", "Syn\\u003cb\\u003ethetic"])
+def test_formatting_inside_a_word_is_rejoined(text):
+    assert checker.matched_lines("ok\n" + text, fingerprints("synthetic")) == [2]
+
+
+@pytest.mark.parametrize("text", ["**Syn** thetic", "Syn <b>thetic</b>", "<p>Syn</p>\n<p>thetic</p>"])
+def test_genuine_word_boundaries_are_not_merged(text):
+    assert checker.matched_lines(text, fingerprints("synthetic")) == []
+
+
+def test_multiline_tag_keeps_line_numbers():
+    text = 'a\n<span\n  class="x">Syn</span>thetic\nend'
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [3]
+
+
+def test_terms_in_tag_attributes_are_seen():
+    assert checker.matched_lines('<img alt="Synthetic Widget">', fingerprints("synthetic-widget")) == [1]
+
+
+# P2b: CamelCase is split before n-gram windows, so mixed forms join up.
+@pytest.mark.parametrize("text", ["SyntheticWidget Kit", "Synthetic WidgetKit", "SyntheticWidgetKit",
+                                  "syntheticWidget-kit", "**SyntheticWidget** kit", "Synthetic_WidgetKit"])
+def test_camel_case_parts_form_ngrams_across_tokens(text):
+    assert checker.matched_lines(text, fingerprints("synthetic-widget-kit")) == [1]
+
+
 def test_fingerprint_helper_matches_canonical_form():
     assert checker.fingerprint("Synthetic  Widget") in fingerprints("synthetic-widget")
 
@@ -80,9 +115,50 @@ def test_private_and_out_of_scope_files_are_not_scanned(tmp_path):
     assert checker.check(tmp_path, fingerprints("syntheticforbidden")) == []
 
 
+def _private_tree(tmp_path):
+    (tmp_path / "README.md").write_text("safe", encoding="utf-8")
+    (tmp_path / ".gitmodules").write_text(
+        '[submodule "vendored/sub"]\n\tpath = vendored/sub\n\turl = git@example.invalid:x.git\n',
+        encoding="utf-8")
+    for rel in ["private/oracles/README.md", "private/submissions/README.md",
+                "vendored/sub/README.md", "docs/private/README.md",
+                "node_modules/pkg/README.md", ".venv/lib/README.md", ".git/README"]:
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("SyntheticForbidden", encoding="utf-8")
+
+
+# P1b: private/ and submodule trees are pruned before traversal and never opened.
+def test_private_and_submodule_readmes_are_never_opened(tmp_path, monkeypatch):
+    _private_tree(tmp_path)
+    blocked = [tmp_path / "private", tmp_path / "vendored" / "sub", tmp_path / "node_modules",
+               tmp_path / ".venv", tmp_path / ".git"]
+    real_scandir = checker.os.scandir
+
+    def guarded_scandir(path="."):
+        assert not any(Path(path) == b or b in Path(path).parents for b in blocked), path
+        return real_scandir(path)
+
+    real_read_bytes = Path.read_bytes
+
+    def guarded_read_bytes(self):
+        assert not any(self == b or b in self.parents for b in blocked), self
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(checker.os, "scandir", guarded_scandir)
+    monkeypatch.setattr(Path, "read_bytes", guarded_read_bytes)
+    paths = checker.public_paths(tmp_path)
+    assert all(not any(b in p.parents for b in blocked) for p in paths)
+    # docs/private is ordinary public docs (only the top-level private/ tree is excluded).
+    problems = checker.check(tmp_path, fingerprints("syntheticforbidden"))
+    assert problems == ["docs/private/README.md:1: forbidden term fingerprint"]
+
+
 @pytest.mark.parametrize("relative", ["README.md", "docs/nested/draft.md", "site/data/leak.json",
                                      "site/nested/page.html", "site/assets/leak.js",
-                                     "templates/foo/README.md", "CONTRIBUTING.md", "CITATION.cff"])
+                                     "templates/foo/README.md", "CONTRIBUTING.md", "CITATION.cff",
+                                     "docs/data/table.tsv", "docs/scripts/run.sh", "docs/notes.rst",
+                                     "docs/data/raw.dat", "docs/LICENSE", "site/feed.atom"])
 def test_each_public_surface_is_checked_without_echoing_terms(tmp_path, relative, capsys):
     (tmp_path / "README.md").write_text("safe", encoding="utf-8")
     path = tmp_path / relative
@@ -102,6 +178,21 @@ def test_invalid_or_empty_denylist_is_rejected(tmp_path, text):
     path.write_text(text, encoding="ascii")
     with pytest.raises(ValueError):
         checker.load_hashes(path)
+
+
+def test_binary_files_are_skipped_by_content(tmp_path):
+    (tmp_path / "README.md").write_text("safe", encoding="utf-8")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "blob.dat").write_bytes(b"\0\x01SyntheticForbidden\0")
+    assert checker.check(tmp_path, fingerprints("syntheticforbidden")) == []
+
+
+# P2a: every plain-text format actually present under docs/ and site/ is scanned.
+def test_every_text_suffix_present_in_public_dirs_is_scanned():
+    scanned = {p.suffix.lower() for p in checker.public_paths(ROOT)}
+    present = {p.suffix.lower() for d in checker.PUBLIC_DIRS for p in (ROOT / d).rglob("*")
+               if p.is_file() and "__pycache__" not in p.parts}
+    assert present - checker.BINARY_SUFFIXES <= scanned
 
 
 def test_committed_denylist_holds_only_hashes_and_comments():

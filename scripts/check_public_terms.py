@@ -8,17 +8,28 @@ joining them with ``-``, e.g. a two-word term "Foo Bar" becomes ``foo-bar``
 (``python scripts/check_public_terms.py --fingerprint`` reads a term from stdin
 and prints its hash without echoing it).
 
-Public text is normalized the same way (HTML entities and JSON ``\\uXXXX``
-escapes are decoded first) and every run of 1..MAX_NGRAM consecutive tokens is
-hashed in hyphen-joined form (``foo-bar``). CamelCase tokens are additionally
-split, so ``FooBar``, ``foo_bar``,
-``**Foo** bar`` and ``"foo-bar"`` all hit the ``foo-bar`` fingerprint, while
-substrings such as ``foobarbaz`` do not. (Concatenating separate words is
-deliberately not done: it turns ordinary prose like "select a" into hits.)
+Public text is normalized before tokenizing:
 
-Scope: text files under docs/ and site/, every README* in the repo, and the
-top-level public Markdown/CITATION files. Diagnostics name file and line only
-and never echo matched text.
+* JSON string escapes are decoded (``\\uXXXX`` to the character; ``\\n``,
+  ``\\t`` and other control escapes to a separator) and HTML entities are
+  unescaped;
+* the text is scanned three ways and the hits are unioned: as-is (so terms in
+  tag attributes are seen), with HTML tags turned into separators, and with
+  inline HTML tags and Markdown emphasis markers (``* _ ~ ` ``) removed so a
+  word split by formatting (``**Fo**o``, ``Fo<b>o</b>``) is rejoined.
+
+Each view is tokenized case-insensitively into two streams, whole alphanumeric
+tokens and CamelCase-split parts, and every run of 1..MAX_NGRAM consecutive
+stream items is hashed in hyphen-joined form. So ``Foo Bar``, ``foo_bar``,
+``FooBar``, ``FooBar Baz``, ``"foo-bar"`` and ``<b>foo</b>&nbsp;bar`` hit the
+``foo-bar`` / ``foo-bar-baz`` fingerprints, while substrings such as
+``foobarbaz`` do not. (Separate words are never concatenated: that turns
+ordinary prose like "select a" into hits.)
+
+Scope: every non-binary file under docs/ and site/, every README* in the repo,
+and the top-level public Markdown/CITATION files. private/, git submodules,
+VCS/cache/virtualenv/node_modules directories are pruned before traversal and
+never opened. Diagnostics name file and line only and never echo matched text.
 """
 
 from __future__ import annotations
@@ -26,6 +37,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import html
+import os
 import re
 import sys
 from pathlib import Path
@@ -36,13 +48,18 @@ MAX_NGRAM = 4
 HASH_LINE = re.compile(r"[0-9a-f]{64}")
 TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
 CAMEL = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")
-JSON_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
+JSON_ESCAPE = re.compile(r"\\(u[0-9a-fA-F]{4}|[nrtbf\"\\/])")
 HTML_TAG = re.compile(r"</?[A-Za-z][^<>]*>")
+EMPHASIS = re.compile(r"[*_~`]+")
 PUBLIC_DIRS = ("docs", "site")
-SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv"}
-TEXT_SUFFIXES = {".md", ".markdown", ".rst", ".txt", ".html", ".htm", ".json",
-                 ".js", ".mjs", ".css", ".svg", ".xml", ".csv", ".py", ".yaml",
-                 ".yml", ".toml", ".cff"}
+PRIVATE_PREFIXES = ("private",)
+SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".tox",
+             ".mypy_cache", ".pytest_cache", ".ruff_cache"}
+BINARY_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp",
+                   ".pdf", ".pyc", ".stl", ".step", ".stp", ".glb", ".gltf",
+                   ".zip", ".gz", ".tar", ".woff", ".woff2", ".ttf", ".otf",
+                   ".mp4", ".webm", ".mov", ".mp3", ".wav"}
+_ESCAPES = {"n": " ", "r": " ", "t": " ", "b": " ", "f": " ", '"': '"', "\\": "\\", "/": "/"}
 
 
 def load_hashes(path: Path) -> frozenset[str]:
@@ -69,68 +86,108 @@ def fingerprint(term: str) -> str:
     return _digest("-".join(t.lower() for t in TOKEN.findall(term)))
 
 
-def _normalize(text: str) -> str:
-    text = JSON_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), text)
-    return html.unescape(text)
+def _decode(text: str) -> str:
+    def escape(match: re.Match) -> str:
+        code = match.group(1)
+        if code[0] == "u":
+            char = chr(int(code[1:], 16))
+            return char if char.isprintable() else " "
+        return _ESCAPES[code]
+
+    return html.unescape(JSON_ESCAPE.sub(escape, text))
 
 
-def _strip_tags(text: str) -> str:
-    # Keep line numbers stable: a tag becomes a space plus the newlines it spanned.
-    return HTML_TAG.sub(lambda m: " " + "\n" * m.group().count("\n"), text)
+def _replace_keeping_lines(pattern: re.Pattern, text: str, filler: str) -> str:
+    return pattern.sub(lambda m: filler + "\n" * m.group().count("\n"), text)
+
+
+def views(text: str) -> list[str]:
+    """Normalized views of ``text``; all keep the original line numbering."""
+    base = _decode(text)
+    result = [base]
+    spaced = _replace_keeping_lines(HTML_TAG, base, " ")
+    joined = _replace_keeping_lines(EMPHASIS, _replace_keeping_lines(HTML_TAG, base, ""), "")
+    for view in (spaced, joined):
+        if view not in result:
+            result.append(view)
+    return result
+
+
+def _streams(text: str) -> list[list[tuple[int, str]]]:
+    whole, split = [], []
+    for match in TOKEN.finditer(text):
+        token = match.group()
+        whole.append((match.start(), token.lower()))
+        parts = CAMEL.findall(token)
+        if len(parts) > 1 and "".join(parts) == token:
+            split.extend((match.start(), part.lower()) for part in parts)
+        else:
+            split.append((match.start(), token.lower()))
+    return [whole, split] if split != whole else [whole]
+
+
+def _view_lines(text: str, hashes: frozenset[str]) -> set[int]:
+    # Collect each distinct n-gram once (public JSON repeats a lot), then hash.
+    grams: dict[str, list[int]] = {}
+    for stream in _streams(text):
+        words = [word for _, word in stream]
+        for index, (start, _) in enumerate(stream):
+            gram = words[index]
+            grams.setdefault(gram, []).append(start)
+            for offset in range(1, min(MAX_NGRAM, len(words) - index)):
+                gram += "-" + words[index + offset]
+                grams.setdefault(gram, []).append(start)
+    return {
+        text.count("\n", 0, start) + 1
+        for gram, starts in grams.items() if _digest(gram) in hashes
+        for start in starts
+    }
 
 
 def matched_lines(text: str, hashes: frozenset[str]) -> list[int]:
-    """Return 1-based line numbers where a denied fingerprint starts.
-
-    Text is scanned as-is (so terms inside tag attributes are seen) and with
-    HTML tags removed (so ``<b>foo</b> bar`` reads as ``foo bar``).
-    """
-    lines = set(_matched_lines(_normalize(text), hashes))
-    if "<" in text:
-        lines.update(_matched_lines(_normalize(_strip_tags(text)), hashes))
+    """Return 1-based line numbers where a denied fingerprint starts."""
+    lines: set[int] = set()
+    for view in views(text):
+        lines |= _view_lines(view, hashes)
     return sorted(lines)
 
 
-def _matched_lines(text: str, hashes: frozenset[str]) -> list[int]:
-    matches = list(TOKEN.finditer(text))
-    words = [m.group().lower() for m in matches]
-    positions = set()
-
-    def hit(start: int) -> None:
-        positions.add(text.count("\n", 0, start) + 1)
-
-    for index, match in enumerate(matches):
-        window = words[index:index + MAX_NGRAM]
-        candidates = {"-".join(window[:size]) for size in range(1, len(window) + 1)}
-        if any(_digest(value) in hashes for value in candidates):
-            hit(match.start())
-            continue
-        parts = [p.lower() for p in CAMEL.findall(match.group())]
-        if len(parts) > 1 and any(
-            _digest("-".join(parts[i:j])) in hashes
-            for i in range(len(parts))
-            for j in range(i + 1, min(i + MAX_NGRAM, len(parts)) + 1)
-        ):
-            hit(match.start())
-    return sorted(positions)
+def excluded_prefixes(root: Path) -> set[str]:
+    """private/ plus every git submodule path, as root-relative POSIX paths."""
+    prefixes = set(PRIVATE_PREFIXES)
+    gitmodules = root / ".gitmodules"
+    if gitmodules.is_file():
+        for line in gitmodules.read_text(encoding="utf-8", errors="replace").splitlines():
+            key, _, value = line.partition("=")
+            if key.strip() == "path" and value.strip():
+                prefixes.add(value.strip().strip("/"))
+    return prefixes
 
 
-def _walk(directory: Path):
-    for path in sorted(directory.rglob("*")):
-        if any(part in SKIP_DIRS for part in path.relative_to(directory).parts):
-            continue
-        if path.is_file():
-            yield path
+def _walk(root: Path, top: Path, excluded: set[str]):
+    """Yield files under ``top``, pruning excluded trees before entering them."""
+    for dirpath, dirnames, filenames in os.walk(top):
+        rel = Path(dirpath).relative_to(root).as_posix()
+        rel = "" if rel == "." else rel + "/"
+        dirnames[:] = sorted(
+            d for d in dirnames
+            if d not in SKIP_DIRS and not d.startswith(".venv")
+            and (rel + d) not in excluded
+        )
+        for name in sorted(filenames):
+            yield Path(dirpath) / name
 
 
 def public_paths(root: Path) -> list[Path]:
-    """docs/ and site/ text, every README*, and top-level public Markdown."""
+    """docs/ and site/ files, every README*, and top-level public Markdown."""
+    excluded = excluded_prefixes(root)
     paths = set()
     for name in PUBLIC_DIRS:
         directory = root / name
-        if directory.is_dir():
-            paths.update(p for p in _walk(directory) if p.suffix.lower() in TEXT_SUFFIXES)
-    paths.update(p for p in _walk(root) if p.name.upper().startswith("README"))
+        if directory.is_dir() and name not in excluded:
+            paths.update(p for p in _walk(root, directory, excluded)
+                         if p.suffix.lower() not in BINARY_SUFFIXES)
+    paths.update(p for p in _walk(root, root, excluded) if p.name.upper().startswith("README"))
     for pattern in ("*.md", "*.cff"):
         paths.update(p for p in root.glob(pattern) if p.is_file())
     return sorted(paths)
@@ -139,9 +196,11 @@ def public_paths(root: Path) -> list[Path]:
 def check(root: Path, hashes: frozenset[str]) -> list[str]:
     problems = []
     for path in public_paths(root):
-        text = path.read_bytes().decode("utf-8", errors="replace")
-        for line in matched_lines(text, hashes):
-            problems.append(f"{path.relative_to(root)}:{line}: forbidden term fingerprint")
+        data = path.read_bytes()
+        if b"\0" in data:
+            continue  # binary payload; not prose
+        for line in matched_lines(data.decode("utf-8", errors="replace"), hashes):
+            problems.append(f"{path.relative_to(root).as_posix()}:{line}: forbidden term fingerprint")
     return problems
 
 
