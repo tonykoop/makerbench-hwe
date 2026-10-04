@@ -18,7 +18,9 @@ convention, right after the post's fenced block)::
     <!-- nocheck: 2600, 5 reason: museum date and model version, not results -->
 
 ``claim: VALUE`` is the number exactly as displayed (``0.889``, ``669``,
-``52%``, ``$8.56``, ``1,300``). It must appear in the section, or the citation
+``52%``, ``$8.56``, ``1,300``, ``−0.40``, ``+0.55``). A sign counts only
+when it is attached to the digits: ``6–10`` is a range and ``2026-09-30`` a
+date, never negatives. The value must appear in the section, or the citation
 is reported as stale. ``source: PATH#SELECTOR`` resolves to one number:
 
 * ``file.json#/json/pointer``: an RFC 6901 pointer, extended with negative
@@ -71,11 +73,18 @@ NOCHECK_RE = re.compile(
     r"<!--\s*nocheck:\s*(?P<values>.+?)\s+reason:\s*(?P<reason>.*?)\s*-->",
     re.DOTALL,
 )
-# A displayed number: optional $, digits with optional thousands commas and
-# decimals, optional %. Not part of a word, a hashtag/issue ref or a version.
+# A displayed number: optional sign (ASCII '-', Unicode minus U+2212, '+')
+# directly attached, optional $, digits with optional thousands commas and
+# decimals, optional %. Not part of a word, a hashtag/issue ref, a version, a
+# date or a hyphenated id: the character before the number (or its sign) may
+# not be a word character, '#', '.', '$', '/' or a sign, so "2026-09-30" and
+# "r6-r10" never yield negatives. An en dash ("6–10") is a range, not a
+# sign, so both ends stay positive.
 NUMBER_RE = re.compile(
-    r"(?<![\w#.$/-])\$?\d{1,3}(?:,\d{3})+(?:\.\d+)?%?(?![\w])"
-    r"|(?<![\w#.$/-])\$?\d+(?:\.\d+)?%?(?![\w])"
+    r"(?<![\w#.$/+\-\u2212])"
+    r"(?:[-+\u2212](?=\$?\d))?\$?"
+    r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?"
+    r"(?![\w])"
 )
 FENCE_RE = re.compile(r"^```text\n(.*?)^```", re.DOTALL | re.MULTILINE)
 AGGREGATES = ("min", "max", "mean", "sum", "len")
@@ -111,7 +120,7 @@ def parse_displayed(token: str) -> tuple[Decimal, int, bool]:
     """Return (value, decimal places, is_percent) for a displayed number."""
     text = token.strip().replace("−", "-")
     is_percent = text.endswith("%")
-    text = text.rstrip("%").lstrip("$").replace(",", "")
+    text = text.rstrip("%").replace("$", "").replace(",", "")
     try:
         value = Decimal(text)
     except InvalidOperation as exc:
@@ -294,6 +303,7 @@ def line_of(text: str, offset: int) -> int:
 
 def _token_key(token: str) -> str:
     value, _, is_percent = parse_displayed(token)
+    value = abs(value) if value == 0 else value  # "-0.0" and "0" are the same number
     return f"{value.normalize()}{'%' if is_percent else ''}"
 
 

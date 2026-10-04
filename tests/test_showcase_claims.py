@@ -188,3 +188,72 @@ def test_fanout_without_aggregate_is_an_error():
 def test_real_showcase_docs_pass():
     code = claims.main(["--root", str(REPO_ROOT), "--strict"])
     assert code == 0
+
+
+# ---------------------------------------------------------------- signs
+
+
+@pytest.fixture()
+def signed(tmp_path: Path) -> Path:
+    (tmp_path / "ci.json").write_text(
+        json.dumps({"rho": -0.5, "lo": -0.4012, "hi": 0.5487}), encoding="utf-8"
+    )
+    return tmp_path
+
+
+def test_sign_mismatch_fails(signed, capsys):
+    body = post("Round 6 rho was +0.5.", "<!-- claim: +0.5 source: ci.json#/rho -->")
+    code, out = run(signed, body, capsys=capsys)
+    assert code == 1
+    assert "MISMATCH +0.5 (=0.5) vs source -0.5" in out
+
+
+def test_dropped_sign_in_text_is_stale_not_silently_matched(signed, capsys):
+    # The text says 0.5 (positive); a citation for -0.5 must not be satisfied by it.
+    body = post("Round 6 rho was 0.5.", "<!-- claim: -0.5 source: ci.json#/rho -->")
+    code, out = run(signed, body, capsys=capsys)
+    assert code == 1
+    assert "STALE claim -0.5" in out
+
+
+@pytest.mark.parametrize("claim", ["−0.40", "-0.40"])
+def test_unicode_minus_matches(signed, capsys, claim):
+    body = post(
+        "Bootstrap CI [−0.40, +0.55].",
+        f"<!-- claim: {claim} source: ci.json#/lo -->",
+        "<!-- claim: +0.55 source: ci.json#/hi -->",
+    )
+    code, out = run(signed, body, "--strict", capsys=capsys)
+    assert code == 0, out
+    assert "2 matched, 0 errors, 0 uncited" in out
+
+
+def test_en_dash_range_is_not_negative(signed, capsys):
+    tokens = [m.group(0) for m in claims.displayed_numbers("over rounds 6–10")]
+    assert tokens == ["6", "10"]
+    assert claims.parse_displayed(tokens[1])[0] > 0
+    # And a positive citation for the range end passes against a positive source.
+    (signed / "r.json").write_text(json.dumps({"last": 10}), encoding="utf-8")
+    body = post("Rounds 6–10.", "<!-- claim: 10 source: r.json#/last -->", "<!-- nocheck: 6 reason: test -->")
+    code, out = run(signed, body, "--strict", capsys=capsys)
+    assert code == 0, out
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("rounds r6-r10", []),
+        ("run on 2026-09-30", ["2026"]),
+        ("rounds 6-10", ["6"]),
+        ("rho −0.5 then +0.866 and -1.0", ["−0.5", "+0.866", "-1.0"]),
+        ("delta (-0.07)", ["-0.07"]),
+        ("a - 3 spaced dash", ["3"]),
+        ("cost -$8.56", ["-$8.56"]),
+    ],
+)
+def test_sign_tokenization(text, expected):
+    assert [m.group(0) for m in claims.displayed_numbers(text)] == expected
+
+
+def test_negative_zero_equals_zero():
+    assert claims._token_key("−0.0") == claims._token_key("0.0")
