@@ -1391,21 +1391,42 @@
       " <span class=\"arena-badge\">" + escapeHTML(String(round.modality || "")) + "</span></h3>" +
       "<span class=\"arena-meta\">" + escapeHTML(meta.join(" · ")) + "</span></div>" +
       "<div class=\"arena-tables\">" + arenaObjectiveTable(round) + "</div>" +
-      "<p class=\"arena-rho\">Rank agreement vs blind preference (Spearman ρ): <strong>" +
-      rho + "</strong>" + interp +
-      " — the preference scoreline itself is single-voter and stays off-site.</p>" +
+      arenaAgreementHTML(ag, rho, interp) +
       "</article>";
   }
 
-  function arenaHeadlineHTML(page) {
-    var h = page.headline;
+  // #983 review: the agreement is attributed to the one min_wall estimator it was computed
+  // over (ag.label), or withheld (ag.withheld_reason) when the round mixes estimators.
+  function arenaAgreementHTML(ag, rho, interp) {
+    if (ag.withheld_reason) {
+      return "<p class=\"arena-rho\">Rank agreement vs blind preference (Spearman ρ): <strong>n/a</strong> — " +
+        escapeHTML(String(ag.withheld_reason)) + "</p>";
+    }
+    var label = ag.label ? " · " + escapeHTML(String(ag.label)) : "";
+    return "<p class=\"arena-rho\">Rank agreement vs blind preference (Spearman ρ): <strong>" +
+      rho + "</strong>" + interp + label +
+      " — the preference scoreline itself is single-voter and stays off-site.</p>";
+  }
+
+  // #983 review: one headline per min_wall estimator, each under its label; never averaged
+  // across estimators. Legacy-only pages carry no labels and render exactly as before.
+  function arenaOneHeadlineHTML(h, insight) {
     if (!h || h.value == null) return "";
     var sign = Number(h.value) >= 0 ? "+" : "";
+    var label = h.label ? " (" + escapeHTML(String(h.label)) + ")" : "";
     return "<div class=\"arena-card arena-headline\">" +
       "<p class=\"arena-rho\"><strong>Headline: mean Spearman ρ ≈ " + sign +
-      arenaNum(h.value, 2) + "</strong> across rounds " +
-      escapeHTML((h.rounds_used || []).join(", ")) + " — " +
-      escapeHTML(String(h.insight || "")) + "</p></div>";
+      arenaNum(h.value, 2) + "</strong>" + label + " across rounds " +
+      escapeHTML((h.rounds_used || []).join(", ")) +
+      (insight ? " — " + escapeHTML(String(h.insight || "")) : "") + "</p></div>";
+  }
+
+  function arenaHeadlineHTML(page) {
+    var html = arenaOneHeadlineHTML(page.headline, true);
+    (page.estimator_headlines || []).forEach(function (h) {
+      html += arenaOneHeadlineHTML(h, false);
+    });
+    return html;
   }
 
   function arenaPendingHTML(page) {

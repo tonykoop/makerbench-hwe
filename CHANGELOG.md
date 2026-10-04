@@ -9,6 +9,10 @@ All notable changes to MakerBench should be recorded here.
   with the estimator, instead of withholding them. They are never mixed into the legacy
   table, and legacy-only rounds keep their exact entries. Rows of an unlabelled estimator
   stay withheld.
+  The rank agreement (Spearman ρ) is attributed to the one estimator it was computed over,
+  or withheld with a reason when a round mixes estimators or has an unlabelled one. The
+  headline mean ρ averages legacy rounds only, and each other estimator gets its own
+  labelled headline.
 
 - **Scoring change (arena mesh gate, #979):** `min_wall` now uses the `robust-v1`
   estimator by default (1st percentile of ray-cast wall distances over 20,000 samples with

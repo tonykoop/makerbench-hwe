@@ -108,6 +108,14 @@ carry it as `objective_pass_rate_by_estimator`, separate from `objective_pass_ra
 or run with no marked rows keeps its exact published entry. A row with an estimator the site
 has no label for stays withheld (fail closed). Tiers stay separate as before.
 
+`agreement.json` holds one ρ computed over every objective row of a round, and the site never
+re-derives it. So the agreement is published only when every row (withheld ones too) was
+scored with one estimator the site can label. A non-legacy estimator adds `min_wall_method`
+and `label`; legacy keeps its exact shape. Otherwise ρ and n are withheld with a
+`withheld_reason`. The page `headline` averages legacy-attributed rounds only, and each
+labelled estimator gets its own entry in `estimator_headlines`. ρ values from different
+estimators are never averaged together.
+
 **What changes and what does not.** Committed results, attested bundles and showcase
 scorelines are **not** rewritten. Re-scoring them under `robust-v1` changes some numbers; the
 full before/after table over

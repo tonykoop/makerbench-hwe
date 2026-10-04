@@ -406,3 +406,88 @@ def test_default_gate_casts_wall_rays_in_bounded_batches(tmp_path, monkeypatch, 
     assert len(calls) >= geometry.ROBUST_V1_SAMPLES // 1000
     assert all(n <= 1000 for n, _ in calls), sorted({n for n, _ in calls})[-3:]
     assert all(multiple_hits is False for _, multiple_hits in calls)
+
+
+# --- #983 review: agreement and headline are attributed to one estimator, or withheld ---------
+
+def _round(runs, number, rows, rho, n=3):
+    round_dir = runs / "code_cad_arena" / f"round{number}"
+    round_dir.mkdir(parents=True)
+    (round_dir / "objective_scoreline.json").write_text(
+        json.dumps({"schema": "makerbench-code-cad-objective-scoreline-v1", "rows": rows}), encoding="utf-8")
+    (round_dir / "agreement.json").write_text(
+        json.dumps({"agreement": {"rho": rho, "n": n, "interpretation": "x"}}), encoding="utf-8")
+    (round_dir / "run_log.json").write_text(
+        json.dumps({"config": {"model_ids": sorted({r["entrant"] for r in rows})}}), encoding="utf-8")
+
+
+def _rows(method, *entrants):
+    return [{"entrant": e, "objective_pass_rate": 0.5, "n_objective_trials": 2,
+             **({"min_wall_method": method} if method else {})} for e in entrants]
+
+
+def test_agreement_of_a_mixed_estimator_round_is_withheld(tmp_path):
+    build_data = _build_data()
+    _round(tmp_path, 5, _rows(None, "a") + _rows("robust-v1", "b", "c"), rho=1.0)
+    (published,) = build_data.build_arena_page(tmp_path)["rounds"]
+    assert published["agreement"]["rho"] is None and published["agreement"]["n"] is None
+    assert "more than one min_wall estimator" in published["agreement"]["withheld_reason"]
+
+
+def test_agreement_of_robust_plus_unknown_rows_is_withheld(tmp_path):
+    """Sol's repro: 2 robust-v1 rows publish, the future-v9 row is withheld, so an n=3 agreement
+    computed over all three cannot be shown."""
+    build_data = _build_data()
+    _round(tmp_path, 5, _rows("robust-v1", "a", "b") + _rows("future-v9", "c"), rho=1.0)
+    (published,) = build_data.build_arena_page(tmp_path)["rounds"]
+    assert [r["entrant"] for r in published["estimator_scorelines"][0]["rows"]] == ["a", "b"]
+    assert published["agreement"]["n"] is None and published["agreement"]["rho"] is None
+    assert published["agreement"]["withheld_reason"]
+    assert build_data.build_arena_page(tmp_path)["headline"] is None
+    assert "estimator_headlines" not in build_data.build_arena_page(tmp_path)
+
+    entry = build_data._arena_run_entry("r", {
+        "scoreline": _rows("robust-v1", "a", "b") + _rows("future-v9", "c"),
+        "agreement": {"agreement": {"rho": 1.0, "n": 3}},
+        "run_log": {"config": {"model_ids": ["a", "b", "c"]}}})
+    assert entry["agreement"]["n"] is None and entry["agreement"]["withheld_reason"]
+
+
+def test_single_estimator_agreement_is_labelled_and_legacy_keeps_its_shape(tmp_path):
+    build_data = _build_data()
+    _round(tmp_path, 5, _rows(None, "a", "b", "c"), rho=0.5)
+    _round(tmp_path, 6, _rows("robust-v1", "a", "b", "c"), rho=-0.5)
+    legacy, robust = build_data.build_arena_page(tmp_path)["rounds"]
+    assert legacy["agreement"] == {"rho": 0.5, "n": 3, "interpretation": "x"}
+    assert robust["agreement"]["rho"] == -0.5 and robust["agreement"]["n"] == 3
+    assert robust["agreement"]["min_wall_method"] == "robust-v1" and "robust-v1" in robust["agreement"]["label"]
+
+    entry = build_data._arena_run_entry("r", {
+        "scoreline": _rows(None, "a") + _rows("robust-v1", "b"),
+        "agreement": {"agreement": {"rho": 1.0, "n": 2}},
+        "run_log": {"config": {"model_ids": ["a", "b"]}}})
+    assert entry["agreement"]["rho"] is None and entry["agreement"]["withheld_reason"]
+
+
+def test_headline_never_averages_across_estimators(tmp_path):
+    """Legacy rho=+1 and robust rho=-1 must not average into an unlabelled 0; a mixed round
+    counts in neither headline."""
+    build_data = _build_data()
+    _round(tmp_path, 5, _rows(None, "a", "b", "c"), rho=1.0)
+    _round(tmp_path, 6, _rows("robust-v1", "a", "b", "c"), rho=-1.0)
+    _round(tmp_path, 7, _rows(None, "a") + _rows("robust-v1", "b", "c"), rho=0.25)
+    page = build_data.build_arena_page(tmp_path)
+    assert page["headline"]["value"] == 1.0 and page["headline"]["rounds_used"] == [5]
+    assert page["headline"]["min_wall_method"] == "min" and "legacy" in page["headline"]["label"]
+    (robust,) = page["estimator_headlines"]
+    assert robust["value"] == -1.0 and robust["rounds_used"] == [6]
+    assert robust["min_wall_method"] == "robust-v1" and "robust-v1" in robust["label"]
+
+
+def test_legacy_only_headline_is_unchanged(tmp_path):
+    build_data = _build_data()
+    _round(tmp_path, 5, _rows(None, "a", "b", "c"), rho=1.0)
+    _round(tmp_path, 6, _rows(None, "a", "b", "c"), rho=0.0)
+    page = build_data.build_arena_page(tmp_path)
+    assert page["headline"]["value"] == 0.5 and page["headline"]["rounds_used"] == [5, 6]
+    assert "label" not in page["headline"] and "estimator_headlines" not in page
