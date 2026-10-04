@@ -71,7 +71,8 @@ axis are classified:
 | `blocked` | solid section, no air path | `bore_continuity` |
 | `missing` | no material: the body is broken | `bore_continuity` |
 
-Steps are found on a scan of bore cross-sections every 2 mm (at most 400 sections). The scan runs
+Steps are found on a scan of bore cross-sections every 2 mm (at most 400 sections). Each sample
+is compared with the next one and the one after it. The scan runs
 from 0.5 mm inside one end to 0.5 mm inside the other, so the end intervals are covered.
 A change larger than `max(1 mm, 20 % of r)` between neighbouring samples is bisected with
 extra cross-sections. It is a `bore_continuity` failure only if it is still larger than that

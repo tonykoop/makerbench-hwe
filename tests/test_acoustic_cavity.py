@@ -553,3 +553,12 @@ def test_asymmetric_ridge_between_stations_is_caught():
 @pytest.mark.parametrize("z0, z1", [(-0.5, 0.5), (199.0, 200.0)], ids=["on-station", "last-mm"])
 def test_known_limitation_asymmetric_ridge_on_a_station_or_at_the_end(z0, z1):
     assert acoustic.bore_report(KENA_LIKE, _ridged(z0, z1), body_id="b")["status"] == "inconsistent"
+
+
+def test_step_split_by_a_scan_sample_is_still_a_step():
+    """#994 review round 4: a scan sample inside a 0.4 mm transition (radii 9 / 10 / 11 at the
+    samples) left each neighbouring change ~1 mm, under the 1.8 mm tolerance."""
+    report = acoustic.bore_report(CONICAL_OPEN, _revolved([0, 350.3, 350.7, 400], [9, 9, 11, 11]), body_id="b")
+    (step,) = _steps(report)
+    assert step["measured"] == pytest.approx(2.0, abs=0.05)
+    _explained([step])

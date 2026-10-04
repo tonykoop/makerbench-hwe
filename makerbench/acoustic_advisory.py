@@ -840,8 +840,13 @@ def bore_report(spec: Mapping[str, Any], mesh: trimesh.Trimesh, *, body_id: str)
     # it is still over it within STEP_RESOLUTION_MM; a smooth flare spreads it out.
     scan = _scan_radii(mesh, axis, lo_axis, length)
     last_to = -math.inf
-    for (za, ra), (zb, rb) in zip(scan, scan[1:]):
-        if abs(rb - ra) <= step_limit:
+    # Neighbouring samples, and samples two apart: a sample that lands in the middle of a
+    # transition splits it into two sub-tolerance halves (#994 review round 4). The bisection
+    # then finds where the change happens, and whether within STEP_RESOLUTION_MM.
+    spans = sorted([(a, b) for a, b in zip(scan, scan[1:])] + [(a, b) for a, b in zip(scan, scan[2:])],
+                   key=lambda pair: (pair[0][0], pair[1][0]))
+    for (za, ra), (zb, rb) in spans:
+        if abs(rb - ra) <= step_limit or za < last_to:
             continue
         abrupt = _abrupt_step(mesh, axis, lo_axis, za, ra, zb, rb, step_limit)
         if abrupt is None or abrupt[0] < last_to:
