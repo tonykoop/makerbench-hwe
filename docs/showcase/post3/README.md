@@ -1,9 +1,9 @@
-# Post 3 assets: a vary-one-axis matchup
+# Vary-one-axis matchup: stub demo
 
-Assets for LinkedIn post 3 (see `../linkedin-posts.md`). These are a **demo of
-the mechanism, not a result**: both entrants are `--stub` (deterministic,
-zero-token), so their identical 1.000 pass rates say nothing about any model.
-The post's "First result" line must still come from a real run.
+A **demo of the matchup mechanism, not a result**: both entrants are `--stub`
+(deterministic, zero-token), so their identical 1.000 pass rates say nothing about
+any model. The real matchups are `matchup-model.md` and `matchup-backend.md` in this
+folder.
 
 ## Which code
 

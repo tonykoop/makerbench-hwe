@@ -4,7 +4,7 @@
 makerbench studio --demo
 ```
 
-The bundled examples are the public Post 3 model/backend matchups, the anonymous
+The bundled examples are the public model/backend matchups, the anonymous
 strings gallery and the kora study. The browser displays their already-published
 objective metadata and PNG previews. Scoreline aggregates remain labelled by
 their recorded trial counts; previews are individual examples. The gallery's

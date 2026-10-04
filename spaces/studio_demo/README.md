@@ -10,7 +10,7 @@ license: apache-2.0
 
 # Arena Studio: read-only showcase
 
-Browse the published Post 3 matchups, strings gallery and kora study. Only public
+Browse the published ocarina model/backend matchups, strings gallery and kora study. Only public
 objective metadata and presentation PNGs are supplied. No launching, voting,
 editing, raw source geometry or preference results are available.
 

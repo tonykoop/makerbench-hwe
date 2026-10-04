@@ -30,7 +30,7 @@ directory arguments. Then rebuild the demo with
 `python scripts/build_studio_demo_data.py`; `--check` validates both the
 snapshot and its wheel asset mappings. No model or CAD process runs.
 
-The older Post-3 and gallery records did not save numerical measurements and
+The older ocarina matchup and gallery records did not save numerical measurements and
 thresholds for each check. Studio says so in its chip explanations rather
 than supplying guessed values. Where a public scoreline has the later
 `failed_checks` data, Studio retains its measurement, threshold, tolerance,
