@@ -257,9 +257,30 @@ ROBUST_V1_SAMPLES = 20000
 ROBUST_V1_SEED = 0
 
 
+def canonical_mesh(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """The same surface with an order-independent layout, for seeded sampling.
+
+    Exact-duplicate vertices are merged and the vertices sorted lexicographically
+    (``-0.0`` folded to ``0.0`` first); faces are remapped, each rotated so its
+    smallest vertex index comes first (winding, hence normals, unchanged), and the
+    faces sorted. Two meshes that differ only in vertex or face order (e.g. the
+    output of threaded manifold booleans) map to identical arrays, so a fixed-seed
+    surface sample, and everything computed from it, is identical too (#1007).
+    """
+    vertices = np.asarray(mesh.vertices, dtype=np.float64) + 0.0
+    faces = np.asarray(mesh.faces, dtype=np.int64)
+    unique, inverse = np.unique(vertices, axis=0, return_inverse=True)
+    faces = np.asarray(inverse, dtype=np.int64).reshape(-1)[faces]
+    first = np.argmin(faces, axis=1)
+    faces = np.take_along_axis(faces, (first[:, None] + np.arange(3)) % 3, axis=1)
+    faces = faces[np.lexsort(faces.T[::-1])]
+    return trimesh.Trimesh(vertices=unique, faces=faces, process=False)
+
+
 def estimate_wall_robust_v1(mesh: trimesh.Trimesh) -> dict:
     """The ``robust-v1`` wall statistic: the 1st percentile of ray-cast wall distances over
-    20,000 samples with a fixed seed. Also returns the raw minimum of the same samples and
+    20,000 samples with a fixed seed, drawn from the :func:`canonical_mesh` layout so the
+    result does not depend on vertex or face order. Also returns the raw minimum of the same samples and
     the number of samples, so a reader can see what the minimum would have said.
 
     ``wall_mm`` is 0.0 for a non-watertight mesh and ``inf`` when no ray hit anything, the
@@ -267,7 +288,9 @@ def estimate_wall_robust_v1(mesh: trimesh.Trimesh) -> dict:
     """
     if not mesh.is_watertight:
         return {"wall_mm": 0.0, "min_mm": 0.0, "n_samples": 0}
-    dists = _wall_distances(mesh, ROBUST_V1_SAMPLES, ROBUST_V1_SEED)
+    # Sample the canonical layout: the fixed-seed sample set (and so p1, the raw
+    # minimum and pass/fail) must not depend on triangle or vertex order (#1007).
+    dists = _wall_distances(canonical_mesh(mesh), ROBUST_V1_SAMPLES, ROBUST_V1_SEED)
     if not len(dists):
         return {"wall_mm": float("inf"), "min_mm": float("inf"), "n_samples": 0}
     return {"wall_mm": float(np.percentile(dists, ROBUST_V1_PERCENTILE)),

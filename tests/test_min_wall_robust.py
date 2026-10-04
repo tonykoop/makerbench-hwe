@@ -491,3 +491,82 @@ def test_legacy_only_headline_is_unchanged(tmp_path):
     page = build_data.build_arena_page(tmp_path)
     assert page["headline"]["value"] == 0.5 and page["headline"]["rounds_used"] == [5, 6]
     assert "label" not in page["headline"] and "estimator_headlines" not in page
+# ----- #1007: robust-v1 must not depend on vertex / face order --------------------------
+
+def _holed_tube() -> trimesh.Trimesh:
+    """The topology-gate flute: a tube with tone holes cut by (threaded) manifold booleans."""
+    tube = trimesh.creation.annulus(r_min=8, r_max=10, height=100, sections=96)
+    for z in (30.0, 50.0, 70.0):
+        hole = trimesh.creation.cylinder(radius=2.5, height=6, sections=48)
+        hole.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2, [0, 1, 0]))
+        hole.apply_translation([10.0, 0.0, z])
+        tube = tube.difference(hole)
+    return tube
+
+
+def _reordered(mesh: trimesh.Trimesh, seed: int) -> trimesh.Trimesh:
+    """Same surface, shuffled vertex order, face order and per-face corner rotation
+    (winding kept)."""
+    rng = np.random.default_rng(seed)
+    vperm = rng.permutation(len(mesh.vertices))
+    inverse = np.empty_like(vperm)
+    inverse[vperm] = np.arange(len(vperm))
+    faces = inverse[mesh.faces][rng.permutation(len(mesh.faces))]
+    shift = rng.integers(3, size=len(faces))
+    faces = np.take_along_axis(faces, (shift[:, None] + np.arange(3)) % 3, axis=1)
+    return trimesh.Trimesh(vertices=mesh.vertices[vperm], faces=faces, process=False)
+
+
+def test_canonical_mesh_is_order_independent_and_keeps_the_surface():
+    mesh = _holed_tube()
+    canon = geometry.canonical_mesh(mesh)
+    for seed in range(6):
+        other = geometry.canonical_mesh(_reordered(mesh, seed))
+        assert np.array_equal(other.vertices, canon.vertices)
+        assert np.array_equal(other.faces, canon.faces)
+    assert canon.is_watertight
+    assert canon.volume == pytest.approx(mesh.volume, rel=1e-12)
+    # winding (so every face normal) is unchanged: same set of (centroid, normal) pairs
+    key = lambda m: np.round(np.hstack([m.triangles_center, m.face_normals]), 9)  # noqa: E731
+    assert np.array_equal(np.unique(key(canon), axis=0), np.unique(key(mesh), axis=0))
+
+
+def test_robust_v1_is_identical_under_vertex_and_face_reordering():
+    mesh = _holed_tube()
+    want = geometry.estimate_wall_robust_v1(mesh)
+    for seed in range(5):
+        assert geometry.estimate_wall_robust_v1(_reordered(mesh, seed)) == want
+
+
+def test_robust_v1_is_identical_in_fresh_processes():
+    import subprocess
+    import sys
+
+    code = (
+        "import json, sys; sys.path.insert(0, 'tests'); import numpy as np\n"
+        "from test_min_wall_robust import _holed_tube, _reordered\n"
+        "from makerbench import geometry\n"
+        "mesh = _holed_tube() if sys.argv[1] == 'raw' else _reordered(_holed_tube(), int(sys.argv[1]))\n"
+        "print(json.dumps(geometry.estimate_wall_robust_v1(mesh)))\n")
+    outs = {subprocess.run([sys.executable, "-c", code, arg], check=True, capture_output=True, text=True,
+                           cwd=Path(__file__).resolve().parents[1]).stdout.strip()
+            for arg in ("raw", "11", "29")}
+    assert len(outs) == 1, outs
+    got = json.loads(outs.pop())
+    assert got == geometry.estimate_wall_robust_v1(_holed_tube())
+
+
+def test_robust_v1_casts_in_bounded_batches(monkeypatch):
+    """Canonicalizing must not undo #997's memory guard: no single ray cast exceeds
+    WALL_RAY_BATCH rays."""
+    sizes = []
+    original = trimesh.ray.ray_triangle.RayMeshIntersector.intersects_location
+
+    def spy(self, ray_origins, ray_directions, **kwargs):
+        sizes.append(len(ray_origins))
+        return original(self, ray_origins, ray_directions, **kwargs)
+
+    monkeypatch.setattr(trimesh.ray.ray_triangle.RayMeshIntersector, "intersects_location", spy)
+    monkeypatch.setattr(geometry, "WALL_RAY_BATCH", 1000)
+    geometry.estimate_wall_robust_v1(trimesh.creation.annulus(r_min=9, r_max=12, height=40, sections=64))
+    assert sizes and max(sizes) <= 1000 and sum(sizes) == geometry.ROBUST_V1_SAMPLES
