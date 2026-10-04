@@ -16,7 +16,9 @@ Public text is normalized before tokenizing:
 * the text is scanned three ways and the hits are unioned: as-is (so terms in
   tag attributes are seen), with HTML tags turned into separators, and with
   inline HTML tags and Markdown emphasis markers (``* _ ~ ` ``) removed so a
-  word split by formatting (``**Fo**o``, ``Fo<b>o</b>``) is rejoined.
+  word split by formatting (``**Fo**o``, ``Fo<b>o</b>``) is rejoined. HTML
+  comments are removed there too, even multi-line ones inside a word; an
+  offset map keeps every token on its original source line.
 
 Each view is tokenized case-insensitively into two streams, whole alphanumeric
 tokens and CamelCase-split parts, and every run of 1..MAX_NGRAM consecutive
@@ -35,12 +37,15 @@ never opened. Diagnostics name file and line only and never echo matched text.
 from __future__ import annotations
 
 import argparse
+import bisect
 import hashlib
 import html
+import html.parser
 import os
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,10 +55,19 @@ HASH_LINE = re.compile(r"[0-9a-f]{64}")
 TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
 CAMEL = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")
 JSON_ESCAPE = re.compile(r"\\(u[0-9a-fA-F]{4}|[nrtbf\"\\/])")
-HTML_TAG = re.compile(r"</?[A-Za-z][^<>]*>")
+# Tag attributes may hold quoted ">" (title="a>b"); quoted values are matched
+# whole (single-line, so a stray apostrophe in prose cannot swallow text), with
+# the plain unquoted form as the fallback when a quote is left unbalanced.
+_ATTRS = r"""(?:[^<>"']|"[^"\n]*"|'[^'\n]*')*"""
+HTML_TAG = re.compile(rf"</?[A-Za-z]{_ATTRS}>|</?[A-Za-z][^<>]*>")
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
-INLINE_TAG = re.compile(
+# main's original patterns, kept verbatim for the legacy views (see _views_with_lines)
+LEGACY_HTML_TAG = re.compile(r"</?[A-Za-z][^<>]*>")
+LEGACY_INLINE_TAG = re.compile(
     r"</?(?:b|i|em|strong|span|a|code|mark|sup|sub|u|s|small)(?=[\s/>])[^<>]*>", re.IGNORECASE)
+INLINE_TAG = re.compile(
+    rf"</?(?:b|i|em|strong|span|a|code|mark|sup|sub|u|s|small)(?=[\s/>])(?:{_ATTRS}>|[^<>]*>)",
+    re.IGNORECASE)
 MD_LINK = re.compile(r"!?\[([^\[\]\n]*)\]\([^()\n]*\)")
 EMPHASIS = re.compile(r"[*_~`]+")
 PUBLIC_DIRS = ("docs", "site")
@@ -106,26 +120,192 @@ def _replace_keeping_lines(pattern: re.Pattern, text: str, filler: str) -> str:
     return pattern.sub(lambda m: filler + "\n" * m.group().count("\n"), text)
 
 
-def views(text: str) -> list[str]:
-    """Normalized views of ``text``; all keep the original line numbering.
+class _OffsetMap:
+    """Text plus a map from its offsets back to 1-based ORIGINAL line numbers.
 
-    Raw (decoded) text; tags/comments as separators; and a "joined" view where
-    HTML comments, inline tags (b, span, a, ...) and Markdown emphasis are
-    removed so formatting inside a word rejoins it, while block tags (p, br,
-    div, li, td, headings, ...) still separate words. Markdown links and
-    images are reduced to their text in the last two views.
+    ``sub`` deletes or replaces matches outright (newlines inside them are
+    dropped, so a word split across lines by a comment or tag rejoins), while
+    every surviving character keeps the line it came from: each step records
+    piecewise (new offset -> old offset) segments, composed back to the source.
+    """
+
+    def __init__(self, text: str):
+        self.text = text
+        self._source_newlines = [m.start() for m in re.finditer("\n", text)]
+        self._steps: list[tuple[list[int], list[int]]] = []
+
+    def sub(self, pattern: re.Pattern, repl: str) -> None:
+        parts: list[str] = []
+        new_starts: list[int] = []
+        old_starts: list[int] = []
+        pos = out = 0
+        for match in pattern.finditer(self.text):
+            new_starts.append(out)
+            old_starts.append(pos)
+            parts.append(self.text[pos:match.start()])
+            out += match.start() - pos
+            new_starts.append(out)
+            old_starts.append(match.start())  # replacement chars map to the match start
+            parts.append(repl)
+            out += len(repl)
+            pos = match.end()
+        if not parts:
+            return
+        new_starts.append(out)
+        old_starts.append(pos)
+        parts.append(self.text[pos:])
+        self.text = "".join(parts)
+        self._steps.append((new_starts, old_starts))
+
+    def line_of(self, offset: int) -> int:
+        for new_starts, old_starts in reversed(self._steps):
+            i = bisect.bisect_right(new_starts, offset) - 1
+            offset = old_starts[i] + (offset - new_starts[i])
+        return bisect.bisect_left(self._source_newlines, offset) + 1
+
+
+INLINE_TAGS = frozenset({"b", "i", "em", "strong", "span", "a", "code", "mark", "sup", "sub", "u", "s",
+                         "small"})
+
+
+class _JoinedParser(html.parser.HTMLParser):
+    """Build the "joined" view with a real HTML tokenizer.
+
+    Text outside markup is kept (Markdown emphasis markers removed); comments
+    and inline tags vanish, so formatting inside a word rejoins it; block tags,
+    declarations and processing instructions become a space. CDATA payloads
+    and script/style bodies are treated as ordinary text and markup. Quoted attribute
+    values (multi-line, containing ``>``, unquoted values with apostrophes) are
+    tokenized by the parser, not by regexes. Each emitted segment records the
+    source line it starts on, so tokens keep their original line numbers.
+    """
+
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.parts: list[str] = []
+        self.starts: list[int] = []
+        self.lines: list[int] = []
+        self._out = 0
+
+    def _emit(self, text: str) -> None:
+        if text:
+            self.starts.append(self._out)
+            self.lines.append(self.getpos()[0])
+            self.parts.append(text)
+            self._out += len(text)
+
+    def handle_data(self, data):
+        self._emit(EMPHASIS.sub("", data))
+
+    def _tag(self, tag: str) -> None:
+        self._emit("" if tag in INLINE_TAGS else " ")
+
+    def handle_starttag(self, tag, attrs):
+        self._tag(tag)
+
+    def handle_startendtag(self, tag, attrs):
+        self._tag(tag)
+
+    def handle_endtag(self, tag):
+        self._tag(tag)
+
+    def handle_entityref(self, name):
+        self._emit(f"&{name};")
+
+    def handle_charref(self, name):
+        self._emit(f"&#{name};")
+
+    def set_cdata_mode(self, *args, **kwargs):
+        # No raw-text mode: <script>/<style>/<textarea>/<title> bodies are
+        # tokenized like any other markup, so formatting inside them still
+        # rejoins words, and a literal "<script>" (e.g. in a Markdown code
+        # span) cannot swallow the rest of the file waiting for its end tag.
+        pass
+
+    def _cdata(self, payload: str) -> None:
+        # CDATA payloads are text: normalize them like the rest of the view
+        # (inline tags and emphasis dropped, other tags a space; newlines kept,
+        # so the segment's line mapping stays exact).
+        payload = _replace_keeping_lines(INLINE_TAG, payload, "")
+        payload = _replace_keeping_lines(HTML_TAG, payload, " ")
+        self._emit(" " + EMPHASIS.sub("", payload) + " ")
+
+    def handle_comment(self, data):
+        # Some html.parser versions report CDATA outside foreign content as a
+        # bogus comment "[CDATA[...]]".
+        if data.startswith("[CDATA[") and data.endswith("]]"):
+            self._cdata(data[7:-2])
+
+    def unknown_decl(self, data):
+        if data.startswith("CDATA["):
+            self._cdata(data[6:])
+        else:
+            self._emit(" ")
+
+    def handle_decl(self, decl):
+        self._emit(" ")
+
+    handle_pi = handle_decl
+
+    def line_of(self, offset: int) -> int:
+        i = bisect.bisect_right(self.starts, offset) - 1
+        if i < 0:
+            return 1
+        return self.lines[i] + self.parts[i].count("\n", 0, offset - self.starts[i])
+
+
+def _joined_view(links: str) -> tuple[str, Callable[[int], int]]:
+    """The joined view via :class:`_JoinedParser`; the regex path only if the
+    parser itself raises."""
+    try:
+        parser = _JoinedParser()
+        parser.feed(links)
+        parser.close()
+        return "".join(parser.parts), parser.line_of
+    except Exception:  # noqa: BLE001 - malformed input: fall back to regex stripping
+        joined = _OffsetMap(links)
+        joined.sub(HTML_COMMENT, "")
+        joined.sub(INLINE_TAG, "")
+        joined.sub(HTML_TAG, " ")
+        joined.sub(EMPHASIS, "")
+        return joined.text, joined.line_of
+
+
+def views(text: str) -> list[str]:
+    """Normalized views of ``text`` (see :func:`_views_with_lines`)."""
+    return [view for view, _ in _views_with_lines(text)]
+
+
+def _views_with_lines(text: str) -> list[tuple[str, Callable[[int], int]]]:
+    """Normalized views of ``text``, each with an offset -> original-line map.
+
+    The first three are EXACTLY the views main has always scanned (same regexes,
+    newlines kept so lines count directly): raw (decoded) text; tags/comments as
+    separators; and a regex "joined" view with comments, inline tags and
+    Markdown emphasis removed. A fourth, tokenizer-built joined view
+    (:func:`_joined_view`) is added on top. Hits are the union over all views,
+    so the checker is a strict superset of main by construction: the legacy
+    joined view still covers raw-text bodies such as ``<script>if (a<b) ...``,
+    and the parser view covers multi-line comments and quoted attributes inside
+    a word.
     """
     base = _decode(text)
     links = MD_LINK.sub(lambda m: m.group(1), base)
-    spaced = _replace_keeping_lines(HTML_TAG, _replace_keeping_lines(HTML_COMMENT, links, " "), " ")
-    joined = _replace_keeping_lines(HTML_COMMENT, links, "")
-    joined = _replace_keeping_lines(INLINE_TAG, joined, "")
-    joined = _replace_keeping_lines(HTML_TAG, joined, " ")
-    joined = _replace_keeping_lines(EMPHASIS, joined, "")
-    result = [base]
-    for view in (spaced, joined):
-        if view not in result:
-            result.append(view)
+    spaced = _replace_keeping_lines(LEGACY_HTML_TAG, _replace_keeping_lines(HTML_COMMENT, links, " "), " ")
+    legacy = _replace_keeping_lines(HTML_COMMENT, links, "")
+    legacy = _replace_keeping_lines(LEGACY_INLINE_TAG, legacy, "")
+    legacy = _replace_keeping_lines(LEGACY_HTML_TAG, legacy, " ")
+    legacy = _replace_keeping_lines(EMPHASIS, legacy, "")
+    parsed_text, parsed_line_of = _joined_view(links)
+
+    def counted(view: str) -> Callable[[int], int]:
+        return lambda start: view.count("\n", 0, start) + 1
+
+    result = [(base, counted(base))]
+    for view, line_of in ((spaced, counted(spaced)), (legacy, counted(legacy)),
+                          (parsed_text, parsed_line_of)):
+        if all(view != seen for seen, _ in result):
+            result.append((view, line_of))
     return result
 
 
@@ -146,7 +326,10 @@ def _grams_from(tokens, index: int) -> set[str]:
     """Every <=MAX_NGRAM-word window starting in token ``index``.
 
     Each token may be read whole or as its CamelCase parts, independently,
-    so mixed forms such as ``FooBar BazQux`` yield ``foobar-baz-qux``.
+    so mixed forms such as ``FooBar BazQux`` yield ``foobar-baz-qux``. A window
+    that starts (ends) inside a CamelCase token may also read the rest (the
+    start) of it as one word: ``AcmeFooBar Baz`` yields ``foobar-baz`` and
+    ``Foo BarBazQux`` yields ``foo-barbaz``.
     """
     grams: set[str] = set()
 
@@ -156,9 +339,13 @@ def _grams_from(tokens, index: int) -> set[str]:
             return
         for reading in tokens[nxt][1]:
             for size in range(1, len(reading) + 1):
+                if 1 < size < len(reading):
+                    # A window may end mid-token with that CamelCase prefix read
+                    # as ONE word; the word limit applies after joining.
+                    grams.add("-".join(words + ["".join(reading[:size])]))
                 window = words + reading[:size]
                 if len(window) > MAX_NGRAM:
-                    break
+                    continue
                 if size < len(reading):
                     grams.add("-".join(window))  # a window may end mid-token
                 else:
@@ -167,6 +354,8 @@ def _grams_from(tokens, index: int) -> set[str]:
     for reading in tokens[index][1]:
         for offset in range(len(reading)):  # a window may start mid-token
             tail = reading[offset:]
+            if offset and len(tail) > 1:  # ... with that CamelCase suffix read as one word
+                extend(["".join(tail)], index + 1)
             for size in range(1, min(len(tail), MAX_NGRAM) + 1):
                 if size < len(tail):
                     grams.add("-".join(tail[:size]))
@@ -175,7 +364,7 @@ def _grams_from(tokens, index: int) -> set[str]:
     return grams
 
 
-def _view_lines(text: str, hashes: frozenset[str]) -> set[int]:
+def _view_lines(text: str, hashes: frozenset[str], line_of: Callable[[int], int]) -> set[int]:
     # Collect each distinct n-gram once (public JSON repeats a lot), then hash.
     grams: dict[str, list[int]] = {}
     tokens = _tokens(text)
@@ -183,17 +372,42 @@ def _view_lines(text: str, hashes: frozenset[str]) -> set[int]:
         for gram in _grams_from(tokens, index):
             grams.setdefault(gram, []).append(start)
     return {
-        text.count("\n", 0, start) + 1
+        line_of(start)
         for gram, starts in grams.items() if _digest(gram) in hashes
         for start in starts
     }
 
 
 def matched_lines(text: str, hashes: frozenset[str]) -> list[int]:
-    """Return 1-based line numbers where a denied fingerprint starts."""
+    """Return 1-based line numbers where a denied fingerprint starts (union over views).
+
+    The views of one file are mostly identical, and the grams starting at a token
+    depend only on that token and the next MAX_NGRAM - 1, so grams are generated
+    once per distinct token window across all views and each distinct gram is
+    hashed once; line numbers are resolved only for windows that hit.
+    """
+    windows: dict[tuple, list[tuple[Callable[[int], int], int]]] = {}
+    samples: dict[tuple, tuple[list, int]] = {}
+    for view, line_of in _views_with_lines(text):
+        tokens = _tokens(view)
+        for index, (start, _) in enumerate(tokens):
+            key = tuple(tuple(map(tuple, readings)) for _, readings in tokens[index:index + MAX_NGRAM])
+            hits = windows.get(key)
+            if hits is None:
+                windows[key] = hits = []
+                samples[key] = (tokens, index)
+            hits.append((line_of, start))
     lines: set[int] = set()
-    for view in views(text):
-        lines |= _view_lines(view, hashes)
+    denied: dict[str, bool] = {}
+    for key, occurrences in windows.items():
+        tokens, index = samples[key]
+        for gram in _grams_from(tokens, index):
+            hit = denied.get(gram)
+            if hit is None:
+                denied[gram] = hit = _digest(gram) in hashes
+            if hit:
+                lines.update(line_of(start) for line_of, start in occurrences)
+                break
     return sorted(lines)
 
 

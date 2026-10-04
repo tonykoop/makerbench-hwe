@@ -270,3 +270,194 @@ def test_ci_runs_the_checker():
 
 def test_committed_public_text_has_no_denied_fingerprints():
     assert checker.check(ROOT, checker.load_hashes(checker.DENYLIST)) == []
+
+
+# #964: multi-line HTML comments inside a word; partial CamelCase joins.
+@pytest.mark.parametrize("text", ["Syn<!--\nnote\n-->thetic", "Syn<!-- a\n-->the<!--\nb -->tic",
+                                  "Syn<!--\n-->the<b>tic</b>", "**Syn**<!--\n\n-->thetic"])
+def test_multiline_comment_inside_a_word_is_rejoined(text):
+    assert checker.matched_lines("ok\n" + text, fingerprints("synthetic")) == [2]
+
+
+def test_multiline_comment_keeps_later_line_numbers():
+    text = "Syn<!--\n\n-->thetic tail\nmid\nSynthetic\n<!--\n-->\nSynthetic"
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [1, 5, 8]
+
+
+def test_multiline_comment_between_words_still_separates():
+    assert checker.matched_lines("Syn <!--\n--> thetic", fingerprints("synthetic")) == []
+    assert checker.matched_lines("Syn<!--\n-->\nthetic", fingerprints("synthetic")) == []
+
+
+@pytest.mark.parametrize("text", ["AcmeSyntheticWidget SpareKit", "AcmeSyntheticWidget spare kit",
+                                  "xAcmeSyntheticWidget spare-kit", "AcmeSyntheticWidget SpareKitPlus",
+                                  "Acme_SyntheticWidget Spare_Kit"])
+def test_partial_camel_case_suffix_reads_as_one_word(text):
+    assert checker.matched_lines(text, fingerprints("syntheticwidget-spare-kit")) == [1]
+
+
+@pytest.mark.parametrize("text", ["Spare SyntheticWidgetAcme", "spare-SyntheticWidgetAcmeKit"])
+def test_partial_camel_case_prefix_reads_as_one_word(text):
+    assert checker.matched_lines(text, fingerprints("spare-syntheticwidget")) == [1]
+
+
+@pytest.mark.parametrize("text", ["Synthetic Widget Spare Kit", "AcmeSynthetic WidgetSpareKit",
+                                  "Synthetic WidgetSpare Kit"])
+def test_partial_camel_joins_do_not_merge_separate_words(text):
+    # Only parts of ONE CamelCase token may be read as one word.
+    assert checker.matched_lines(text, fingerprints("syntheticwidget-spare-kit")) == []
+
+
+# #1002 review repros.
+@pytest.mark.parametrize("text", ['Syn<!--\n--><span class="x">thetic</span>',
+                                  'Syn<!--\n--><a\n href="u">the</a>tic'])
+def test_multiline_comment_then_attribute_tag_inside_a_word(text):
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [1]
+
+
+@pytest.mark.parametrize("text,lines", [
+    ("<!--\n-->**Syn**thetic", [2]),
+    ("Syn<!--\n-->thetic,**Syn**thetic", [1, 2]),
+    ("a\n<!--\n\n-->Syn<b\n>thetic</b> x\nSynthetic", [4, 6]),
+    ('<span\n  class="x">Syn</span>thetic <!--\n--> Synthetic', [2, 3]),
+])
+def test_joined_view_reports_each_token_on_its_source_line(text, lines):
+    assert checker.matched_lines(text, fingerprints("synthetic")) == lines
+
+
+@pytest.mark.parametrize("text", ["one two three SyntheticWidgetAcme", "one two-three SyntheticWidgetAcmeKit"])
+def test_camel_prefix_join_counts_as_one_word_toward_the_limit(text):
+    assert checker.matched_lines(text, fingerprints("one-two-three-syntheticwidget")) == [1]
+
+
+def test_camel_prefix_join_still_respects_the_word_limit():
+    assert checker.matched_lines("one two three four SyntheticWidgetAcme",
+                                 fingerprints("one-two-three-four-syntheticwidget")) == []
+
+
+# #1002 round 3: quoted ">" inside tag attributes.
+@pytest.mark.parametrize("text", ['Syn<!--\n--><span title="a>b">thetic</span>',
+                                  "Syn<!--\n--><span title='a>b'>thetic</span>",
+                                  'Syn<span title="a>b">thetic</span>',
+                                  "Syn<b data-x='>'>the</b>tic"])
+def test_quoted_gt_in_tag_attribute_does_not_split_the_word(text):
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [1]
+
+
+@pytest.mark.parametrize("text", ['<p title="a>b">Syn</p>thetic', "<div class='x>y'>Syn</div>thetic"])
+def test_quoted_gt_in_block_tag_still_separates(text):
+    assert checker.matched_lines(text, fingerprints("synthetic")) == []
+
+
+def test_unbalanced_apostrophe_in_prose_does_not_swallow_text():
+    text = "if a<b and c's\nnext line\nSynthetic here, it's fine>"
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [3]
+
+
+# #1002 round 4: joined view built by an HTML tokenizer (html.parser).
+@pytest.mark.parametrize("text", ['Syn<!--\n--><span title="a>b\nc">thetic</span>',
+                                  "Syn<!--\n--><span title='a>b\nc'>thetic</span>",
+                                  'Syn<!--\n--><span title="a>b" data-x=O\'Reilly>thetic</span>',
+                                  "Syn<span data-x=O'Reilly title='a>b'>thetic</span>",
+                                  'Syn<a\n  href="x?a>b"\n  title=\'c>d\'>thet</a>ic'])
+def test_tokenizer_handles_multiline_and_mixed_quoted_attributes(text):
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [1]
+
+
+def test_tokenizer_keeps_lines_after_multiline_attributes():
+    text = 'a\n<span title="x\ny>z">Syn</span>thetic\n<p title="q>\nr">b</p>\nSynthetic'
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [3, 6]
+
+
+def test_joined_view_falls_back_to_regexes_if_the_parser_raises(monkeypatch):
+    def boom(self, data):
+        raise RuntimeError("synthetic parser failure")
+
+    monkeypatch.setattr(checker._JoinedParser, "feed", boom)
+    assert checker.matched_lines("x\nSyn<!-- c -->thetic", fingerprints("synthetic")) == [2]
+
+
+# #1002 round 5: raw-text elements and CDATA.
+@pytest.mark.parametrize("text", ["<script>Syn<b>thetic</b></script>", "<style>Syn<b>thetic</b></style>",
+                                  "<script>**Syn**thetic</script>", "<textarea>Syn<i>thetic</i></textarea>"])
+def test_script_and_style_bodies_are_normalized(text):
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [1]
+
+
+@pytest.mark.parametrize("opener", ["`<script>`", "`<style>`", "`<textarea>`"])
+def test_literal_raw_text_tag_in_a_code_span_does_not_swallow_later_text(opener):
+    text = f"Use {opener} for that.\n\nLater: **Syn**thetic and Syn<b>thetic</b>\n"
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [3]
+
+
+@pytest.mark.parametrize("text,lines", [
+    ("<![CDATA[**Syn**thetic]]>", [1]),
+    ("x\n<![CDATA[a\nSyn<b>thetic</b>]]>", [3]),
+    ("<![CDATA[Syn]]>thetic", []),   # a CDATA boundary is a word boundary
+])
+def test_cdata_payload_is_normalized(text, lines):
+    assert checker.matched_lines(text, fingerprints("synthetic")) == lines
+
+
+def test_cdata_reported_as_bogus_comment_is_normalized_too():
+    # Newer html.parser builds may report CDATA outside foreign content as a
+    # comment "[CDATA[...]]"; both paths emit the normalized payload.
+    parser = checker._JoinedParser()
+    parser.handle_comment("[CDATA[**Syn**thetic]]")
+    parser.handle_comment(" a real comment ")
+    assert "".join(parser.parts).split() == ["Synthetic"]
+
+
+# #1002 round 6: strict superset of main (legacy views + parser view, union of hits).
+@pytest.mark.parametrize("text", [
+    '<script>if (a<b) { const s = "**Syn**thetic"; }</script>',
+    '<style>.x::after { content: "x<!--y **Syn**thetic" }</style>',
+])
+def test_raw_text_bodies_still_hit_via_the_legacy_view(text):
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [1]
+
+
+def _main_views(text):
+    """Verbatim copy of main's views() (pre-#964) as an independent reference."""
+    import re as _re
+    tag = _re.compile(r"</?[A-Za-z][^<>]*>")
+    comment = _re.compile(r"<!--.*?-->", _re.DOTALL)
+    inline = _re.compile(r"</?(?:b|i|em|strong|span|a|code|mark|sup|sub|u|s|small)(?=[\s/>])[^<>]*>",
+                         _re.IGNORECASE)
+    link = _re.compile(r"!?\[([^\[\]\n]*)\]\([^()\n]*\)")
+    emphasis = _re.compile(r"[*_~`]+")
+
+    def keep(pattern, value, filler):
+        return pattern.sub(lambda m: filler + "\n" * m.group().count("\n"), value)
+
+    base = checker._decode(text)
+    links = link.sub(lambda m: m.group(1), base)
+    spaced = keep(tag, keep(comment, links, " "), " ")
+    joined = keep(emphasis, keep(tag, keep(inline, keep(comment, links, ""), ""), " "), "")
+    return [base, spaced, joined]
+
+
+SUPERSET_CORPUS = [
+    "Synthetic", "**Syn**thetic", "Syn<b>thetic</b>", "Syn<!-- x -->thetic", "Syn<!--\n-->thetic",
+    '<script>if (a<b) { const s = "**Syn**thetic"; }</script>',
+    '<style>.x::after { content: "x<!--y **Syn**thetic" }</style>',
+    "<script>Syn<b>thetic</b></script>", "<style>**Syn**thetic</style>", "<textarea>Syn<i>thetic</i></textarea>",
+    "<script>var t = '<b>Syn</b>thetic';</script>", "<script>x = 1 < 2 && 'Synthetic';</script>",
+    "<style>/* Syn<!-- */thetic</style>", "Use `<script>` here.\n\n**Syn**thetic",
+    "<![CDATA[**Syn**thetic]]>", "<![CDATA[Syn<b>thetic</b>]]>", '<span title="a>b">Syn</span>thetic',
+    "<span title='a>b\nc'>Syn</span>thetic", 'Syn<span title="a>b" data-x=O\'Reilly>thetic</span>',
+    "a<b and c's\nSynthetic, it's>", "<p>Syn</p><p>thetic</p>", "Syn<br>thetic", "[Syn](u)thetic",
+    "<img alt=\"Synthetic\">", "&lt;b&gt;Syn&lt;/b&gt;thetic", "Syn\\u003cb\\u003ethetic", "<!-- Synthetic -->",
+    "<div\n class=\"x\">Syn</div>thetic", "<a\n href='x'>Syn</a>thetic", "<?php echo 'Synthetic'; ?>",
+    "<!DOCTYPE html><title>Syn<b>thetic</b></title>", "x <y Syn</y>thetic", "<<b>Syn</b>thetic",
+    "Syn</b>thetic", "<b>Syn<b>the</b>tic</b>", "Syn<i>the<!--\n-->tic</i>",
+]
+
+
+@pytest.mark.parametrize("text", SUPERSET_CORPUS)
+def test_every_main_hit_is_still_a_hit(text):
+    hashes = fingerprints("synthetic")
+    main_lines = set()
+    for view in _main_views(text):
+        main_lines |= checker._view_lines(view, hashes, lambda start, v=view: v.count("\n", 0, start) + 1)
+    assert main_lines <= set(checker.matched_lines(text, hashes))
