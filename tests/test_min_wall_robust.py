@@ -491,3 +491,160 @@ def test_legacy_only_headline_is_unchanged(tmp_path):
     page = build_data.build_arena_page(tmp_path)
     assert page["headline"]["value"] == 0.5 and page["headline"]["rounds_used"] == [5, 6]
     assert "label" not in page["headline"] and "estimator_headlines" not in page
+# ----- #1007: robust-v1 must not depend on vertex / face order --------------------------
+
+def _holed_tube() -> trimesh.Trimesh:
+    """The topology-gate flute: a tube with tone holes cut by (threaded) manifold booleans."""
+    tube = trimesh.creation.annulus(r_min=8, r_max=10, height=100, sections=96)
+    for z in (30.0, 50.0, 70.0):
+        hole = trimesh.creation.cylinder(radius=2.5, height=6, sections=48)
+        hole.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2, [0, 1, 0]))
+        hole.apply_translation([10.0, 0.0, z])
+        tube = tube.difference(hole)
+    return tube
+
+
+def _reordered(mesh: trimesh.Trimesh, seed: int) -> trimesh.Trimesh:
+    """Same surface, shuffled vertex order, face order and per-face corner rotation
+    (winding kept)."""
+    rng = np.random.default_rng(seed)
+    vperm = rng.permutation(len(mesh.vertices))
+    inverse = np.empty_like(vperm)
+    inverse[vperm] = np.arange(len(vperm))
+    faces = inverse[mesh.faces][rng.permutation(len(mesh.faces))]
+    shift = rng.integers(3, size=len(faces))
+    faces = np.take_along_axis(faces, (shift[:, None] + np.arange(3)) % 3, axis=1)
+    return trimesh.Trimesh(vertices=mesh.vertices[vperm], faces=faces, process=False)
+
+
+def test_canonical_mesh_is_order_independent_and_keeps_the_surface():
+    mesh = _holed_tube()
+    canon = geometry.canonical_mesh(mesh)
+    for seed in range(6):
+        other = geometry.canonical_mesh(_reordered(mesh, seed))
+        assert np.array_equal(other.vertices, canon.vertices)
+        assert np.array_equal(other.faces, canon.faces)
+    assert canon.is_watertight
+    assert canon.volume == pytest.approx(mesh.volume, rel=1e-12)
+    # winding (so every face normal) is unchanged: same set of (centroid, normal) pairs
+    key = lambda m: np.round(np.hstack([m.triangles_center, m.face_normals]), 9)  # noqa: E731
+    assert np.array_equal(np.unique(key(canon), axis=0), np.unique(key(mesh), axis=0))
+
+
+def test_robust_v1_is_identical_under_vertex_and_face_reordering():
+    mesh = _holed_tube()
+    want = geometry.estimate_wall_robust_v1(mesh)
+    for seed in range(5):
+        assert geometry.estimate_wall_robust_v1(_reordered(mesh, seed)) == want
+
+
+def test_robust_v1_is_identical_in_fresh_processes():
+    import subprocess
+    import sys
+
+    code = (
+        "import json, sys; sys.path.insert(0, 'tests'); import numpy as np\n"
+        "from test_min_wall_robust import _holed_tube, _reordered\n"
+        "from makerbench import geometry\n"
+        "mesh = _holed_tube() if sys.argv[1] == 'raw' else _reordered(_holed_tube(), int(sys.argv[1]))\n"
+        "print(json.dumps(geometry.estimate_wall_robust_v1(mesh)))\n")
+    outs = {subprocess.run([sys.executable, "-c", code, arg], check=True, capture_output=True, text=True,
+                           cwd=Path(__file__).resolve().parents[1]).stdout.strip()
+            for arg in ("raw", "11", "29")}
+    assert len(outs) == 1, outs
+    got = json.loads(outs.pop())
+    assert got == geometry.estimate_wall_robust_v1(_holed_tube())
+
+
+def test_robust_v1_casts_in_bounded_batches(monkeypatch):
+    """Canonicalizing must not undo #997's memory guard: no single ray cast exceeds
+    WALL_RAY_BATCH rays."""
+    sizes = []
+    original = trimesh.ray.ray_triangle.RayMeshIntersector.intersects_location
+
+    def spy(self, ray_origins, ray_directions, **kwargs):
+        sizes.append(len(ray_origins))
+        return original(self, ray_origins, ray_directions, **kwargs)
+
+    monkeypatch.setattr(trimesh.ray.ray_triangle.RayMeshIntersector, "intersects_location", spy)
+    monkeypatch.setattr(geometry, "WALL_RAY_BATCH", 1000)
+    geometry.estimate_wall_robust_v1(trimesh.creation.annulus(r_min=9, r_max=12, height=40, sections=64))
+    assert sizes and max(sizes) <= 1000 and sum(sizes) == geometry.ROBUST_V1_SAMPLES
+
+
+def _two_boxes(first_thin: bool) -> trimesh.Trimesh:
+    """Two disjoint watertight 12-face boxes (a 0.4 mm plate and a 5 mm cube), listed in
+    either order: a face-count tie between bodies."""
+    thin = trimesh.creation.box(extents=[20.0, 20.0, 0.4])
+    cube = trimesh.creation.box(extents=[5.0, 5.0, 5.0])
+    cube.apply_translation([40.0, 0.0, 0.0])
+    pair = [thin, cube] if first_thin else [cube, thin]
+    return trimesh.util.concatenate(pair)
+
+
+def test_robust_gate_breaks_body_ties_independently_of_order(tmp_path):
+    """#1007 review: with two equally large (12-face) solids, robust-v1 measured the
+    first-listed one (0.399 mm FAIL vs 4.999 mm PASS for the same geometry). The tie-break
+    (face count, volume, canonical geometry) makes the gate order-independent."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    a = _payload(tmp_path / "a", _two_boxes(first_thin=True))
+    b = _payload(tmp_path / "b", _two_boxes(first_thin=False))
+    assert a["min_wall_method"] == b["min_wall_method"] == "robust-v1"
+    assert a["metrics"]["min_wall_mm"] == b["metrics"]["min_wall_mm"]
+    assert a["objective_pass_rate"] == b["objective_pass_rate"]
+    # the larger-volume body (the 20 x 20 x 0.4 plate) is the one measured
+    assert a["metrics"]["min_wall_mm"] < 1.0
+
+
+def test_legacy_min_gate_keeps_first_listed_body_selection(tmp_path):
+    """Legacy "min" is unchanged (older results must reproduce): it still measures the
+    first-listed of equally large bodies."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    a = _payload(tmp_path / "a", _two_boxes(first_thin=True), min_wall_estimator="min")
+    b = _payload(tmp_path / "b", _two_boxes(first_thin=False), min_wall_estimator="min")
+    assert a["min_wall_method"] == b["min_wall_method"] == "min"
+    assert a["metrics"]["min_wall_mm"] < 1.0 < b["metrics"]["min_wall_mm"]
+
+
+def test_canonical_rotation_is_unique_for_degenerate_faces():
+    faces = np.array([[2, 0, 0], [0, 2, 0], [0, 0, 2], [1, 3, 1], [3, 1, 1], [1, 1, 3]])
+    rotated = geometry._smallest_rotation(faces)
+    assert rotated.tolist() == [[0, 0, 2]] * 3 + [[1, 1, 3]] * 3
+    verts = np.array([[0.0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    one = geometry.canonical_mesh(trimesh.Trimesh(verts, faces[[0, 3]], process=False))
+    two = geometry.canonical_mesh(trimesh.Trimesh(verts, faces[[4, 2]], process=False))
+    assert np.array_equal(one.faces, two.faces) and np.array_equal(one.vertices, two.vertices)
+
+
+def test_welding_coincident_vertices_is_sampling_only():
+    """Documented limitation: two closed boxes touching along an edge are watertight as
+    listed, but exact-coordinate welding joins the shared edge, so the canonical copy is
+    not. Watertightness is judged on the original mesh, and the robust-v1 reading stays
+    finite and order-independent."""
+    a = trimesh.creation.box(extents=[2.0, 2.0, 2.0])
+    b = trimesh.creation.box(extents=[2.0, 2.0, 2.0])
+    b.apply_translation([2.0, 2.0, 0.0])  # shares the x=1, y=1 edge with a
+    mesh = trimesh.Trimesh(np.vstack([a.vertices, b.vertices]),
+                           np.vstack([a.faces, b.faces + len(a.vertices)]), process=False)
+    assert mesh.is_watertight
+    assert not geometry.canonical_mesh(mesh).is_watertight
+    want = geometry.estimate_wall_robust_v1(mesh)
+    assert np.isfinite(want["wall_mm"]) and want["wall_mm"] > 1.9
+    for seed in range(3):
+        assert geometry.estimate_wall_robust_v1(_reordered(mesh, seed)) == want
+
+
+def test_tie_break_key_is_computed_from_the_canonical_mesh():
+    """#1008 review: the tie-break volume must come from the canonical mesh. A raw
+    ``mesh.volume`` sums in face order, and far from the origin that noise survives the
+    9-decimal rounding (160.0 vs 160.000000001 vs 160.000000002 across shuffles here), so
+    it, not geometry, would decide between equal-volume bodies."""
+    body = trimesh.creation.box(extents=[20.0, 20.0, 0.4])
+    body.apply_transform(trimesh.transformations.euler_matrix(0.3, 0.7, 1.1))
+    body.apply_translation([3.0e4, 3.0e4, 3.0e4])
+    raw = {round(abs(float(_reordered(body, s).volume)), 9) for s in range(8)}
+    assert len(raw) > 1  # the hazard is real for raw volumes
+    keys = {geometry.canonical_order_key(_reordered(body, s)) for s in range(8)}
+    assert len(keys) == 1
