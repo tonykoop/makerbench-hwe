@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import functools
 import itertools
+import threading
 import json
 import math
 import os
@@ -11,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections import OrderedDict
 from collections.abc import Iterator
 from urllib.parse import quote
 from datetime import datetime, timezone
@@ -50,6 +53,75 @@ from makerbench.schema import MatchupMetadata
 from . import analytics
 from . import doe
 from . import gatekeeper
+
+#: Matchup meshes larger than this are not converted for the 3D compare (#974).
+MATCHUP_MESH_MAX_BYTES = 64 * 1024 * 1024
+#: Conversion budgets for one compare GLB: triangles, connected components
+#: drawn as separate meshes (beyond this the mesh is drawn as one), and output.
+MATCHUP_GLB_MAX_FACES = 2_000_000
+MATCHUP_GLB_MAX_BODIES = 64
+MATCHUP_GLB_MAX_BYTES = 48 * 1024 * 1024
+#: The converted-GLB cache holds at most this many entries and bytes.
+MATCHUP_GLB_CACHE_ENTRIES = 16
+MATCHUP_GLB_CACHE_BYTES = 96 * 1024 * 1024
+
+
+class _ByteBudgetCache:
+    """A small LRU keyed by file version that also caps the bytes it holds."""
+
+    def __init__(self, max_entries: int, max_bytes: int) -> None:
+        self.max_entries = max_entries
+        self.max_bytes = max_bytes
+        self._items: "OrderedDict[tuple, Optional[bytes]]" = OrderedDict()
+        self._lock = threading.Lock()
+
+    def _size(self) -> int:
+        return sum(len(value) for value in self._items.values() if value)
+
+    def get_or_make(self, key: tuple, make) -> Optional[bytes]:
+        with self._lock:
+            if key in self._items:
+                self._items.move_to_end(key)
+                return self._items[key]
+        value = make()
+        if value is not None and len(value) > self.max_bytes:
+            return value  # served once, never held
+        with self._lock:
+            self._items[key] = value
+            self._items.move_to_end(key)
+            while len(self._items) > self.max_entries or self._size() > self.max_bytes:
+                self._items.popitem(last=False)
+        return value
+
+    def clear(self) -> None:
+        with self._lock:
+            self._items.clear()
+
+
+_MATCHUP_GLB_CACHE = _ByteBudgetCache(MATCHUP_GLB_CACHE_ENTRIES, MATCHUP_GLB_CACHE_BYTES)
+
+
+def _matchup_glb(path: str, mtime_ns: int, size: int) -> Optional[bytes]:
+    """``mtime_ns`` and ``size`` key the cache to one version of the file."""
+
+    def make() -> Optional[bytes]:
+        from makerbench.code_cad_export import stl_to_glb_bytes
+
+        try:
+            return stl_to_glb_bytes(Path(path), max_faces=MATCHUP_GLB_MAX_FACES,
+                                    max_bodies=MATCHUP_GLB_MAX_BODIES, max_bytes=MATCHUP_GLB_MAX_BYTES)
+        except Exception:  # noqa: BLE001 - unreadable or over budget is "no mesh", never a 500
+            return None
+
+    return _MATCHUP_GLB_CACHE.get_or_make((path, mtime_ns, size), make)
+
+
+@functools.lru_cache(maxsize=16)
+def _matchup_dimensions_cached(path: str, mtime_ns: int, size: int) -> dict:
+    from makerbench.measure import measure_overlay
+
+    return measure_overlay(path)
+
 
 # A run_id becomes a path segment (``runs/code_cad_arena/<run_id>``); this
 # rejects "/", ".." and absolute paths so a queue write can never escape
@@ -330,8 +402,8 @@ class ArenaStudioService:
             summary["matchup_trials"] = self._matchup_trials(run_dir, trials)
         return summary
 
-    def matchup_render_path(self, run_dir: Path, trial_id: str) -> Optional[Path]:
-        """Resolve one recorded PNG inside the selected run; never accept a filename."""
+    def _matchup_artifact_path(self, run_dir: Path, trial_id: str, key: str, suffix: str) -> Optional[Path]:
+        """Resolve one recorded artifact inside the selected run; never accept a filename."""
         run_dir = run_dir.resolve()
         log = _load_run_log(run_dir)
         if not log.get("config", {}).get("matchup"):
@@ -340,7 +412,7 @@ class ArenaStudioService:
         if len(matches) != 1:
             return None
         result = matches[0].get("result") or {}
-        raw = (result.get("artifacts") or {}).get("png_path")
+        raw = (result.get("artifacts") or {}).get(key)
         if not isinstance(raw, str):
             return None
         path = Path(raw)
@@ -356,12 +428,51 @@ class ArenaStudioService:
             else:
                 path = run_dir / path
         path = path.resolve()
-        if not path.is_relative_to(run_dir) or path.suffix.lower() != ".png" or not path.is_file():
+        if not path.is_relative_to(run_dir) or path.suffix.lower() != suffix or not path.is_file():
+            return None
+        return path
+
+    def matchup_render_path(self, run_dir: Path, trial_id: str) -> Optional[Path]:
+        """Resolve one recorded PNG inside the selected run; never accept a filename."""
+        path = self._matchup_artifact_path(run_dir, trial_id, "png_path", ".png")
+        if path is None:
             return None
         with path.open("rb") as handle:
             if handle.read(8) != b"\x89PNG\r\n\x1a\n":
                 return None
         return path
+
+    def matchup_mesh_path(self, run_dir: Path, trial_id: str) -> Optional[Path]:
+        """The trial's recorded STL inside the selected run (#974), or None."""
+        return self._matchup_artifact_path(run_dir, trial_id, "stl_path", ".stl")
+
+    def matchup_mesh_glb(self, run_dir: Path, trial_id: str) -> Optional[bytes]:
+        """The trial's mesh as GLB bytes, converted in memory; never writes.
+        None when there is no contained mesh or it cannot be converted."""
+        path = self.matchup_mesh_path(run_dir, trial_id)
+        if path is None:
+            return None
+        stat = path.stat()
+        if stat.st_size > MATCHUP_MESH_MAX_BYTES:
+            return None
+        return _matchup_glb(str(path), stat.st_mtime_ns, stat.st_size)
+
+    def matchup_dimensions(self, run_dir: Path, trial_id: str) -> Optional[dict]:
+        """Gate metrics for the dimension overlay (#975) on a matchup trial."""
+        path = self.matchup_mesh_path(run_dir, trial_id)
+        if path is None:
+            return None
+        stat = path.stat()
+        if stat.st_size > MATCHUP_MESH_MAX_BYTES:
+            return None
+        payload = dict(_matchup_dimensions_cached(str(path), stat.st_mtime_ns, stat.st_size))
+        # An empty or unreadable mesh is "no mesh", as on the GLB route.
+        if not any(row.get("ok") for row in payload.get("measurements") or []):
+            return None
+        if payload.get("error"):  # no host path on the wire
+            payload["error"] = str(payload["error"]).replace(str(path.parent), "artifacts")
+        payload["units"] = "mm"
+        return payload
 
     def _matchup_trials(self, run_dir: Path, trials: list) -> list[dict]:
         def observed(value, ceiling=None):
@@ -374,6 +485,9 @@ class ArenaStudioService:
             result = trial.get("result") or {}
             objective = result.get("objective") or {}
             gates = objective.get("sub_scores") or {}
+            trial_base = f"/api/runs/{quote(run_dir.name, safe='')}"
+            trial_part = quote(str(trial.get("trial_id")), safe="")
+            has_mesh = self.matchup_mesh_path(run_dir, trial.get("trial_id")) is not None
             rows.append({
                 "trial_id": trial.get("trial_id"), "entrant": trial.get("model_id"),
                 "instrument_id": trial.get("instrument_id"), "seed": trial.get("seed"), "rep": trial.get("rep"),
@@ -385,6 +499,8 @@ class ArenaStudioService:
                     *[key for key in ("topology", "interfaces") if key in gates])},
                 "render_url": f"/api/runs/{quote(run_dir.name, safe='')}/matchup-render/{quote(str(trial.get('trial_id')), safe='')}"
                 if self.matchup_render_path(run_dir, trial.get("trial_id")) else None,
+                "mesh_url": f"{trial_base}/matchup-mesh/{trial_part}" if has_mesh else None,
+                "dimensions_url": f"{trial_base}/matchup-dimensions/{trial_part}" if has_mesh else None,
             })
         return rows
 

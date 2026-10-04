@@ -701,4 +701,9 @@ def test_blind_vote_surfaces_never_load_the_dimension_overlay():
     static = Path(__file__).resolve().parents[1] / "makerbench" / "arena_studio" / "static" / "app"
     users = sorted(p.relative_to(static).as_posix() for p in static.rglob("*.js")
                    if "DimensionOverlay" in p.read_text(encoding="utf-8"))
-    assert users == ["components/dimensionOverlay.js", "screens/workbench.js"]
+    # The matchup compare (#974) sits on the Runs screen's matchup results,
+    # which already name the entrants; no blind surface imports either.
+    assert users == ["components/dimensionOverlay.js", "components/matchupCompare.js", "screens/workbench.js"]
+    compare_users = sorted(p.relative_to(static).as_posix() for p in static.rglob("*.js")
+                           if "MatchupCompare" in p.read_text(encoding="utf-8"))
+    assert compare_users == ["components/matchupCompare.js", "screens/runs.js"]
