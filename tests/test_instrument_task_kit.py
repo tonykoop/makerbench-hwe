@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import math
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -297,8 +298,19 @@ def test_stub_agents_replay_gold_and_perturb_params():
 
 
 # ----- #984: CSV read bound to the validated file (TOCTOU) + Windows paths -----
+# These race tests only use the public scaffold() API (the reader mode is set
+# with raising=False), so against the pre-#984 reader they reach the swap and
+# fail because the swapped content is ACCEPTED, not on a missing attribute.
 
 SECRET = "member_id,target_hz\nSECRET,1\n"
+MODES = [True, False]
+MODE_IDS = ["dirfd", "handle-path"]
+
+
+def _set_mode(monkeypatch, dirfd):
+    if dirfd and not getattr(scaffold_mod, "_DIRFD_OK", True):
+        pytest.skip("platform has no O_NOFOLLOW / dir_fd")
+    monkeypatch.setattr(scaffold_mod, "_DIRFD_OK", dirfd, raising=False)
 
 
 def _swap_file_to_outside(tmp_path, repo):
@@ -322,46 +334,106 @@ def _swap_parent_dir_to_outside(tmp_path, repo):
     (repo / "data").symlink_to(outside, target_is_directory=True)
 
 
-@pytest.mark.parametrize("dirfd", [True, False], ids=["dirfd", "inode-recheck"])
-@pytest.mark.parametrize("csv_rel,swap", [
+def _swap_root_to_other_checkout(tmp_path, repo):
+    # The checkout root itself is replaced by a symlink to another checkout
+    # after the PUBLIC approval was given for the first one.
+    other = tmp_path / "other_checkout"
+    (other / "data").mkdir(parents=True)
+    (other / "family-spec.csv").write_text(SECRET, encoding="utf-8")
+    (other / "data" / "spec.csv").write_text(SECRET, encoding="utf-8")
+    repo.rename(tmp_path / "repo_moved")
+    repo.symlink_to(other, target_is_directory=True)
+
+
+SWAPS = [
     ("family-spec.csv", _swap_file_to_outside),
     ("family-spec.csv", _swap_file_to_private),
     ("data/spec.csv", _swap_parent_dir_to_outside),
-], ids=["file->outside", "file->private", "parent-dir->outside"])
-def test_scaffold_symlink_swap_after_validation_is_refused(tmp_path, monkeypatch, dirfd, csv_rel, swap):
-    # The swap happens inside the visibility lookup: after resolve_csv validated
-    # the path and before the content read, i.e. exactly the TOCTOU window.
-    if dirfd and not scaffold_mod._DIRFD_OK:
-        pytest.skip("platform has no O_NOFOLLOW / dir_fd")
-    monkeypatch.setattr(scaffold_mod, "_DIRFD_OK", dirfd)
+    ("family-spec.csv", _swap_root_to_other_checkout),
+    ("data/spec.csv", _swap_root_to_other_checkout),
+]
+SWAP_IDS = ["file->outside", "file->private", "parent-dir->outside", "root->other", "root->other-subdir"]
+
+
+def _swap_repo(tmp_path):
     repo = _plain_repo(tmp_path)
     (repo / "data").mkdir()
     (repo / "data" / "spec.csv").write_text(CSV, encoding="utf-8")
+    return repo
+
+
+def _scaffold_with_swap(tmp_path, repo, csv_rel, swap, **kw):
+    ran = []
 
     def lookup(slug):
         swap(tmp_path, repo)
+        ran.append(slug)
         return "PUBLIC"
 
-    with pytest.raises(scaffold_mod.ScaffoldError, match="changed after validation"):
-        scaffold_mod.scaffold(repo_dir=repo, task_id="instrument_x", columns=["member_id"],
-                              csv_rel=csv_rel, tasks_root=tmp_path / "tasks", visibility_lookup=lookup,
-                              slug="tonykoop/x", commit="c")
+    try:
+        return scaffold_mod.scaffold(repo_dir=repo, task_id="instrument_x", columns=["member_id"],
+                                     csv_rel=csv_rel, tasks_root=tmp_path / "tasks",
+                                     visibility_lookup=lookup, slug="tonykoop/x", commit="c", **kw)
+    finally:
+        assert ran == ["tonykoop/x"], "the swap callback must have run (race window reached)"
+
+
+@pytest.mark.parametrize("dirfd", MODES, ids=MODE_IDS)
+@pytest.mark.parametrize("csv_rel,swap", SWAPS, ids=SWAP_IDS)
+def test_scaffold_symlink_swap_after_validation_is_refused(tmp_path, monkeypatch, dirfd, csv_rel, swap):
+    _set_mode(monkeypatch, dirfd)
+    repo = _swap_repo(tmp_path)
+    with pytest.raises(scaffold_mod.ScaffoldError, match="changed"):
+        _scaffold_with_swap(tmp_path, repo, csv_rel, swap)
     assert not (tmp_path / "tasks").exists()
 
 
-@pytest.mark.parametrize("dirfd", [True, False], ids=["dirfd", "inode-recheck"])
+@pytest.mark.parametrize("csv_rel,swap", SWAPS, ids=SWAP_IDS)
+def test_control_legacy_pathname_read_accepts_the_swapped_content(tmp_path, csv_rel, swap):
+    # Positive control: re-reading by pathname after the lookup (the pre-#984
+    # behaviour) really does snapshot the outside / private content in each
+    # scenario, so the refusals above are what the bound reader adds.
+    repo = _swap_repo(tmp_path)
+    out = _scaffold_with_swap(tmp_path, repo, csv_rel, swap,
+                              read_csv=lambda p: p.read_text(encoding="utf-8-sig"))
+    rows = json.loads(out.read_text(encoding="utf-8"))["rows"]
+    assert [r["member_id"] for r in rows] == ["SECRET"]
+
+
+@pytest.mark.parametrize("dirfd", MODES, ids=MODE_IDS)
 def test_scaffold_bound_read_without_swap_still_works(tmp_path, monkeypatch, dirfd):
-    if dirfd and not scaffold_mod._DIRFD_OK:
-        pytest.skip("platform has no O_NOFOLLOW / dir_fd")
-    monkeypatch.setattr(scaffold_mod, "_DIRFD_OK", dirfd)
-    repo = _plain_repo(tmp_path)
-    (repo / "data").mkdir()
+    _set_mode(monkeypatch, dirfd)
+    repo = _swap_repo(tmp_path)
     (repo / "data" / "spec.csv").write_text("\ufeff" + CSV, encoding="utf-8")  # BOM is stripped
     out = scaffold_mod.scaffold(repo_dir=repo, task_id="instrument_x", columns=["member_id"],
                                 csv_rel="data/spec.csv", tasks_root=tmp_path / "tasks",
                                 visibility_lookup=lambda s: "PUBLIC", slug="tonykoop/x", commit="c")
     data = json.loads(out.read_text(encoding="utf-8"))
     assert [r["member_id"] for r in data["rows"]] == ["A", "B", "C"]
+
+
+CRLF_CSV = (b'member_id,target_hz,notes\r\n'
+            b'A,440.0,"line one\r\nline two"\r\n'
+            b'B,523.251,"x\ry"\r\n')
+
+
+@pytest.mark.parametrize("dirfd", MODES, ids=MODE_IDS)
+def test_scaffold_crlf_and_multiline_cell_hashes_match_text_mode_read(tmp_path, monkeypatch, dirfd):
+    # The bound reader must decode exactly like Path.read_text (universal
+    # newlines), so csv_sha256 / rows_sha256 match snapshots made before #984.
+    _set_mode(monkeypatch, dirfd)
+    repo = _plain_repo(tmp_path)
+    (repo / "family-spec.csv").write_bytes(b"\xef\xbb\xbf" + CRLF_CSV)
+    common = dict(repo_dir=repo, task_id="instrument_x", columns=["member_id", "target_hz", "notes"],
+                  visibility_lookup=lambda s: "PUBLIC", slug="tonykoop/x", commit="c")
+    bound = scaffold_mod.scaffold(tasks_root=tmp_path / "bound", **common)
+    legacy = scaffold_mod.scaffold(tasks_root=tmp_path / "legacy",
+                                   read_csv=lambda p: p.read_text(encoding="utf-8-sig"), **common)
+    b, l_ = (json.loads(p.read_text(encoding="utf-8")) for p in (bound, legacy))
+    assert b["source"]["csv_sha256"] == l_["source"]["csv_sha256"]
+    assert b["rows_sha256"] == l_["rows_sha256"]
+    assert b["rows"] == l_["rows"]
+    assert b["rows"][0]["notes"] == "line one\nline two"
 
 
 def test_scaffold_in_repo_symlink_is_still_allowed(tmp_path):
@@ -374,22 +446,76 @@ def test_scaffold_in_repo_symlink_is_still_allowed(tmp_path):
     assert json.loads(out.read_text(encoding="utf-8"))["source"]["path"] == "family-spec.csv"
 
 
-def test_scaffold_rejects_fifo_swapped_in(tmp_path):
-    if not hasattr(__import__("os"), "mkfifo") or not scaffold_mod._DIRFD_OK:
-        pytest.skip("no mkfifo / dir_fd")
-    import os
-
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no mkfifo")
+@pytest.mark.parametrize("dirfd", MODES, ids=MODE_IDS)
+def test_scaffold_rejects_fifo_swapped_in_without_blocking(tmp_path, monkeypatch, dirfd):
+    _set_mode(monkeypatch, dirfd)
     repo = _plain_repo(tmp_path)
 
-    def lookup(slug):
-        (repo / "family-spec.csv").unlink()
-        os.mkfifo(repo / "family-spec.csv")
-        return "PUBLIC"
+    import errno
+    import threading
 
-    with pytest.raises(scaffold_mod.ScaffoldError, match="regular file"):
+    fifo = repo / "family-spec.csv"
+    done = threading.Event()
+    released = []
+
+    def unblock_a_blocked_reader():
+        # Watchdog: a reader that opened the FIFO in blocking mode would hang the
+        # suite. After a 1 s grace period (a non-blocking reader is long gone), a
+        # non-blocking writer open succeeds only if a reader is still stuck in
+        # open(); that releases it and is recorded, so a blocking regression
+        # FAILS here instead of hanging.
+        if done.wait(1.0):
+            return
+        while not done.wait(0.05):
+            try:
+                os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
+                released.append(True)
+            except OSError as exc:
+                if exc.errno not in (errno.ENXIO, errno.ENOENT):
+                    return
+
+    def to_fifo(tmp, repo_):
+        fifo.unlink()
+        os.mkfifo(fifo)
+        threading.Thread(target=unblock_a_blocked_reader, daemon=True).start()
+
+    try:
+        with pytest.raises(scaffold_mod.ScaffoldError, match="regular file"):
+            _scaffold_with_swap(tmp_path, repo, "family-spec.csv", to_fifo)
+    finally:
+        done.set()
+    assert not released, "the CSV open blocked on a FIFO (missing O_NONBLOCK)"
+
+
+def test_handle_path_fallback_fails_closed_without_a_handle_path(tmp_path, monkeypatch):
+    _set_mode(monkeypatch, False)
+    monkeypatch.setattr(scaffold_mod, "_handle_path", lambda fd: None)
+    repo = _plain_repo(tmp_path)
+    with pytest.raises(scaffold_mod.ScaffoldError, match="refusing"):
         scaffold_mod.scaffold(repo_dir=repo, task_id="instrument_x", columns=["member_id"],
-                              tasks_root=tmp_path / "tasks", visibility_lookup=lookup,
+                              tasks_root=tmp_path / "tasks", visibility_lookup=lambda s: "PUBLIC",
                               slug="tonykoop/x", commit="c")
+    assert not (tmp_path / "tasks").exists()
+
+
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="needs /proc/self/fd to count fds")
+@pytest.mark.parametrize("dirfd", MODES, ids=MODE_IDS)
+def test_read_does_not_leak_fds_when_decoding_setup_fails(tmp_path, monkeypatch, dirfd):
+    _set_mode(monkeypatch, dirfd)
+    repo = _plain_repo(tmp_path)
+
+    def boom(*a, **k):
+        raise OSError("synthetic open failure")
+
+    monkeypatch.setattr(scaffold_mod, "open", boom, raising=False)
+    before = len(os.listdir("/proc/self/fd"))
+    for _ in range(5):
+        with pytest.raises((OSError, scaffold_mod.ScaffoldError), match="synthetic"):
+            scaffold_mod.scaffold(repo_dir=repo, task_id="instrument_x", columns=["member_id"],
+                                  tasks_root=tmp_path / "tasks", visibility_lookup=lambda s: "PUBLIC",
+                                  slug="tonykoop/x", commit="c")
+    assert len(os.listdir("/proc/self/fd")) == before
 
 
 _WINDOWS_BAD = [
