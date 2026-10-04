@@ -569,7 +569,7 @@ class TestRealJob:
         assert draft["job"]["status"] == "succeeded", draft["job"]
         assert draft["objective"]["sandbox"] == {"kind": "bwrap", "verified": True, "xvfb": True}
         assert draft["objective"]["objective"]["declared"] is True and draft["objective"]["objective"]["objective_pass_rate"] == 1.0
-        assert draft["artifacts"] == ["output.stl", "preview.png"]
+        assert draft["artifacts"] == ["model.glb", "output.stl", "preview.png"]  # #975: the 3D preview GLB
         stream = "".join(service.stream_log(did, jid, follow=False))
         assert "compiling in the sandbox" in stream and "event: end" in stream and tmp_path.as_posix() not in stream
         r0 = service.save_revision(did, draft_id=jid)

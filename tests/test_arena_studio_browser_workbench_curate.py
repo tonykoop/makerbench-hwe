@@ -41,7 +41,7 @@ needs_sandbox = pytest.mark.skipif(not _SANDBOX, reason="OpenSCAD sandbox unavai
 HOSTILE_TITLE = '"><img src=x onerror="window.__pwned=1">'
 HOSTILE_NOTE = "`${alert(1)}`<img src=x onerror=alert(1)>"
 CUBE = "w_mm = 10;\ncube(w_mm);\n"
-EXPORT_NAMES = ["boxolin-workbench-r1.scad", "boxolin-workbench-r1.stl", "boxolin-workbench-r1.png", "provenance.json", "README.md"]
+EXPORT_NAMES = ["boxolin-workbench-r1.scad", "boxolin-workbench-r1.stl", "boxolin-workbench-r1.png", "boxolin-workbench-r1.glb", "provenance.json", "README.md"]
 
 
 def _free_port() -> int:
@@ -196,15 +196,15 @@ def test_keyboard_only_curate_then_export_preview_confirm_and_replace(studio_url
         assert page.locator("#export-confirm-title").inner_text() == "Export these files?"
         target = f"strings/boxolin/arena/workbench/{design_id}/{rev_id}"
         summary = page.locator(".export-confirm p[role=status]").inner_text()
-        assert f"5 files to {target}/" in summary and "does not exist yet" in summary
+        assert f"6 files to {target}/" in summary and "does not exist yet" in summary
         assert page.locator(".export-confirm .export-paths li code").all_inner_texts() == [f"{target}/{name}" for name in EXPORT_NAMES]
         assert not (repo / "arena").exists()
         _tab_to(page, "() => document.activeElement?.dataset?.action === 'confirm-export'")
         page.keyboard.press("Enter")
         page.wait_for_function("() => document.activeElement?.classList.contains('export-result')")
         result = page.locator(".export-result").inner_text()
-        assert f"Wrote 5 files to {target}/" in result and "Commit it in the instrument repo when you're ready." in result
-        assert page.locator(".export-result .export-paths li").count() == 5
+        assert f"Wrote 6 files to {target}/" in result and "Commit it in the instrument repo when you're ready." in result
+        assert page.locator(".export-result .export-paths li").count() == 6
         dest = repo / "arena" / "workbench" / design_id / rev_id
         assert sorted(p.name for p in dest.iterdir()) == sorted(EXPORT_NAMES)
         assert (dest / "boxolin-workbench-r1.scad").read_text() == CUBE
@@ -222,7 +222,7 @@ def test_keyboard_only_curate_then_export_preview_confirm_and_replace(studio_url
         page.wait_for_function("() => document.activeElement?.id === 'export-confirm-title'")
         assert page.locator("#export-confirm-title").inner_text() == "Replace the existing export?"
         assert "All of them already exist" in page.locator(".export-confirm p[role=status]").inner_text()
-        assert page.locator(".export-confirm .export-paths .gate").count() == 5
+        assert page.locator(".export-confirm .export-paths .gate").count() == 6
         _tab_to(page, "() => document.activeElement?.dataset?.action === 'cancel-export'")
         page.keyboard.press("Enter")
         page.locator(".export-confirm").wait_for(state="detached")
@@ -233,7 +233,7 @@ def test_keyboard_only_curate_then_export_preview_confirm_and_replace(studio_url
         _tab_to(page, "() => document.activeElement?.dataset?.action === 'confirm-replace'")
         page.keyboard.press("Enter")
         page.wait_for_function("() => document.activeElement?.classList.contains('export-result')")
-        assert "replacing 5" in page.locator(".export-result").inner_text()
+        assert "replacing 6" in page.locator(".export-result").inner_text()
         assert "NOT a measured master" in (dest / "README.md").read_text()
         assert sorted(p.name for p in dest.iterdir()) == sorted(EXPORT_NAMES)
 

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from makerbench.entrant_sandbox import SandboxUnavailable
@@ -216,6 +216,16 @@ def register_workbench_routes(
             return workbench.parameters(design_id, rev_id)
         except Exception as exc:  # noqa: BLE001
             raise _http(exc)
+
+    @app.get("/api/workbench/designs/{design_id}/{kind}/{item_id}/dimensions")
+    def get_dimensions(design_id: str, kind: str, item_id: str):
+        if kind not in ("revisions", "drafts"):
+            raise HTTPException(status_code=404, detail="unknown path")
+        try:
+            payload = workbench.measure(design_id, kind, item_id)
+        except Exception as exc:  # noqa: BLE001
+            raise _http(exc)
+        return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/workbench/designs/{design_id}/revisions/{rev_id}/artifacts/{name}")
     def get_revision_artifact(design_id: str, rev_id: str, name: str):

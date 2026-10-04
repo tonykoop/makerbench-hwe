@@ -17,6 +17,7 @@ sandboxed compiler already produced.
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -390,4 +391,41 @@ def measure_candidate(
         "ok": not errors,
         "error": "; ".join(errors) or None,
         "measurements": [result.to_dict() for result in results],
+    }
+
+
+def measure_overlay(
+    path: str | Path,
+    *,
+    wall_samples: int = DEFAULT_WALL_SAMPLES,
+    seed: int = DEFAULT_SEED,
+) -> dict[str, Any]:
+    """The gate metrics shown on a 3D viewer (#975): volume, bbox and min wall,
+    plus where the min-wall sample sits when it can be recovered.
+
+    The location reruns the same seeded samples as :func:`min_wall_thickness`
+    and is reported only when it reproduces that value, so the hotspot always
+    marks the wall the number came from. ``min_wall_location`` is ``None``
+    otherwise (failed wall measure, or a mismatch).
+    """
+    try:
+        mesh = load_mesh(path)
+    except Exception as exc:  # noqa: BLE001 - any parser/kernel failure is a load error
+        detail = str(exc) or exc.__class__.__name__
+        return {"artifact": Path(path).name, "ok": False, "error": detail,
+                "measurements": [], "min_wall_location": None}
+    wall = min_wall_thickness(mesh, samples=wall_samples, seed=seed)
+    results = [volume(mesh), bbox(mesh), wall]
+    location = None
+    if wall.ok:
+        sample = geometry.min_wall_sample(mesh, wall_samples, seed=seed)
+        if sample and math.isclose(sample["wall_mm"], float(wall.value), rel_tol=1e-9, abs_tol=1e-9):
+            location = {"from": sample["from"], "to": sample["to"]}
+    errors = [f"{result.metric}: {result.error}" for result in results if not result.ok]
+    return {
+        "artifact": Path(path).name,
+        "ok": not errors,
+        "error": "; ".join(errors) or None,
+        "measurements": [result.to_dict() for result in results],
+        "min_wall_location": location,
     }

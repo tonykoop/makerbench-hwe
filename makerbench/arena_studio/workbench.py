@@ -23,6 +23,7 @@ Model revisions (``revise``) are W6 and are refused here.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
@@ -128,6 +129,15 @@ def _pid_is_workbench_job(pid: object, draft_dir: Path) -> bool:
             return False
         return "workbench-job" in cmdline and str(draft_dir) in cmdline
     return True
+
+
+@functools.lru_cache(maxsize=32)
+def _measure_overlay_cached(path: str, mtime_ns: int, size: int) -> dict:
+    """``mtime_ns`` and ``size`` key the cache to one version of the file."""
+
+    from makerbench.measure import measure_overlay
+
+    return measure_overlay(path)
 
 
 class WorkbenchService:
@@ -517,6 +527,19 @@ class WorkbenchService:
         spec = self._spec(design.get("instrument_id", ""))
         envelope = spec.get("envelope_mm") if spec else None
         payload["envelope_mm"] = list(envelope) if isinstance(envelope, (list, tuple)) and len(envelope) == 3 else None
+        return payload
+
+    def measure(self, design_id: str, kind: str, item_id: str) -> dict:
+        """Read-only gate metrics for a draft's or revision's compiled mesh
+        (#975): bbox, volume, min wall and its location. Nothing is written;
+        results are memoised per file version."""
+
+        path = self.store.artifact_path(design_id, kind, item_id, "output.stl")
+        stat = path.stat()
+        payload = dict(_measure_overlay_cached(str(path), stat.st_mtime_ns, stat.st_size))
+        if payload.get("error"):  # G15: no host path on the wire
+            payload["error"] = str(payload["error"]).replace(str(path.parent), "artifacts")
+        payload["units"] = "mm"
         return payload
 
     # --- jobs -------------------------------------------------------------
@@ -967,6 +990,7 @@ def run_job(draft_dir: Path, registry_path: Path, instruments_root: Optional[Pat
     for warning in artifacts.warnings[:50]:
         _log(warning)
     _log(f"compiled: {artifacts.stl_path.name}, {artifacts.png_path.name}")
+    _write_model_glb(artifacts.stl_path, out_dir)
 
     design = store.read_design(design_id)
     try:
@@ -1035,6 +1059,20 @@ def _confinement_from_evidence(provider: str, generator: Any, request: Any) -> s
     sandboxed = ran_sandboxed(generator, model_id=request.model_id, instrument_id=request.instrument_id,
                               seed=request.seed, context_tier=request.context_tier)
     return "verified" if sandboxed else "unconfined"
+
+
+def _write_model_glb(stl_path: Path, out_dir: Path) -> None:
+    """Best effort: the GLB the Studio 3D preview and measure overlay load
+    (#975). A failed conversion only means the preview stays the image."""
+
+    from makerbench.code_cad_export import stl_to_glb
+
+    try:
+        stl_to_glb(stl_path, out_dir / "model.glb")
+        _log("3D model: model.glb")
+    except Exception as exc:  # noqa: BLE001 - never fail the compile for this
+        (out_dir / "model.glb").unlink(missing_ok=True)
+        _log(f"3D model: unavailable ({exc})")
 
 
 def _run_revise(store: WorkbenchStore, draft: dict, draft_dir: Path, registry_path: Path,
