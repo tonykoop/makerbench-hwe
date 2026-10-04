@@ -9,6 +9,8 @@ import {
   checkState,
   fieldOfViewFor,
   leaderIndex,
+  sharedFovLimits,
+  verticalFor,
   toggleSelection,
 } from "../../makerbench/arena_studio/static/app/lib/matchupCompare.js";
 
@@ -83,4 +85,25 @@ test("field of view setting undoes model-viewer's per-model widening", () => {
   assert.equal(fieldOfViewFor(40, NaN, 1), null);
   assert.equal(fieldOfViewFor(40, 1, 0), null);
   assert.equal(fieldOfViewFor(0, 1, 1), null);
+});
+
+test("shared FOV limits: both views can reach the same rendered range (#998 review)", () => {
+  const wide = { idealAspect: 2, aspect: 0.7 }; // widened about 2.9x
+  const plain = { idealAspect: 0.5, aspect: 0.7 }; // not widened
+  assert.ok(Math.abs(verticalFor(90, plain.idealAspect, plain.aspect) - 90) < 1e-9);
+  assert.ok(verticalFor(90, wide.idealAspect, wide.aspect) > 90);
+  const shared = sharedFovLimits([wide, plain]);
+  // The top is the overlap: the plain view caps it, so the wide view's own
+  // maximum setting comes down until it renders the same top.
+  assert.ok(Math.abs(shared.max - 90) < 1e-9);
+  assert.equal(shared.min, 1, "model-viewer applies the minimum unwidened");
+  shared.settings.forEach((own, index) => {
+    const frame = [wide, plain][index];
+    assert.ok(Math.abs(verticalFor(own.max, frame.idealAspect, frame.aspect) - shared.max) < 1e-9);
+    assert.equal(own.min, 1);
+    assert.ok(own.max <= 90 + 1e-9);
+  });
+  assert.ok(shared.settings[0].max < 90, "the wide view's maximum setting is lowered");
+  assert.equal(sharedFovLimits([wide, { idealAspect: NaN, aspect: 1 }]), null);
+  assert.equal(sharedFovLimits([]), null);
 });

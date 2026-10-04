@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { html } from "../html.js";
-import { cameraStrings, camerasMatch, canCompare3d, checkGrid, fieldOfViewFor, leaderIndex } from "../lib/matchupCompare.js";
+import { cameraStrings, camerasMatch, canCompare3d, checkGrid, fieldOfViewFor, leaderIndex, sharedFovLimits } from "../lib/matchupCompare.js";
 import { symbolValue } from "../lib/section.js";
 import { webgl2Available } from "../lib/webgl.js";
 import { DimensionOverlay } from "./dimensionOverlay.js";
@@ -54,9 +54,20 @@ function useSyncedCameras(elements) {
     for (const element of views) {
       element.minCameraOrbit = "auto auto 0m";
       element.maxCameraOrbit = `auto auto ${far}m`;
-      element.minFieldOfView = "1deg";
-      element.maxFieldOfView = "90deg";
     }
+    // Zoom moves the field of view, which each view widens by its own model's
+    // framing, so the views share one rendered-FOV range (#998 review).
+    const limitFov = () => {
+      const frames = views.map((element) => symbolValue(element, "scene"));
+      const shared = sharedFovLimits(frames);
+      views.forEach((element, index) => {
+        const own = shared?.settings[index];
+        element.minFieldOfView = `${own?.min ?? 1}deg`;
+        element.maxFieldOfView = `${own?.max ?? 90}deg`;
+        element.dataset.fovRange = shared ? `${shared.min} ${shared.max}` : "";
+      });
+    };
+    limitFov();
     const align = (follower) => {
       const camera = readCamera(driver);
       if (!camerasMatch(camera, readCamera(follower), 1e-6)) applyCamera(follower, camera);
@@ -79,8 +90,17 @@ function useSyncedCameras(elements) {
         element.removeEventListener("camera-change", changed);
       };
     });
+    // The widening depends on each view's aspect, which a resize changes.
+    const onResize = () => {
+      limitFov();
+      align(views[0] === driver ? views[1] : views[0]);
+    };
+    window.addEventListener("resize", onResize);
     setSynced(true);
-    return () => listeners.forEach((remove) => remove());
+    return () => {
+      window.removeEventListener("resize", onResize);
+      listeners.forEach((remove) => remove());
+    };
   }, [a, b]);
   return synced;
 }

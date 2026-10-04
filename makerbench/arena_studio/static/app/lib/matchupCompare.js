@@ -90,3 +90,29 @@ export function fieldOfViewFor(verticalDeg, idealAspect, aspect) {
   const widen = Math.max(1, idealAspect / aspect);
   return (2 * Math.atan(Math.tan((verticalDeg / 2) * (Math.PI / 180)) / widen) * 180) / Math.PI;
 }
+
+// The rendered vertical FOV for a field-of-view setting (the inverse above).
+export function verticalFor(settingDeg, idealAspect, aspect) {
+  if (![settingDeg, idealAspect, aspect].every(finite) || aspect <= 0 || settingDeg <= 0) return null;
+  const widen = Math.max(1, idealAspect / aspect);
+  return (2 * Math.atan(Math.tan((settingDeg / 2) * (Math.PI / 180)) * widen) * 180) / Math.PI;
+}
+
+// One rendered-FOV range both views can reach (#998 review): the larger of
+// their minimums and the smaller of their maximums. model-viewer widens the
+// maximum by each view's own framing but applies the minimum as given, so
+// each view's maximum setting is derived from the shared range. Zooming one
+// view then never asks the other for a field of view it would clamp (which
+// made them resync forever).
+export function sharedFovLimits(frames, minSettingDeg = 1, maxSettingDeg = 90) {
+  const highs = (frames || []).map((frame) => verticalFor(maxSettingDeg, frame?.idealAspect, frame?.aspect));
+  if (!highs.length || highs.some((high) => high == null) || !finite(minSettingDeg)) return null;
+  const min = minSettingDeg;
+  const max = Math.min(...highs);
+  if (!(max > min)) return null;
+  return {
+    min,
+    max,
+    settings: frames.map((frame) => ({ min, max: fieldOfViewFor(max, frame.idealAspect, frame.aspect) })),
+  };
+}

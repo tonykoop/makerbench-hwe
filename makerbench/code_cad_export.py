@@ -33,28 +33,53 @@ BODY_COLORS: tuple[tuple[int, int, int, int], ...] = (
 )
 
 
-def stl_to_glb_bytes(stl_path: Path) -> bytes:
+class GlbBudgetExceeded(ValueError):
+    """The mesh is too large to convert within the caller's budget."""
+
+
+def stl_to_glb_bytes(
+    stl_path: Path,
+    *,
+    max_faces: Optional[int] = None,
+    max_bodies: Optional[int] = None,
+    max_bytes: Optional[int] = None,
+) -> bytes:
     """An STL as GLB bytes, in memory: one distinctly-colored mesh per body.
-    Coordinates are kept (mm)."""
+    Coordinates are kept (mm).
+
+    Budgets (all optional): more than ``max_faces`` triangles is refused;
+    more than ``max_bodies`` connected components is drawn as one mesh
+    instead of one per body (per-body meshes multiply the output); a result
+    over ``max_bytes`` is refused. Source metadata (the STL header, which can
+    hold a host path) never reaches the GLB.
+    """
 
     import trimesh
 
     mesh = trimesh.load(Path(stl_path).as_posix(), force="mesh")
     if not isinstance(mesh, trimesh.Trimesh) or len(mesh.faces) == 0:
         raise ValueError(f"{Path(stl_path).name}: no triangles to convert")
+    if max_faces is not None and len(mesh.faces) > max_faces:
+        raise GlbBudgetExceeded(f"{len(mesh.faces)} triangles exceeds the {max_faces} budget")
+    mesh.metadata = {}
     try:
         bodies = list(mesh.split(only_watertight=False))
     except Exception:  # noqa: BLE001 - degenerate meshes still get a viewer.
         bodies = []
-    if not bodies:
+    if not bodies or (max_bodies is not None and len(bodies) > max_bodies):
         bodies = [mesh]
     scene = trimesh.Scene()
+    scene.metadata = {}
     for index, body in enumerate(bodies):
+        body.metadata = {}
         body.visual = trimesh.visual.ColorVisuals(
             body, face_colors=BODY_COLORS[index % len(BODY_COLORS)]
         )
         scene.add_geometry(body, node_name=f"body_{index}")
-    return scene.export(file_type="glb")
+    data = scene.export(file_type="glb")
+    if max_bytes is not None and len(data) > max_bytes:
+        raise GlbBudgetExceeded(f"{len(data)} GLB bytes exceeds the {max_bytes} budget")
+    return data
 
 
 def stl_to_glb(stl_path: Path, glb_path: Path) -> Path:

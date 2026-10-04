@@ -186,6 +186,32 @@ def test_both_views_share_one_camera_and_chips_align(with_meshes, theme, width):
         _assert_same(zoomed)
         assert abs(zoomed[0][2] - after_right[0][2]) > 1e-3
 
+        # Zoom far out and back in on either view (#998 review): both stay on
+        # one camera inside a shared FOV range, and once input stops neither
+        # view keeps re-syncing the other.
+        viewers.nth(0).hover()
+        for _ in range(12):
+            page.mouse.wheel(0, 1500)
+        far_out = _settle(page)
+        _assert_same(far_out)
+        low, high = map(float, viewers.nth(0).get_attribute("data-fov-range").split())
+        assert low - 1e-6 <= far_out[0][6] <= high + 1e-6 and low - 1e-6 <= far_out[1][6] <= high + 1e-6, (far_out, low, high)
+        viewers.nth(1).hover()
+        for _ in range(12):
+            page.mouse.wheel(0, -1500)
+        _assert_same(_settle(page))
+        changes = page.evaluate("""() => new Promise(done => {
+          const views = [...document.querySelectorAll('.matchup-compare model-viewer')];
+          let count = 0;
+          const tick = () => { count += 1; };
+          views.forEach(view => view.addEventListener('camera-change', tick));
+          setTimeout(() => { views.forEach(view => view.removeEventListener('camera-change', tick)); done(count); }, 1200);
+        })""")
+        assert changes == 0, f"{changes} camera changes with no input: the views are fighting"
+        viewers.nth(1).hover()
+        page.mouse.wheel(0, 300)
+        _assert_same(_settle(page))
+
         # The #975 dimension overlay reads each entrant's own mesh.
         overlays = compare.locator(".measure-overlay")
         overlays.nth(1).locator(".measure-row").first.wait_for(timeout=30_000)
