@@ -131,17 +131,27 @@ ray inward along its normal (its shape diameter: the thickness of the part under
 thinner than 4 mm (`constraints.string_max_diameter_mm` overrides) are grouped by edge
 adjacency; a group is a string when its oriented bounding box is at least 40 mm long, 15
 times longer than wide and no wider than 1.5 x the maximum diameter. A thin soundboard is thin
-but wide, so it is not a string. A string's length is its bounding-box length, anchor to anchor.
+but wide, so it is not a string. On a unioned mesh a string that runs over a nut and a bridge
+is cut into several free stretches; collinear stretches (parallel within 2 degrees, on one axis
+within a string diameter) are merged, so strings are counted, not stretches.
+
+**Contacts, supports and speaking length.** Each string's whole path, anchor to anchor, is
+sampled (every 4 mm, refined to 0.5 mm wherever the clearance is low), ends included. A point is
+in contact where no free stretch covers it (the string is fused into something) or its clearance
+to the rest of the assembly is under 1 mm. Short contact runs at the ends are anchors; short runs
+(up to max(25 mm, 5 %)) within the outer 35 % at either end are supports (nut, bridge, saddle),
+and with declared intermediate bridges (`bridges`, `bridge_ring*`) a short run anywhere is a
+support. Any other contact is a fault. The speaking length is the longest free interval between
+neighbouring supports or anchors.
 
 | check | compares | tolerance |
 |---|---|---|
-| `string_count` | detected strings vs `string_count` (or an integer `strings`) | exact; up to `sympathetic_string_count` extra |
-| `string_length` | shortest and longest string vs `string_length_range_mm`, `shortest/longest_speaking_length_mm` or `speaking_length_min/max_mm`; the median string vs a single `scale_length_mm` / `speaking_length_mm` | -15 % / +30 % (a modelled string runs past its speaking length to its anchors) |
-| `string_clearance` | 17 points on each string's axis over its middle 80 % vs the rest of the assembly | under 1 mm over more than 20 % of the span fails: the string lies on or in the soundboard or body |
+| `string_count` | detected strings (merged stretches) vs `string_count` (or an integer `strings`) | exact; up to `sympathetic_string_count` extra |
+| `string_length` | **every** string's speaking length vs the declared window: a single `scale_length_mm` / `speaking_length_mm` / `vibrating_string_length_mm`, or a range (`string_length_range_mm`, `shortest/longest_speaking_length_mm`, `speaking_length_min/max_mm`), whose shortest and longest ends must also be met | -15 % / +30 % |
+| `string_clearance` | contact faults on a string's whole path, excluding its supports and anchors | any fault fails: the string touches or lies on the soundboard or body |
 
-Each failure names the string (`string_N`, longest first) or `assembly`. On the measured
-sambuca meshes from the string matchups the check finds all 13 strings with lengths from about
-180 to 550 mm against the declared 200-580 mm range.
+Each failure names the string (`string_N`, longest first) or `assembly`; a `string_length`
+failure lists every string outside the window.
 
 Not modelled: tension, gauge, break angle, frets and action. A string buried entirely inside
 material leaves no surface and shows up as a missing string (`string_count`).

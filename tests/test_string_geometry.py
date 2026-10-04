@@ -100,6 +100,7 @@ def test_wrong_scale_length_is_flagged(good):
     result = sg.advise(_spec(scale_length_mm=600), good)
     (failure,) = result["failures"]
     assert failure["check"] == "string_length" and failure["threshold"] == 600
+    assert failure["which"] == "every string" and len(failure["strings"]) == 6
     assert failure["measured"] == pytest.approx(SCALE, rel=0.05)
     _explained([failure])
 
@@ -109,8 +110,8 @@ def test_harp_style_length_range_checks_both_ends():
     ok = sg.advise(_spec(string_count=4, scale_length_mm=None, string_length_range_mm=[150, 400]), harp)
     assert not [f for f in ok["failures"] if f["check"] == "string_length"], ok["failures"]
     bad = sg.advise(_spec(string_count=4, scale_length_mm=None, string_length_range_mm=[250, 400]), harp)
-    (failure,) = [f for f in bad["failures"] if f["check"] == "string_length"]
-    assert failure["which"] == "shortest string" and failure["threshold"] == 250
+    (failure,) = [f for f in bad["failures"] if f.get("which") == "shortest string"]
+    assert failure["threshold"] == 250
 
 
 def test_string_lying_in_the_soundboard_is_flagged():
@@ -126,8 +127,97 @@ def test_string_resting_on_the_top_has_no_clearance():
     low = _instrument(6, string_height=0.9)  # 0.3 mm above the top
     result = sg.advise(_spec(), low)
     clearance = [f for f in result["failures"] if f["check"] == "string_clearance"]
-    assert clearance and all(f["body_id"].startswith("string_") for f in clearance)
-    assert all(f["measured"] > sg.MAX_LOW_CLEARANCE_FRACTION for f in clearance)
+    assert len(clearance) == 6 and all(f["body_id"].startswith("string_") for f in clearance)
+    assert all(f["measured"] < sg.MIN_CLEARANCE_MM for f in clearance)
+    _explained(clearance)
+
+
+def _with(mesh, *blocks):
+    return trimesh.boolean.union([mesh, *blocks], engine="manifold")
+
+
+def _block(y0, y1, top):
+    """A block on the soundbox top across every string, from y0 to y1, up to ``top``."""
+    block = trimesh.creation.box(extents=[70, y1 - y0, top - BOX_TOP + 1])
+    block.apply_translation([0, (y0 + y1) / 2, BOX_TOP - 1 + (top - BOX_TOP + 1) / 2])
+    return block
+
+
+def test_strings_running_past_the_nut_and_bridge_are_counted_once():
+    # each string is cut into three stretches by the nut and the bridge: count strings, not stretches
+    parts = [_instrument(0)]
+    for x in np.linspace(-25, 25, 6):
+        parts.append(_string(x, BOX_TOP + 8, BOX_TOP + 8, length=SCALE + 120, y0=-SCALE / 2 - 60))
+    mesh = trimesh.boolean.union(parts, engine="manifold")
+    result = sg.advise(_spec(), mesh)
+    assert result["measured"]["segments"] == 18 and result["detected"] == 6
+    assert result["status"] == "consistent", result["failures"]
+    for s in result["strings"]:
+        assert s["segments"] == 3
+        assert s["speaking_length_mm"] == pytest.approx(SCALE - 6, abs=2.0)  # between the nut and bridge faces
+        assert [k["kind"] for k in s["supports"] if k["kind"] != "anchor"] == ["support", "support"]
+
+
+def test_one_short_string_among_full_length_ones_is_flagged():
+    # a 199 mm string among 394 mm strings: the median passes a 400 mm scale, this must not
+    parts = [_instrument(5)]
+    stub_bridge = trimesh.creation.box(extents=[6, 6, 10])
+    stub_bridge.apply_translation([30, 0, BOX_TOP + 5])
+    parts += [stub_bridge, _string(30, BOX_TOP + 8, BOX_TOP + 8, length=203, y0=-2)]
+    result = sg.advise(_spec(), trimesh.boolean.union(parts, engine="manifold"))
+    (failure,) = [f for f in result["failures"] if f["check"] == "string_length"]
+    assert failure["which"] == "every string" and len(failure["strings"]) == 1
+    assert failure["measured"] == pytest.approx(194.0, abs=3.0)  # stub bridge face to nut face
+    _explained([failure])
+
+
+def test_protrusion_touching_every_string_mid_span_is_flagged():
+    # a ridge on the top that reaches the strings in the middle (fused: 0 mm clearance)
+    result = sg.advise(_spec(), _with(_instrument(), _block(-5, 5, BOX_TOP + 8)))
+    assert result["detected"] == 6
+    clearance = [f for f in result["failures"] if f["check"] == "string_clearance"]
+    assert len(clearance) == 6
+    for f in clearance:
+        assert f["measured"] <= 0.0 and f["contacts"][0]["from"] == pytest.approx(0.5, abs=0.03)
+    _explained(clearance)
+
+
+def test_low_clearance_without_contact_is_flagged():
+    # the ridge stops 0.5 mm under the strings' surface: not fused, still too close
+    result = sg.advise(_spec(), _with(_instrument(), _block(-5, 5, BOX_TOP + 8 - 0.6 - 0.5)))
+    clearance = [f for f in result["failures"] if f["check"] == "string_clearance"]
+    assert len(clearance) == 6 and all(0.3 < f["measured"] < 0.7 for f in clearance)
+
+
+def test_string_lying_on_the_body_near_its_end_is_flagged():
+    # a 60 mm stretch next to the bridge where the strings lie on a raised deck: too long for a support
+    result = sg.advise(_spec(), _with(_instrument(), _block(-190, -130, BOX_TOP + 8)))
+    clearance = [f for f in result["failures"] if f["check"] == "string_clearance"]
+    assert len(clearance) == 6
+    for f in clearance:
+        (contact,) = f["contacts"]
+        assert contact["length_mm"] == pytest.approx(62.0, abs=3.0)  # the deck plus the fused flanks
+        assert min(contact["from"], 1.0 - contact["to"]) < 0.05  # next to the bridge end, either direction
+
+
+def test_declared_intermediate_bridges_are_supports():
+    mesh = _with(_instrument(), _block(-3, 3, BOX_TOP + 8))  # a 6 mm bridge mid-span under every string
+    plain = sg.advise(_spec(), mesh)
+    assert {f["check"] for f in plain["failures"]} >= {"string_clearance"}
+    zheng = sg.advise(_spec(bridges="moveable inverted-V bridges", scale_length_mm=200), mesh)
+    assert zheng["declared"]["intermediate_bridges"] is True
+    assert not [f for f in zheng["failures"] if f["check"] == "string_clearance"], zheng["failures"]
+    assert all(s["speaking_length_mm"] == pytest.approx(SCALE / 2 - 6, abs=3.0) for s in zheng["strings"])
+
+
+def test_separate_string_bodies_resting_on_the_top_are_flagged():
+    # not unioned: each string is its own body lying 0.2 mm above the top for its whole length
+    box = trimesh.creation.box(extents=[80, SCALE + 60, BOX_TOP])
+    box.apply_translation([0, 0, BOX_TOP / 2])
+    strings = [_string(x, BOX_TOP + 0.8, BOX_TOP + 0.8) for x in np.linspace(-25, 25, 6)]
+    result = sg.advise(_spec(), trimesh.util.concatenate([box, *strings]))
+    assert result["detected"] == 6
+    assert len([f for f in result["failures"] if f["check"] == "string_clearance"]) == 6
 
 
 def test_thin_soundboard_is_not_a_string():
