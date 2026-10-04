@@ -42,6 +42,12 @@ strings" source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/s
 | Failed gate | `min_wall`: 0.0149 mm measured vs 1.0 mm floor |
 | Status | generated model, **not** a measured master (`arena/cadam-fable-image-pilot/README.md`) |
 
+<!-- claim: 0.833 at: "| Objective result | 0.833 =" source: docs/showcase/sambuca/assets/gate.json#/objective_pass_rate -->
+<!-- claim: 5 at: "= 5 of 6 sub-gates" source: docs/showcase/sambuca/assets/gate.json#/sub_scores/*|count=1.0 -->
+<!-- claim: 6 at: "5 of 6 sub-gates" source: docs/showcase/sambuca/assets/gate.json#/sub_scores/*|len -->
+<!-- claim: 0.0149 at: "`min_wall`: 0.0149 mm measured" source: docs/showcase/sambuca/assets/gate.json#/metrics/min_wall_mm -->
+<!-- claim: 1.0 at: "measured vs 1.0 mm floor" source: docs/showcase/sambuca/assets/gate.json#/metrics/min_wall_floor_mm -->
+
 ## 1. The story, with sources
 
 **Task.** The registry defines the `sambuca` task: a multi-part boat-harp

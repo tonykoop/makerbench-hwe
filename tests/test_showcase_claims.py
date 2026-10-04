@@ -463,12 +463,15 @@ def test_same_marker_thematic_break_ends_the_quote(repo, capsys, rule):
         ("docs/showcase/kora/CASE_STUDY.md", "0.833 (`min_wall`) | 0.944", "1.000 (`min_wall`) | 0.944"),
         ("docs/showcase/post3/matchup-backend.md", "| CadQuery | 0.778 |", "| CadQuery | 0.889 |"),
         ("docs/showcase/strings/matchup-model.md", "| 0.833 | 0.778 |", "| 0.833 | 0.878 |"),
+        ("docs/showcase/sambuca/CASE_STUDY.md", "= 5 of 6 sub-gates", "= 6 of 6 sub-gates"),
+        ("docs/showcase/sambuca/CASE_STUDY.md", "`min_wall`: 0.0149 mm measured", "`min_wall`: 99.0 mm measured"),
     ],
 )
 def test_mutating_a_cited_result_fails_strict(tmp_path, capsys, doc, before, after):
     text = (REPO_ROOT / doc).read_text(encoding="utf-8")
-    # The visible table cell comes first; later copies sit inside citation comments.
-    assert text.index(before) < text.index("<!-- claim:")
+    # The first occurrence must be visible text, not a copy inside a citation comment.
+    first = text.index(before)
+    assert text.rfind("<!--", 0, first) <= text.rfind("-->", 0, first)
     assert claims.main([str(REPO_ROOT / doc), "--root", str(REPO_ROOT), "--strict"]) == 0
     mutated = tmp_path / "mutated.md"
     mutated.write_text(text.replace(before, after, 1), encoding="utf-8")
