@@ -64,8 +64,11 @@ jobs:
       - name: Check generated site data
         run: python site/check_data_drift.py
 
+      - name: Check showcase claims against their sources
+        run: python scripts/check_showcase_claims.py --strict
+
       - name: Lint
-        run: ruff check makerbench tasks site/check_data_drift.py
+        run: ruff check makerbench tasks site/check_data_drift.py scripts/check_showcase_claims.py tests/test_showcase_claims.py
 
       - name: Unit tests
         env:
