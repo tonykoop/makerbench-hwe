@@ -78,6 +78,17 @@ Bore continuity and taper (#980)
 Every advisory failure carries a #903-shaped explanation (``check``,
 ``measured``, ``threshold``, ``unit``, ``requires``, ``body_id``, ``detail``)
 under ``failures``. None of it changes a sub-score or a pass rate.
+
+Known limitations of the bore checks (#994 review, advisory)
+    * The end-lip guard compares the bore just inside an end with the trend of the two
+      outermost stations. On a strongly nonlinear taper that trend can fall to the lip's own
+      radius, so a lip there is taken for the taper and the end probes pass through it.
+    * An asymmetric ridge that sits exactly on a station, or in the last millimetre of an end,
+      shifts that section's fitted centroid and equivalent radius, so the probes move off it.
+      Its radius change is under the step tolerance, so nothing reports it. Between stations
+      the probes catch it.
+    * The step scan samples the bore every ``STEP_SCAN_MM`` (coarser on long bodies), so a
+      feature narrower than the spacing can fall between samples.
 """
 
 from __future__ import annotations
@@ -705,24 +716,79 @@ def _declares_cylindrical(spec: Mapping[str, Any]) -> bool:
     return "cylindrical" in text or _positive(constraints.get("bore_id_mm")) is not None
 
 
+#: The step scan (#994 review round 3): bore cross-sections every ``STEP_SCAN_MM`` (coarser on
+#: long bodies, at most ``MAX_STEP_SCAN`` sections) from ``END_FIT_INSET_MM`` inside one end to
+#: the same inside the other, so steps in the end intervals and pairs of steps whose changes
+#: cancel between two stations are both seen. Features narrower than the scan spacing can
+#: still fall between samples.
+STEP_SCAN_MM = 2.0
+MAX_STEP_SCAN = 400
+
+
+def _ring_radius(path) -> float | None:
+    """Equivalent radius of the largest interior loop of a planar section, or ``None``."""
+    from shapely.geometry import Polygon
+
+    if path is None:
+        return None
+    rings = [Polygon(ring) for polygon in path.polygons_full for ring in polygon.interiors]
+    if not rings:
+        return None
+    return math.sqrt(max(abs(ring.area) for ring in rings) / math.pi)
+
+
+def _scan_radii(mesh: trimesh.Trimesh, axis: int, lo_axis: float, length: float) -> list[tuple[float, float]]:
+    """``(z, bore radius)`` along the axis at the step-scan positions where the section has a bore."""
+    if length <= 2 * END_FIT_INSET_MM:
+        return []
+    span = length - 2 * END_FIT_INSET_MM
+    step = max(STEP_SCAN_MM, span / MAX_STEP_SCAN)
+    heights = np.unique(np.r_[np.arange(END_FIT_INSET_MM, length - END_FIT_INSET_MM, step),
+                              length - END_FIT_INSET_MM])
+    origin = (mesh.bounds[0] + mesh.bounds[1]) / 2.0
+    origin[axis] = lo_axis
+    normal = np.zeros(3)
+    normal[axis] = 1.0
+    sections = mesh.section_multiplane(plane_origin=origin, plane_normal=normal, heights=heights)
+    out = []
+    for z, path in zip(heights, sections):
+        radius = _ring_radius(path)
+        if radius is not None:
+            out.append((float(z), radius))
+    return out
+
+
 def _abrupt_step(mesh: trimesh.Trimesh, axis: int, lo_axis: float, za: float, ra: float,
-                 zb: float, rb: float, limit: float) -> tuple[float, float] | None:
-    """Where (``(z_from, z_to)`` mm along the axis) a radius change of more than ``limit``
-    happens within ``STEP_RESOLUTION_MM``, found by bisecting ``za..zb`` with extra cross-sections;
+                 zb: float, rb: float, limit: float) -> tuple[float, float, float] | None:
+    """Where (``(z_from, z_to, radius change)``) a radius change of more than ``limit`` happens
+    within ``STEP_RESOLUTION_MM``, found by bisecting ``za..zb`` with extra cross-sections;
     ``None`` when the change is spread out (a smooth taper or flare). A span that cannot be
-    resolved (no bore loop near its middle) is reported as abrupt, the conservative answer."""
+    resolved (no bore loop near its middle) is reported as abrupt, the conservative answer.
+
+    #994 review round 3: when the change is split by the bisection point, neither half may
+    exceed ``limit`` on its own. The ``STEP_RESOLUTION_MM`` window across that point is then
+    compared as a whole, so a sub-millimetre step that a section lands in is not lost."""
     if abs(rb - ra) <= limit:
         return None
     if zb - za <= STEP_RESOLUTION_MM:
-        return za, zb
+        return za, zb, rb - ra
     span = zb - za
     for zm in (za + span / 2, za + span / 4, za + 3 * span / 4):
         ring = _bore_ring(mesh, axis, lo_axis + zm)
-        if ring is not None:
-            rm = ring[1]
-            return (_abrupt_step(mesh, axis, lo_axis, za, ra, zm, rm, limit)
-                    or _abrupt_step(mesh, axis, lo_axis, zm, rm, zb, rb, limit))
-    return za, zb
+        if ring is None:
+            continue
+        rm = ring[1]
+        found = (_abrupt_step(mesh, axis, lo_axis, za, ra, zm, rm, limit)
+                 or _abrupt_step(mesh, axis, lo_axis, zm, rm, zb, rb, limit))
+        if found:
+            return found
+        half = STEP_RESOLUTION_MM / 2.0
+        left = _bore_ring(mesh, axis, lo_axis + max(za, zm - half))
+        right = _bore_ring(mesh, axis, lo_axis + min(zb, zm + half))
+        if left is not None and right is not None and abs(right[1] - left[1]) > limit:
+            return max(za, zm - half), min(zb, zm + half), right[1] - left[1]
+        return None
+    return za, zb, rb - ra
 
 
 def bore_report(spec: Mapping[str, Any], mesh: trimesh.Trimesh, *, body_id: str) -> dict[str, Any]:
@@ -766,25 +832,28 @@ def bore_report(spec: Mapping[str, Any], mesh: trimesh.Trimesh, *, body_id: str)
                    + ("the bore is obstructed" if blockage["kind"] == "obstruction" else
                       "a declared open end is closed")))
     step_limit = max(STEP_MIN_MM, STEP_REL * r_med)
-    bores = [s for s in profile["stations"] if s["kind"] == "bore"]
     axis, lo_axis, length = int(profile["axis_index"]), float(profile["bounds"][0][profile["axis_index"]]), \
         profile["length_mm"]
-    for prev, cur in zip(bores, bores[1:]):
-        step = abs(cur["radius_mm"] - prev["radius_mm"])
-        if step > step_limit:
-            # #994 review: a smooth flare changes the radius across the whole span; a step
-            # does it within STEP_RESOLUTION_MM. Only the latter breaks continuity.
-            abrupt = _abrupt_step(mesh, axis, lo_axis, prev["fraction"] * length, prev["radius_mm"],
-                                  cur["fraction"] * length, cur["radius_mm"], step_limit)
-            if abrupt is None:
-                continue
-            failures.append(_explain(
-                "bore_continuity", measured=round(step, 3), threshold=round(step_limit, 3), unit="mm",
-                requires="measured <= threshold (radius step between neighbouring bore stations)",
-                body_id=body_id, station=cur["fraction"],
-                detail=f"bore radius jumps {prev['radius_mm']:g} -> {cur['radius_mm']:g} mm between "
-                       f"{prev['fraction']:.0%} and {cur['fraction']:.0%} of the length, abruptly "
-                       f"(within {abrupt[0]:.1f}-{abrupt[1]:.1f} mm along the axis)"))
+    # #994 review: steps are found on a fine scan of the whole bore, both end intervals
+    # included, by the largest change between neighbouring samples (not the net change between
+    # stations, which two opposite steps cancel). A change over the tolerance is a step only if
+    # it is still over it within STEP_RESOLUTION_MM; a smooth flare spreads it out.
+    scan = _scan_radii(mesh, axis, lo_axis, length)
+    last_to = -math.inf
+    for (za, ra), (zb, rb) in zip(scan, scan[1:]):
+        if abs(rb - ra) <= step_limit:
+            continue
+        abrupt = _abrupt_step(mesh, axis, lo_axis, za, ra, zb, rb, step_limit)
+        if abrupt is None or abrupt[0] < last_to:
+            continue
+        last_to = abrupt[1]
+        fraction = round(((abrupt[0] + abrupt[1]) / 2.0) / length, 3)
+        failures.append(_explain(
+            "bore_continuity", measured=round(abs(rb - ra), 3), threshold=round(step_limit, 3), unit="mm",
+            requires="measured <= threshold (radius step along the bore)",
+            body_id=body_id, station=fraction,
+            detail=f"bore radius jumps {ra:.3g} -> {rb:.3g} mm between {za:.1f} and {zb:.1f} mm along "
+                   f"the axis, abruptly (within {abrupt[0]:.1f}-{abrupt[1]:.1f} mm)"))
     taper_limit = max(TAPER_MIN_MM, TAPER_REL * r_med)
     change = profile["taper_change_mm"]
     cylindrical = _declares_cylindrical(spec)

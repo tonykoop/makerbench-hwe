@@ -342,9 +342,12 @@ def test_annular_lip_narrowing_the_bore_between_stations_is_an_obstruction():
     result = acoustic.advise(KENA_LIKE, _lipped(-10.0))
     assert {s["kind"] for s in result["bore"]["stations"]} == {"bore"}
     assert result["status"] == "inconsistent"
-    (failure,) = [f for f in result["failures"] if f["check"] == "bore_continuity"]
+    (failure,) = [f for f in result["failures"] if f["check"] == "bore_continuity" and f["unit"] == "probe"]
     _explained([failure])
     assert failure["measured"] == "obstruction" and "45% and 50%" in failure["detail"]
+    # the step scan (#994 review round 3) also sees the lip's abrupt narrowing and widening
+    steps = [f for f in result["failures"] if f["check"] == "bore_continuity" and f["unit"] == "mm"]
+    assert len(steps) == 2 and all(f["measured"] == pytest.approx(3.0, abs=0.2) for f in steps)
     (path,) = result["bore"]["through_path"]
     assert path["probes_hit"] == 8 and path["probes"] == 13  # exactly the outer ring
     assert path["at_mm"] == pytest.approx(189.0, abs=0.5)
@@ -492,3 +495,61 @@ def test_advisory_report_is_per_tier_and_separate_from_the_scoreline():
     # the scoreline itself never carries advisory rows
     rows = runner.collect_objective_scoreline(log)
     assert all("advisory" not in row and "status_counts" not in row for row in rows)
+
+
+# --- #994 review round 3: steps the station-to-station comparison missed ---------------------
+
+def _steps(report):
+    return [f for f in report["failures"] if f["check"] == "bore_continuity" and f["unit"] == "mm"]
+
+
+def test_sub_millimetre_step_split_by_the_bisection_is_still_a_step():
+    """Radius 9 -> 11 within 0.4 mm at 350 mm: a bisection section inside the step split the
+    2 mm change into two sub-tolerance halves, and both were dropped."""
+    report = acoustic.bore_report(CONICAL_OPEN, _revolved([0, 349.8, 350.2, 400], [9, 9, 11, 11]), body_id="b")
+    (step,) = _steps(report)
+    assert step["measured"] == pytest.approx(2.0, abs=0.05) and step["measured"] > step["threshold"]
+    _explained([step])
+
+
+@pytest.mark.parametrize("zs, rs", [([0, 2, 2, 400], [11, 11, 9, 9]), ([0, 398, 398, 400], [9, 9, 11, 11])],
+                         ids=["lower-end", "upper-end"])
+def test_steps_in_the_end_intervals_are_checked(zs, rs):
+    """No station lies within 20 mm of either end; the step scan covers the end intervals."""
+    (step,) = _steps(acoustic.bore_report(CONICAL_OPEN, _revolved(zs, rs), body_id="b"))
+    assert step["measured"] == pytest.approx(2.0, abs=0.05)
+
+
+def test_two_steps_that_cancel_between_stations_are_both_found():
+    """9 -> 15 mm at 342 mm and back to 9 at 348 mm: the neighbouring stations agree, so the net
+    station-to-station change is zero, but the bore has two abrupt steps."""
+    zs, rs = [0, 342, 342, 348, 348, 400], [9, 9, 15, 15, 9, 9]
+    steps = _steps(acoustic.bore_report(CONICAL_OPEN, _revolved(zs, rs), body_id="b"))
+    assert len(steps) == 2 and all(f["measured"] == pytest.approx(6.0, abs=0.05) for f in steps)
+
+
+@pytest.mark.xfail(strict=True, reason="known limitation (#994 review): the end-lip trend guard "
+                   "extrapolates the two outermost stations, which a strongly nonlinear taper can "
+                   "bend down to the lip's own radius")
+def test_known_limitation_lip_at_the_end_of_a_strongly_nonlinear_taper():
+    zs, rs = [0, 1, 1, 20, 40, 400], [4, 4, 6, 6, 8, 15]
+    report = acoustic.bore_report(CONICAL_OPEN, _revolved(zs, rs), body_id="b")
+    assert report["status"] == "inconsistent"
+
+
+def _ridged(z0, z1):
+    """An 18 mm bore with a fused asymmetric 1 mm ridge across one side (x 6..10)."""
+    ridge = trimesh.creation.box(bounds=[[6, -10, z0], [10, 10, z1]])
+    return trimesh.boolean.union([_tube(), ridge], engine="manifold")
+
+
+def test_asymmetric_ridge_between_stations_is_caught():
+    assert acoustic.bore_report(KENA_LIKE, _ridged(-10.5, -9.5), body_id="b")["status"] == "inconsistent"
+
+
+@pytest.mark.xfail(strict=True, reason="known limitation (#994 review): on a station or in the last "
+                   "millimetre the fitted equivalent radius and shifted centroid move the probes off "
+                   "an asymmetric ridge, and its radius change is under the step tolerance")
+@pytest.mark.parametrize("z0, z1", [(-0.5, 0.5), (199.0, 200.0)], ids=["on-station", "last-mm"])
+def test_known_limitation_asymmetric_ridge_on_a_station_or_at_the_end(z0, z1):
+    assert acoustic.bore_report(KENA_LIKE, _ridged(z0, z1), body_id="b")["status"] == "inconsistent"

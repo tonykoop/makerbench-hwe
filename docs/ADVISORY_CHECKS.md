@@ -71,10 +71,15 @@ axis are classified:
 | `blocked` | solid section, no air path | `bore_continuity` |
 | `missing` | no material: the body is broken | `bore_continuity` |
 
-A radius change larger than `max(1 mm, 20 % of r)` between neighbouring bore stations is a
-`bore_continuity` failure when it is a step. Extra cross-sections bisect the span until the change
-is either within the tolerance (a smooth taper or bell flare, not a failure) or still larger than
-it over 1 mm of axis or less (an abrupt step). The taper is the least-squares slope of radius along the axis; a
+Steps are found on a scan of bore cross-sections every 2 mm (at most 400 sections). The scan runs
+from 0.5 mm inside one end to 0.5 mm inside the other, so the end intervals are covered.
+A change larger than `max(1 mm, 20 % of r)` between neighbouring samples is bisected with
+extra cross-sections. It is a `bore_continuity` failure only if it is still larger than that
+within 1 mm of axis, so a smooth taper or bell flare is not a step. A 1 mm window across each
+bisection point is compared as a whole, so a sub-millimetre step that a section lands in is
+kept. Comparing neighbouring samples, not stations, also catches two opposite steps that
+cancel between stations.
+The taper is the least-squares slope of radius along the axis; a
 bore declared cylindrical (the word in `bore` or the brief, or a declared `bore_id_mm`) may
 change by at most `max(0.5 mm, 5 % of r)` over its length (`bore_taper`). A bore described as
 conical or tapered reports its slope without a verdict. A declared `bore_id_mm` must match the
@@ -91,6 +96,14 @@ the trend of the two outermost stations is a lip, so the probes keep the trend r
 it. A capped end has no bore there, so the probes keep the station radius and hit the cap. Any material on a probe is a `bore_continuity` failure: `obstruction` (inside
 the bore, with the station interval) or `closed_end` (a declared open end is closed).
 The probes are in `bore.through_path`.
+
+Known limitations (advisory; tests mark them `xfail`):
+- **Lip on a nonlinear taper:** the end-lip guard extrapolates the two outermost stations. A
+  strongly nonlinear taper can bring that trend down to a lip's own radius, so the lip passes.
+- **Ridge on a station or at an end:** an asymmetric ridge exactly on a station, or in the last
+  millimetre, shifts the fitted centroid and radius there, so the probes miss it. Its radius
+  change is under the step tolerance.
+- **Narrow features:** a feature narrower than the 2 mm scan spacing can fall between samples.
 
 **Assemblies (bore body).** For an assembly, the largest body fixes the bore axis and
 footprint. Every body that overlaps that footprint and is itself a tube piece (an interior
