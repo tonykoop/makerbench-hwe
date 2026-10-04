@@ -304,7 +304,9 @@ def test_dense_assembly_peak_memory_stays_under_a_gigabyte(tmp_path):
         "mesh = trimesh.util.concatenate(parts)\n"
         "assert len(mesh.faces) <= af.MAX_FACES, len(mesh.faces)\n"
         "r = af.advise({'assembly': True}, mesh)\n"
-        "print(r['status'], resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024)\n")
+        "print(r['status'], int([l for l in open('/proc/self/status') if l.startswith('VmHWM')][0].split()[1]) // 1024 if __import__('os').path.exists('/proc/self/status') else resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024)\n")
+    # VmHWM, not ru_maxrss: on Linux ru_maxrss survives execve, so a child forked from a pytest
+    # process already holding gigabytes reports the parent's peak (seen at 2.7 GB in a full run).
     env = {**os.environ, "PYTHONPATH": os.pathsep.join([root, os.environ.get("PYTHONPATH", "")])}
     out = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=600,
                          cwd=root, env=env, check=True).stdout.split()

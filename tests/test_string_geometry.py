@@ -482,7 +482,9 @@ def test_strings_advisory_peak_memory_on_a_dense_instrument(tmp_path):
         "    mesh = mesh.subdivide()\n"
         "assert len(mesh.faces) <= sg.MAX_FACES\n"
         "r = sg.advise(_spec(string_count=14), mesh)\n"
-        "print(len(mesh.faces), r['status'], r['detected'], resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024)\n")
+        "print(len(mesh.faces), r['status'], r['detected'], int([l for l in open('/proc/self/status') if l.startswith('VmHWM')][0].split()[1]) // 1024 if __import__('os').path.exists('/proc/self/status') else resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024)\n")
+    # VmHWM, not ru_maxrss: on Linux ru_maxrss survives execve, so a child forked from a pytest
+    # process already holding gigabytes reports the parent's peak (seen at 2.7 GB in a full run).
     env = {**os.environ, "PYTHONPATH": os.pathsep.join([root, os.environ.get("PYTHONPATH", "")])}
     out = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=900,
                          cwd=root, env=env, check=True).stdout.split()
