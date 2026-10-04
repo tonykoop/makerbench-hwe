@@ -1,2 +1,6 @@
+# SHA-256 fingerprints of private terms that must never appear in public text.
+# Hashes only: never add plaintext here. Generate an entry with
+#   printf '%s' 'Term' | python scripts/check_public_terms.py --fingerprint
+# (lowercased, alphanumeric tokens joined with "-"). Checked by CI.
 15438f8917b4b4916965b37350712315e9f2ccbe66b7e9fb2e306f3d504a4326
 35e58353766e425c5e266cc4a4dbbf890346986acd91e830b12498611a39e090
