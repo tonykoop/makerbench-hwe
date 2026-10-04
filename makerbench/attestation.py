@@ -134,17 +134,46 @@ def format_attestation_comment(attestation: dict[str, Any]) -> str:
 
 
 def fetch_pr_comments(repo: str, pr: int) -> list[dict[str, Any]]:
+    """Fetch every issue comment on ``pr`` via the gh CLI.
+
+    ``gh api --slurp`` only exists in gh >= 2.48, so page with
+    ``--paginate --jq '.[]'`` instead: gh emits one JSON value per comment
+    (JSON Lines), which works on older packaged gh releases too (#987).
+    """
     proc = subprocess.run(
-        ["gh", "api", f"repos/{repo}/issues/{pr}/comments", "--paginate", "--slurp"],
+        ["gh", "api", f"repos/{repo}/issues/{pr}/comments", "--paginate", "--jq", ".[]"],
         check=True,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    payload = json.loads(proc.stdout or "[]")
-    if payload and isinstance(payload[0], list):
-        return [comment for page in payload for comment in page]
-    return payload
+    return _flatten_comment_pages(_parse_json_stream(proc.stdout or ""))
+
+
+def _parse_json_stream(text: str) -> list[Any]:
+    """Parse concatenated / newline-delimited JSON values."""
+    decoder = json.JSONDecoder()
+    values: list[Any] = []
+    index = 0
+    length = len(text)
+    while True:
+        while index < length and text[index].isspace():
+            index += 1
+        if index >= length:
+            return values
+        value, index = decoder.raw_decode(text, index)
+        values.append(value)
+
+
+def _flatten_comment_pages(values: list[Any]) -> list[dict[str, Any]]:
+    """Flatten page arrays (``--slurp``-style or raw pages) into one comment list."""
+    comments: list[dict[str, Any]] = []
+    for value in values:
+        if isinstance(value, list):
+            comments.extend(_flatten_comment_pages(value))
+        else:
+            comments.append(value)
+    return comments
 
 
 def load_comments(path: Path | str | None, *, repo: str, pr: int) -> list[dict[str, Any]]:
