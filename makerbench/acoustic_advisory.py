@@ -59,7 +59,7 @@ Vessel flutes (#980)
 Bore continuity and taper (#980)
     Pipes (the open-pipe family above) and any spec declaring a bore diameter
     (``constraints.bore_id_mm``, for example the duduk study body, measured on
-    the largest body) get a bore profile on ``BORE_STATIONS`` cross-sections
+    its bore body) get a bore profile on ``BORE_STATIONS`` cross-sections
     from 5 % to 95 % of the axis. Each station is ``bore`` (an interior loop,
     radius from its area), ``side_hole`` (the ring is cut open by a tone hole:
     not a fault), ``blocked`` (a solid section, no air path) or ``missing`` (no
@@ -69,6 +69,11 @@ Bore continuity and taper (#980)
     radius against axial position; a bore declared cylindrical must change by
     at most ``max(TAPER_MIN_MM, TAPER_REL * r)`` over its length, and a declared
     ``bore_id_mm`` must match the median diameter within ``BORE_ID_TOLERANCE``.
+    Probe rays through the bore between stations, and out of both ends unless an end is
+    declared closed or stopped, catch plugs and end caps that fall between stations
+    (``obstruction`` / ``closed_end``). For an assembly, every collinear tube piece is
+    profiled (the "bore body"), axial gaps between pieces fail continuity, and a declared
+    ``body_length_mm`` must match the bore body's extent.
 
 Every advisory failure carries a #903-shaped explanation (``check``,
 ``measured``, ``threshold``, ``unit``, ``requires``, ``body_id``, ``detail``)
@@ -473,20 +478,25 @@ def measure_bore_profile(mesh: trimesh.Trimesh) -> dict[str, Any]:
         origin = (lo + hi) / 2.0
         origin[axis] = lo[axis] + fraction * extents[axis]
         section = mesh.section(plane_origin=origin, plane_normal=normal)
-        polygons = []
+        polygons, to_3d = [], np.eye(4)
         if section is not None:
-            path_2d, _ = section.to_2D()
+            path_2d, to_3d = section.to_2D()
             polygons = list(path_2d.polygons_full)
-        holes = [abs(Polygon(ring).area) for polygon in polygons for ring in polygon.interiors]
+        rings = [Polygon(ring) for polygon in polygons for ring in polygon.interiors]
+        largest = max(rings, key=lambda ring: abs(ring.area)) if rings else None
+        center = None
+        if largest is not None:
+            c = largest.centroid
+            center = (to_3d @ np.array([c.x, c.y, 0.0, 1.0]))[:3]
         raw.append({"fraction": fraction, "z_mm": float(fraction * extents[axis]),
                     "material_mm2": float(sum(p.area for p in polygons)),
-                    "bore_mm2": max(holes) if holes else None})
+                    "bore_mm2": abs(largest.area) if largest is not None else None, "center": center})
     bore = [s for s in raw if s["bore_mm2"]]
     if len(bore) < MIN_BORE_STATIONS:
         return {"ok": False, "error": f"no through bore found ({len(bore)} of {len(BORE_STATIONS)} stations)"}
     ref_bore = float(np.median([s["bore_mm2"] for s in bore]))
     ref_ring = float(np.median([s["material_mm2"] for s in bore]))
-    stations = []
+    stations, centers = [], []
     for s in raw:
         if s["bore_mm2"]:
             kind, radius = "bore", math.sqrt(s["bore_mm2"] / math.pi)
@@ -498,12 +508,118 @@ def measure_bore_profile(mesh: trimesh.Trimesh) -> dict[str, Any]:
             kind, radius = "side_hole", None
         stations.append({"fraction": s["fraction"], "z_mm": round(s["z_mm"], 2), "kind": kind,
                          "radius_mm": None if radius is None else round(radius, 3)})
+        centers.append(s["center"] if kind == "bore" else None)
     zs = np.array([s["z_mm"] for s in stations if s["kind"] == "bore"])
     rs = np.array([s["radius_mm"] for s in stations if s["kind"] == "bore"])
     slope = float(np.polyfit(zs, rs, 1)[0]) if len(zs) >= 2 else 0.0
-    return {"ok": True, "axis": "xyz"[axis], "length_mm": float(extents[axis]), "stations": stations,
+    return {"ok": True, "axis": "xyz"[axis], "axis_index": axis, "bounds": (lo, hi),
+            "centers": centers, "length_mm": float(extents[axis]), "stations": stations,
             "median_radius_mm": float(np.median(rs)), "taper_slope_mm_per_mm": slope,
             "taper_change_mm": slope * float(extents[axis])}
+
+
+PROBE_OFFSETS = ((0.0, 0.0), (0.5, 0.0), (-0.5, 0.0), (0.0, 0.5), (0.0, -0.5))
+GAP_TOLERANCE_MM = 0.5
+BODY_LENGTH_TOLERANCE = 0.1
+_CLOSED_END_RE = re.compile(r"\b(closed|stopped|capped)\b")
+
+
+def _declared_open_ends(spec: Mapping[str, Any]) -> bool:
+    """Whether the bore must be open at both ends: unless the spec declares a closed or
+    stopped end, a pipe bore is taken as open at both ends."""
+    constraints = spec.get("constraints") or {}
+    text = f"{constraints.get('bore') or ''} {constraints.get('acoustic_model') or ''}".lower()
+    return not _CLOSED_END_RE.search(text)
+
+
+def probe_through_path(mesh: trimesh.Trimesh, profile: Mapping[str, Any], *,
+                       open_ends: bool = True) -> list[dict[str, Any]]:
+    """Obstructions on the air path through the bore (#980 review).
+
+    Five probe rays (the bore centre and four points at half the bore radius) run between
+    every pair of neighbouring ``bore`` stations, and, when the ends must be open, from the
+    first and last bore station out past the ends of the body. Any surface hit on a probe
+    means material sits in the air passage between stations (a plug or a membrane that
+    falls between two cross-sections) or closes an end (an end cap). Segments that span a
+    station already classified ``blocked`` or ``missing`` are skipped: that fault is
+    reported at its station.
+    """
+    axis = int(profile["axis_index"])
+    lo, hi = profile["bounds"]
+    stations, centers = profile["stations"], profile["centers"]
+    e_axis = np.zeros(3)
+    e_axis[axis] = 1.0
+    e1 = np.zeros(3)
+    e1[(axis + 1) % 3] = 1.0
+    e2 = np.cross(e_axis, e1)
+    bore_idx = [i for i, st in enumerate(stations) if st["kind"] == "bore" and centers[i] is not None]
+    segments = []  # (label, start_center, start_r, end_center, end_r, (frac_a, frac_b))
+    for a, b in zip(bore_idx, bore_idx[1:]):
+        if any(stations[k]["kind"] in ("blocked", "missing") for k in range(a + 1, b)):
+            continue
+        segments.append(("interior", centers[a], stations[a]["radius_mm"], centers[b],
+                         stations[b]["radius_mm"], (stations[a]["fraction"], stations[b]["fraction"])))
+    if open_ends and bore_idx:
+        first, last = bore_idx[0], bore_idx[-1]
+        if not any(stations[k]["kind"] in ("blocked", "missing") for k in range(0, first)):
+            out = np.array(centers[first], dtype=float)
+            out[axis] = lo[axis] - 1.0
+            segments.append(("end", centers[first], stations[first]["radius_mm"], out,
+                             stations[first]["radius_mm"], (stations[first]["fraction"], 0.0)))
+        if not any(stations[k]["kind"] in ("blocked", "missing") for k in range(last + 1, len(stations))):
+            out = np.array(centers[last], dtype=float)
+            out[axis] = hi[axis] + 1.0
+            segments.append(("end", centers[last], stations[last]["radius_mm"], out,
+                             stations[last]["radius_mm"], (stations[last]["fraction"], 1.0)))
+    if not segments:
+        return []
+    origins, dirs, lengths, owner = [], [], [], []
+    for si, (_, c0, r0, c1, r1, _) in enumerate(segments):
+        for u, v in PROBE_OFFSETS:
+            start = np.asarray(c0, float) + r0 * (u * e1 + v * e2)
+            end = np.asarray(c1, float) + r1 * (u * e1 + v * e2)
+            vec = end - start
+            length = float(np.linalg.norm(vec))
+            if length <= 1e-9:
+                continue
+            origins.append(start)
+            dirs.append(vec / length)
+            lengths.append(length)
+            owner.append(si)
+    locations, index_ray, _ = mesh.ray.intersects_location(np.array(origins), np.array(dirs),
+                                                            multiple_hits=True)
+    hits: dict[int, list[float]] = {}
+    rays_hit: dict[int, set[int]] = {}
+    for loc, ri in zip(locations, index_ray):
+        d = float(np.dot(loc - origins[ri], dirs[ri]))
+        if 1e-6 < d < lengths[ri] - 1e-6:
+            hits.setdefault(owner[ri], []).append(float(loc[axis] - lo[axis]))
+            rays_hit.setdefault(owner[ri], set()).add(int(ri))
+    found = []
+    for si, positions in sorted(hits.items()):
+        kind, _, _, _, _, (fa, fb) = segments[si]
+        found.append({"kind": "closed_end" if kind == "end" else "obstruction",
+                      "between": [fa, fb], "at_mm": round(min(positions) if fb >= fa else max(positions), 2),
+                      "probes_hit": len(rays_hit[si]), "probes": len(PROBE_OFFSETS)})
+    return found
+
+
+def axial_gaps(mesh: trimesh.Trimesh, axis: int) -> list[dict[str, float]]:
+    """Axial gaps between the bodies of a pipe (#980 review): spans along the axis that no
+    body covers, between the first and last body. A pipe split into separated pieces has
+    a gap; pieces that touch or overlap (a joint) do not."""
+    bodies = [b for b in mesh.split(only_watertight=False) if len(b.faces)]
+    if len(bodies) < 2:
+        return []
+    spans = sorted((float(b.bounds[0][axis]), float(b.bounds[1][axis])) for b in bodies)
+    lo = float(mesh.bounds[0][axis])
+    gaps, reach = [], spans[0][1]
+    for start, end in spans[1:]:
+        if start - reach > GAP_TOLERANCE_MM:
+            gaps.append({"from_mm": round(reach - lo, 2), "to_mm": round(start - lo, 2),
+                         "gap_mm": round(start - reach, 3)})
+        reach = max(reach, end)
+    return gaps
 
 
 def _declares_cylindrical(spec: Mapping[str, Any]) -> bool:
@@ -532,6 +648,28 @@ def bore_report(spec: Mapping[str, Any], mesh: trimesh.Trimesh, *, body_id: str)
                 requires="every station is bore or side_hole", body_id=body_id,
                 detail=f"station at {s['fraction']:.0%} of the length ({s['z_mm']:g} mm): {what}",
                 station=s["fraction"]))
+    for gap in axial_gaps(mesh, int(profile["axis_index"])):
+        failures.append(_explain(
+            "bore_continuity", measured=gap["gap_mm"], threshold=GAP_TOLERANCE_MM, unit="mm",
+            requires="measured <= threshold (axial gap between the pieces of the body)", body_id=body_id,
+            detail=f"the body is in separate pieces with a {gap['gap_mm']:g} mm gap from "
+                   f"{gap['from_mm']:g} to {gap['to_mm']:g} mm along the axis"))
+    open_ends = _declared_open_ends(spec)
+    path = probe_through_path(mesh, profile, open_ends=open_ends)
+    for blockage in path:
+        fa, fb = blockage["between"]
+        where = (f"between {min(fa, fb):.0%} and {max(fa, fb):.0%} of the length"
+                 if blockage["kind"] == "obstruction" else
+                 f"at the {'lower' if fb == 0.0 else 'upper'} end")
+        failures.append(_explain(
+            "bore_continuity", measured=blockage["kind"], threshold="open air path", unit="probe",
+            requires="no material on the probe rays through the bore"
+                     + (" and out of both open ends" if open_ends else ""),
+            body_id=body_id,
+            detail=f"material {where} (first hit {blockage['at_mm']:g} mm along the axis; "
+                   f"{blockage['probes_hit']} of {blockage['probes']} probe rays hit): "
+                   + ("the bore is obstructed" if blockage["kind"] == "obstruction" else
+                      "a declared open end is closed")))
     step_limit = max(STEP_MIN_MM, STEP_REL * r_med)
     bores = [s for s in profile["stations"] if s["kind"] == "bore"]
     for prev, cur in zip(bores, bores[1:]):
@@ -553,6 +691,13 @@ def bore_report(spec: Mapping[str, Any], mesh: trimesh.Trimesh, *, body_id: str)
             body_id=body_id,
             detail=f"declared cylindrical, but the fitted bore radius changes {change:+.2f} mm over "
                    f"{profile['length_mm']:.0f} mm (slope {profile['taper_slope_mm_per_mm']:+.4f} mm/mm)"))
+    declared_length = _positive((spec.get("constraints") or {}).get("body_length_mm"))
+    if declared_length and abs(profile["length_mm"] - declared_length) > BODY_LENGTH_TOLERANCE * declared_length:
+        failures.append(_explain(
+            "bore_length", measured=round(profile["length_mm"], 2), threshold=declared_length, unit="mm",
+            requires=f"|measured - threshold| <= {BODY_LENGTH_TOLERANCE:.0%} of threshold", body_id=body_id,
+            detail=f"the bore-carrying body spans {profile['length_mm']:.1f} mm along its axis vs the "
+                   f"declared body length {declared_length:g} mm"))
     declared_id = _positive((spec.get("constraints") or {}).get("bore_id_mm"))
     if declared_id:
         measured_id = 2.0 * r_med
@@ -565,9 +710,9 @@ def bore_report(spec: Mapping[str, Any], mesh: trimesh.Trimesh, *, body_id: str)
             "declared_cylindrical": cylindrical, "length_mm": round(profile["length_mm"], 3),
             "median_radius_mm": round(r_med, 3), "taper_change_mm": round(change, 3),
             "taper_slope_mm_per_mm": round(profile["taper_slope_mm_per_mm"], 6),
-            "stations": profile["stations"],
+            "stations": profile["stations"], "open_ends_required": open_ends, "through_path": path,
             "tolerances": {"step_mm": round(step_limit, 3), "taper_mm": round(taper_limit, 3),
-                           "bore_id_rel": BORE_ID_TOLERANCE}}
+                           "bore_id_rel": BORE_ID_TOLERANCE, "gap_mm": GAP_TOLERANCE_MM}}
 
 
 def _with_bore(result: dict[str, Any], spec: Mapping[str, Any], mesh: trimesh.Trimesh,
@@ -580,10 +725,52 @@ def _with_bore(result: dict[str, Any], spec: Mapping[str, Any], mesh: trimesh.Tr
     return {**result, "status": status, "pitch_status": result["status"], "bore": bore, "failures": failures}
 
 
+def _has_bore(body: trimesh.Trimesh, axis: int) -> bool:
+    """Whether a body's mid cross-section along ``axis`` has an interior loop (a tube piece)."""
+    lo, hi = body.bounds
+    origin = (lo + hi) / 2.0
+    normal = np.zeros(3)
+    normal[axis] = 1.0
+    section = body.section(plane_origin=origin, plane_normal=normal)
+    if section is None:
+        return False
+    path_2d, _ = section.to_2D()
+    return any(len(polygon.interiors) for polygon in path_2d.polygons_full)
+
+
+def bore_bodies(mesh: trimesh.Trimesh) -> tuple[trimesh.Trimesh, int, int]:
+    """The pieces of the bore-carrying body in an assembly (#980 review).
+
+    The largest body fixes the bore axis and footprint. Every body whose footprint across
+    that axis overlaps it and that is itself a tube piece (an interior loop at its own mid
+    section) belongs to the same bore, so a body split into pieces keeps all of them and
+    its full extent; solid parts seated in or on the bore (a reed, a cork) are left out.
+    Returns the combined mesh, the number of pieces and the number of bodies left out.
+    """
+    bodies = [b for b in mesh.split(only_watertight=False) if len(b.faces)]
+    if len(bodies) <= 1:
+        return mesh, len(bodies), 0
+    main = max(bodies, key=lambda b: abs(float(b.volume)) if b.is_watertight else 0.0)
+    axis = int(np.argmax(main.bounds[1] - main.bounds[0]))
+    across = [i for i in range(3) if i != axis]
+    m_lo, m_hi = main.bounds
+    picked = []
+    for body in bodies:
+        lo, hi = body.bounds
+        overlap = all(min(hi[i], m_hi[i]) - max(lo[i], m_lo[i]) > 0.5 * min(hi[i] - lo[i], m_hi[i] - m_lo[i])
+                      for i in across)
+        if body is main or (overlap and _has_bore(body, axis)):
+            picked.append(body)
+    return trimesh.util.concatenate(picked), len(picked), len(bodies) - len(picked)
+
+
 def advise_bore_only(spec: Mapping[str, Any], mesh: trimesh.Trimesh) -> dict[str, Any]:
     """Bore continuity/taper for a spec with a declared bore and no modelled pitch (#980)."""
-    body = _largest_body(mesh)
-    bore = bore_report(spec, body, body_id="largest body")
+    body, pieces, left_out = bore_bodies(mesh)
+    bore = bore_report(spec, body, body_id="bore body")
+    bore["pieces"], bore["other_bodies"] = pieces, left_out
     return {"label": LABEL, "affects_scoring": False, "family": BORE_FAMILY, "status": bore["status"],
             "pitch_status": NOT_MODELLED, "bore": bore, "failures": bore["failures"],
-            "method": "bore profile on 19 cross-sections of the largest body; pitch not modelled"}
+            "method": "bore profile on 19 cross-sections of every collinear tube piece (the bore body), "
+                      "probe rays through the bore and its open ends, axial gaps between pieces; "
+                      "pitch not modelled"}

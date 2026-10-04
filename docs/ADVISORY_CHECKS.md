@@ -61,7 +61,7 @@ ocarina. The udu (a drum) is not modelled.
 ### Bore continuity and taper (`pipe_bore`, #980)
 
 For the open-pipe family above and for any spec that declares `constraints.bore_id_mm` (the
-duduk study body, measured on its largest body), 19 cross-sections from 5 % to 95 % of the
+duduk study body, measured on its bore body, see below), 19 cross-sections from 5 % to 95 % of the
 axis are classified:
 
 | station | meaning | fault? |
@@ -77,6 +77,23 @@ bore declared cylindrical (the word in `bore` or the brief, or a declared `bore_
 change by at most `max(0.5 mm, 5 % of r)` over its length (`bore_taper`). A bore described as
 conical or tapered reports its slope without a verdict. A declared `bore_id_mm` must match the
 median diameter within 10 % (`bore_diameter`).
+
+**Through path.** Cross-sections only see what lies on a station, so a thin plug or end cap
+between stations would pass. Five probe rays (the bore centre and four points at half the bore
+radius) therefore run between every pair of neighbouring bore stations and, unless the spec
+declares a closed, stopped or capped end, from the first and last bore station out past both
+ends of the body. Any material on a probe is a `bore_continuity` failure: `obstruction` (inside
+the bore, with the station interval) or `closed_end` (a declared open end is closed).
+The probes are in `bore.through_path`.
+
+**Assemblies (bore body).** For an assembly, the largest body fixes the bore axis and
+footprint. Every body that overlaps that footprint and is itself a tube piece (an interior
+loop at its own mid section) belongs to the bore body, so a body modelled in pieces keeps all
+of them and its full extent. Solid parts seated in or on the bore, such as a reed, are left
+out (`bore.pieces`, `bore.other_bodies`). An axial gap of more than 0.5 mm between pieces is a
+`bore_continuity` failure in mm, and a declared `body_length_mm` must match the bore body's
+extent within 10 % (`bore_length`). A reed or plug fused into the body by a union is part of
+the body, so if it sits in the bore it reads as an obstruction or a closed end.
 
 ### Not modelled
 

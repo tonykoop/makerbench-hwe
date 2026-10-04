@@ -247,15 +247,106 @@ def _duduk(r_in=6.0):
     return trimesh.util.concatenate([body, reed])
 
 
-def test_assembly_with_a_declared_bore_is_profiled_on_its_largest_body():
+def test_assembly_with_a_declared_bore_is_profiled_on_its_bore_body():
     good = acoustic.advise(DUDUK_LIKE, _duduk())
     assert good["family"] == "pipe_bore" and good["pitch_status"] == "not modelled"
     assert good["status"] == "consistent", good["failures"]
     assert good["bore"]["median_radius_mm"] == pytest.approx(6.0, rel=0.01)
     bad = acoustic.advise(DUDUK_LIKE, _duduk(r_in=4.0))
     (failure,) = bad["failures"]
-    assert failure["check"] == "bore_diameter" and failure["body_id"] == "largest body"
+    assert failure["check"] == "bore_diameter" and failure["body_id"] == "bore body"
     assert failure["measured"] == pytest.approx(8.0, rel=0.01) and failure["threshold"] == 12
+
+
+def _plugged(z, thickness=2.0, length=400.0):
+    plug = trimesh.creation.cylinder(radius=10.0, height=thickness, sections=96)  # overlaps the wall
+    plug.apply_translation([0, 0, z])
+    return trimesh.boolean.union([_tube(length=length), plug], engine="manifold")
+
+
+def test_thin_plug_between_stations_is_caught_by_the_through_path_probe():
+    # stations every 20 mm (5 % of 400 mm) at z = -180, -160, ...; this 2 mm plug sits at
+    # z = -10, between the 45 % and 50 % stations, so no cross-section sees it
+    plugged = _plugged(-10.0)
+    result = acoustic.advise(KENA_LIKE, plugged)
+    assert {s["kind"] for s in result["bore"]["stations"]} == {"bore"}
+    assert result["status"] == "inconsistent"
+    (failure,) = [f for f in result["failures"] if f["check"] == "bore_continuity"]
+    _explained([failure])
+    assert failure["measured"] == "obstruction" and "45% and 50%" in failure["detail"]
+    (path,) = result["bore"]["through_path"]
+    assert path["probes_hit"] == path["probes"] == 5
+    assert path["at_mm"] == pytest.approx(189.0, abs=0.5)
+
+
+@pytest.mark.parametrize("z, end", [(199.0, "upper"), (-199.0, "lower")])
+def test_end_cap_on_a_declared_open_end_is_flagged(z, end):
+    capped = _plugged(z)
+    result = acoustic.advise(KENA_LIKE, capped)
+    assert result["status"] == "inconsistent"
+    (failure,) = [f for f in result["failures"] if f["check"] == "bore_continuity"]
+    _explained([failure])
+    assert failure["measured"] == "closed_end" and f"{end} end" in failure["detail"]
+
+
+def test_end_cap_is_allowed_when_the_spec_declares_a_stopped_end():
+    stopped = {**KENA_LIKE, "constraints": {**KENA_LIKE["constraints"], "bore": "cylindrical, stopped at one end"}}
+    report = acoustic.bore_report(stopped, _plugged(199.0), body_id="body")
+    assert report["open_ends_required"] is False and report["through_path"] == []
+    assert not [f for f in report["failures"] if f["check"] == "bore_continuity"]
+    # an interior plug is still an obstruction
+    report = acoustic.bore_report(stopped, _plugged(-10.0), body_id="body")
+    assert [f["measured"] for f in report["failures"] if f["check"] == "bore_continuity"] == ["obstruction"]
+
+
+def test_clean_tube_has_an_open_through_path():
+    report = acoustic.bore_report(KENA_LIKE, _tube(), body_id="body")
+    assert report["status"] == "consistent" and report["through_path"] == []
+
+
+def _split_duduk(gap=8.0, r_in=6.0):
+    half = (336 - gap) / 2
+    lower = _tube(length=half, r_in=r_in, r_out=r_in + 3.5, z0=-168 + half / 2)
+    upper = _tube(length=half, r_in=r_in, r_out=r_in + 3.5, z0=168 - half / 2)
+    reed = trimesh.creation.box(extents=[14, 3, 60])
+    reed.apply_translation([0, 0, 168 + 31])
+    return trimesh.util.concatenate([lower, upper, reed])
+
+
+def test_assembly_body_split_with_a_gap_is_flagged():
+    result = acoustic.advise(DUDUK_LIKE, _split_duduk(gap=8.0))
+    bore = result["bore"]
+    assert bore["pieces"] == 2 and bore["other_bodies"] == 1
+    assert bore["length_mm"] == pytest.approx(336.0, abs=0.01)  # the full body extent, both halves
+    assert result["status"] == "inconsistent"
+    gaps = [f for f in result["failures"] if f["check"] == "bore_continuity" and f["unit"] == "mm"]
+    assert len(gaps) == 1 and gaps[0]["measured"] == pytest.approx(8.0, abs=0.01)
+    _explained(gaps)
+
+
+def test_assembly_body_in_two_touching_pieces_is_consistent():
+    result = acoustic.advise(DUDUK_LIKE, _split_duduk(gap=0.0))
+    assert result["bore"]["pieces"] == 2
+    assert result["status"] == "consistent", result["failures"]
+
+
+def test_assembly_with_only_half_a_body_fails_the_declared_length():
+    half = _tube(length=164, r_in=6.0, r_out=9.5, z0=-86)
+    reed = trimesh.creation.box(extents=[14, 3, 60])
+    reed.apply_translation([0, 0, 168 + 31])
+    result = acoustic.advise(DUDUK_LIKE, trimesh.util.concatenate([half, reed]))
+    (failure,) = [f for f in result["failures"] if f["check"] == "bore_length"]
+    assert failure["measured"] == pytest.approx(164.0, abs=0.01) and failure["threshold"] == 336
+    _explained([failure])
+
+
+def test_reed_seated_into_the_bore_is_not_an_obstruction():
+    body = _tube(length=336, r_in=6.0, r_out=9.5)
+    reed = trimesh.creation.box(extents=[8, 3, 60])
+    reed.apply_translation([0, 0, 168 + 10])  # 20 mm of the reed inside the top of the bore
+    result = acoustic.advise(DUDUK_LIKE, trimesh.util.concatenate([body, reed]))
+    assert result["bore"]["other_bodies"] == 1
+    assert result["status"] == "consistent", result["failures"]
 
 
 def test_shipped_duduk_and_kena_get_a_bore_profile():
