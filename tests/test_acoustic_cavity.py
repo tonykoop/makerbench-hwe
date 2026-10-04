@@ -275,8 +275,38 @@ def test_thin_plug_between_stations_is_caught_by_the_through_path_probe():
     _explained([failure])
     assert failure["measured"] == "obstruction" and "45% and 50%" in failure["detail"]
     (path,) = result["bore"]["through_path"]
-    assert path["probes_hit"] == path["probes"] == 5
+    assert path["probes_hit"] == path["probes"] == len(acoustic.PROBE_OFFSETS) == 13
     assert path["at_mm"] == pytest.approx(189.0, abs=0.5)
+
+
+def _lipped(z, r_lip=6.0, thickness=2.0, length=400.0):
+    # a fused annular joint lip: overlaps the wall (r 10 > 9) and narrows the 18 mm bore to 2 r_lip
+    lip = trimesh.creation.annulus(r_min=r_lip, r_max=10.0, height=thickness, sections=96)
+    lip.apply_translation([0, 0, z])
+    return trimesh.boolean.union([_tube(length=length), lip], engine="manifold")
+
+
+def test_annular_lip_narrowing_the_bore_between_stations_is_an_obstruction():
+    # #994 review: an 18 mm bore narrowed to 12 mm (56 % of the area gone) by a 2 mm lip at
+    # z = -10, between the 45 % and 50 % stations. The centre and half-radius probes (r <= 4.5 mm)
+    # pass through the 6 mm hole; the outer ring (r = 7.2 mm) hits the lip.
+    result = acoustic.advise(KENA_LIKE, _lipped(-10.0))
+    assert {s["kind"] for s in result["bore"]["stations"]} == {"bore"}
+    assert result["status"] == "inconsistent"
+    (failure,) = [f for f in result["failures"] if f["check"] == "bore_continuity"]
+    _explained([failure])
+    assert failure["measured"] == "obstruction" and "45% and 50%" in failure["detail"]
+    (path,) = result["bore"]["through_path"]
+    assert path["probes_hit"] == 8 and path["probes"] == 13  # exactly the outer ring
+    assert path["at_mm"] == pytest.approx(189.0, abs=0.5)
+
+
+def test_outer_probe_ring_stays_inside_clean_bores_of_any_size():
+    tube = _tube()
+    assert acoustic.bore_report(KENA_LIKE, tube, body_id="body")["through_path"] == []
+    for r_in in (4.0, 6.0, 12.0):
+        thin = _tube(r_in=r_in, r_out=r_in + 1.5)
+        assert acoustic.bore_report(KENA_LIKE, thin, body_id="body")["through_path"] == [], r_in
 
 
 @pytest.mark.parametrize("z, end", [(199.0, "upper"), (-199.0, "lower")])

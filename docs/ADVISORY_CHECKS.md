@@ -79,8 +79,9 @@ conical or tapered reports its slope without a verdict. A declared `bore_id_mm` 
 median diameter within 10 % (`bore_diameter`).
 
 **Through path.** Cross-sections only see what lies on a station, so a thin plug or end cap
-between stations would pass. Five probe rays (the bore centre and four points at half the bore
-radius) therefore run between every pair of neighbouring bore stations and, unless the spec
+between stations would pass. Thirteen probe rays (the bore centre, four points at half the bore
+radius, and an outer ring of eight at 0.8 of the bore radius, so a lip or ridge that narrows the
+bore near the wall is hit too) therefore run between every pair of neighbouring bore stations and, unless the spec
 declares a closed, stopped or capped end, from the first and last bore station out past both
 ends of the body. Any material on a probe is a `bore_continuity` failure: `obstruction` (inside
 the bore, with the station interval) or `closed_end` (a declared open end is closed).

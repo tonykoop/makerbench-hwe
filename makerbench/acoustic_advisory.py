@@ -518,7 +518,15 @@ def measure_bore_profile(mesh: trimesh.Trimesh) -> dict[str, Any]:
             "taper_change_mm": slope * float(extents[axis])}
 
 
-PROBE_OFFSETS = ((0.0, 0.0), (0.5, 0.0), (-0.5, 0.0), (0.0, 0.5), (0.0, -0.5))
+#: Radius (fraction of the bore's equivalent radius) of the outer probe ring (#994 review):
+#: near the wall, so a lip or ridge that narrows the bore between stations is hit, yet inside
+#: any round or square bore (a square's inscribed radius is 0.886 of its equivalent radius).
+OUTER_PROBE_FRACTION = 0.8
+PROBE_OFFSETS = (
+    ((0.0, 0.0), (0.5, 0.0), (-0.5, 0.0), (0.0, 0.5), (0.0, -0.5))
+    + tuple((round(OUTER_PROBE_FRACTION * math.cos(k * math.pi / 4), 12),
+             round(OUTER_PROBE_FRACTION * math.sin(k * math.pi / 4), 12)) for k in range(8))
+)
 GAP_TOLERANCE_MM = 0.5
 BODY_LENGTH_TOLERANCE = 0.1
 _CLOSED_END_RE = re.compile(r"\b(closed|stopped|capped)\b")
@@ -536,7 +544,8 @@ def probe_through_path(mesh: trimesh.Trimesh, profile: Mapping[str, Any], *,
                        open_ends: bool = True) -> list[dict[str, Any]]:
     """Obstructions on the air path through the bore (#980 review).
 
-    Five probe rays (the bore centre and four points at half the bore radius) run between
+    Thirteen probe rays (the bore centre, four points at half the bore radius and an outer
+    ring of eight at 0.8 of it, so a lip narrowing the bore near the wall is hit) run between
     every pair of neighbouring ``bore`` stations, and, when the ends must be open, from the
     first and last bore station out past the ends of the body. Any surface hit on a probe
     means material sits in the air passage between stations (a plug or a membrane that
