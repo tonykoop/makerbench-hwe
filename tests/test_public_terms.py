@@ -68,7 +68,24 @@ def test_formatting_inside_a_word_is_rejoined(text):
     assert checker.matched_lines("ok\n" + text, fingerprints("synthetic")) == [2]
 
 
-@pytest.mark.parametrize("text", ["**Syn** thetic", "Syn <b>thetic</b>", "<p>Syn</p>\n<p>thetic</p>"])
+@pytest.mark.parametrize("text", ["Syn<!-- note -->thetic", "Syn<!-- a -->the<!--b-->tic",
+                                  "[Syn](https://example.invalid)thetic", "Syn<STRONG>thetic</STRONG>",
+                                  "Syn<a href=\"x\">thetic</a>", "Syn<em>the</em><code>tic</code>"])
+def test_comments_links_and_inline_tags_join(text):
+    assert checker.matched_lines(text, fingerprints("synthetic")) == [1]
+
+
+@pytest.mark.parametrize("text", ["[Synthetic Widget](https://example.invalid/x)",
+                                  "![Synthetic widget](img/x.png)", "see [**Synthetic** widget](u)"])
+def test_markdown_link_and_image_text_is_checked(text):
+    assert checker.matched_lines(text, fingerprints("synthetic-widget")) == [1]
+
+
+@pytest.mark.parametrize("text", ["**Syn** thetic", "Syn <b>thetic</b>", "<p>Syn</p>\n<p>thetic</p>",
+                                  "Syn<br>thetic", "Syn<br/>thetic", "<p>Syn</p><p>thetic</p>",
+                                  "Syn<div>thetic</div>", "<li>Syn</li><li>thetic</li>",
+                                  "<td>Syn</td><td>thetic</td>", "<h2>Syn</h2>thetic", "Syn<hr>thetic",
+                                  "Syn<bdi>thetic</bdi>"])
 def test_genuine_word_boundaries_are_not_merged(text):
     assert checker.matched_lines(text, fingerprints("synthetic")) == []
 
@@ -87,6 +104,18 @@ def test_terms_in_tag_attributes_are_seen():
                                   "syntheticWidget-kit", "**SyntheticWidget** kit", "Synthetic_WidgetKit"])
 def test_camel_case_parts_form_ngrams_across_tokens(text):
     assert checker.matched_lines(text, fingerprints("synthetic-widget-kit")) == [1]
+
+
+@pytest.mark.parametrize("text", ["SyntheticWidget SpareKit", "SyntheticWidget Spare Kit",
+                                  "SyntheticWidget spare-kit", "syntheticwidget SpareKit",
+                                  "Acme SyntheticWidget SpareKit"])
+def test_mixed_whole_and_split_camel_case_windows(text):
+    assert checker.matched_lines(text, fingerprints("syntheticwidget-spare-kit")) == [1]
+
+
+def test_mixed_windows_stay_bounded():
+    assert checker.matched_lines("SyntheticWidget One Two ThreeFour",
+                                 fingerprints("synthetic-widget-one-two-three")) == []
 
 
 def test_fingerprint_helper_matches_canonical_form():
@@ -152,6 +181,38 @@ def test_private_and_submodule_readmes_are_never_opened(tmp_path, monkeypatch):
     # docs/private is ordinary public docs (only the top-level private/ tree is excluded).
     problems = checker.check(tmp_path, fingerprints("syntheticforbidden"))
     assert problems == ["docs/private/README.md:1: forbidden term fingerprint"]
+
+
+@pytest.mark.parametrize("use_git", [True, False])
+def test_quoted_submodule_path_is_never_traversed(tmp_path, monkeypatch, use_git):
+    (tmp_path / "README.md").write_text("safe", encoding="utf-8")
+    (tmp_path / ".gitmodules").write_text(
+        '[submodule "vendor"]\n\tpath = "docs/vendor"  \n\turl = git@example.invalid:x.git\n',
+        encoding="utf-8")
+    for rel in ["docs/vendor/README.md", "docs/vendor/page.md"]:
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("SyntheticForbidden", encoding="utf-8")
+    (tmp_path / "docs" / "ok.md").write_text("fine", encoding="utf-8")
+    if not use_git:
+        def no_git(*args, **kwargs):
+            raise OSError("git unavailable")
+        monkeypatch.setattr(checker.subprocess, "run", no_git)
+    assert "docs/vendor" in checker.excluded_prefixes(tmp_path)
+    blocked = tmp_path / "docs" / "vendor"
+    real_scandir, real_read_bytes = checker.os.scandir, Path.read_bytes
+
+    def guarded_scandir(path="."):
+        assert not (Path(path) == blocked or blocked in Path(path).parents), path
+        return real_scandir(path)
+
+    def guarded_read_bytes(self):
+        assert blocked not in self.parents, self
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(checker.os, "scandir", guarded_scandir)
+    monkeypatch.setattr(Path, "read_bytes", guarded_read_bytes)
+    assert checker.check(tmp_path, fingerprints("syntheticforbidden")) == []
 
 
 @pytest.mark.parametrize("relative", ["README.md", "docs/nested/draft.md", "site/data/leak.json",

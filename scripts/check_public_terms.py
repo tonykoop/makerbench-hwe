@@ -39,6 +39,7 @@ import hashlib
 import html
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -50,6 +51,10 @@ TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
 CAMEL = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")
 JSON_ESCAPE = re.compile(r"\\(u[0-9a-fA-F]{4}|[nrtbf\"\\/])")
 HTML_TAG = re.compile(r"</?[A-Za-z][^<>]*>")
+HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+INLINE_TAG = re.compile(
+    r"</?(?:b|i|em|strong|span|a|code|mark|sup|sub|u|s|small)(?=[\s/>])[^<>]*>", re.IGNORECASE)
+MD_LINK = re.compile(r"!?\[([^\[\]\n]*)\]\([^()\n]*\)")
 EMPHASIS = re.compile(r"[*_~`]+")
 PUBLIC_DIRS = ("docs", "site")
 PRIVATE_PREFIXES = ("private",)
@@ -102,41 +107,81 @@ def _replace_keeping_lines(pattern: re.Pattern, text: str, filler: str) -> str:
 
 
 def views(text: str) -> list[str]:
-    """Normalized views of ``text``; all keep the original line numbering."""
+    """Normalized views of ``text``; all keep the original line numbering.
+
+    Raw (decoded) text; tags/comments as separators; and a "joined" view where
+    HTML comments, inline tags (b, span, a, ...) and Markdown emphasis are
+    removed so formatting inside a word rejoins it, while block tags (p, br,
+    div, li, td, headings, ...) still separate words. Markdown links and
+    images are reduced to their text in the last two views.
+    """
     base = _decode(text)
+    links = MD_LINK.sub(lambda m: m.group(1), base)
+    spaced = _replace_keeping_lines(HTML_TAG, _replace_keeping_lines(HTML_COMMENT, links, " "), " ")
+    joined = _replace_keeping_lines(HTML_COMMENT, links, "")
+    joined = _replace_keeping_lines(INLINE_TAG, joined, "")
+    joined = _replace_keeping_lines(HTML_TAG, joined, " ")
+    joined = _replace_keeping_lines(EMPHASIS, joined, "")
     result = [base]
-    spaced = _replace_keeping_lines(HTML_TAG, base, " ")
-    joined = _replace_keeping_lines(EMPHASIS, _replace_keeping_lines(HTML_TAG, base, ""), "")
     for view in (spaced, joined):
         if view not in result:
             result.append(view)
     return result
 
 
-def _streams(text: str) -> list[list[tuple[int, str]]]:
-    whole, split = [], []
+def _tokens(text: str) -> list[tuple[int, list[list[str]]]]:
+    """Each token with its readings: whole, plus CamelCase parts if any."""
+    tokens = []
     for match in TOKEN.finditer(text):
         token = match.group()
-        whole.append((match.start(), token.lower()))
+        readings = [[token.lower()]]
         parts = CAMEL.findall(token)
         if len(parts) > 1 and "".join(parts) == token:
-            split.extend((match.start(), part.lower()) for part in parts)
-        else:
-            split.append((match.start(), token.lower()))
-    return [whole, split] if split != whole else [whole]
+            readings.append([part.lower() for part in parts])
+        tokens.append((match.start(), readings))
+    return tokens
+
+
+def _grams_from(tokens, index: int) -> set[str]:
+    """Every <=MAX_NGRAM-word window starting in token ``index``.
+
+    Each token may be read whole or as its CamelCase parts, independently,
+    so mixed forms such as ``FooBar BazQux`` yield ``foobar-baz-qux``.
+    """
+    grams: set[str] = set()
+
+    def extend(words: list[str], nxt: int) -> None:
+        grams.add("-".join(words))
+        if len(words) >= MAX_NGRAM or nxt >= len(tokens):
+            return
+        for reading in tokens[nxt][1]:
+            for size in range(1, len(reading) + 1):
+                window = words + reading[:size]
+                if len(window) > MAX_NGRAM:
+                    break
+                if size < len(reading):
+                    grams.add("-".join(window))  # a window may end mid-token
+                else:
+                    extend(window, nxt + 1)
+
+    for reading in tokens[index][1]:
+        for offset in range(len(reading)):  # a window may start mid-token
+            tail = reading[offset:]
+            for size in range(1, min(len(tail), MAX_NGRAM) + 1):
+                if size < len(tail):
+                    grams.add("-".join(tail[:size]))
+                else:
+                    extend(tail, index + 1)
+    return grams
 
 
 def _view_lines(text: str, hashes: frozenset[str]) -> set[int]:
     # Collect each distinct n-gram once (public JSON repeats a lot), then hash.
     grams: dict[str, list[int]] = {}
-    for stream in _streams(text):
-        words = [word for _, word in stream]
-        for index, (start, _) in enumerate(stream):
-            gram = words[index]
+    tokens = _tokens(text)
+    for index, (start, _) in enumerate(tokens):
+        for gram in _grams_from(tokens, index):
             grams.setdefault(gram, []).append(start)
-            for offset in range(1, min(MAX_NGRAM, len(words) - index)):
-                gram += "-" + words[index + offset]
-                grams.setdefault(gram, []).append(start)
     return {
         text.count("\n", 0, start) + 1
         for gram, starts in grams.items() if _digest(gram) in hashes
@@ -152,16 +197,34 @@ def matched_lines(text: str, hashes: frozenset[str]) -> list[int]:
     return sorted(lines)
 
 
+def _submodule_paths(root: Path) -> set[str]:
+    gitmodules = root / ".gitmodules"
+    if not gitmodules.is_file():
+        return set()
+    try:
+        out = subprocess.run(
+            ["git", "config", "-f", str(gitmodules), "--get-regexp", r"^submodule\..*\.path$"],
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+        if out.returncode in (0, 1):  # 1 = no path entries
+            return {line.split(" ", 1)[1].strip().strip("/")
+                    for line in out.stdout.splitlines() if " " in line}
+    except (OSError, subprocess.SubprocessError):
+        pass
+    paths = set()  # fallback: minimal parse, unquoting like git does
+    for line in gitmodules.read_text(encoding="utf-8", errors="replace").splitlines():
+        key, _, value = line.partition("=")
+        value = value.split(" #")[0].split(" ;")[0].strip()
+        if len(value) >= 2 and value[0] == value[-1] == '"':
+            value = value[1:-1]
+        if key.strip().lower() == "path" and value.strip():
+            paths.add(value.strip().strip("/"))
+    return paths
+
+
 def excluded_prefixes(root: Path) -> set[str]:
     """private/ plus every git submodule path, as root-relative POSIX paths."""
-    prefixes = set(PRIVATE_PREFIXES)
-    gitmodules = root / ".gitmodules"
-    if gitmodules.is_file():
-        for line in gitmodules.read_text(encoding="utf-8", errors="replace").splitlines():
-            key, _, value = line.partition("=")
-            if key.strip() == "path" and value.strip():
-                prefixes.add(value.strip().strip("/"))
-    return prefixes
+    return set(PRIVATE_PREFIXES) | _submodule_paths(root)
 
 
 def _walk(root: Path, top: Path, excluded: set[str]):
@@ -184,7 +247,8 @@ def public_paths(root: Path) -> list[Path]:
     paths = set()
     for name in PUBLIC_DIRS:
         directory = root / name
-        if directory.is_dir() and name not in excluded:
+        if directory.is_dir() and not any(name == e or name.startswith(e + "/")
+                                          for e in excluded):
             paths.update(p for p in _walk(root, directory, excluded)
                          if p.suffix.lower() not in BINARY_SUFFIXES)
     paths.update(p for p in _walk(root, root, excluded) if p.name.upper().startswith("README"))
