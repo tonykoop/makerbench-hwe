@@ -1361,6 +1361,30 @@
       "<tbody>" + rows + "</tbody></table></div>";
   }
 
+  // #983 review: the renderer fails closed on its own, whatever the payload. Legacy (no
+  // min_wall_method, or "min") renders as before. Any other estimator renders numbers only when
+  // it is one this page knows AND it carries a non-empty label; otherwise it is withheld.
+  var ARENA_KNOWN_ESTIMATORS = { "robust-v1": true };
+  var ARENA_ESTIMATOR_WITHHELD =
+    "Withheld: scored with a min_wall estimator this page cannot label, so not shown.";
+
+  function arenaEstimator(obj) {
+    var method = obj && obj.min_wall_method;
+    if (method == null || method === "" || method === "min") {
+      return { ok: true, legacy: true, label: obj && obj.label ? String(obj.label) : "" };
+    }
+    var label = obj.label == null ? "" : String(obj.label).trim();
+    if (!Object.prototype.hasOwnProperty.call(ARENA_KNOWN_ESTIMATORS, String(method)) || !label) {
+      return { ok: false, legacy: false, label: "" };
+    }
+    return { ok: true, legacy: false, label: label };
+  }
+
+  function arenaWithheldHTML(title) {
+    return "<div class=\"arena-scoreline\"><h4>" + escapeHTML(title) + "</h4>" +
+      "<p class=\"muted-note\">" + escapeHTML(ARENA_ESTIMATOR_WITHHELD) + "</p></div>";
+  }
+
   // #983: rows scored with a non-legacy min_wall estimator (robust-v1) arrive in their own
   // labelled tables (round.estimator_scorelines) and are never merged into the legacy table.
   function arenaObjectiveTable(round) {
@@ -1373,7 +1397,13 @@
         round.scoreline);
     }
     extra.forEach(function (table) {
-      html += arenaScoreTable(title + " · " + String(table.label || table.min_wall_method),
+      var est = arenaEstimator(table);
+      if (!est.ok || est.legacy) {
+        // a table here must be a labelled non-legacy estimator; anything else is withheld
+        html += arenaWithheldHTML(title);
+        return;
+      }
+      html += arenaScoreTable(title + " · " + est.label,
         table.rows, "Scored with a different min_wall estimator: not comparable with other tables.");
     });
     return html;
@@ -1398,11 +1428,12 @@
   // #983 review: the agreement is attributed to the one min_wall estimator it was computed
   // over (ag.label), or withheld (ag.withheld_reason) when the round mixes estimators.
   function arenaAgreementHTML(ag, rho, interp) {
-    if (ag.withheld_reason) {
+    var est = arenaEstimator(ag);
+    if (ag.withheld_reason || !est.ok) {
       return "<p class=\"arena-rho\">Rank agreement vs blind preference (Spearman ρ): <strong>n/a</strong> — " +
-        escapeHTML(String(ag.withheld_reason)) + "</p>";
+        escapeHTML(String(ag.withheld_reason || ARENA_ESTIMATOR_WITHHELD)) + "</p>";
     }
-    var label = ag.label ? " · " + escapeHTML(String(ag.label)) : "";
+    var label = est.label ? " · " + escapeHTML(est.label) : "";
     return "<p class=\"arena-rho\">Rank agreement vs blind preference (Spearman ρ): <strong>" +
       rho + "</strong>" + interp + label +
       " — the preference scoreline itself is single-voter and stays off-site.</p>";
@@ -1412,8 +1443,13 @@
   // across estimators. Legacy-only pages carry no labels and render exactly as before.
   function arenaOneHeadlineHTML(h, insight) {
     if (!h || h.value == null) return "";
+    var est = arenaEstimator(h);
+    if (!est.ok) {
+      return "<div class=\"arena-card arena-headline\"><p class=\"arena-rho\">Headline withheld — " +
+        escapeHTML(ARENA_ESTIMATOR_WITHHELD) + "</p></div>";
+    }
     var sign = Number(h.value) >= 0 ? "+" : "";
-    var label = h.label ? " (" + escapeHTML(String(h.label)) + ")" : "";
+    var label = est.label ? " (" + escapeHTML(est.label) + ")" : "";
     return "<div class=\"arena-card arena-headline\">" +
       "<p class=\"arena-rho\"><strong>Headline: mean Spearman ρ ≈ " + sign +
       arenaNum(h.value, 2) + "</strong>" + label + " across rounds " +
