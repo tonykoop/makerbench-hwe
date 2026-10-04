@@ -35,6 +35,9 @@ If you work on CAD tooling, hardware design or AI evaluation, tell me what you w
 #CAD #AI #HardwareDesign #MusicalInstruments #AIEvaluation
 ```
 
+<!-- claim: 0.52 source: site/data/arena.json#/rounds/1/scoreline/*/objective_pass_rate|min -->
+<!-- claim: 0.90 source: site/data/arena.json#/rounds/1/scoreline/*/objective_pass_rate|max -->
+
 Claims → source
 - SolidWorks is "early", Fusion is "live": Fusion stage→confirm connector, and a 28-body kora built live through it; SolidWorks capability matrix lists most live features as broken, gap or blocked. Code-CAD backends: `makerbench/code_cad_arena_runner.py`, `docs/CODE_CAD_BACKEND_AXIS.md`. (#SolidWorks tag dropped until a SolidWorks live build is proven.)
 - Same brief for each comparison: `docs/CODE_CAD_ARENA.md` (same instrument spec and seed).
@@ -67,6 +70,24 @@ Museum record in the comments. Render is mine.
 
 #CAD #AI #GenerativeDesign #MusicalInstruments #OpenSCAD
 ```
+
+<!-- claim: 2600 source: docs/showcase/sambuca/CASE_STUDY.md#re:Royal Cemetery at Ur, c\. (\d+) BC -->
+<!-- claim: 13 source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/string_count -->
+<!-- claim: 669 source: docs/showcase/sambuca/CASE_STUDY.md#re:bbox ([\d.]+) × [\d.]+ × [\d.]+ mm -->
+<!-- claim: 150 source: docs/showcase/sambuca/CASE_STUDY.md#re:bbox [\d.]+ × ([\d.]+) × [\d.]+ mm -->
+<!-- claim: 842 source: docs/showcase/sambuca/CASE_STUDY.md#re:bbox [\d.]+ × [\d.]+ × ([\d.]+) mm -->
+<!-- claim: 650 source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/body_length_mm -->
+<!-- claim: 150 source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/body_width_mm -->
+<!-- claim: 810 source: tasks/code_cad_arena/registry.json#/instruments/4/constraints/instrument_height_mm -->
+<!-- claim: 5 source: docs/showcase/sambuca/CASE_STUDY.md#re:= (\d) of 6 sub-gates pass -->
+<!-- claim: 6 source: docs/showcase/sambuca/CASE_STUDY.md#re:= \d of (\d) sub-gates pass -->
+<!-- claim: 0.015 source: docs/showcase/sambuca/CASE_STUDY.md#re:`min_wall`: ([\d.]+) mm measured -->
+<!-- claim: 1 source: tasks/code_cad_arena/registry.json#/instruments/4/min_wall_mm -->
+<!-- claim: 113 source: docs/showcase/sambuca/CASE_STUDY.md#re:model thinking time \((\d+) s\) -->
+<!-- claim: 881 source: docs/showcase/sambuca/CASE_STUDY.md#re:Output: (\d+) bodies, all watertight -->
+<!-- claim: 668.6 source: docs/showcase/sambuca/CASE_STUDY.md#re:bbox ([\d.]+) × -->
+<!-- claim: 0.0149 source: docs/showcase/sambuca/CASE_STUDY.md#re:`min_wall`: ([\d.]+) mm measured -->
+<!-- nocheck: 5 reason: "Claude Fable 5" is a model name; the token is also backed by the 5-of-6 gate claim above -->
 
 Claims → source
 - Object and date: BM record 1928,1010.1.b; the displayed object is a 1971–72 reconstruction (`CASE_STUDY.md` §3).
@@ -127,6 +148,8 @@ What broke: on that first build (4 July) the bridge had no delete and no boundin
 #Fusion360 #CAD #MCP #AI
 ```
 
+<!-- nocheck: 28, 4 reason: 28-body kora built 4 July 2026; the only record is private local epic notes, see the open item below -->
+
 Claims → source
 - **28 bodies, a kora**, built live 2026-07-04 through the Fusion connector: the only record is the local epic notes. The earlier "31" appears nowhere. Confirm against a screenshot or the Fusion document before posting.
 - Stage → review → confirm, mm units, same vocabulary for Fusion and SolidWorks: the bridge build-loop and conventions docs (private repo).
@@ -148,6 +171,11 @@ The full board, the method and the code: [LINK once the site refresh (#666) ship
 
 #AIEvaluation #CAD #Benchmark #HardwareDesign
 ```
+
+<!-- claim: 0.07 source: site/data/arena.json#/headline/value -->
+<!-- claim: 0.0732 source: site/data/arena.json#/headline/value -->
+<!-- claim: 6 source: site/data/arena.json#/headline/rounds_used/0 -->
+<!-- claim: 10 source: site/data/arena.json#/headline/rounds_used/-1 -->
 
 Claims → source
 - **Mean ρ ≈ 0.07 over rounds 6–10** (0.0732): `site/data/arena.json` headline. "Four rounds" is removed (stale: the site publishes ten, and the old −0.2 to +0.5 range holds only for rounds 1–4).
@@ -175,6 +203,13 @@ Write-up and code: [LINK once the site refresh (#666) ships]
 
 #AIEvaluation #CAD #Benchmark #OpenSCAD
 ```
+
+<!-- claim: 1.000 source: docs/showcase/post3/matchup-backend/objective_scoreline-openscad.json#/rows/0/objective_pass_rate -->
+<!-- claim: 0.778 source: docs/showcase/post3/matchup-backend/objective_scoreline-cadquery.json#/rows/0/objective_pass_rate -->
+<!-- claim: 0.889 source: docs/showcase/post3/matchup-backend.md#re:^\| CadQuery \| [\d.]+ \| ([\d.]+) \| -->
+<!-- claim: 1.000 source: docs/showcase/post3/matchup-backend/after/objective_scoreline-cadquery.json#/rows/0/objective_pass_rate -->
+<!-- claim: 1.000 source: docs/showcase/post3/matchup-backend/after/objective_scoreline-build123d.json#/rows/0/objective_pass_rate -->
+<!-- claim: 0.556 source: docs/showcase/post3/matchup-backend/objective_scoreline-build123d.json#/rows/0/objective_pass_rate -->
 
 Character count: 1109 (limit 1,300).
 
@@ -215,6 +250,9 @@ Gallery and method: [LINK once published]
 
 #AIEvaluation #CAD #Benchmark #OpenSCAD
 ```
+
+<!-- claim: 18 source: docs/showcase/strings/gallery/gallery.json#/n_designs -->
+<!-- claim: 17 source: docs/showcase/strings/gallery/gallery.json#/designs/*/status|count=scored -->
 
 Character count: 1078 (limit 1,300).
 
