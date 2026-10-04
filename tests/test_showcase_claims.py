@@ -410,3 +410,18 @@ def test_lazy_continuation_stops_at_new_block_or_empty_quote_line(repo, capsys):
     )
     code, out = run(repo, body, "--strict", capsys=capsys)
     assert code == 0, out
+
+
+def test_mixed_marker_line_is_not_a_thematic_break(repo, capsys):
+    """Codex round 3: '-_-' mixes markers, so it is lazy text and the quote continues."""
+    body = "## Drafts\n\n> The headline:\n-_-\nClaimed pass rate: 0.99.\n"
+    code, out = run(repo, body, "--strict", capsys=capsys)
+    assert code == 1
+    assert "UNCITED number 0.99" in out
+
+
+@pytest.mark.parametrize("rule", ["---", "***", "_ _ _", "  ___", "- - -", "*\t*\t*"])
+def test_same_marker_thematic_break_ends_the_quote(repo, capsys, rule):
+    body = f"## Drafts\n\n> The headline:\n{rule}\nClaimed pass rate: 0.99.\n"
+    code, out = run(repo, body, "--strict", capsys=capsys)
+    assert code == 0, out

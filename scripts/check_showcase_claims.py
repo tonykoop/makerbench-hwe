@@ -116,7 +116,9 @@ QUOTE_RE = re.compile(r"^ {0,3}>(?P<rest>.*)$")
 # Lines that start a new block, so they cannot be lazy paragraph continuations
 # of a blockquote: ATX headings, code fences, list items, thematic breaks.
 NEW_BLOCK_RE = re.compile(
-    r"^ {0,3}(?:#{1,6}(?:\s|$)|```|~~~|[-*+]\s|\d{1,9}[.)]\s|(?:[-*_][ \t]*){3,}$)"
+    r"^ {0,3}(?:#{1,6}(?:\s|$)|```|~~~|[-*+]\s|\d{1,9}[.)]\s"
+    # Thematic break: 3+ of the SAME marker, optional spaces/tabs between.
+    r"|(?:-[ \t]*){3,}$|(?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$)"
 )
 AGGREGATES = ("min", "max", "mean", "sum", "len")
 
