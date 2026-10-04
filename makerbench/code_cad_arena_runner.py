@@ -409,7 +409,13 @@ def mesh_objective_gate(
         if len(bodies) == 0:
             bodies = [mesh]
         watertight_bodies = [body for body in bodies if geometry.is_watertight(body)]
-        largest = max(bodies, key=lambda body: len(body.faces))
+        if robust_wall:
+            # #1009: the body behind nonzero_volume and largest_body_volume_mm3 must not depend
+            # on body order either. Same order-independent key as the measured body below, so
+            # both pick the same body when it is watertight. Legacy "min" keeps first-listed.
+            largest = max(bodies, key=geometry.canonical_order_key)
+        else:
+            largest = max(bodies, key=lambda body: len(body.faces))
 
         try:
             volume = abs(float(largest.volume))
