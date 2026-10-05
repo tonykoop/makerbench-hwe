@@ -69,6 +69,35 @@ and the schema id stays `makerbench-code-cad-objective-scoreline-v1` because the
 additive. The schema is exported at `schemas/objective_scoreline.schema.json`; older
 scorelines (all committed under `docs/showcase/`) validate against it as they are.
 
+## Borderline `min_wall` (#1011)
+
+**Why.** `robust-v1` passes when the 1st percentile of 20,000 wall samples clears the floor
+minus the 0.05 mm tolerance. When about 1 % of the samples lie below that threshold, the 1st
+percentile sits on a cliff, and any change in which points are sampled can flip the verdict.
+After #1008 three published verdicts flipped this way (`docs/MIN_WALL_RESCORE.md`).
+
+**Rule (Tony, 2026-10-04).** Under `robust-v1`, `min_wall` is `"borderline"` when the share
+of samples below the threshold is within **0.8-1.2 %**, inclusive. That is about +/-3 binomial
+standard errors at n = 20,000. The band is compared on sample counts, so its edges are exact.
+The comparison is the verdict's own: a sample is below when it fails
+`printable_wall(sample, floor)`.
+
+**Scoring.** A borderline `min_wall` is **excluded from the objective pass rate**. It is
+neither a pass nor a fail, and that trial's rate is the mean of its other, decided
+sub-scores (`objective_rate`). It is not a failure, so it has no `failed_checks` entry.
+
+**Reporting.**
+- The share is always reported under `robust-v1`: `metrics.min_wall_below_floor_share` on the
+  gate result, and `min_wall_below_floor_share` on the persisted objective.
+- A failed `robust-v1` `min_wall` explanation also carries `below_floor_share`.
+- Scoreline rows list borderline checks in the additive `borderline_checks` field, with the
+  trial, the check and the share. Rows without one keep their bytes.
+- The report's gate matrix drops borderline trials from that gate's mean (shown as `–` when
+  none is decided).
+- The studio shows a "Borderline" chip.
+
+Legacy `min` is unchanged: no share, no borderline, the same bytes.
+
 ## Robust `min_wall` (`robust-v1`): the default since epic T2 (#979)
 
 **Why.** The legacy `min_wall` is the minimum over 4,000 random surface samples (seed 0)

@@ -311,7 +311,22 @@ def canonical_order_key(mesh: trimesh.Trimesh) -> tuple:
     return (len(canon.faces), volume, canon.vertices.tobytes(), canon.faces.tobytes())
 
 
-def estimate_wall_robust_v1(mesh: trimesh.Trimesh) -> dict:
+#: #1011 (Tony, 2026-10-04): when 0.8-1.2 % of robust-v1's wall samples lie below the
+#: threshold (about +/-3 binomial standard errors around the 1 % cut at n = 20,000), the 1st
+#: percentile sits on that cliff and pass/fail is a coin flip. The verdict is then
+#: ``"borderline"``: excluded from the objective pass rate, neither a pass nor a fail.
+MIN_WALL_BORDERLINE = "borderline"
+ROBUST_V1_BORDERLINE_PERMILLE = (8, 12)  # the inclusive band, in samples per thousand
+
+
+def is_borderline_share(below: int, n_samples: int) -> bool:
+    """Whether ``below`` of ``n_samples`` wall samples under the threshold is within the
+    borderline band (inclusive). Counts, not floats, so the band edges are exact."""
+    lo, hi = ROBUST_V1_BORDERLINE_PERMILLE
+    return n_samples > 0 and lo * n_samples <= 1000 * below <= hi * n_samples
+
+
+def estimate_wall_robust_v1(mesh: trimesh.Trimesh, floor_mm: float | None = None) -> dict:
     """The ``robust-v1`` wall statistic: the 1st percentile of ray-cast wall distances over
     20,000 samples with a fixed seed, drawn from the :func:`canonical_mesh` layout so the
     result does not depend on vertex or face order. Also returns the raw minimum of the same samples and
@@ -319,16 +334,32 @@ def estimate_wall_robust_v1(mesh: trimesh.Trimesh) -> dict:
 
     ``wall_mm`` is 0.0 for a non-watertight mesh and ``inf`` when no ray hit anything, the
     same conventions as :func:`estimate_min_wall_mm`.
+
+    With ``floor_mm`` (#1011) it also returns ``below_floor``, the number of samples that fail
+    :func:`printable_wall` against that floor (the same comparison the verdict uses), and
+    ``below_floor_share``, that count over ``n_samples`` (``None`` with no samples).
     """
+    out = _robust_v1_stats(mesh)
+    if floor_mm is not None:
+        dists = out.pop("_dists")
+        below = int(np.count_nonzero(~printable_wall(dists, floor_mm))) if len(dists) else 0
+        out["below_floor"] = below
+        out["below_floor_share"] = below / out["n_samples"] if out["n_samples"] else None
+    else:
+        out.pop("_dists")
+    return out
+
+
+def _robust_v1_stats(mesh: trimesh.Trimesh) -> dict:
     if not mesh.is_watertight:
-        return {"wall_mm": 0.0, "min_mm": 0.0, "n_samples": 0}
+        return {"wall_mm": 0.0, "min_mm": 0.0, "n_samples": 0, "_dists": np.empty(0)}
     # Sample the canonical layout: the fixed-seed sample set (and so p1, the raw
     # minimum and pass/fail) must not depend on triangle or vertex order (#1007).
     dists = _wall_distances(canonical_mesh(mesh), ROBUST_V1_SAMPLES, ROBUST_V1_SEED)
     if not len(dists):
-        return {"wall_mm": float("inf"), "min_mm": float("inf"), "n_samples": 0}
+        return {"wall_mm": float("inf"), "min_mm": float("inf"), "n_samples": 0, "_dists": dists}
     return {"wall_mm": float(np.percentile(dists, ROBUST_V1_PERCENTILE)),
-            "min_mm": float(dists.min()), "n_samples": int(len(dists))}
+            "min_mm": float(dists.min()), "n_samples": int(len(dists)), "_dists": dists}
 
 
 # The ray-cast estimate in `estimate_min_wall_mm` is a *conservative* proxy: a

@@ -151,3 +151,14 @@ def test_older_results_without_explanations_are_listed_not_dropped():
     (failed,) = row["failed_checks"]
     assert failed["check"] == "min_wall" and failed["measured"] is None and "predates" in failed["detail"]
     assert _check(_doc([row]), SCHEMA) == []
+
+
+def test_borderline_rows_validate():
+    """#1011: the additive borderline_checks row field is in the schema, and a bad share fails."""
+    row = {"entrant": "m", "backend": "openscad", "objective_pass_rate": 1.0, "n_objective_trials": 1,
+           "min_wall_method": "robust-v1",
+           "borderline_checks": [{"trial_id": "t", "instrument_id": "x", "seed": 0, "check": "min_wall",
+                                  "below_floor_share": 0.01}]}
+    assert _check(_doc([row]), SCHEMA) == []
+    bad = {**row, "borderline_checks": [{"check": "min_wall", "below_floor_share": 1.5}]}
+    assert _check(_doc([bad]), SCHEMA)

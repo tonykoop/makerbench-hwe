@@ -26,6 +26,15 @@ test("check state: pass, fail, not recorded, not checked", () => {
   assert.equal(checkState({ renders: "1" }, "renders"), "unknown");
 });
 
+test("#1011: a borderline min_wall is its own state, never a pass or fail", () => {
+  assert.equal(checkState({ min_wall: "borderline" }, "min_wall"), "borderline");
+  const [row] = checkGrid([{ gates: { min_wall: "borderline" } }, { gates: { min_wall: 1 } }])
+    .filter((r) => r.check === "min_wall");
+  assert.deepEqual(row.cells.map((c) => c.state), ["borderline", "pass"]);
+  assert.equal(row.cells[0].text, "Borderline");
+  assert.equal(row.differs, false); // only decided cells (pass/fail) can differ
+});
+
 test("the grid aligns every check across both entrants in one fixed order", () => {
   const rows = checkGrid([A, B]);
   assert.deepEqual(rows.map((row) => row.check), ["renders", "watertight", "min_wall", "topology", "zeta_extra"]);

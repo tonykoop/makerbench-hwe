@@ -40,9 +40,10 @@
         "unit": "bodies"
       },
       {
+        "below_floor_share": 0.9731,
         "body_id": "body_0",
         "check": "min_wall",
-        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured",
+        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured; 97.31% of the samples are below the threshold",
         "instrument_id": null,
         "measured": 1.9979,
         "method": "robust-v1",
@@ -78,9 +79,10 @@
         "unit": "bodies"
       },
       {
+        "below_floor_share": 0.9731,
         "body_id": "body_0",
         "check": "min_wall",
-        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured",
+        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured; 97.31% of the samples are below the threshold",
         "instrument_id": null,
         "measured": 1.9979,
         "method": "robust-v1",
@@ -104,9 +106,10 @@
         "unit": "bodies"
       },
       {
+        "below_floor_share": 0.9731,
         "body_id": "body_0",
         "check": "min_wall",
-        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured",
+        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured; 97.31% of the samples are below the threshold",
         "instrument_id": null,
         "measured": 1.9979,
         "method": "robust-v1",
@@ -154,9 +157,10 @@
         "unit": "bodies"
       },
       {
+        "below_floor_share": 0.9731,
         "body_id": "body_0",
         "check": "min_wall",
-        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured",
+        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured; 97.31% of the samples are below the threshold",
         "instrument_id": null,
         "measured": 1.9979,
         "method": "robust-v1",
@@ -204,9 +208,10 @@
         "unit": "bodies"
       },
       {
+        "below_floor_share": 0.9729,
         "body_id": "body_0",
         "check": "min_wall",
-        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured",
+        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured; 97.29% of the samples are below the threshold",
         "instrument_id": null,
         "measured": 1.9979,
         "method": "robust-v1",
@@ -287,9 +292,10 @@
         "unit": "bodies"
       },
       {
+        "below_floor_share": 0.9745,
         "body_id": "body_0",
         "check": "min_wall",
-        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured",
+        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured; 97.45% of the samples are below the threshold",
         "instrument_id": null,
         "measured": 1.9979,
         "method": "robust-v1",
@@ -301,9 +307,10 @@
         "unit": "mm"
       },
       {
+        "below_floor_share": 0.9725,
         "body_id": "body_0",
         "check": "min_wall",
-        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured",
+        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured; 97.25% of the samples are below the threshold",
         "instrument_id": null,
         "measured": 1.9979,
         "method": "robust-v1",
@@ -327,9 +334,10 @@
         "unit": "bodies"
       },
       {
+        "below_floor_share": 0.9731,
         "body_id": "body_0",
         "check": "min_wall",
-        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured",
+        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured; 97.31% of the samples are below the threshold",
         "instrument_id": null,
         "measured": 1.9979,
         "method": "robust-v1",
@@ -365,9 +373,10 @@
         "unit": "bodies"
       },
       {
+        "below_floor_share": 0.9731,
         "body_id": "body_0",
         "check": "min_wall",
-        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured",
+        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured; 97.31% of the samples are below the threshold",
         "instrument_id": null,
         "measured": 1.9979,
         "method": "robust-v1",
@@ -415,9 +424,10 @@
         "unit": "bodies"
       },
       {
+        "below_floor_share": 0.9725,
         "body_id": "body_0",
         "check": "min_wall",
-        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured",
+        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured; 97.25% of the samples are below the threshold",
         "instrument_id": null,
         "measured": 1.9979,
         "method": "robust-v1",
@@ -477,9 +487,10 @@
         "unit": "bodies"
       },
       {
+        "below_floor_share": 0.9731,
         "body_id": "body_0",
         "check": "min_wall",
-        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured",
+        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured; 97.31% of the samples are below the threshold",
         "instrument_id": null,
         "measured": 1.9979,
         "method": "robust-v1",
@@ -572,9 +583,10 @@
         "unit": "bodies"
       },
       {
+        "below_floor_share": 0.9731,
         "body_id": "body_0",
         "check": "min_wall",
-        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured",
+        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured; 97.31% of the samples are below the threshold",
         "instrument_id": null,
         "measured": 1.9979,
         "method": "robust-v1",
@@ -598,9 +610,10 @@
         "unit": "bodies"
       },
       {
+        "below_floor_share": 0.9731,
         "body_id": "body_0",
         "check": "min_wall",
-        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured",
+        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured; 97.31% of the samples are below the threshold",
         "instrument_id": null,
         "measured": 1.9979,
         "method": "robust-v1",
@@ -624,9 +637,10 @@
         "unit": "bodies"
       },
       {
+        "below_floor_share": 0.9731,
         "body_id": "body_0",
         "check": "min_wall",
-        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured",
+        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured; 97.31% of the samples are below the threshold",
         "instrument_id": null,
         "measured": 1.9979,
         "method": "robust-v1",
@@ -650,9 +664,10 @@
         "unit": "bodies"
       },
       {
+        "below_floor_share": 0.9731,
         "body_id": "body_0",
         "check": "min_wall",
-        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured",
+        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured; 97.31% of the samples are below the threshold",
         "instrument_id": null,
         "measured": 1.9979,
         "method": "robust-v1",
@@ -712,9 +727,10 @@
         "unit": "bodies"
       },
       {
+        "below_floor_share": 0.9767,
         "body_id": "body_0",
         "check": "min_wall",
-        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured",
+        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured; 97.67% of the samples are below the threshold",
         "instrument_id": null,
         "measured": 1.9979,
         "method": "robust-v1",
@@ -786,9 +802,10 @@
         "unit": "bodies"
       },
       {
+        "below_floor_share": 0.9725,
         "body_id": "body_0",
         "check": "min_wall",
-        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured",
+        "detail": "1st percentile of ray-cast wall over 20000 samples (robust-v1; raw minimum 0.1351 mm) on the largest watertight body; other bodies are not measured; 97.25% of the samples are below the threshold",
         "instrument_id": null,
         "measured": 1.9979,
         "method": "robust-v1",

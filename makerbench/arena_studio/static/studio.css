@@ -2552,6 +2552,13 @@ body[data-demo="true"] .demo-header-links {
   border-style: dashed;
 }
 
+/* #1011: a borderline min_wall is neither a pass nor a fail */
+.check-chip[data-state="borderline"] {
+  color: var(--warning, var(--muted));
+  border-color: var(--warning, var(--muted));
+  border-style: dotted;
+}
+
 @media (max-width: 40rem) {
   .compare-stage {
     height: min(40vh, 16rem);

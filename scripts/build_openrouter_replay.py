@@ -105,7 +105,8 @@ def load_ledger(path: Path):
 
 
 def _failed(sub_scores) -> dict:
-    return {k: 1 for k, v in (sub_scores or {}).items() if v < 1}
+    # #1011: a "borderline" min_wall is neither a pass nor a fail, so it is not a failure
+    return {k: 1 for k, v in (sub_scores or {}).items() if not isinstance(v, str) and v < 1}
 
 
 def build(runs: Path, ledger: Path, code_revision: str, repo: Path, credits=(None, None),
