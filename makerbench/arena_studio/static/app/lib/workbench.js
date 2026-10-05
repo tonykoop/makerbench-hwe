@@ -88,7 +88,8 @@ export function checkRows(objective) {
     const passed = value && typeof value === "object" ? value.passed : value;
     const ok = passed === true || passed === 1 || passed === 1.0;
     const bad = passed === false || passed === 0;
-    return { name, result: ok ? "pass" : bad ? "fail" : "unknown", detail: value && typeof value === "object" ? value.detail || "" : "" };
+    // #1011: a borderline min_wall is neither a pass nor a fail
+    return { name, result: ok ? "pass" : bad ? "fail" : passed === "borderline" ? "borderline" : "unknown", detail: value && typeof value === "object" ? value.detail || "" : "" };
   });
   const rate = typeof block.objective_pass_rate === "number" ? block.objective_pass_rate : null;
   return { state: "scored", rows, rate, note: rate === null ? "" : `Pass rate ${Math.round(rate * 100)}%` };

@@ -102,8 +102,10 @@ def load_designs(run_dir: Path) -> tuple[list[Design], int]:
             skipped += 1  # not executed yet: not a failure, so no card and no grade
             continue
         objective = result.get("objective") or {}
+        # #1011: a "borderline" min_wall stays a label; every other sub-score is a number
         sub_scores = {
-            name: float(objective["sub_scores"][name])
+            name: (objective["sub_scores"][name] if objective["sub_scores"][name] == "borderline"
+                   else float(objective["sub_scores"][name]))
             for name in SUB_SCORE_ORDER
             if name in (objective.get("sub_scores") or {})
         }
@@ -113,7 +115,8 @@ def load_designs(run_dir: Path) -> tuple[list[Design], int]:
             status = "scored"
             rate = objective.get("objective_pass_rate")
             if rate is None:
-                rate = (sum(sub_scores.values()) / len(sub_scores)) if sub_scores else 0.0
+                decided = [v for v in sub_scores.values() if not isinstance(v, str)]
+                rate = (sum(decided) / len(decided)) if decided else 0.0
         else:
             status, rate = "failed", 0.0  # ran, but failed before scoring; the arena counts it as 0
         png = _resolve_png(run_dir, (result.get("artifacts") or {}).get("png_path"))
@@ -150,7 +153,9 @@ def _rate_text(card: dict) -> str:
     return f"Objective pass rate {card['objective_pass_rate']:.3f}"
 
 
-def _score_cell(value: float) -> str:
+def _score_cell(value: float | str) -> str:
+    if isinstance(value, str):  # #1011: "borderline"
+        return value
     return "pass" if value >= 1.0 else "fail"
 
 
@@ -216,7 +221,7 @@ def reencode_png(source: Path, dest: Path) -> None:
 
 
 def _failing(card: dict) -> str:
-    bad = [name for name, value in card["sub_scores"].items() if value < 1.0]
+    bad = [name for name, value in card["sub_scores"].items() if not isinstance(value, str) and value < 1.0]
     return "fails: " + ", ".join(bad) if bad else ""
 
 

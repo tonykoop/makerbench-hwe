@@ -13,11 +13,13 @@ export const CHECK_ORDER = [
   "interfaces",
 ];
 
-const STATE_TEXT = { pass: "Pass", fail: "Fail", unknown: "Not recorded", absent: "Not checked" };
+const STATE_TEXT = { pass: "Pass", fail: "Fail", borderline: "Borderline", unknown: "Not recorded", absent: "Not checked" };
 
 export function checkState(gates, name) {
   if (!gates || !Object.prototype.hasOwnProperty.call(gates, name)) return "absent";
   const value = gates[name];
+  // #1011: a borderline min_wall is neither a pass nor a fail (excluded from the pass rate).
+  if (value === "borderline") return "borderline";
   if (typeof value !== "number" || !Number.isFinite(value)) return "unknown";
   return value >= 1 ? "pass" : "fail";
 }

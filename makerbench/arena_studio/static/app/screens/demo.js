@@ -14,10 +14,13 @@ const CHECK_HELP = { renders: "The recorded design could be rendered.", watertig
 
 function CheckChips({ row, prefix }) {
   return html`<ul class="demo-checks" aria-label="Build checks">${CHECK_ORDER.map(gate => {
-    const trials = (row.trials || []).filter(trial => trial.gates?.[gate] != null);
+    // #1011: a "borderline" min_wall is neither a pass nor a fail; it never counts as one.
+    const borderline = (row.trials || []).filter(trial => trial.gates?.[gate] === "borderline").length;
+    const trials = (row.trials || []).filter(trial => trial.gates?.[gate] != null && trial.gates[gate] !== "borderline");
     const passed = trials.filter(trial => trial.gates[gate] >= 1).length;
-    const state = trials.length === 0 ? "unknown" : passed === trials.length ? "pass" : "fail";
-    const label = state === "unknown" ? "Not measured" : state === "pass" ? "Pass" : "Fail";
+    const state = trials.length === 0 ? (borderline ? "borderline" : "unknown") : passed === trials.length ? "pass" : "fail";
+    const label = state === "unknown" ? "Not measured" : state === "borderline" ? "Borderline"
+      : (state === "pass" ? "Pass" : "Fail") + (borderline ? ` (${borderline} borderline)` : "");
     const details = trials.flatMap(trial => (trial.failed_checks || []).filter(failure => failure.check === gate)
       .map(failure => ({ ...failure, seed: trial.seed })));
     const id = `${prefix}-${gate}-detail`;

@@ -494,7 +494,9 @@ class ArenaStudioService:
                 "status": trial.get("status") or "pending", "backend": result.get("backend"),
                 "wall_time_s": observed(trial.get("wall_time_s")),
                 "objective_pass_rate": observed(objective.get("objective_pass_rate"), 1),
-                "gates": {key: observed(gates.get(key), 1) for key in (
+                # #1011: a "borderline" min_wall is passed through as is (neither pass nor fail)
+                "gates": {key: (gates.get(key) if gates.get(key) == "borderline" else observed(gates.get(key), 1))
+                          for key in (
                     "renders", "watertight", "nonzero_volume", "body_count", "fits_envelope", "min_wall",
                     *[key for key in ("topology", "interfaces") if key in gates])},
                 "render_url": f"/api/runs/{quote(run_dir.name, safe='')}/matchup-render/{quote(str(trial.get('trial_id')), safe='')}"
