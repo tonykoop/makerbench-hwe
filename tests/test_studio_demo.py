@@ -177,3 +177,15 @@ def test_demo_cannot_open_private_or_live_workspaces(flags):
     result = CliRunner().invoke(app, ["studio", "--demo", *flags])
     assert result.exit_code == 2
     assert "--demo cannot use" in result.stdout
+
+
+def test_demo_builder_treats_borderline_as_undecided():
+    """#1011: a "borderline" min_wall is neither a pass nor a fail in the demo snapshot: decided-check
+    denominators, passed through for display, and anything that is not 0, 1 or borderline is rejected."""
+    spec = importlib.util.spec_from_file_location("demo_builder_1011", ROOT / "scripts/build_studio_demo_data.py")
+    builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(builder)
+    assert builder._decided(1) and builder._decided(0.0) and not builder._decided("borderline")
+    assert not builder._decided(True) and not builder._decided(0.5)
+    assert builder._gate_mean([1, "borderline", 0]) == 0.5
+    assert builder._gate_mean(["borderline", "borderline"]) == "borderline"

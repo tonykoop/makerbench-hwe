@@ -11,6 +11,19 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "makerbench/arena_studio/data/showcase.json"
 GATES = {"renders", "watertight", "nonzero_volume", "fits_envelope", "body_count", "min_wall"}
+BORDERLINE = "borderline"  # #1011: a robust-v1 min_wall on the 1st-percentile cliff
+
+
+def _decided(value) -> bool:
+    return value in (0, 1) and not isinstance(value, bool)
+
+
+def _gate_mean(values: list):
+    """Mean over the decided trials; "borderline" when every trial is borderline (#1011)."""
+    decided = [value for value in values if _decided(value)]
+    if not decided:
+        return BORDERLINE
+    return sum(decided) / len(decided)
 MODEL_NAMES = {"claude-code-opus-5.5": "Claude Opus 5.5",
                "claude-code-sonnet-5.5": "Claude Sonnet 5.5",
                "codex-gpt-6.1-sol": "GPT-6.1 Sol"}
@@ -153,9 +166,13 @@ def build(root: Path = ROOT) -> dict:
             if abs(sum(trial["objective_pass_rate"] for trial in trials) / 3 - row["objective_pass_rate"]) > 1e-6:
                 raise ValueError("Recorded showcase renders disagree with the public average")
             for trial in trials:
-                if set(trial["gates"]) != GATES or any(value not in (0, 1) for value in trial["gates"].values()):
-                    raise ValueError("Recorded showcase trials must contain the six build checks")
-                if abs(trial["objective_pass_rate"] - sum(trial["gates"].values()) / 6) > 1e-6:
+                if set(trial["gates"]) != GATES or any(not _decided(value) and value != BORDERLINE
+                                                       for value in trial["gates"].values()):
+                    raise ValueError("Recorded showcase trials must contain the six build checks, each 0, 1 "
+                                     "or 'borderline'")
+                # #1011: a borderline check is neither a pass nor a fail; it leaves the denominator
+                decided = [value for value in trial["gates"].values() if _decided(value)]
+                if abs(trial["objective_pass_rate"] - (sum(decided) / len(decided) if decided else 0.0)) > 1e-6:
                     raise ValueError("Recorded showcase check scores disagree with the trial average")
                 image(trial["image"])
                 if hashlib.sha256((root / trial["image"]).read_bytes()).hexdigest() != trial["png_sha256"]:
@@ -163,7 +180,7 @@ def build(root: Path = ROOT) -> dict:
             row["trials"] = [{"seed": trial["seed"], "image": image(trial["image"]),
                               "gates": trial["gates"], "objective_pass_rate": trial["objective_pass_rate"],
                               "failed_checks": []} for trial in sorted(trials, key=lambda trial: trial["seed"])]
-            row["gates"] = {gate: sum(trial["gates"][gate] for trial in trials) / 3 for gate in sorted(GATES)}
+            row["gates"] = {gate: _gate_mean([trial["gates"][gate] for trial in trials]) for gate in sorted(GATES)}
             row["image"] = row["trials"][0]["image"]
     gallery = load("docs/showcase/strings/gallery/gallery.json")
     if any(set(design.get("sub_scores", {})) != GATES for design in gallery["designs"] if design["status"] == "scored"):

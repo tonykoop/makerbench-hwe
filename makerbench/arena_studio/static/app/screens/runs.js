@@ -7,6 +7,7 @@ import { Empty, ErrorState, Loading } from "../components/states.js";
 import { formatWhen, UNKNOWN_GRADE_COUNT } from "../lib/format.js";
 import { buildHash } from "../lib/route.js";
 import { toggleSelection } from "../lib/matchupCompare.js";
+import { gateLabel } from "../lib/gateText.js";
 import { MatchupCompare } from "../components/matchupCompare.js";
 
 function RunsTable({ runs, selected }) {
@@ -151,7 +152,7 @@ function MatchupResults({ metadata, trials }) {
             </dl>
             <ul class="matchup-gates">
               ${Object.entries(trial.gates || {}).map(([name, value]) => html`
-                <li key=${name}><span>${name}</span>: <strong>${value == null ? "Not recorded" : value >= 1 ? "Pass" : "Fail"}</strong></li>
+                <li key=${name}><span>${name}</span>: <strong>${gateLabel(value)}</strong></li>
               `)}
             </ul>
             ${rows.length > 1 && html`<label class="compare-pick">
