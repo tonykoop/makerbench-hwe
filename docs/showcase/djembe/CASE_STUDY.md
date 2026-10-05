@@ -66,20 +66,23 @@ height/radius points.
 | The repo marks the instrument "not build-ready" | **Verified** | `photo-shotlist.md` and `capstone-manifest.json` in `tonykoop/djembe` |
 | Model, backend, context tier, seed | **Verified** | `arena run` command above; trial provenance records `context_tier: image`, model `claude-code-sonnet-5.5` |
 | Generated design has 14 staves, 10 mm wall, a `stave_count` parameter (12-16), hoops, base ring and 4 mm ropes | **Verified** by reading the generated script (kept in ignored `runs/`, not committed) | `stave_count = 14`, `wall = 10`, `rope_d = 4`, modules `stave`, `shell`, `flesh_hoop`, `crown_hoop`, `base_ring`, `ropes` |
-| Recorded grade: 0.833, `min_wall` fails, other five checks pass | **Verified** | `assets/objective_scoreline.json`; run log sub-scores |
+| Recorded grade: 0.833, `min_wall` fails, other five checks pass | **Verified**, and unchanged when regraded with `robust-v1` (`scripts/regrade_scoreline.py`) | `assets/objective_scoreline.json`; run log sub-scores |
 | Wall time 108 s | **Verified as a single sample, scope stated** | `assets/timing.json` |
 | The photo was given to the model | **Assumed from configuration**: the image tier was requested with an image map | Trial provenance shows the tier, not a tool call or image read |
 | The photo shaped the design | **Unknown**: not demonstrated | No no-image control run |
-| Why `min_wall` failed | **Unknown** | Not investigated; floor is provisional |
+| Why `min_wall` failed | **Partly measured**: the 1st-percentile wall is 1.27 mm against a 2.0 mm floor, with 1.52% of samples below it (above the 0.8-1.2% borderline band), so it is a real thin region, not one thin sample. Where it is was not located | `assets/objective_scoreline.json` `failed_checks` (regraded) |
 | Reference photo's reuse rights | **Not relied on**: photo not published | It shows a person and carries location metadata |
 | Buildability, sound, structure | **Not claimed** | Repo says not build-ready |
 
+<!-- claim: 1.27 at: "wall is 1.27 mm" source: docs/showcase/djembe/assets/objective_scoreline.json#/rows/0/failed_checks/0/measured -->
 <!-- claim: 108 at: "| Wall time 108 s |" source: docs/showcase/djembe/assets/timing.json#/elapsed_s -->
 
 ## What it does not show
 
-- **Why `min_wall` failed is unknown.** The 10 mm stave wall is well above the floor,
-  so the thin rope or hoop geometry is a candidate, but that was not checked. The
+- **Where `min_wall` fails is unknown.** Regraded with `robust-v1`, 1.52% of the sampled
+  wall is below the 2.0 mm floor (1st percentile 1.27 mm), so this is a measurable thin
+  region rather than one stray sample. The 10 mm stave wall is well above the floor, so the
+  thin rope or hoop geometry is a candidate, but that was not checked. The
   arena's floor for this task is also provisional.
 - **Whether the photo influenced the design.** The run used the arena's image tier,
   but the trial record shows no tool calls and I did not test the same brief without
