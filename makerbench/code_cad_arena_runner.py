@@ -23,6 +23,7 @@ from . import assembly_fit
 from . import blender_backend
 from . import build123d_backend
 from . import cadquery_backend
+from . import freecad_backend
 from . import fusion_backend
 from . import geometry
 from . import render
@@ -65,6 +66,7 @@ BACKEND_COMPILERS: Mapping[str, Compiler] = {
     "blender": blender_backend.compile_bpy_to_artifacts,
     "cadquery": cadquery_backend.compile_cadquery_to_artifacts,
     "build123d": build123d_backend.compile_build123d_to_artifacts,
+    "freecad": freecad_backend.compile_freecad_to_artifacts,
     "solidworks": solidworks_backend.compile_solidworks_to_artifacts,
     "fusion": fusion_backend.compile_fusion_to_artifacts,
 }
@@ -77,6 +79,7 @@ SANDBOXED_BACKEND_COMPILERS: Mapping[str, Compiler] = {
     "openscad": scad_sandbox.compile_scad_sandboxed,
     "cadquery": cadquery_backend.compile_cadquery_to_artifacts,
     "build123d": build123d_backend.compile_build123d_to_artifacts,
+    "freecad": freecad_backend.compile_freecad_to_artifacts,
 }
 
 

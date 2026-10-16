@@ -2,7 +2,7 @@
 
 #824 was a build123d entrant whose inline tool calls were silently compiled in
 the OpenSCAD sandbox. These tests apply the same regression check to every
-backend the tool server accepts (OpenSCAD, CadQuery, build123d). Each studio-tier
+backend the tool server accepts (OpenSCAD, CadQuery, build123d, FreeCAD). Each studio-tier
 ``measure`` / ``render_view`` call must reach that backend's own sandboxed
 compiler, the one the arena grades with. It must run under Bubblewrap with the
 same isolation flags and the right interpreter, and it must never fall back to
@@ -26,7 +26,7 @@ from types import SimpleNamespace
 import pytest
 import trimesh
 
-from makerbench import build123d_backend, cadquery_backend
+from makerbench import build123d_backend, cadquery_backend, freecad_backend
 from makerbench import code_cad_arena_runner as runner
 from makerbench import code_cad_generator as gen
 from makerbench import code_cad_providers as providers
@@ -36,8 +36,9 @@ SOURCES = {
     "openscad": "cube([10, 20, 5]);\n",
     "cadquery": "import cadquery as cq\nresult = cq.Workplane('XY').box(10, 20, 5)\n",
     "build123d": "from build123d import Box\nresult = Box(10, 20, 5)\n",
+    "freecad": "import Part\nresult = Part.makeBox(10, 20, 5)\n",
 }
-FENCES = {"openscad": "scad", "cadquery": "python", "build123d": "python"}
+FENCES = {"openscad": "scad", "cadquery": "python", "build123d": "python", "freecad": "python"}
 BACKENDS = tuple(entrant_tools.BACKENDS)
 TOOLS = ("measure", "render_view")
 #: Bubblewrap flags every entrant-code sandbox must pass, whatever the backend.
@@ -49,6 +50,16 @@ FAKE_BIN = "/fake-sandbox-bin"
 def test_parity_covers_every_sandboxed_arena_backend():
     """A backend the arena can grade in a sandbox must also be one the tool server routes."""
     assert set(BACKENDS) == set(runner.SANDBOXED_BACKEND_COMPILERS) == set(SOURCES)
+
+
+@pytest.fixture(autouse=True)
+def pinned_freecad_fixture(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    (runtime / "usr/bin").mkdir(parents=True)
+    (runtime / "AppRun").touch()
+    (runtime / "usr/bin/python").touch()
+    (runtime / ".makerbench-appimage-sha256").write_text(freecad_backend.APPIMAGE_SHA256)
+    monkeypatch.setenv("MAKERBENCH_FREECAD_APPDIR", str(runtime))
 
 
 @pytest.fixture
@@ -93,6 +104,7 @@ def lane_spy(monkeypatch):
     monkeypatch.setattr(scad_sandbox, "compile_scad_sandboxed", spy("openscad"))
     monkeypatch.setattr(cadquery_backend, "compile_cadquery_to_artifacts", spy("cadquery"))
     monkeypatch.setattr(build123d_backend, "compile_build123d_to_artifacts", spy("build123d"))
+    monkeypatch.setattr(freecad_backend, "compile_freecad_to_artifacts", spy("freecad"))
     return calls
 
 
@@ -128,15 +140,16 @@ def test_explicit_backend_argument_wins_over_the_session_default(layout, monkeyp
 @pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize(("path", "lane"), [("draft.scad", "openscad"), ("draft.py", "cadquery")])
 def test_workspace_path_routes_by_suffix_in_every_session(layout, lane_spy, backend, path, lane):
-    """A workspace file is routed by its suffix, never by a mismatched session backend.
+    """Preserve suffix routing, with FreeCAD .py files using their own interpreter.
 
     ``.py`` keeps the generic CadQuery worker routing that #824 kept on purpose.
     The build123d lane is that same Bubblewrap worker plus an import check (see
-    the confinement tests below), so a ``.py`` file never reaches OpenSCAD.
+    the confinement tests below). FreeCAD instead needs its pinned runtime.
     """
     session = _session(layout, backend)
     assert session.call("measure", {"path": path})["ok"] is True
     workspace, _ = layout
+    lane = "freecad" if backend == "freecad" and path.endswith(".py") else lane
     assert lane_spy == [(lane, (workspace / path).read_text(encoding="utf-8"))]
     ledger = entrant_tools.read_ledger(session.ledger)[0]
     assert (ledger["backend"], ledger["path"]) == (lane, path)
@@ -173,12 +186,24 @@ def fake_sandbox(monkeypatch):
         launches.append({"argv": cmd, "source": source})
         return subprocess.CompletedProcess(cmd, 1, "", "fake sandbox: candidate failed\n")
 
-    def no_popen(*a, **kw):
-        pytest.fail("entrant tools must not spawn an unrecorded process")
+    class FakePopen:
+        def __init__(self, cmd, **kw):
+            assert "/opt/freecad/AppRun" in cmd
+            self.result = run(cmd, **kw)
+            self.returncode = self.result.returncode
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def communicate(self, **kw):
+            return self.result.stdout, self.result.stderr
 
     monkeypatch.setattr(shutil, "which", which)
     monkeypatch.setattr(subprocess, "run", run)
-    monkeypatch.setattr(subprocess, "Popen", no_popen)
+    monkeypatch.setattr(subprocess, "Popen", FakePopen)
     return launches
 
 
@@ -202,8 +227,14 @@ def test_each_backend_launches_its_own_confined_interpreter(layout, fake_sandbox
     if backend == "openscad":
         assert f"{FAKE_BIN}/openscad" in argv
         assert sys.executable not in argv and "/work/entrant.py" not in argv
+    elif backend == "freecad":
+        assert "/opt/freecad/AppRun" in argv
+        assert argv[-4:] == ["python", "/work/driver.py", "/out", "/work/entrant.py"]
+        assert f"--as={freecad_backend.MEMORY_LIMIT_BYTES}" in argv
+        assert "--cpu=180" in argv
+        assert sys.executable not in argv
     else:
-        tail = argv[argv.index("--chdir"):]
+        tail = argv[argv.index("--chdir"): ]
         assert tail[:4] == ["--chdir", "/work", sys.executable, "/work/driver.py"]
         assert tail[4] == "/work/entrant.py"
         assert not any(arg.endswith("/openscad") for arg in argv)
@@ -222,7 +253,8 @@ def test_build123d_lane_refuses_foreign_source_before_any_sandbox(layout, fake_s
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_unavailable_sandbox_never_falls_back(layout, monkeypatch, backend):
+@pytest.mark.parametrize("tool", TOOLS)
+def test_unavailable_sandbox_never_falls_back(layout, monkeypatch, backend, tool):
     """With no bwrap, every backend reports an environment error and starts no process."""
     monkeypatch.setattr(shutil, "which", lambda *a, **kw: None)
 
@@ -232,7 +264,7 @@ def test_unavailable_sandbox_never_falls_back(layout, monkeypatch, backend):
     monkeypatch.setattr(subprocess, "run", tripwire)
     monkeypatch.setattr(subprocess, "Popen", tripwire)
     session = _session(layout, backend)
-    result = session.call("measure", {"source": SOURCES[backend]})
+    result = session.call(tool, {"source": SOURCES[backend]})
     assert result["ok"] is False and "sandbox unavailable" in result["error"]
     assert entrant_tools.read_ledger(session.ledger)[0]["backend"] == backend
 

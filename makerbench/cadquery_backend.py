@@ -243,6 +243,8 @@ def _bubblewrap_command(
     script_path: Path,
     out_dir: Path,
     readonly_input_dir: Path | None = None,
+    runtime_bind: tuple[Path, str] | None = None,
+    worker_command: list[str] | None = None,
 ) -> list[str]:
     """Build a sandbox command exposing only runtime and job files."""
 
@@ -268,7 +270,8 @@ def _bubblewrap_command(
     cmd.extend(("--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"))
 
     runtime_prefix = Path(sys.prefix).resolve()
-    if runtime_prefix != Path("/usr") and not runtime_prefix.is_relative_to(Path("/usr")):
+    if (runtime_bind is None and runtime_prefix != Path("/usr")
+            and not runtime_prefix.is_relative_to(Path("/usr"))):
         cmd.extend(("--ro-bind", runtime_prefix.as_posix(), runtime_prefix.as_posix()))
 
     cmd.extend(
@@ -288,6 +291,20 @@ def _bubblewrap_command(
     )
     if readonly_input_dir is not None:
         cmd.extend(("--ro-bind", readonly_input_dir.as_posix(), "/inputs"))
+    if runtime_bind is not None:
+        source, destination = runtime_bind
+        cmd.extend(("--ro-bind", source.as_posix(), destination))
+        # AppImage launchers use a /bin/bash shebang; /usr alone does not
+        # provide that path in the otherwise empty mount namespace.
+        cmd.extend(("--ro-bind", "/bin", "/bin"))
+        # FreeCAD resolves the current user at import time. Generate a
+        # sandbox-only entry instead of exposing host account information.
+        passwd = out_dir.parent / "passwd"
+        passwd.write_text(f"entrant:x:{os.getuid()}:{os.getgid()}:entrant:/tmp:/bin/sh\n")
+        cmd.extend(("--ro-bind", passwd.as_posix(), "/etc/passwd"))
+    if worker_command is not None:
+        cmd.extend(("--chdir", "/work", *worker_command))
+        return cmd
     cmd.extend(
         (
             "--chdir",

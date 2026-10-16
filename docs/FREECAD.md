@@ -49,10 +49,10 @@ display or credential variables. The runner times out the process group and
 publishes artifacts only after successful export. Output directories must be
 absent or empty to prevent stale artifacts being mistaken for a new result.
 
-This is a **trusted-input primitive**, not a security sandbox. It is not registered
-in Arena or any grading path. Filesystem/network confinement and Arena wiring
-are #1037; do not execute untrusted entrant code through this API until that
-layer exists. Tests generate simple geometry; no oracle or held-out data is used.
+This API is a **trusted-input primitive**, not a security sandbox. Arena and
+entrant tools use the separate confined compiler described below. Never execute
+untrusted entrant code through `run_freecad`. Tests generate simple geometry;
+no oracle or held-out data is used.
 
 ## Export policy and determinism
 
@@ -71,3 +71,41 @@ author, organization, preprocessor_version, originating_system, authorization,
 FILE_DESCRIPTION, FILE_SCHEMA, every DATA byte, whitespace and line endings all
 remain part of the byte-for-byte comparison. Negative controls change other
 header/data fields to prove those differences remain visible.
+
+## Confined Arena and entrant tools (#1037)
+
+`arena run --backend freecad` and the studio entrant tools use
+`compile_freecad_to_artifacts`, which always runs through the existing
+CadQuery/build123d Bubblewrap command builder. The trusted `run_freecad` API
+above remains for trusted export integration tests only.
+
+```bash
+PYTHONPATH="$PWD" python -m makerbench.cli arena run \
+  --backend freecad --stub --instruments ocarina --models stub-a \
+  --seeds 0 --rate-limit-s 0 --run-dir runs/freecad-stub
+```
+
+This is a $0 public-task smoke with a deterministic fixture entrant, not model
+performance. Set `MAKERBENCH_FREECAD_APPDIR` to the pinned extraction first.
+The harness also needs Bubblewrap with unprivileged namespaces, `prlimit`, and
+OpenSCAD/`xvfb-run` for previews. Missing or broken confinement fails closed;
+there is no unconfined compiler fallback. The normal unit suite uses generated
+fixture geometry and a fixture interpreter, so it needs no FreeCAD download or
+paid provider calls. The separate #1036 CI job validates the real pinned exports.
+
+The sandbox exposes system runtime files, the pinned AppDir at `/opt/freecad`,
+the worker and entrant source read-only at `/work`, optional explicitly supplied
+fixtures read-only at `/inputs`, and a fresh writable `/out` and temporary home.
+A generated passwd entry supplies the sandbox user; no host account files,
+checkout, real home, prior output or private data are mounted. The network
+namespace is isolated and the child environment is allowlisted. The default
+wall/CPU budget is 180 seconds (`MAKERBENCH_FREECAD_TIMEOUT_S`); address space
+is limited to 4 GiB per process. Native STEP, derived STL, runtime provenance
+and PNG preview are retained. Outputs are accepted only from regular,
+non-symlink files in the fresh job directory.
+
+Entrants may use Part, Sketcher and PartDesign, receive a fresh `doc`, and set
+`result` as described above. In FreeCAD tool sessions `.py` workspace files
+route to the FreeCAD sandbox; inline source can select `backend="freecad"`.
+Run logs, objective scorelines and tool ledgers carry the `freecad` backend;
+these rows remain separate from other backend series.
