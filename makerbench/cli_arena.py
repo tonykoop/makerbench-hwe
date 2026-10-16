@@ -26,6 +26,7 @@ from . import cadquery_backend
 from . import code_cad_export as arena_export
 from . import code_cad_providers as providers
 from . import code_cad_arena_runner as arena_runner
+from . import freecad_backend
 from . import fusion_backend
 from . import live_cad_runner
 from . import render
@@ -441,7 +442,7 @@ def arena_run(
         backend: str = typer.Option(
             "openscad",
             "--backend",
-            help="CAD-backend axis (#601/#627/#752/#799): 'openscad', 'cadquery', 'build123d', 'blender', 'solidworks', 'fusion', or the agentic live tiers 'solidworks-live'/'fusion-live'.",
+            help="CAD-backend axis (#601/#627/#752/#799): 'openscad', 'cadquery', 'build123d', 'freecad', 'blender', 'solidworks', 'fusion', or the agentic live tiers 'solidworks-live'/'fusion-live'.",
         ),
         driver_model: str = typer.Option("gpt-5.6-sol", "--driver-model", help="Live backends only: the codex driver model each entrant agent uses."),
         image_map: Optional[str] = typer.Option(None, "--image-map", help="JSON file mapping instrument_id -> inspiration image path; required for --context-tier image (#609), optional lead reference image for studio."),
@@ -449,7 +450,7 @@ def arena_run(
         sandboxed_compile: bool = typer.Option(
             False,
             "--sandboxed-compile",
-            help="Compile OpenSCAD candidates inside the Bubblewrap sandbox (#788 W0) instead of on the host. Off by default; fails closed if the sandbox cannot start. Only openscad, cadquery and build123d support it.",
+            help="Compile OpenSCAD candidates inside the Bubblewrap sandbox (#788 W0) instead of on the host. Off by default; fails closed if the sandbox cannot start. Only openscad, cadquery, build123d and freecad support it.",
         ),
         entrant_tools: bool = typer.Option(False, "--entrant-tools", help="Studio tier only (#798): offer entrants read-only sandboxed measure/render_view tools (Claude via MCP allow-list); calls are recorded in trial provenance.")):
     """Run (or resume) the 4D arena matrix and write the objective scoreline."""
@@ -479,11 +480,18 @@ def arena_run(
             "optional local backend with `pip install -e '.[cadquery]'`.[/red]"
         )
         raise typer.Exit(code=1)
-    if backend in ("cadquery", "build123d") and not cadquery_backend._bubblewrap_available(
+    if backend == "freecad":
+        try:
+            freecad_backend.pinned_appdir()
+        except RuntimeError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
+    if backend in ("cadquery", "build123d", "freecad") and not cadquery_backend._bubblewrap_available(
         cadquery_backend._scrub_environment(os.environ)
     ):
+        label = "FreeCAD" if backend == "freecad" else "CadQuery"
         console.print(
-            "[red]Bubblewrap filesystem sandbox unavailable — the CadQuery "
+            f"[red]Bubblewrap filesystem sandbox unavailable — the {label} "
             "backend requires `bwrap` and unprivileged user namespaces.[/red]"
         )
         raise typer.Exit(code=1)
@@ -509,9 +517,10 @@ def arena_run(
                 "Not falling back to the host compiler.[/red]"
             )
             raise typer.Exit(code=1)
-    if backend in ("cadquery", "build123d") and not render.openscad_available():
+    if backend in ("cadquery", "build123d", "freecad") and not render.openscad_available():
+        label = "FreeCAD" if backend == "freecad" else "CadQuery"
         console.print(
-            "[red]openscad binary not found — the CadQuery backend needs it for "
+            f"[red]openscad binary not found — the {label} backend needs it for "
             "headless preview rendering.[/red]"
         )
         raise typer.Exit(code=1)
