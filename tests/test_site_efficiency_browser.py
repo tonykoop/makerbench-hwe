@@ -47,7 +47,7 @@ def test_grouping_order_and_unset_effort(page):
         point('a',null,'high',2)];
       const groups = h.effortGroups(points);
       return groups.map(g => g.map(p => [p._model.identifier,
-        p._model.agent_identifier, h.effortLabel(p._model), p.x]));
+        p._model.agent_identifier, h.effortCode(p._model), p.x]));
     }""") == [
         [["a", "cli", "L", 9], ["a", "cli", "M", 8],
          ["a", "cli", "H", 2], ["a", "cli", "X", 1]],
@@ -86,7 +86,7 @@ def test_real_codex_rows_and_chart_options(page):
       const groups = h.effortGroups(models.map(m => ({_model:m})));
       return groups.length === 1 && groups[0].length === 4 &&
         groups[0].every(p => p._model.agent_identifier === 'codex_cli') &&
-        groups[0].map(p => h.effortLabel(p._model)).join('') === 'LMHX' &&
+        groups[0].map(p => h.effortCode(p._model)).join('') === 'LMHX' &&
         new Set(models.map((m,i) => h.modelColor(i,m))).size === 1;
     }""", codex)
     for metric in ("time", "cost", "tokens"):
