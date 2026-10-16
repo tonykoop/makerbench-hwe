@@ -441,6 +441,44 @@
     return title;
   }
 
+  function leaderboardRanking(models) {
+    var minimum = DATA.overall_ranking_min_families || 4;
+    function coverage(m) { return m.tracks[TRACK].n_families_scored || 0; }
+    function reference(m) { return m.is_control || m.is_human_baseline; }
+    function eligible(m) {
+      return !reference(m) && coverage(m) >= minimum && m.tracks[TRACK].overall_mean != null;
+    }
+    function overallOrder(a, b) {
+      var av = a.tracks[TRACK].overall_mean, bv = b.tracks[TRACK].overall_mean;
+      return (bv == null ? -1 : bv) - (av == null ? -1 : av) ||
+        modelText(a).localeCompare(modelText(b));
+    }
+    // Coverage picks the representative before the board is sorted by score.
+    function variantOrder(a, b) {
+      var efforts = { high: 4, xhigh: 3, medium: 2, low: 1 };
+      return coverage(b) - coverage(a) ||
+        ((b.tracks[TRACK].overall_mean == null ? -1 : b.tracks[TRACK].overall_mean) -
+         (a.tracks[TRACK].overall_mean == null ? -1 : a.tracks[TRACK].overall_mean)) ||
+        (efforts[b.reasoning_level] || 0) - (efforts[a.reasoning_level] || 0) ||
+        modelText(a).localeCompare(modelText(b)) ||
+        String(a.agent_identifier || "").localeCompare(String(b.agent_identifier || ""));
+    }
+    var grouped = new Map();
+    models.filter(function (m) { return m.tracks[TRACK] && m.tracks[TRACK].has_data; }).forEach(function (m) {
+      var key = (m.league || 'autonomous') + ':' +
+        (m.is_control ? 'control:' : m.is_human_baseline ? 'human:' : 'model:') +
+        (m.model_family || m.identifier);
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(m);
+    });
+    var entries = Array.from(grouped.values()).map(function (variants) {
+      variants.sort(variantOrder);
+      return { primary: variants[0], variants: variants.slice(1) };
+    });
+    return { entries: entries, coverage: coverage, reference: reference,
+      eligible: eligible, overallOrder: overallOrder };
+  }
+
   function renderTable() {
     var fams = familyList();
     var axes = capabilityAxes().slice(0, 8);
@@ -454,27 +492,9 @@
       document.getElementById("lb-note").textContent = "";
       return;
     }
-    function coverage(m) { return m.tracks[TRACK].n_families_scored || 0; }
-    function reference(m) { return m.is_control || m.is_human_baseline; }
-    function eligible(m) {
-      return !reference(m) && coverage(m) >= minimum && m.tracks[TRACK].overall_mean != null;
-    }
-    function overallOrder(a, b) {
-      var av = a.tracks[TRACK].overall_mean, bv = b.tracks[TRACK].overall_mean;
-      return (bv == null ? -1 : bv) - (av == null ? -1 : av) ||
-        modelText(a).localeCompare(modelText(b));
-    }
-    // Coverage picks the representative before the board is sorted by score.
-    // This preference is intentionally independent of the profile-chart order.
-    function variantOrder(a, b) {
-      var efforts = { high: 4, xhigh: 3, medium: 2, low: 1 };
-      return coverage(b) - coverage(a) ||
-        ((b.tracks[TRACK].overall_mean == null ? -1 : b.tracks[TRACK].overall_mean) -
-         (a.tracks[TRACK].overall_mean == null ? -1 : a.tracks[TRACK].overall_mean)) ||
-        (efforts[b.reasoning_level] || 0) - (efforts[a.reasoning_level] || 0) ||
-        modelText(a).localeCompare(modelText(b)) ||
-        String(a.agent_identifier || "").localeCompare(String(b.agent_identifier || ""));
-    }
+    var ranking = leaderboardRanking(models);
+    var coverage = ranking.coverage, reference = ranking.reference;
+    var eligible = ranking.eligible, overallOrder = ranking.overallOrder;
     function columnValue(m, key) {
       if (key === "coverage") return coverage(m);
       if (key.indexOf("axis:") === 0) {
@@ -567,16 +587,8 @@
     var leagueDefs = DATA.leagues && DATA.leagues.length ? DATA.leagues : [{ id: 'autonomous', label: 'Autonomous' }];
     var shownCount = 0;
     container.innerHTML = leagueDefs.map(function (lg) {
-      var grouped = new Map();
-      models.filter(function (m) { return (m.league || 'autonomous') === lg.id; }).forEach(function (m) {
-        // Controls stay separate even if they share a model family with a run.
-        var key = (m.is_control ? 'control:' : m.is_human_baseline ? 'human:' : 'model:') + (m.model_family || m.identifier);
-        if (!grouped.has(key)) grouped.set(key, []);
-        grouped.get(key).push(m);
-      });
-      var entries = Array.from(grouped.values()).map(function (variants) {
-        variants.sort(variantOrder);
-        return { primary: variants[0], variants: variants.slice(1) };
+      var entries = ranking.entries.filter(function (entry) {
+        return (entry.primary.league || 'autonomous') === lg.id;
       });
       if (!entries.length) return '';
       shownCount += entries.length;
@@ -1095,41 +1107,6 @@
     return "rect";
   }
 
-  function profileSignature(values) {
-    return values.map(function (v) {
-      return v == null ? "x" : Number(v).toFixed(3);
-    }).join("|");
-  }
-
-  function insetOverlappingProfile(values, overlapIndex, overlapCount) {
-    if (overlapCount < 2) return values;
-    var inset = (overlapCount - overlapIndex - 1) * 0.08;
-    return values.map(function (v) {
-      if (v == null) return null;
-      return Math.max(0, Math.min(4, v - inset));
-    });
-  }
-
-  function revealOverlappingProfiles(datasets) {
-    var buckets = {};
-    datasets.forEach(function (dataset) {
-      var signature = profileSignature(dataset._actualData);
-      if (!buckets[signature]) buckets[signature] = [];
-      buckets[signature].push(dataset);
-    });
-    Object.keys(buckets).forEach(function (signature) {
-      var bucket = buckets[signature];
-      if (bucket.length < 2) return;
-      bucket.forEach(function (dataset, overlapIndex) {
-        dataset.data = insetOverlappingProfile(
-          dataset._actualData,
-          overlapIndex,
-          bucket.length
-        );
-      });
-    });
-  }
-
   function profileChartId(index) {
     return "chart-profile-" + index;
   }
@@ -1163,14 +1140,16 @@
         String(a.row_id).localeCompare(String(b.row_id));
     });
     var labels = new Map();
-    var usedLabels = {};
     models.concat(unavailable).forEach(function (m) {
-      var base = plainLabel(m.identifier) + " · " + effortLabel(m.reasoning_level) +
+      var base = plainLabel(m.identifier) + " · " + (m.reasoning_level == null ? "Unspecified effort" : effortLabel(m.reasoning_level)) +
         " · " + (harnessLabel(m.agent_identifier) || "Unknown harness");
-      usedLabels[base] = (usedLabels[base] || 0) + 1;
-      labels.set(m, base + (usedLabels[base] > 1 ? " · variant " + usedLabels[base] : ""));
+      labels.set(m, base);
     });
-    var selected = models.slice(0, 3);
+    var ranking = leaderboardRanking(DATA.models);
+    var selected = ranking.entries.map(function (entry) { return entry.primary; })
+      .filter(function (m) { return ranking.eligible(m) && models.indexOf(m) !== -1 &&
+        (m.league || 'autonomous') === 'autonomous'; })
+      .sort(ranking.overallOrder).slice(0, 3);
     var controls = document.createElement("fieldset");
     controls.className = "profile-picker";
     controls.innerHTML = '<legend>Compare up to 3 models</legend>';
@@ -1225,7 +1204,7 @@
         var card = document.createElement("div");
         card.className = "profile-card";
         card.innerHTML = '<div class="profile-head"><h4>' + escapeHTML(group.family) + '</h4>' +
-          '<span>' + group.models.length + ' variant' +
+          '<span>' + group.models.length + ' model' +
           (group.models.length === 1 ? '' : 's') + '</span></div>' +
           '<div class="chart-box chart-box-radar"><canvas id="' + chartId + '"></canvas></div>';
         plots.appendChild(card);
@@ -1323,7 +1302,7 @@
       });
     }
     drawProfiles();
-    if (note) note.textContent = "Default selection: top 3 by overall score on this track. Blank vertices are unmeasured packs, not zeros. Overlapping profiles retain their measured values.";
+    if (note) note.textContent = "Default selection: top 3 ranked models on this track, using leaderboard coverage and variant selection. Blank vertices are unmeasured packs, not zeros. Identical profiles overlap exactly.";
   }
 
   function renderHistChart() {
