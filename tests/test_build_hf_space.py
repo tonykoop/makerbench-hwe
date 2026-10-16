@@ -248,3 +248,58 @@ def test_main_prints_upload_command_for_the_one_space(tmp_path, monkeypatch, cap
     assert build_hf_space.DEFAULT_SPACE_ID == "tonykoop/makerbench-hwe"
     assert f"hf upload tonykoop/makerbench-hwe {out} . --repo-type space" in captured
     assert (out / "app.py").is_file()
+
+
+def _tiny_png() -> bytes:
+    import struct
+    import zlib
+
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return (struct.pack(">I", len(body)) + kind + body
+                + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF))
+
+    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    idat = zlib.compress(b"\x00\xff\x00\x00")
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
+
+
+@pytest.mark.parametrize("encoding", ["utf-16-le", "utf-16-be", "utf-32-le", "utf-32-be"])
+@pytest.mark.parametrize("suffix", [".png", ".jpg", ".woff2", ".svgz"])
+def test_verify_rejects_padded_encoded_text_under_binary_extension(
+    staged: Path, encoding: str, suffix: str
+) -> None:
+    payload = ("../../private/oracles/x\n" + "\f" * 12).encode(encoding)
+    (staged / "tabs" / f"probe{suffix}").write_bytes(payload)
+    problems = build_hf_space.verify_staged(staged)
+    rel = f"tabs/probe{suffix}"
+    assert f"{rel}: refers to a private location" in problems, problems
+    assert any(p.startswith(f"{rel}: ") and ("signature" in p or "gzip" in p) for p in problems)
+
+
+def test_verify_scans_decoded_text_even_when_unreadable(staged: Path) -> None:
+    payload = ("../../private/oracles/x" + "\x01" * 200).encode("utf-16-le")
+    (staged / "tabs" / "pad.txt").write_bytes(payload)
+    assert "tabs/pad.txt: refers to a private location" in build_hf_space.verify_staged(staged)
+
+
+def test_verify_accepts_real_png_and_rejects_wrong_magic(staged: Path) -> None:
+    (staged / "logo.png").write_bytes(_tiny_png())
+    assert build_hf_space.verify_staged(staged) == []
+    (staged / "fake.png").write_bytes(b"GIF89a" + b"\x00" * 10)
+    problems = build_hf_space.verify_staged(staged)
+    assert "fake.png: contents do not match the .png file signature" in problems
+
+
+def test_verify_rejects_private_path_in_svg_and_svgz(staged: Path) -> None:
+    import gzip
+
+    svg = '<svg xmlns="http://www.w3.org/2000/svg"><!-- ../../private/oracles/x --></svg>'
+    (staged / "icon.svg").write_text(svg, encoding="utf-8")
+    (staged / "icon2.svgz").write_bytes(gzip.compress(svg.encode()))
+    problems = build_hf_space.verify_staged(staged)
+    assert "icon.svg: refers to a private location" in problems
+    assert "icon2.svgz: refers to a private location" in problems
+    ok = '<svg xmlns="http://www.w3.org/2000/svg"/>'
+    (staged / "icon.svg").write_text(ok, encoding="utf-8")
+    (staged / "icon2.svgz").write_bytes(gzip.compress(ok.encode()))
+    assert build_hf_space.verify_staged(staged) == []
