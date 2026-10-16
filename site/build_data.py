@@ -2913,6 +2913,104 @@ def build_hero_stats(models: list[dict], families: list[dict]) -> dict:
     return {"schema_version": "0.1", "stats": stats}
 
 
+HARNESS_LABELS: dict[str, str] = {
+    "legacy_unknown": "Older harness",
+    "legacy": "Older harness",
+    "codex_cli": "Codex CLI",
+    "claude_cli": "Claude CLI",
+    "agy_cli": "Antigravity CLI",
+    "openrouter_api": "OpenRouter API",
+    "gemini_api": "Gemini API",
+    "anthropic_api": "Anthropic API",
+    "openai_api": "OpenAI API",
+    "deepseek_api": "DeepSeek API",
+    "grok_api": "Grok API",
+    "kimi_api": "Kimi API",
+    "qwen_api": "Qwen API",
+}
+
+EFFORT_LABELS: dict[str, str] = {
+    "default_or_unset": "Default effort",
+    "default": "Default effort",
+    "minimal": "Minimal effort",
+    "low": "Low effort",
+    "medium": "Medium effort",
+    "high": "High effort",
+    "xhigh": "Extra-high effort",
+}
+
+PLAIN_LABELS: dict[str, str] = {
+    **HARNESS_LABELS,
+    "default_or_unset": "Default effort",
+    "default": "Default effort",
+}
+
+
+def seed_count_label(n: object) -> str:
+    try:
+        count = int(n)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        count = 0
+    return f"{count} seed" if count == 1 else f"{count} seeds"
+
+
+def infra_count_label(n: object) -> str:
+    try:
+        count = int(n)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        count = 0
+    noun = "run" if count == 1 else "runs"
+    return f"{count} {noun} hit an infrastructure error"
+
+
+def plain_harness_label(token: object) -> str:
+    raw = str(token or "legacy_unknown").strip() or "legacy_unknown"
+    if raw in HARNESS_LABELS:
+        return HARNESS_LABELS[raw]
+    lower = raw.lower()
+    return HARNESS_LABELS.get(lower, raw)
+
+
+def plain_effort_label(token: object) -> str:
+    if token is None or str(token).strip() == "":
+        return "Default effort"
+    raw = str(token).strip()
+    if raw in EFFORT_LABELS:
+        return EFFORT_LABELS[raw]
+    lower = raw.lower()
+    return EFFORT_LABELS.get(lower, raw)
+
+
+def plain_label(token: object) -> str:
+    if token is None:
+        return ""
+    raw = str(token).strip()
+    if not raw:
+        return ""
+    if raw in PLAIN_LABELS:
+        return PLAIN_LABELS[raw]
+    lower = raw.lower()
+    if lower in PLAIN_LABELS:
+        return PLAIN_LABELS[lower]
+    seed_match = re.match(r"^n(\d+)$", raw, flags=re.IGNORECASE)
+    if seed_match:
+        return seed_count_label(int(seed_match.group(1)))
+    infra_match = re.match(r"^\+?(\d+)\s+infra(?:\s+excluded)?$", raw, flags=re.IGNORECASE)
+    if infra_match:
+        return infra_count_label(int(infra_match.group(1)))
+    if lower in EFFORT_LABELS:
+        return EFFORT_LABELS[lower]
+    return raw
+
+
+def plain_display_model(model: dict) -> str:
+    effort = model.get("reasoning_level")
+    if not effort:
+        return str(model["identifier"])
+    shown = PLAIN_LABELS.get(str(effort).lower(), str(effort))
+    return f"{model['identifier']} [{shown}]"
+
+
 def display_model(model: dict) -> str:
     effort = model.get("reasoning_level")
     return f"{model['identifier']} [{effort}]" if effort else model["identifier"]
@@ -4267,7 +4365,7 @@ def _prerender_leaderboard_html(payload: dict, top_n: int = PRERENDER_TOP_N) -> 
         rows.append(
             f'<tr><td class="num">{rank}</td>'
             f'<td class="model-col"><a class="model-name" href="{_esc(href)}">'
-            f"{_esc(display_model(model))}</a></td>"
+            f"{_esc(plain_display_model(model))}</a></td>"
             f'<td class="num">{_fmt_mean(overall)}</td></tr>'
         )
     note = (
@@ -4381,7 +4479,7 @@ def _prerender_sections(payload: dict, supplemental: dict | None = None) -> dict
         perception = (model.get("tracks") or {}).get("perception") or {}
         histogram = blind.get("level_histogram") or {}
         metric_rows.append([
-            display_model(model), _fmt_mean(blind.get("overall_mean")),
+            plain_display_model(model), _fmt_mean(blind.get("overall_mean")),
             _fmt_mean(perception.get("overall_mean")), blind.get("n_families_scored", 0),
             _fmt_mean(blind.get("mean_wall_time_s")), _fmt_mean(blind.get("mean_cost_usd")),
             " / ".join(str(histogram.get(str(level), 0)) for level in range(5)),
