@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ._tessellation import STL_ANGULAR_TOLERANCE_RAD, STL_LINEAR_TOLERANCE_MM
+
 if TYPE_CHECKING:
     from .code_cad_objective import RenderArtifacts
 
@@ -25,8 +27,6 @@ APPIMAGE_SHA256 = "f6dc6ba676e5ac96a565ebc8d657232f94c6158e85b4352141bd1a46f6b43
 APPIMAGE_URL = (
     f"https://github.com/FreeCAD/FreeCAD/releases/download/{FREECAD_VERSION}/{APPIMAGE_NAME}"
 )
-LINEAR_DEFLECTION_MM = 0.1
-ANGULAR_DEFLECTION_RAD = 0.1
 MEMORY_LIMIT_BYTES = 4 * 1024**3
 
 
@@ -111,6 +111,7 @@ def compile_freecad_to_artifacts(
             worker_command=[
                 "/usr/bin/prlimit", f"--as={MEMORY_LIMIT_BYTES}", f"--cpu={timeout}",
                 "/opt/freecad/AppRun", "python", "/work/driver.py", "/out", "/work/entrant.py",
+                str(STL_LINEAR_TOLERANCE_MM), str(STL_ANGULAR_TOLERANCE_RAD),
             ],
         )
         with subprocess.Popen(
@@ -198,6 +199,9 @@ def run_freecad(
             "python",
             str(Path(__file__).with_name("_freecad_worker.py")),
             str(work),
+            str(work / "entrant.py"),
+            str(STL_LINEAR_TOLERANCE_MM),
+            str(STL_ANGULAR_TOLERANCE_RAD),
         ]
         with subprocess.Popen(
             command,

@@ -56,6 +56,14 @@ def test_headless_exports_are_deterministic(tmp_path, runtime, shape, volume, mo
         "assert not os.environ.get('DISPLAY') and not os.environ.get('WAYLAND_DISPLAY')\n"
         "assert not os.environ.get('GH_TOKEN')\n"
         "assert len(FreeCAD.listDocuments()) == 1 and not doc.Objects\n"
+        "import MeshPart\n"
+        "original_mesh = MeshPart.meshFromShape\n"
+        "def checked_mesh(**kwargs):\n"
+        "    assert kwargs['Relative'] is True\n"
+        f"    assert kwargs['LinearDeflection'] == {backend.STL_LINEAR_TOLERANCE_MM!r}\n"
+        f"    assert kwargs['AngularDeflection'] == {backend.STL_ANGULAR_TOLERANCE_RAD!r}\n"
+        "    return original_mesh(**kwargs)\n"
+        "MeshPart.meshFromShape = checked_mesh\n"
         f"result = {shape}\n"
     )
     monkeypatch.setenv("GH_TOKEN", "synthetic-freecad-env-control")
@@ -92,9 +100,9 @@ def test_headless_exports_are_deterministic(tmp_path, runtime, shape, volume, mo
     assert first.provenance["occt_version"] == "7.8.1"
     assert first.provenance["distribution"]["sha256"] == backend.APPIMAGE_SHA256
     assert first.provenance["export"] == {
-        "linear_deflection_mm": backend.LINEAR_DEFLECTION_MM,
-        "angular_deflection_rad": backend.ANGULAR_DEFLECTION_RAD,
-        "relative": False,
+        "linear_deflection_mm": backend.STL_LINEAR_TOLERANCE_MM,
+        "angular_deflection_rad": backend.STL_ANGULAR_TOLERANCE_RAD,
+        "relative": True,
         "stl_format": "binary",
         "step_schema": "AP214IS",
         "step_unit": "MM",

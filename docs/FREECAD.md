@@ -56,8 +56,13 @@ no oracle or held-out data is used.
 
 ## Export policy and determinism
 
-STEP uses AP214IS and millimetres. STL is binary, with absolute linear deflection
-**0.1 mm**, angular deflection **0.1 radians**, and `Relative=False`. The source
+STEP uses AP214IS and millimetres. STL is binary and uses the same **relative** meshing policy as CadQuery and STEP
+intake: `STL_LINEAR_TOLERANCE_MM` (**0.01**) and
+`STL_ANGULAR_TOLERANCE_RAD` (**0.1 radians**), with `Relative=True`.
+The constants have one stdlib-only source in `makerbench/_tessellation.py` and
+remain exported by `makerbench/cadquery_backend.py`; the linear constant keeps
+its historical name, while relative deflection scales with edge size. Both
+FreeCAD launch paths pass these values into the isolated worker. The source
 B-rep is copied into a fixed-name export object. Provenance records the measured
 FreeCAD version/build, OCCT kernel version, pinned distribution URL/checksum,
 and all export settings. STEP and STL are retained unchanged.

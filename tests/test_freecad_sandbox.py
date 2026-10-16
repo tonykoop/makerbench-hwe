@@ -28,7 +28,7 @@ def fake_appdir(tmp_path, monkeypatch):
     (runtime / "usr/bin").mkdir(parents=True)
     (runtime / "usr/bin/python").touch()
     launcher = runtime / "AppRun"
-    launcher.write_text('#!/bin/sh\nfor last; do :; done\nexec /usr/bin/python3 "$last"\n')
+    launcher.write_text('#!/bin/sh\nexec /usr/bin/python3 "$4"\n')
     launcher.chmod(0o755)
     (runtime / ".makerbench-appimage-sha256").write_text(freecad_backend.APPIMAGE_SHA256)
     monkeypatch.setenv("MAKERBENCH_FREECAD_APPDIR", str(runtime))

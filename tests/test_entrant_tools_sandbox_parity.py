@@ -229,7 +229,9 @@ def test_each_backend_launches_its_own_confined_interpreter(layout, fake_sandbox
         assert sys.executable not in argv and "/work/entrant.py" not in argv
     elif backend == "freecad":
         assert "/opt/freecad/AppRun" in argv
-        assert argv[-4:] == ["python", "/work/driver.py", "/out", "/work/entrant.py"]
+        assert argv[-6:] == ["python", "/work/driver.py", "/out", "/work/entrant.py",
+                             str(cadquery_backend.STL_LINEAR_TOLERANCE_MM),
+                             str(cadquery_backend.STL_ANGULAR_TOLERANCE_RAD)]
         assert f"--as={freecad_backend.MEMORY_LIMIT_BYTES}" in argv
         assert "--cpu=180" in argv
         assert sys.executable not in argv
