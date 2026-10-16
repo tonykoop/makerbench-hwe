@@ -22,7 +22,10 @@ def test_sparse_sample_cannot_take_hero_or_static_rank_one():
     assert "broad-result" in top["detail"]
     table = builder._prerender_leaderboard_html({"models": models})
     assert "broad-result" in table
-    assert "sparse-perfect" not in table
+    assert "Limited coverage · unranked" in table
+    ranked, partial = table.split("Limited coverage · unranked", 1)
+    assert "sparse-perfect" not in ranked
+    assert "sparse-perfect" in partial
     card = builder.leaderboard_og_svg({"models": models})
     assert "Leader: broad-result" in card
     assert "sparse-perfect" not in card
