@@ -93,6 +93,13 @@ local copy of the reference photo.
 
 ## Re-scored under the gate now (#904)
 
+> **Historical note.** This section was written for #904, before `robust-v1` became the
+> default (#979) and before this page was regraded. It follows unchanged below, except for
+> this note. Read "the table at the top" and "published above" as the **First published**
+> column, whose per-seed values are the "Recorded" rows `showcase strings/matchup-context` in
+> [`../../MIN_WALL_RESCORE.md`](../../MIN_WALL_RESCORE.md). The "not adopted" status of
+> `robust-v1` describes the gate at that time; it is now the default estimator.
+
 The table at the top of this page is unchanged and is the published result. This section
 re-scores the same six committed designs **with no regeneration** (each design's `output.stl`
 and SCAD from the original run directories, read-only) so the two can be read side by side. It is
