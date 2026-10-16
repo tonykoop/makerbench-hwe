@@ -584,7 +584,10 @@
   function modelColor(idx, model) {
     if (model && model.is_control) return cssVar("--control") || "#6b46c1";
     if (model && model.is_human_baseline) return cssVar("--human") || "#b45309";
-    return PALETTE[idx % PALETTE.length];
+    var key = String((model && (model.model_family || model.identifier)) || "unknown");
+    var hash = 0;
+    for (var i = 0; i < key.length; i++) hash = (Math.imul(hash, 31) + key.charCodeAt(i)) >>> 0;
+    return PALETTE[hash % PALETTE.length];
   }
 
   function alphaColor(color, alpha) {
@@ -657,12 +660,44 @@
   }
 
   function frontierPoints(points, higherBetter) {
-    return points.filter(function (p) {
-      return !isDominated(p, points, higherBetter);
-    }).sort(function (a, b) {
-      return higherBetter ? (a.x - b.x || a.y - b.y) : (b.x - a.x || a.y - b.y);
+    var eligible = points.filter(function (p) {
+      return Number.isFinite(p.x) && Number.isFinite(p.y) && p.x > 0 && p.y > 0;
     });
+    return eligible.filter(function (p) {
+      return !isDominated(p, eligible, higherBetter);
+    }).sort(function (a, b) { return a.x - b.x || a.y - b.y; });
   }
+
+  var EFFORT_LEVELS = ["low", "medium", "high", "xhigh"];
+
+  function effortLabel(model) {
+    var rank = EFFORT_LEVELS.indexOf(model.reasoning_level);
+    return rank < 0 ? "" : ["L", "M", "H", "X"][rank];
+  }
+
+  function effortGroups(points) {
+    var groups = new Map();
+    points.forEach(function (p) {
+      var m = p._model;
+      if (!effortLabel(m) || !m.agent_identifier || m.agent_identifier === "legacy_unknown") return;
+      var key = JSON.stringify([m.identifier, m.agent_identifier || "legacy_unknown"]);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(p);
+    });
+    return Array.from(groups.values()).filter(function (g) { return g.length > 1; })
+      .map(function (g) {
+        return g.slice().sort(function (a, b) {
+          return EFFORT_LEVELS.indexOf(a._model.reasoning_level) -
+            EFFORT_LEVELS.indexOf(b._model.reasoning_level);
+        });
+      });
+  }
+
+  // Pure presentation helpers, also exercised by the browser test harness.
+  window.MakerBenchEfficiency = {
+    modelColor: modelColor, effortLabel: effortLabel, effortGroups: effortGroups,
+    frontierPoints: frontierPoints, isDominated: isDominated,
+  };
 
   function scoreSpreadText(efficiency) {
     var parts = [];
@@ -692,11 +727,16 @@
     if (existing) existing.remove();
     canvas.style.display = "";
 
+    var oldLegend = card ? card.querySelector(".efficiency-model-legend") : null;
+    if (oldLegend) oldLegend.remove();
+
     var metricDef = EFFICIENCY_METRICS[EFFICIENCY_METRIC] || EFFICIENCY_METRICS.time;
     var models = modelsOnTrack(TRACK);
     var points = models.map(function (m, i) {
       return efficiencyPoint(m, i, EFFICIENCY_METRIC);
-    }).filter(Boolean);
+    }).filter(function (p) {
+      return p && Number.isFinite(p.x) && Number.isFinite(p.y) && p.x > 0;
+    });
     var omitted = models.length - points.length;
 
     if (!points.length) {
@@ -716,25 +756,46 @@
       return;
     }
 
+    // Keep every model identifiable, including models with no effort line.
+    if (card) {
+      var legend = document.createElement("div");
+      legend.className = "efficiency-model-legend";
+      legend.setAttribute("aria-label", "Model colors and effort levels");
+      legend.style.cssText = "display:flex;flex-wrap:wrap;gap:6px 12px;max-height:120px;overflow:auto;font-size:11px;margin-top:12px";
+      legend.tabIndex = 0;
+      var legendModels = new Map();
+      points.forEach(function (p) {
+        var id = p._model.identifier;
+        if (!legendModels.has(id)) legendModels.set(id, { color: p._color, efforts: [] });
+        var label = effortLabel(p._model);
+        if (label && legendModels.get(id).efforts.indexOf(label) < 0) legendModels.get(id).efforts.push(label);
+      });
+      legendModels.forEach(function (entry, id) {
+        var item = document.createElement("span");
+        var swatch = document.createElement("span");
+        swatch.textContent = "● ";
+        swatch.style.color = entry.color;
+        item.appendChild(swatch);
+        var levels = ["L", "M", "H", "X"].filter(function (l) { return entry.efforts.indexOf(l) >= 0; });
+        item.appendChild(document.createTextNode(id + (levels.length ? " · " + levels.join("/") : "")));
+        legend.appendChild(item);
+      });
+      if (note) note.after(legend);
+      else card.appendChild(legend);
+    }
+
     var higherBetter = Boolean(metricDef.higherBetter);
     var frontier = frontierPoints(points, higherBetter);
-    // Connect a single model's effort / thinking-level variants with a line
-    // (e.g. gpt-5.5 medium -> high), like the DeepSWE cost/score trajectory.
-    var byBase = {};
-    points.forEach(function (p) {
-      var k = p._model.identifier;
-      (byBase[k] = byBase[k] || []).push(p);
-    });
-    var effortLines = Object.keys(byBase).map(function (k) {
-      var g = byBase[k];
-      if (g.length < 2) return null;
-      g = g.slice().sort(function (a, b) { return a.x - b.x; });
+    // Connect only disclosed effort levels within the same model and harness.
+    var effortLines = effortGroups(points).map(function (g) {
+      var m = g[0]._model;
       return {
-        label: "effort — " + k,
+        label: m.identifier + " · " + (m.agent_identifier || "legacy_unknown") + " · " +
+          g.map(function (p) { return effortLabel(p._model); }).join(" → "),
         data: g.map(function (p) { return { x: p.x, y: p.y }; }),
         parsing: false,
         type: "line",
-        borderColor: alphaColor(g[0]._color, 0.6),
+        borderColor: g[0]._color,
         borderWidth: 1.5,
         borderDash: [5, 3],
         pointRadius: 0,
@@ -763,13 +824,14 @@
             data: frontier.map(function (p) { return { x: p.x, y: p.y }; }),
             parsing: false,
             type: "line",
-            borderColor: cssVar("--good"),
+            borderColor: alphaColor(cssVar("--good"), 0.4),
             backgroundColor: alphaColor(cssVar("--good"), 0.08),
             pointBackgroundColor: cssVar("--good"),
             pointBorderColor: cssVar("--bg-elev"),
-            pointRadius: 3,
-            pointHoverRadius: 5,
-            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 0,
+            borderWidth: 1,
+            stepped: "after",
             tension: 0,
             fill: false,
           },
@@ -789,7 +851,8 @@
             callbacks: {
               title: function (items) {
                 var raw = items.length ? items[0].raw : null;
-                return raw && raw._model ? modelText(raw._model) : "Efficient frontier";
+                return raw && raw._model ? modelText(raw._model) +
+                  (effortLabel(raw._model) ? " · effort " + effortLabel(raw._model) : "") : "Efficient frontier";
               },
               label: function (item) {
                 var raw = item.raw;
@@ -819,10 +882,11 @@
         },
         scales: {
           x: {
-            reverse: !higherBetter,
+            reverse: false,
+            type: ["time", "cost", "tokens"].indexOf(EFFICIENCY_METRIC) >= 0 ? "logarithmic" : "linear",
             title: {
               display: true,
-              text: metricDef.label + (higherBetter ? " (higher is better)" : " (lower is better)"),
+              text: metricDef.label + (higherBetter ? " (better: top-right)" : " (better: top-left)"),
               color: cssVar("--text-soft"),
             },
             ticks: {
@@ -848,7 +912,7 @@
       note.textContent = points.length + " charted · " + omitted +
         " unavailable for " + metricDef.shortLabel +
         (estimates ? " · " + estimates + " estimate-labeled point(s)" : "") +
-        ". Frontier uses " + (higherBetter ? "higher " : "lower ") + metricDef.shortLabel +
+        ". L/M/H/X = low/medium/high/xhigh; unset effort stays unconnected. Zero/nonpositive telemetry is omitted. Frontier excludes zero scores and uses " + (higherBetter ? "higher " : "lower ") + metricDef.shortLabel +
         " and higher score. Efficiency comparisons keep disclosed harness/adapter rows separate.";
     }
   }
