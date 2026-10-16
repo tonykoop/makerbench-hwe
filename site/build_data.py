@@ -2834,9 +2834,8 @@ def build_hero_stats(models: list[dict], families: list[dict]) -> dict:
     ]
     n_models = len(non_control)
     n_families = len(families)
-    ranked = [m for m in non_control if
-              m["tracks"]["blind"].get("n_families_scored", 0) >= OVERALL_RANKING_MIN_FAMILIES]
-    top = max(ranked, key=lambda m: m["tracks"]["blind"]["overall_mean"], default=None)
+    ranked, _, _ = select_leaderboard_entries(models)
+    top = ranked[0][0] if ranked else None
     top_mean = top["tracks"]["blind"]["overall_mean"] if top else None
 
     # Hardest tier (Level 4 / DFM) pass rate across every graded blind run.
@@ -2860,9 +2859,7 @@ def build_hero_stats(models: list[dict], families: list[dict]) -> dict:
     lift = (sum(gaps) / len(gaps)) if gaps else None
 
     stats: list[dict] = []
-    top_score_label = (
-        f"top blind score among models measured on ≥{OVERALL_RANKING_MIN_FAMILIES} families"
-    )
+    top_score_label = "#1 on the leaderboard"
     if top_mean is not None:
         stats.append(
             {
@@ -4358,17 +4355,16 @@ def _prerender_hero_stats_html(payload: dict) -> str:
     return "".join(parts)
 
 
-def _prerender_leaderboard_html(payload: dict, top_n: int = PRERENDER_TOP_N) -> str:
-    """Blind-track summary, with native details for variants and family scores.
+def select_leaderboard_entries(
+    models: list[dict], league_id: str = "autonomous",
+    minimum: int = OVERALL_RANKING_MIN_FAMILIES,
+) -> tuple[list, list, list]:
+    """Return ranked, limited-coverage and reference groups for one league.
 
-    Keep selection and ranking in step with renderTable; aggregate scores and
-    the payload are never modified. top_n is retained for caller compatibility;
-    all groups render so no-JS visitors can inspect every family's metadata.
+    Shared by the hero and static board; mirrors renderTable's default variant
+    selection (coverage, score, effort) and score ranking without changing rows.
+    Each entry is (primary, remaining variants).
     """
-    families = payload.get("task_families", [])
-    axes = payload.get("capability_axes", [])[:8]
-    minimum = payload.get("overall_ranking_min_families", OVERALL_RANKING_MIN_FAMILIES)
-
     def track(model):
         return model.get("tracks", {}).get("blind", {}) or {}
 
@@ -4388,6 +4384,42 @@ def _prerender_leaderboard_html(payload: dict, top_n: int = PRERENDER_TOP_N) -> 
     def eligible(model):
         return (not is_reference_row(model) and coverage(model) >= minimum
                 and track(model).get("overall_mean") is not None)
+
+    groups = {}
+    for model in models:
+        tr = track(model)
+        if ((model.get("league") or "autonomous") != league_id
+                or not tr.get("has_data", tr.get("overall_mean") is not None)):
+            continue
+        kind = "control" if model.get("is_control") else "human" if model.get("is_human_baseline") else "model"
+        key = (kind, model.get("model_family") or model["identifier"])
+        groups.setdefault(key, []).append(model)
+    entries = []
+    for variants in groups.values():
+        variants = sorted(variants, key=selection_key)
+        entries.append((variants[0], variants[1:]))
+    broad = sorted((e for e in entries if eligible(e[0])), key=lambda e: score_key(e[0]))
+    partial = sorted((e for e in entries if not is_reference_row(e[0]) and not eligible(e[0])), key=lambda e: score_key(e[0]))
+    refs = sorted((e for e in entries if is_reference_row(e[0])), key=lambda e: bool(e[0].get("is_control")))
+    return broad, partial, refs
+
+
+def _prerender_leaderboard_html(payload: dict, top_n: int = PRERENDER_TOP_N) -> str:
+    """Blind-track summary, with native details for variants and family scores.
+
+    Keep selection and ranking in step with renderTable; aggregate scores and
+    the payload are never modified. top_n is retained for caller compatibility;
+    all groups render so no-JS visitors can inspect every family's metadata.
+    """
+    families = payload.get("task_families", [])
+    axes = payload.get("capability_axes", [])[:8]
+    minimum = payload.get("overall_ranking_min_families", OVERALL_RANKING_MIN_FAMILIES)
+
+    def track(model):
+        return model.get("tracks", {}).get("blind", {}) or {}
+
+    def coverage(model):
+        return track(model).get("n_families_scored", 0)
 
     def cell(label, content, cls=""):
         return f'<td data-label="{_esc(label)}" class="{cls}">{content}</td>'
@@ -4472,24 +4504,11 @@ def _prerender_leaderboard_html(payload: dict, top_n: int = PRERENDER_TOP_N) -> 
     leagues = payload.get("leagues") or [{"id": "autonomous", "label": "Autonomous"}]
     sections = []
     for league in leagues:
-        groups = {}
-        for model in payload.get("models", []):
-            tr = track(model)
-            if ((model.get("league") or "autonomous") != league["id"]
-                    or not tr.get("has_data", tr.get("overall_mean") is not None)):
-                continue
-            kind = "control" if model.get("is_control") else "human" if model.get("is_human_baseline") else "model"
-            key = (kind, model.get("model_family") or model["identifier"])
-            groups.setdefault(key, []).append(model)
-        entries = []
-        for variants in groups.values():
-            variants = sorted(variants, key=selection_key)
-            entries.append((variants[0], variants[1:]))
-        if not entries:
+        broad, partial, refs = select_leaderboard_entries(
+            payload.get("models", []), league["id"], minimum,
+        )
+        if not (broad or partial or refs):
             continue
-        broad = sorted((e for e in entries if eligible(e[0])), key=lambda e: score_key(e[0]))
-        partial = sorted((e for e in entries if not is_reference_row(e[0]) and not eligible(e[0])), key=lambda e: score_key(e[0]))
-        refs = sorted((e for e in entries if is_reference_row(e[0])), key=lambda e: bool(e[0].get("is_control")))
         ranks = {id(entry[0]): i for i, entry in enumerate(broad, 1)}
         html = f'<section class="lb-league" aria-label="{_esc(league.get("label", league["id"]))}">'
         if len(leagues) > 1:

@@ -67,6 +67,45 @@ def summary_payload():
     return payload
 
 
+@pytest.mark.parametrize("source", ["fixture", "real"])
+def test_hero_matches_leaderboard_rank_one(source):
+    import re
+
+    payload = summary_payload() if source == "fixture" else json.loads(
+        (ROOT / "site/data/leaderboard.json").read_text())
+    models = payload['models']
+    if source == 'fixture':
+        # Even perfect, fully covered controls and humans cannot take rank one.
+        for flag in ('is_control', 'is_human_baseline'):
+            reference = copy.deepcopy(models[0])
+            reference.update(identifier=flag, model_family=flag, **{flag: True})
+            reference['tracks']['blind'].update(n_families_scored=49, overall_mean=4.0)
+            models.append(reference)
+    original = copy.deepcopy(payload)
+    ranked, _, _ = builder.select_leaderboard_entries(models)
+    leader = ranked[0][0]
+    hero = builder.build_hero_stats(models, payload['task_families'])['stats'][0]
+    board = builder._prerender_leaderboard_html(payload)
+    first_row = re.search(r'<tr class="lb-primary">(.*?)</tr>', board, re.S)[1]
+    assert '<td data-label="Rank" class="lb-rank">1</td>' in first_row
+    assert builder.plain_display_model(leader) in first_row
+    assert hero['label'] == '#1 on the leaderboard'
+    assert hero['display'] == f"{leader['tracks']['blind']['overall_mean']:.2f}/4"
+    assert hero['detail'] == (
+        f"{builder.display_model(leader)} · "
+        f"{leader['tracks']['blind']['n_families_scored']}/{len(payload['task_families'])} families"
+    )
+    assert payload == original
+    if source == 'fixture':
+        assert leader['identifier'] == 'beta'
+        assert next(e[0] for e in ranked if e[0]['model_family'] == 'alpha')['identifier'] == 'alpha-high'
+        assert hero['value'] == 3.5  # alpha-low is a perfect, narrower variant.
+    else:
+        assert leader['identifier'] == 'claude-code-sonnet-5'
+        assert hero['display'] == '2.93/4'
+        assert '11/49 families' in hero['detail']
+
+
 def test_prerender_keeps_every_variant_and_family_without_mutating_data():
     data = summary_payload()
     original = copy.deepcopy(data)
@@ -86,10 +125,15 @@ def test_prerender_keeps_every_variant_and_family_without_mutating_data():
 def test_summary_rank_details_and_responsiveness(javascript, width):
     playwright = pytest.importorskip("playwright.sync_api")
     payload = summary_payload()
+    payload['hero_stats'] = builder.build_hero_stats(payload['models'], payload['task_families'])
     html = (ROOT / "site/index.html").read_text()
     import re
     html = re.sub(r'(<!-- prerender:leaderboard -->).*?(<!-- /prerender:leaderboard -->)',
                   lambda m: m[1] + builder._prerender_leaderboard_html(payload) + m[2],
+                  html, flags=re.S)
+
+    html = re.sub(r'(<!-- prerender:hero-stats -->).*?(<!-- /prerender:hero-stats -->)',
+                  lambda m: m[1] + builder._prerender_hero_stats_html(payload) + m[2],
                   html, flags=re.S)
 
     class Handler(SimpleHTTPRequestHandler):
@@ -116,6 +160,10 @@ def test_summary_rank_details_and_responsiveness(javascript, width):
             primary = broad.locator(":scope > tbody > tr.lb-primary")
             assert primary.count() == 2
             assert "beta" in primary.nth(0).inner_text()
+            hero = page.locator('#hero-stats .stat').first
+            assert hero.locator('.stat-val').inner_text() == '3.50/4'
+            assert hero.locator('.stat-detail').inner_text().startswith('beta [high] · 4/')
+            assert '#1 on the leaderboard' in hero.inner_text()
             assert "alpha-high" in primary.nth(1).inner_text()
             assert "alpha-high-low-score" not in primary.nth(1).inner_text()
             assert primary.locator(".lb-rank").all_text_contents() == ["1", "2"]
@@ -157,6 +205,9 @@ def test_summary_rank_details_and_responsiveness(javascript, width):
             page.unroute("**/data/leaderboard.json")
             page.unroute(base + "/")
             page.goto(base + "/", wait_until="networkidle")
+            assert 'claude-code-sonnet-5' in page.locator('#hero-stats .stat').first.inner_text()
+            assert page.locator('#hero-stats .stat-val').first.inner_text() == '2.93/4'
+            assert 'claude-code-sonnet-5' in page.locator('#lb-container .lb-primary').first.inner_text()
             for tier in ("terra", "sol", "luna"):
                 assert page.locator("#lb-container .lb-primary .model-name").filter(
                     has_text=f"codex-gpt-5.6-{tier}"

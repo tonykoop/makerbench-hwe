@@ -21,9 +21,7 @@ def test_sparse_sample_cannot_take_hero_or_static_rank_one():
     hero = builder.build_hero_stats(models, [{"id": str(i)} for i in range(49)])
     top = next(s for s in hero["stats"] if s["key"] == "top_score")
     assert top["value"] == 3.5
-    assert top["label"] == (
-        f"top blind score among models measured on ≥{builder.OVERALL_RANKING_MIN_FAMILIES} families"
-    )
+    assert top["label"] == "#1 on the leaderboard"
     assert "broad-result" in top["detail"]
     table = builder._prerender_leaderboard_html({"models": models})
     assert "broad-result" in table
