@@ -39,22 +39,130 @@
     return "s-bad";
   }
 
+  // ---- plain-language label helpers (#1021) -------------------------------
+  var HARNESS_LABELS = {
+    legacy_unknown: "Older harness",
+    legacy: "Older harness",
+    codex_cli: "Codex CLI",
+    claude_cli: "Claude CLI",
+    agy_cli: "Antigravity CLI",
+    openrouter_api: "OpenRouter API",
+    gemini_api: "Gemini API",
+    anthropic_api: "Anthropic API",
+    openai_api: "OpenAI API",
+    deepseek_api: "DeepSeek API",
+    grok_api: "Grok API",
+    kimi_api: "Kimi API",
+    qwen_api: "Qwen API",
+  };
+
+  var EFFORT_LABELS = {
+    default_or_unset: "Default effort",
+    default: "Default effort",
+    minimal: "Minimal effort",
+    low: "Low effort",
+    medium: "Medium effort",
+    high: "High effort",
+    xhigh: "Extra-high effort",
+  };
+
+  var PLAIN_LABELS = Object.assign({}, HARNESS_LABELS, {
+    default_or_unset: "Default effort",
+    default: "Default effort",
+  });
+
+  function seedCountLabel(n) {
+    var count = Number(n) || 0;
+    return count + " seed" + (count === 1 ? "" : "s");
+  }
+
+  function infraCountLabel(n) {
+    var count = Number(n) || 0;
+    return count + " run" + (count === 1 ? "" : "s") + " hit an infrastructure error";
+  }
+
+  function harnessLabel(token) {
+    var key = String(token || "legacy_unknown").trim();
+    if (!key) key = "legacy_unknown";
+    if (Object.prototype.hasOwnProperty.call(HARNESS_LABELS, key)) {
+      return HARNESS_LABELS[key];
+    }
+    var lower = key.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(HARNESS_LABELS, lower)) {
+      return HARNESS_LABELS[lower];
+    }
+    return key;
+  }
+
+  function effortLabel(token) {
+    if (token == null || String(token).trim() === "") return "Default effort";
+    var key = String(token).trim();
+    if (Object.prototype.hasOwnProperty.call(EFFORT_LABELS, key)) {
+      return EFFORT_LABELS[key];
+    }
+    var lower = key.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(EFFORT_LABELS, lower)) {
+      return EFFORT_LABELS[lower];
+    }
+    return key;
+  }
+
+  function plainLabel(token) {
+    if (token == null) return "";
+    var raw = String(token).trim();
+    if (!raw) return "";
+    if (Object.prototype.hasOwnProperty.call(PLAIN_LABELS, raw)) {
+      return PLAIN_LABELS[raw];
+    }
+    var lower = raw.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(PLAIN_LABELS, lower)) {
+      return PLAIN_LABELS[lower];
+    }
+    var seedMatch = /^n(\d+)$/i.exec(raw);
+    if (seedMatch) return seedCountLabel(Number(seedMatch[1]));
+    var infraMatch = /^\+?(\d+)\s+infra(?:\s+excluded)?$/i.exec(raw);
+    if (infraMatch) return infraCountLabel(Number(infraMatch[1]));
+    if (Object.prototype.hasOwnProperty.call(EFFORT_LABELS, lower)) {
+      return EFFORT_LABELS[lower];
+    }
+    return raw;
+  }
+
   function modelShort(id) {
     return id; // identifiers are already terse
   }
 
   function modelText(model) {
-    return model.identifier + (model.reasoning_level ? " [" + model.reasoning_level + "]" : "");
+    var effort = model.reasoning_level;
+    var shownEffort = effort
+      ? (Object.prototype.hasOwnProperty.call(PLAIN_LABELS, String(effort).toLowerCase())
+          ? PLAIN_LABELS[String(effort).toLowerCase()]
+          : effort)
+      : "";
+    return model.identifier + (shownEffort ? " [" + shownEffort + "]" : "");
   }
 
   function modelVariantText(model) {
-    return model.reasoning_level || "default";
+    return effortLabel(model.reasoning_level);
   }
 
   function modelLabel(model) {
     var label = modelShort(model.identifier);
     if (model.reasoning_level) {
-      label += '<span class="badge badge-effort">' + model.reasoning_level + "</span>";
+      var rawEffort = String(model.reasoning_level);
+      var isMappedEffort = Object.prototype.hasOwnProperty.call(
+        PLAIN_LABELS,
+        rawEffort.toLowerCase()
+      );
+      var effortText = isMappedEffort
+        ? PLAIN_LABELS[rawEffort.toLowerCase()]
+        : rawEffort;
+      var effortTip = "Reasoning effort: " + effortLabel(rawEffort) + " (" + rawEffort + ")";
+      var effortStyle = isMappedEffort ? ' style="text-transform:none"' : "";
+      label += '<span class="badge badge-effort"' + effortStyle +
+        ' data-effort="' + escapeHTML(rawEffort) +
+        '" title="' + escapeHTML(effortTip) + '">' +
+        escapeHTML(effortText) + "</span>";
     }
     var provenance = model.result_provenance || "community";
     if (provenance !== "community") {
@@ -72,13 +180,16 @@
   function harnessBadge(model) {
     var harness = model.agent_identifier || "legacy_unknown";
     var known = harness !== "legacy_unknown";
+    var text = harnessLabel(harness);
     var env = model.runner_environment || {};
-    var tip = known ? "Harness: " + harness : "Harness not reported (legacy run)";
+    var tip = known
+      ? "Harness: " + text + " (" + harness + ")"
+      : "Older harness — harness not reported (" + harness + ")";
     if (env.adapter_name) tip += " · adapter: " + env.adapter_name;
     if (env.makerbench_cli) tip += " · runner: makerbench " + env.makerbench_cli;
     var cls = known ? "badge badge-harness" : "badge badge-harness badge-legacy";
-    var text = known ? harness : "legacy";
-    return '<span class="' + cls + '" title="' + escapeHTML(tip) + '">' +
+    return '<span class="' + cls + '" data-harness="' + escapeHTML(harness) +
+      '" title="' + escapeHTML(tip) + '">' +
       escapeHTML(text) + "</span>";
   }
 
@@ -545,9 +656,10 @@
       telemetryNote;
   }
 
-  // Compact "n=3 · sd ±0.47 · range 3–4" summary for a cell tooltip.
+  // Compact "3 seeds (n=3) · sd ±0.47 · range 3–4" summary for a cell tooltip.
   function spreadTip(cell) {
-    var parts = ["n=" + (cell.n_seeds || 0) + " seed" + ((cell.n_seeds === 1) ? "" : "s")];
+    var nSeeds = cell.n_seeds || 0;
+    var parts = [seedCountLabel(nSeeds) + " (n=" + nSeeds + ")"];
     if (cell.mean_score != null) parts.push("mean " + cell.mean_score.toFixed(2));
     if (cell.score_ci95_low != null && cell.score_ci95_high != null) {
       parts.push("95% CI " + cell.score_ci95_low.toFixed(2) + "–" +
@@ -558,24 +670,57 @@
     if (cell.score_min != null && cell.score_max != null) {
       parts.push("range " + cell.score_min + "–" + cell.score_max);
     }
-    if (cell.n_infra) parts.push("+" + cell.n_infra + " infra excluded");
+    if (cell.n_infra) {
+      parts.push(infraCountLabel(cell.n_infra) + " (+" + cell.n_infra + " infra excluded)");
+    }
     return parts.join(" · ");
   }
 
   function cellHTML(cell) {
     if (!cell) return '<td class="na">—</td>';
     if (cell.mean_score == null) {
-      var naInfra = cell.n_infra ? (cell.n_infra + " infra excluded") : "no gradable seeds";
-      return '<td class="na" title="' + escapeHTML(naInfra) + '">n/a<span class="why">infra</span></td>';
+      var naInfra = cell.n_infra
+        ? (infraCountLabel(cell.n_infra) + " (+" + cell.n_infra + " infra excluded)")
+        : "no gradable seeds";
+      var naData = cell.n_infra ? ' data-infra="+' + cell.n_infra + ' infra"' : "";
+      return '<td class="na"' + naData + ' title="' + escapeHTML(naInfra) + '">n/a<span class="why">infra</span></td>';
     }
     var c = scoreClass(cell.mean_score);
     var pct = (cell.mean_score / 4 * 100).toFixed(0);
-    var infra = cell.n_infra ? '<span class="infra-tag"> +' + cell.n_infra + " infra</span>" : "";
-    // Faint, always-visible sample size; full spread on hover.
-    var nseeds = cell.n_seeds ? '<span class="cell-n">n' + cell.n_seeds + "</span>" : "";
+    var infra = cell.n_infra
+      ? '<span class="infra-tag" data-infra="+' + cell.n_infra + ' infra" title="' +
+        escapeHTML(infraCountLabel(cell.n_infra)) + '"> +' + cell.n_infra + " infra</span>"
+      : "";
+    // Faint, always-visible sample size; plain tooltip on hover + raw token in data-seeds.
+    var nseeds = cell.n_seeds
+      ? '<span class="cell-n" data-seeds="n' + cell.n_seeds + '" title="' +
+        escapeHTML(seedCountLabel(cell.n_seeds)) + '">n' + cell.n_seeds + "</span>"
+      : "";
     return '<td title="' + escapeHTML(spreadTip(cell)) + '"><span class="score ' + c + '">' +
       cell.mean_score.toFixed(2) +
       '<span class="bar"><i style="width:' + pct + '%"></i></span></span>' + nseeds + infra + "</td>";
+  }
+
+  if (typeof window !== "undefined") {
+    window.MakerBenchLabels = {
+      HARNESS_LABELS: HARNESS_LABELS,
+      EFFORT_LABELS: EFFORT_LABELS,
+      PLAIN_LABELS: PLAIN_LABELS,
+      plainLabel: plainLabel,
+      harnessLabel: harnessLabel,
+      effortLabel: effortLabel,
+      seedCountLabel: seedCountLabel,
+      infraCountLabel: infraCountLabel,
+      modelText: modelText,
+      modelVariantText: modelVariantText,
+      modelLabel: modelLabel,
+      harnessBadge: harnessBadge,
+      spreadTip: spreadTip,
+      cellHTML: cellHTML,
+    };
+    window.plainLabel = plainLabel;
+    window.harnessLabel = harnessLabel;
+    window.effortLabel = effortLabel;
   }
 
   // ---- charts -------------------------------------------------------------
@@ -584,7 +729,10 @@
   function modelColor(idx, model) {
     if (model && model.is_control) return cssVar("--control") || "#6b46c1";
     if (model && model.is_human_baseline) return cssVar("--human") || "#b45309";
-    return PALETTE[idx % PALETTE.length];
+    var key = String((model && (model.model_family || model.identifier)) || "unknown");
+    var hash = 0;
+    for (var i = 0; i < key.length; i++) hash = (Math.imul(hash, 31) + key.charCodeAt(i)) >>> 0;
+    return PALETTE[hash % PALETTE.length];
   }
 
   function alphaColor(color, alpha) {
@@ -657,12 +805,44 @@
   }
 
   function frontierPoints(points, higherBetter) {
-    return points.filter(function (p) {
-      return !isDominated(p, points, higherBetter);
-    }).sort(function (a, b) {
-      return higherBetter ? (a.x - b.x || a.y - b.y) : (b.x - a.x || a.y - b.y);
+    var eligible = points.filter(function (p) {
+      return Number.isFinite(p.x) && Number.isFinite(p.y) && p.x > 0 && p.y > 0;
     });
+    return eligible.filter(function (p) {
+      return !isDominated(p, eligible, higherBetter);
+    }).sort(function (a, b) { return a.x - b.x || a.y - b.y; });
   }
+
+  var EFFORT_LEVELS = ["low", "medium", "high", "xhigh"];
+
+  function effortCode(model) {
+    var rank = EFFORT_LEVELS.indexOf(model.reasoning_level);
+    return rank < 0 ? "" : ["L", "M", "H", "X"][rank];
+  }
+
+  function effortGroups(points) {
+    var groups = new Map();
+    points.forEach(function (p) {
+      var m = p._model;
+      if (!effortCode(m) || !m.agent_identifier || m.agent_identifier === "legacy_unknown") return;
+      var key = JSON.stringify([m.identifier, m.agent_identifier || "legacy_unknown"]);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(p);
+    });
+    return Array.from(groups.values()).filter(function (g) { return g.length > 1; })
+      .map(function (g) {
+        return g.slice().sort(function (a, b) {
+          return EFFORT_LEVELS.indexOf(a._model.reasoning_level) -
+            EFFORT_LEVELS.indexOf(b._model.reasoning_level);
+        });
+      });
+  }
+
+  // Pure presentation helpers, also exercised by the browser test harness.
+  window.MakerBenchEfficiency = {
+    modelColor: modelColor, effortCode: effortCode, effortGroups: effortGroups,
+    frontierPoints: frontierPoints, isDominated: isDominated,
+  };
 
   function scoreSpreadText(efficiency) {
     var parts = [];
@@ -692,11 +872,16 @@
     if (existing) existing.remove();
     canvas.style.display = "";
 
+    var oldLegend = card ? card.querySelector(".efficiency-model-legend") : null;
+    if (oldLegend) oldLegend.remove();
+
     var metricDef = EFFICIENCY_METRICS[EFFICIENCY_METRIC] || EFFICIENCY_METRICS.time;
     var models = modelsOnTrack(TRACK);
     var points = models.map(function (m, i) {
       return efficiencyPoint(m, i, EFFICIENCY_METRIC);
-    }).filter(Boolean);
+    }).filter(function (p) {
+      return p && Number.isFinite(p.x) && Number.isFinite(p.y) && p.x > 0;
+    });
     var omitted = models.length - points.length;
 
     if (!points.length) {
@@ -716,25 +901,46 @@
       return;
     }
 
+    // Keep every model identifiable, including models with no effort line.
+    if (card) {
+      var legend = document.createElement("div");
+      legend.className = "efficiency-model-legend";
+      legend.setAttribute("aria-label", "Model colors and effort levels");
+      legend.style.cssText = "display:flex;flex-wrap:wrap;gap:6px 12px;max-height:120px;overflow:auto;font-size:11px;margin-top:12px";
+      legend.tabIndex = 0;
+      var legendModels = new Map();
+      points.forEach(function (p) {
+        var id = p._model.identifier;
+        if (!legendModels.has(id)) legendModels.set(id, { color: p._color, efforts: [] });
+        var label = effortCode(p._model);
+        if (label && legendModels.get(id).efforts.indexOf(label) < 0) legendModels.get(id).efforts.push(label);
+      });
+      legendModels.forEach(function (entry, id) {
+        var item = document.createElement("span");
+        var swatch = document.createElement("span");
+        swatch.textContent = "● ";
+        swatch.style.color = entry.color;
+        item.appendChild(swatch);
+        var levels = ["L", "M", "H", "X"].filter(function (l) { return entry.efforts.indexOf(l) >= 0; });
+        item.appendChild(document.createTextNode(id + (levels.length ? " · " + levels.join("/") : "")));
+        legend.appendChild(item);
+      });
+      if (note) note.after(legend);
+      else card.appendChild(legend);
+    }
+
     var higherBetter = Boolean(metricDef.higherBetter);
     var frontier = frontierPoints(points, higherBetter);
-    // Connect a single model's effort / thinking-level variants with a line
-    // (e.g. gpt-5.5 medium -> high), like the DeepSWE cost/score trajectory.
-    var byBase = {};
-    points.forEach(function (p) {
-      var k = p._model.identifier;
-      (byBase[k] = byBase[k] || []).push(p);
-    });
-    var effortLines = Object.keys(byBase).map(function (k) {
-      var g = byBase[k];
-      if (g.length < 2) return null;
-      g = g.slice().sort(function (a, b) { return a.x - b.x; });
+    // Connect only disclosed effort levels within the same model and harness.
+    var effortLines = effortGroups(points).map(function (g) {
+      var m = g[0]._model;
       return {
-        label: "effort — " + k,
+        label: m.identifier + " · " + (m.agent_identifier || "legacy_unknown") + " · " +
+          g.map(function (p) { return effortCode(p._model); }).join(" → "),
         data: g.map(function (p) { return { x: p.x, y: p.y }; }),
         parsing: false,
         type: "line",
-        borderColor: alphaColor(g[0]._color, 0.6),
+        borderColor: g[0]._color,
         borderWidth: 1.5,
         borderDash: [5, 3],
         pointRadius: 0,
@@ -763,13 +969,14 @@
             data: frontier.map(function (p) { return { x: p.x, y: p.y }; }),
             parsing: false,
             type: "line",
-            borderColor: cssVar("--good"),
+            borderColor: alphaColor(cssVar("--good"), 0.4),
             backgroundColor: alphaColor(cssVar("--good"), 0.08),
             pointBackgroundColor: cssVar("--good"),
             pointBorderColor: cssVar("--bg-elev"),
-            pointRadius: 3,
-            pointHoverRadius: 5,
-            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 0,
+            borderWidth: 1,
+            stepped: "after",
             tension: 0,
             fill: false,
           },
@@ -789,7 +996,8 @@
             callbacks: {
               title: function (items) {
                 var raw = items.length ? items[0].raw : null;
-                return raw && raw._model ? modelText(raw._model) : "Efficient frontier";
+                return raw && raw._model ? modelText(raw._model) +
+                  (effortCode(raw._model) ? " · effort " + effortCode(raw._model) : "") : "Efficient frontier";
               },
               label: function (item) {
                 var raw = item.raw;
@@ -819,10 +1027,11 @@
         },
         scales: {
           x: {
-            reverse: !higherBetter,
+            reverse: false,
+            type: ["time", "cost", "tokens"].indexOf(EFFICIENCY_METRIC) >= 0 ? "logarithmic" : "linear",
             title: {
               display: true,
-              text: metricDef.label + (higherBetter ? " (higher is better)" : " (lower is better)"),
+              text: metricDef.label + (higherBetter ? " (better: top-right)" : " (better: top-left)"),
               color: cssVar("--text-soft"),
             },
             ticks: {
@@ -848,7 +1057,7 @@
       note.textContent = points.length + " charted · " + omitted +
         " unavailable for " + metricDef.shortLabel +
         (estimates ? " · " + estimates + " estimate-labeled point(s)" : "") +
-        ". Frontier uses " + (higherBetter ? "higher " : "lower ") + metricDef.shortLabel +
+        ". L/M/H/X = low/medium/high/xhigh; unset effort stays unconnected. Zero/nonpositive telemetry is omitted. Frontier excludes zero scores and uses " + (higherBetter ? "higher " : "lower ") + metricDef.shortLabel +
         " and higher score. Efficiency comparisons keep disclosed harness/adapter rows separate.";
     }
   }
