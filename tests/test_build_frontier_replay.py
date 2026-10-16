@@ -60,6 +60,14 @@ def test_fixture_round_trip(runs, tmp_path):
     assert str(runs) not in out.read_text()
 
 
+def test_standalone_cli_without_pythonpath(runs, tmp_path, monkeypatch):
+    monkeypatch.delenv('PYTHONPATH', raising=False)
+    out = tmp_path / 'standalone.json'
+    result = cli(runs, out)
+    assert result.returncode == 0, result.stderr
+    assert out.read_bytes() == (FIXTURES / 'expected.json').read_bytes()
+
+
 def test_regrade_absent_vs_present(runs, tmp_path):
     log = runs / "round1" / "run_log.json"
     provenance = dict(regraded_by="fixture reviewer", regrade_commit="fixture-commit",

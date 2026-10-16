@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -259,3 +261,82 @@ def test_original_gate_borderline_is_primary_only_without_regrade(tmp_path):
     }
     decided = replay.build(runs, tmp_path/'ledger.jsonl', 'HEAD', repo, regrade=regraded)
     assert all('borderline_checks' not in row for item in decided['matchups'] for row in item['entrants'])
+
+
+def _provenance(runs):
+    return {
+        'regraded_by': 'fixture reviewer', 'regrade_commit': 'fixture-commit',
+        'gate_policy': 'fixture-policy',
+        'source_run_log_sha256': {
+            path.relative_to(runs).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in runs.glob('r*/run_log.json')
+        },
+    }
+
+
+def test_provenance_cli_is_additive_and_absent_by_default(tmp_path):
+    baseline, runs = _bundle(tmp_path)
+    scores = tmp_path / 'scores.json'
+    scores.write_text(json.dumps(_regrade(runs)))
+    out = tmp_path / 'bundle.json'
+    command = [
+        sys.executable, str(ROOT / 'scripts/build_openrouter_replay.py'),
+        '--runs', str(runs), '--ledger', str(tmp_path / 'ledger.jsonl'),
+        '--out', str(out), '--repo', str(tmp_path / 'repo'),
+        '--code-revision', baseline['harness_git_revision'],
+        '--current-revision', baseline['openrouter_run']['grading']['current_gate_revision'],
+        '--regrade', str(scores), '--credits-before', '1.0', '--credits-after', '2.0',
+    ]
+    subprocess.run(command, check=True, capture_output=True,
+                   env={k: v for k, v in os.environ.items() if k != 'PYTHONPATH'})
+    expected = (json.dumps(baseline, indent=2, ensure_ascii=False) + '\n').encode()
+    assert out.read_bytes() == expected
+    assert 'regrade' not in json.loads(out.read_bytes())
+    provenance = _provenance(runs)
+    path = tmp_path / 'provenance.json'
+    path.write_text(json.dumps(provenance))
+    subprocess.run([*command, '--regrade-provenance', str(path)], check=True, capture_output=True)
+    actual = json.loads(out.read_bytes())
+    assert actual.pop('regrade') == provenance
+    assert (json.dumps(actual, indent=2, ensure_ascii=False) + '\n').encode() == expected
+    provenance['extra'] = 'must not be published'
+    path.write_text(json.dumps(provenance))
+    out.unlink()
+    result = subprocess.run([*command, '--regrade-provenance', str(path)], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert 'unsupported keys: extra' in result.stderr
+    assert not out.exists()
+
+
+@pytest.mark.parametrize('bad', ['missing-field', 'blank-field', 'missing-log', 'extra-log', 'wrong-hash'])
+def test_regrade_provenance_rejects_incomplete_or_unbound_metadata(tmp_path, bad):
+    baseline, runs = _bundle(tmp_path)
+    provenance = _provenance(runs)
+    if bad == 'missing-field':
+        del provenance['gate_policy']
+    elif bad == 'blank-field':
+        provenance['regrade_commit'] = ' '
+    elif bad == 'missing-log':
+        provenance['source_run_log_sha256'].pop(next(iter(provenance['source_run_log_sha256'])))
+    elif bad == 'extra-log':
+        provenance['source_run_log_sha256']['unused/run_log.json'] = '0' * 64
+    else:
+        provenance['source_run_log_sha256']['r1-grok-4.3/run_log.json'] = '0' * 64
+    with pytest.raises(ValueError, match='regrade'):
+        replay.build(runs, tmp_path / 'ledger.jsonl', baseline['harness_git_revision'],
+                     tmp_path / 'repo', regrade_provenance=provenance)
+
+
+@pytest.mark.parametrize('value', [None, [], 'text'])
+def test_explicit_non_object_provenance_is_rejected(tmp_path, value):
+    path = tmp_path / 'provenance.json'
+    path.write_text(json.dumps(value))
+    result = subprocess.run(
+        [sys.executable, str(ROOT / 'scripts/build_openrouter_replay.py'),
+         '--runs', str(tmp_path / 'unused'), '--ledger', str(tmp_path / 'unused-ledger'),
+         '--out', str(tmp_path / 'refused.json'), '--code-revision', 'HEAD',
+         '--regrade-provenance', str(path)], capture_output=True, text=True,
+    )
+    assert result.returncode != 0
+    assert 'regrade provenance must be an object' in result.stderr
+    assert not (tmp_path / 'refused.json').exists()
