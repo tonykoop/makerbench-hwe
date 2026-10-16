@@ -815,7 +815,7 @@
 
   var EFFORT_LEVELS = ["low", "medium", "high", "xhigh"];
 
-  function effortLabel(model) {
+  function effortCode(model) {
     var rank = EFFORT_LEVELS.indexOf(model.reasoning_level);
     return rank < 0 ? "" : ["L", "M", "H", "X"][rank];
   }
@@ -824,7 +824,7 @@
     var groups = new Map();
     points.forEach(function (p) {
       var m = p._model;
-      if (!effortLabel(m) || !m.agent_identifier || m.agent_identifier === "legacy_unknown") return;
+      if (!effortCode(m) || !m.agent_identifier || m.agent_identifier === "legacy_unknown") return;
       var key = JSON.stringify([m.identifier, m.agent_identifier || "legacy_unknown"]);
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(p);
@@ -840,7 +840,7 @@
 
   // Pure presentation helpers, also exercised by the browser test harness.
   window.MakerBenchEfficiency = {
-    modelColor: modelColor, effortLabel: effortLabel, effortGroups: effortGroups,
+    modelColor: modelColor, effortCode: effortCode, effortGroups: effortGroups,
     frontierPoints: frontierPoints, isDominated: isDominated,
   };
 
@@ -912,7 +912,7 @@
       points.forEach(function (p) {
         var id = p._model.identifier;
         if (!legendModels.has(id)) legendModels.set(id, { color: p._color, efforts: [] });
-        var label = effortLabel(p._model);
+        var label = effortCode(p._model);
         if (label && legendModels.get(id).efforts.indexOf(label) < 0) legendModels.get(id).efforts.push(label);
       });
       legendModels.forEach(function (entry, id) {
@@ -936,7 +936,7 @@
       var m = g[0]._model;
       return {
         label: m.identifier + " · " + (m.agent_identifier || "legacy_unknown") + " · " +
-          g.map(function (p) { return effortLabel(p._model); }).join(" → "),
+          g.map(function (p) { return effortCode(p._model); }).join(" → "),
         data: g.map(function (p) { return { x: p.x, y: p.y }; }),
         parsing: false,
         type: "line",
@@ -997,7 +997,7 @@
               title: function (items) {
                 var raw = items.length ? items[0].raw : null;
                 return raw && raw._model ? modelText(raw._model) +
-                  (effortLabel(raw._model) ? " · effort " + effortLabel(raw._model) : "") : "Efficient frontier";
+                  (effortCode(raw._model) ? " · effort " + effortCode(raw._model) : "") : "Efficient frontier";
               },
               label: function (item) {
                 var raw = item.raw;
