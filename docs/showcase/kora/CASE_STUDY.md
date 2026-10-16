@@ -57,13 +57,18 @@ Photo-conditioned design, seed 1 (`assets/image-seed1.png`), and brief-only desi
 
 ![Photo arm, seed 1](assets/image-seed1.png) ![Brief-only arm, seed 1](assets/blind-seed1.png)
 
+Pass rates are **regraded** from the recorded meshes with today's full gate (`robust-v1`
+`min_wall`, canonical sampling, borderline) by `scripts/regrade_scoreline.py`; no design was
+regenerated. As first published, photo seed 2 scored 0.833 (`min_wall`) and the photo mean 0.944.
+
 | Arm | Seed 0 | Seed 1 | Seed 2 | Mean | Wall time (s) |
 |---|---|---|---|---|---|
-| Photo + brief (`image`) | 1.000 | 1.000 | 0.833 (`min_wall`) | 0.944 | 45.2 / 49.7 / 71.1 |
+| Photo + brief (`image`) | 1.000 | 1.000 | 1.000 (0.833 first published) | 1.000 | 45.2 / 49.7 / 71.1 |
 | Brief only (`blind`) | 1.000 | 1.000 | 1.000 | 1.000 | 72.3 / 68.0 / 89.3 |
 
 <!-- claim: 1.000 at: "(`image`) | 1.000" source: docs/showcase/kora/assets/scoreline-image-seed0.json#/rows/0/objective_pass_rate -->
-<!-- claim: 0.833 at: "0.833 (`min_wall`) | 0.944" source: docs/showcase/kora/assets/scoreline-image-seed2.json#/rows/0/objective_pass_rate -->
+<!-- claim: 1.000 at: "| 1.000 (0.833 first" source: docs/showcase/kora/assets/scoreline-image-seed2.json#/rows/0/objective_pass_rate -->
+<!-- claim: 0.833 at: "(0.833 first published)" source: docs/MIN_WALL_RESCORE.md#re:\| showcase kora image seed2 \|(?:[^|]*\|){3} ([0-9.]+) \| -->
 <!-- claim: 1.000 at: "(`blind`) | 1.000" source: docs/showcase/kora/assets/scoreline-blind-seed0.json#/rows/0/objective_pass_rate -->
 
 By eye (six renders): in the blind arm all three designs have the neck lying horizontally
@@ -72,13 +77,16 @@ stand the neck upright, as it does in the photograph. The designs are stylised: 
 hemisphere, a rod, a plate with notches and thin posts, strings absent or sparse. They are
 not a faithful kora.
 
-The photo arm's one failure is `min_wall` (seed 2). That check is provisional and, per the
-S7 analysis (#900 / PR #905, merged, measured on another instrument), can flip with its random
-sample seed. A replay of these kora meshes (4,000 samples, sample seeds 0 to 9) found some
-cells flip (for example blind seeds 0 and 2, photo seed 0), but the failing photo seed 2 stayed
-below the floor in all 10 samples, so that particular failure has not been shown to flip. The
-0.944 versus 1.000 gap is one failed check in six runs; it is not evidence about the photo,
-and no significance analysis was performed.
+As first published, the photo arm's one failure was `min_wall` (seed 2). That check was then
+provisional and, per the S7 analysis (#900 / PR #905, merged, measured on another instrument),
+could flip with its random sample seed. A replay of these kora meshes under the legacy minimum
+(4,000 samples, sample seeds 0 to 9) found some cells flip (for example blind seeds 0 and 2, photo
+seed 0), but photo seed 2 stayed below the floor in all 10 samples. Under `robust-v1` (the 1st
+percentile of 20,000 samples, #979) it passes: about 0.1% of its sampled wall is below the floor,
+well short of the borderline band (0.8 to 1.2%). So the failure came from a few thin samples, not
+from a wall that is thin over a measurable area. The published 0.944 versus 1.000 gap was one
+failed check in six runs; it was not evidence about the photo, and no significance analysis was
+performed.
 
 ## Provenance: verified, assumed, unknown
 
@@ -91,11 +99,12 @@ and no significance analysis was performed.
 | The photo is from Tony's phone on 2026-05-29 | **Verified as metadata** (Samsung SM-G996U, 2026:05:29 14:21:39) | original file EXIF; the copy here has none |
 | The photo was taken by the repo owner | **Assumed** | it sits in the owner's repo under CC BY 4.0; EXIF gives the device and date, not who owned the phone or pressed the shutter |
 | Connected bodies in each mesh | **Verified** | independent split of the exported STLs: photo arm 2 / 4 / 2, brief-only arm 2 / 3 / 2; gate minimum is 4 (passes via the standalone-module fallback). The gate does not prove each required part exists as its own body |
-| Recorded grades (0.944 / 1.000) and per-run failures | **Verified** (reproduced by an independent replay of the six artifacts) | `assets/scoreline-*.json` |
+| Grades as first published (0.944 / 1.000) and per-run failures | **Verified** (reproduced by an independent replay of the six artifacts) | `docs/MIN_WALL_RESCORE.md` "Recorded" column |
+| Regraded grades (1.000 / 1.000) | **Verified** (`scripts/regrade_scoreline.py` from the recorded meshes) | `assets/scoreline-*.json` |
 | Wall times | **Author-recorded single samples, rounded** (no independent start/end stamps) | `assets/wall-time.tsv`; scope is the whole process |
 | The photo was given to the model | **Assumed from configuration** | the image tier with an image map was requested; the trial record shows no image-read call |
 | The photo changed the designs | **Unknown, weakly suggestive** | neck upright in 2 of 3 photo designs vs 0 of 3 blind, n=3, no other control |
-| Why one photo run failed `min_wall` | **Unknown** | not investigated; the check is unstable (#905) |
+| Why one photo run failed `min_wall` as first published | **Measured** | the legacy minimum read a few thin samples; about 0.1% of the sampled wall is below the floor, and `robust-v1` passes it |
 | Resemblance, sound, buildability | **Not claimed** | the gate checks none of them; the repo does not mark the model as a build |
 
 ## What it does not show

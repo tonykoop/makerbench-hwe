@@ -38,6 +38,17 @@ def source_link(path, label):
     return {"path": path, "url": SOURCE_BASE + path, "label": label}
 
 
+def recorded_backend_rates(root):
+    """The as-published post3 backend rates, from the "Recorded" column of the min_wall re-score."""
+
+    rates = {}
+    for line in (root / "docs/MIN_WALL_RESCORE.md").read_text().splitlines():
+        match = re.match(r"\| showcase post3/matchup-backend (\w+) \|(?:[^|]*\|){3} (0\.[0-9]{3}|1\.000) \|", line)
+        if match:
+            rates[match.group(1)] = float(match.group(2))
+    return rates
+
+
 def backend_story(root):
     source = "docs/showcase/post3/matchup-backend.md"
     text = (root / source).read_text()
@@ -46,6 +57,7 @@ def backend_story(root):
         raise ValueError("The historical backend comparison table must occur exactly once")
     table = text.split(header, 1)[1].split("\n\n", 1)[0]
     names = {label: backend for backend, label in BACKEND_NAMES.items()}
+    recorded = recorded_backend_rates(root)
     rows = []
     for line in table.splitlines():
         cells = [cell.strip() for cell in line.strip().split("|")[1:-1]]
@@ -56,8 +68,12 @@ def backend_story(root):
             before = json.loads((root / f"docs/showcase/post3/matchup-backend/objective_scoreline-{backend}.json").read_text())["rows"][0]
             after = json.loads((root / f"docs/showcase/post3/matchup-backend/after/objective_scoreline-{backend}.json").read_text())["rows"][0]
             values = [float(value) for value in cells[1:]]
+            # The "before" scorelines were regraded with today's gate (scripts/regrade_scoreline.py),
+            # so they now hold the same-meshes column; the published column is the recorded rate
+            # that docs/MIN_WALL_RESCORE.md keeps.
             if (before["n_objective_trials"] != 3 or after["n_objective_trials"] != 3
-                    or round(before["objective_pass_rate"], 3) != values[0]
+                    or recorded.get(backend) != values[0]
+                    or round(before["objective_pass_rate"], 3) != values[1]
                     or round(after["objective_pass_rate"], 3) != values[2]):
                 raise ValueError("Historical table disagrees with the committed scorelines")
             rows.append({"backend": backend, "label": cells[0], "published": values[0],

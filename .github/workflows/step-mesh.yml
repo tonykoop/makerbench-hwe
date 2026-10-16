@@ -1,0 +1,30 @@
+name: STEP mesh
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  step-mesh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install sandbox
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Install locked grading and STEP environments
+        run: |
+          python -m pip install -r requirements.lock -r requirements-step.lock
+          python -m pip install --no-deps -e '.[dev]'
+      - name: Require kernel and confinement, then run real STEP tests
+        env:
+          MAKERBENCH_REQUIRE_STEP: '1'
+        run: python -m pytest tests/test_step_mesh.py -q

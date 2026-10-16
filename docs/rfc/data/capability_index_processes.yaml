@@ -134,14 +134,14 @@ processes:
     ci_level: L0
     min_feature_mm: null           # trace width is current-derived, not a fixed floor
     min_feature_rules:
-      trace_width: "inverted from IPC-2221 I = k*dT^0.44*A^0.725"  # DFM_RULES H1 (PCBA block)
+      trace_width: "inverted from IPC-2221 I = k*dT^0.44*A^0.725"  # DFM_RULES I1 (PCBA block)
     max_envelope_mm: null          # TODO: needs measurement (board outline per seed)
     kinematic_cadence: null        # n/a (no motion)
     energetic_threshold_J: null    # n/a (steady-state thermal, not an energy-to-alter-state)
     tolerance_floor_sigma:
-      max_temp_rise_c: 30.0        # default dT limit (DFM_RULES PCBA H1)
-      max_junction_c: "part max_junction_temp"  # DFM_RULES PCBA H2
-    source: "DFM_RULES.md PCBA H1/H2; registry axis electronics_layout"
+      max_temp_rise_c: 30.0        # default dT limit (DFM_RULES PCBA I1)
+      max_junction_c: "part max_junction_temp"  # DFM_RULES PCBA I2
+    source: "DFM_RULES.md PCBA I1/I2; registry axis electronics_layout"
     notes: "electrical/thermal DFM over component physics metadata; deterministic but current-derived, not a fixed min feature."
 
   - process_id: glass_ceramics

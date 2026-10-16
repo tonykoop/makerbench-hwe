@@ -100,7 +100,26 @@ def test_all_showcases_are_visible_without_mutating_controls():
                     assert page.locator(".demo-reference img").count() == 1
                     assert "Photo from tonykoop/kora, CC BY 4.0." in page.locator(".demo-reference figcaption").inner_text()
                     assert page.get_by_role("link", name="CC BY 4.0", exact=True).count() == 1
-                    assert "Passed 5 of 6 build checks in this run." in content
+                    # Regraded with robust-v1 (scripts/regrade_scoreline.py): all six kora runs pass.
+                    assert page.get_by_text("Passed all 6 build checks in 1 of 1 run.", exact=True).count() == 6
+                    assert page.locator(".demo-check[data-state='fail']").count() == 0
+                    # The measured-failure explanation, on the record as first published (photo
+                    # seed 2, legacy min_wall), injected so the chip tooltip stays covered.
+                    def first_published(route):
+                        summary = route.fetch().json()
+                        failure = {"body_id": "body_0", "check": "min_wall", "measured": 0.0702,
+                                   "requires": "measured >= threshold - tolerance", "seed": 2,
+                                   "threshold": 1.0, "tolerance": 0.05, "unit": "mm",
+                                   "detail": "thinnest ray-cast wall on the largest watertight body"}
+                        row = summary["rows"][5]
+                        row["objective_pass_rate"] = row["trials"][0]["objective_pass_rate"] = 0.833333
+                        row["gates"]["min_wall"] = row["trials"][0]["gates"]["min_wall"] = 0
+                        row["trials"][0]["failed_checks"] = [failure]
+                        route.fulfill(json=summary)
+                    page.route("**/api/runs/kora/summary", first_published)
+                    page.reload()
+                    page.get_by_role("heading", name=title, exact=True).wait_for()
+                    assert "Passed 5 of 6 build checks in this run." in page.locator("main").inner_text()
                     chip = page.locator(".matchup-entrant").nth(5).locator(".demo-check[data-state='fail']")
                     chip.focus()
                     assert chip.locator("[role='tooltip']").is_visible()
