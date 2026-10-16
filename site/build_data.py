@@ -4796,11 +4796,20 @@ def build_matchups_page(results_dir: Path) -> dict:
                     raise ValueError("a failed matchup must record its failed checks")
                 if rate == 1 and failed:
                     raise ValueError("a perfect matchup rate cannot have failed checks")
+                # Replay builders persist primary-gate check names, absent when empty.
+                # The published rate already excludes borderline checks (#1014); keep it intact.
+                borderline_checks = row.get("borderline_checks", [])
+                if not isinstance(borderline_checks, list) or any(
+                    not isinstance(k, str) or k not in MATCHUP_GATES for k in borderline_checks
+                ):
+                    raise ValueError("invalid matchup borderline checks")
+                borderline = len(borderline_checks)
                 rows.append({"entrant": _matchup_label(row.get("entrant")),
                              "backend": _matchup_label(row.get("backend")),
                              "objective_pass_rate": rate, "n_objective_trials": measured,
                              "n_infra_errors": infra, "n_execution_errors": errors,
-                             "n_compile_errors": compile_errors, "failed_checks": failed})
+                             "n_compile_errors": compile_errors, "failed_checks": failed,
+                             **({"borderline": borderline} if borderline else {})})
             if len(rows) < 2 or len({(r["entrant"], r["backend"]) for r in rows}) != len(rows):
                 raise ValueError("matchup needs at least two distinct entrants")
             if metadata["varied_axis"] == "models" and {r["entrant"] for r in rows} != set(metadata["values"]):
@@ -4855,6 +4864,8 @@ def _prerender_matchups_html(page: dict | None) -> str:
                 rate += " (compile failure)"
             elif row["objective_pass_rate"] is None and row["n_execution_errors"]:
                 rate += " (execution error)"
+            if row.get("borderline", 0):
+                rate += f' · {row["borderline"]} borderline (excluded)'
             failures = ", ".join(f"{k} ({v})" for k, v in sorted(row["failed_checks"].items())) or (
                 "None observed" if row["n_objective_trials"] else "Not measured")
             rows.append('<tr>' + ''.join(f'<td>{_esc(str(v))}</td>' for v in (
@@ -4867,7 +4878,13 @@ def _prerender_matchups_html(page: dict | None) -> str:
                      '<th>Measured gate pass rate</th><th>Measured trials</th><th>Failed checks</th>'
                      '<th>Execution errors</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>'
                      f'<p class="muted-note">Source: {_esc(item["source_bundle"])}</p></article>')
-    return ''.join(cards)
+    return ''.join(cards) + (
+        '<p class="muted-note">Under robust-v1, min_wall is borderline when 0.8–1.2% '
+        '(inclusive) of wall samples fall below the printable-wall threshold. Borderline '
+        'checks are excluded from each trial’s pass-rate denominator; measured trials '
+        'still count. See <a href="https://github.com/tonykoop/makerbench-hwe/blob/main/'
+        'docs/MIN_WALL_RESCORE.md">the min_wall rescore notes</a>.</p>'
+    )
 
 
 def _prerender_frontier_html(payload: dict) -> str:

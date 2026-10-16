@@ -226,3 +226,25 @@ def test_production_render_auto_fail_preserves_pipeline_zero_without_mesh_measur
     assert 'Unmeasured (execution error)' in html and 'Not measured' in html
     assert '0.00%' not in html and 'renders (1)' not in html
     assert row['pipeline_objective_pass_rate']==0
+
+
+@pytest.mark.parametrize('checks', [None, []])
+def test_zero_borderline_count_is_hidden(tmp_path, checks):
+    sample = bundle()
+    row = sample['matchups'][0]['entrants'][0]
+    if checks is not None:
+        row['borderline_checks'] = checks
+    row['current_gate'] = {'borderline_checks': ['min_wall']}
+    (tmp_path/'sample.json').write_text(json.dumps(sample))
+    page = b.build_matchups_page(tmp_path)
+    assert all(r.get('borderline', 0) == 0 for r in page['matchups'][0]['entrants'])
+    assert 'borderline (excluded)' not in b._prerender_matchups_html(page)
+
+
+@pytest.mark.parametrize('checks', ['min_wall', {'min_wall': 1}, [None], ['unknown']])
+def test_invalid_borderline_metadata_is_rejected(tmp_path, checks):
+    sample = bundle()
+    sample['matchups'][0]['entrants'][0]['borderline_checks'] = checks
+    (tmp_path/'sample.json').write_text(json.dumps(sample))
+    with pytest.raises(ValueError, match='invalid matchup borderline checks'):
+        b.build_matchups_page(tmp_path)
