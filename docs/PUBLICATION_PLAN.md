@@ -1,8 +1,8 @@
-# Publication checklist — HF Space mirror + arXiv tech report (issue #53)
+# Publication checklist — HF Space + arXiv tech report (issue #53)
 
 Maintainer checklist for the two remaining public-discovery steps from the
 2026-06 landscape sweep ([STRATEGY_MEMO.md](STRATEGY_MEMO.md), "Distribution
-Plan"): mirroring the leaderboard into a Hugging Face Space and submitting a
+Plan"): publishing the MakerBench Hugging Face Space and submitting a
 short arXiv technical report. Everything here is a manual maintainer action;
 nothing in this repo publishes anything automatically.
 
@@ -33,55 +33,88 @@ submission actually exists on the CADGenBench board.
 
 ---
 
-## 1. Hugging Face Space mirror (static)
+## 1. Hugging Face Space: deploy runbook (`tonykoop/makerbench-hwe`)
 
-The Pages site is a self-contained static build (stdlib-only generator, no
-framework, Chart.js from CDN), so the Space is a byte-level mirror of the same
-output — no second site to maintain.
+Decision (2026-10-16, epic #1031): one public Space, `tonykoop/makerbench-hwe`,
+with three tabs: **Grade a part**, **Explore designs**, **Leaderboard**. Its
+only source is [`spaces/makerbench_hwe/`](../spaces/makerbench_hwe/) in this
+repo (#1026): a Gradio Blocks app (`sdk: gradio`, `sdk_version: 5.43.1`,
+pinned in `requirements.txt`) with one module per tab under `tabs/`. The
+Leaderboard tab links to (and embeds) the live GitHub Pages board and keeps no
+copy of it, so the Space never goes stale between deploys. Grade a part
+(#1027/#1028) and Explore designs (#1029) are placeholders until their stories
+land.
 
-- [ ] Stage the Space contents:
+This replaces the three earlier Space codebases:
+
+- the separately maintained Space repo that is live today (a Gradio app with
+  a hand-copied leaderboard snapshot, a "private dashboard" card and a disabled
+  Submit placeholder) is **replaced on the next deploy** by the steps below;
+  that external repo is no longer maintained;
+- `spaces/hf_dashboard/` (the never-deployed Docker dual-league dashboard,
+  #98) has been removed from this repo;
+- the old `sdk: static` mirror of `site/` that `scripts/build_hf_space.py`
+  used to stage is gone; the script now stages the Gradio Space.
+
+`spaces/studio_demo/` is a separate, never-deployed build recipe; #1029 folds
+the showcase into the Explore designs tab.
+
+Every step below is a manual maintainer action (Tony). Nothing in this repo
+uploads to Hugging Face.
+
+- [ ] Stage the Space from a clean `main` checkout:
 
   ```bash
   python scripts/build_hf_space.py
   ```
 
-  This regenerates `site/data/` via `site/build_data.py`, copies the static
-  site into `dist/hf_space/` (git-ignored), and writes a Space card
-  `README.md` with `sdk: static` frontmatter. `--skip-build` reuses the
-  committed site data; `--out` overrides the staging directory; `--space-id`
-  changes only the printed upload command.
+  This copies `spaces/makerbench_hwe/` into `dist/hf_space/` (git-ignored)
+  and fails closed unless the staged tree passes the integrity checks: no
+  path naming private storage, oracles, submissions, held-out seeds or
+  results; no reference to the private oracle or submission locations; the
+  `scripts/audit_public_artifacts.py` path rules and the
+  `scripts/check_public_terms.py` fingerprints pass on every staged file;
+  the card carries the canary; the gradio pin equals the card's
+  `sdk_version`. `--out` overrides the staging directory; `--space-id` only
+  changes the printed upload command. The same checks run in CI
+  (`tests/test_build_hf_space.py`, `tests/test_hf_space_app.py`).
 
-- [ ] Smoke-test the staged copy locally (the page fetches
-  `data/leaderboard.json`, which `file://` may block):
-
-  ```bash
-  cd dist/hf_space && python -m http.server 8000
-  ```
-
-  Check: leaderboard table renders, charts draw, track toggle works, blog
-  pages open.
-
-- [ ] Decide the owner: personal account (`tonykoop`) is fine for v1; an org
-  can adopt the Space later without breaking the slug badly (HF redirects
-  renames, but pick deliberately).
-
-- [ ] Create the Space (SDK **Static**, license Apache-2.0), e.g.
-  `tonykoop/makerbench-hwe-leaderboard`, then upload the staged tree:
+- [ ] Smoke-test the staged copy locally:
 
   ```bash
-  hf upload tonykoop/makerbench-hwe-leaderboard dist/hf_space . --repo-type space
+  cd dist/hf_space
+  python -m venv .venv && . .venv/bin/activate
+  pip install -r requirements.txt
+  python app.py            # http://127.0.0.1:7860
   ```
 
-  (or `git clone` the Space repo and copy/commit/push.)
+  Check: three tabs in the order Grade a part, Explore designs, Leaderboard;
+  the Leaderboard button opens <https://tonykoop.github.io/makerbench-hwe/>
+  and the embed loads. Delete `.venv` before uploading (or upload from a fresh
+  `python scripts/build_hf_space.py` run).
 
-- [ ] Verify the live Space: index renders, `data/leaderboard.json` fetch
-  succeeds, Chart.js CDN loads inside the HF iframe.
+- [ ] Log in: `hf auth login` (a write token for `tonykoop`).
 
-- [ ] Refresh policy: the Space is a mirror, not a second source of truth.
-  After new results land on `main` and Pages redeploys, rerun
-  `build_hf_space.py` and re-upload. Manual refresh is acceptable for v1; a
-  scheduled Action with an `HF_TOKEN` secret is a later nicety, not a
-  prerequisite.
+- [ ] Upload, replacing the old Space contents in one commit:
+
+  ```bash
+  hf upload tonykoop/makerbench-hwe dist/hf_space . --repo-type space \
+    --commit-message "Deploy from makerbench-hwe <git sha>" --delete '*'
+  ```
+
+  `--delete '*'` removes every remote file that is not in the staged tree
+  (the old app's snapshot data, scripts, Makefile and pyproject). Files in
+  the upload are kept. Alternative: `git clone` the Space repo, replace its
+  contents with `dist/hf_space/`, commit and push.
+
+- [ ] Verify the live Space: it builds without errors (Space "Logs" tab),
+  shows the three tabs, the card reads as a public benchmark page (no
+  "private dashboard" wording, no Submit placeholder), and the Leaderboard
+  link and embed work inside the HF iframe.
+
+- [ ] Redeploy policy: redeploy only when `spaces/makerbench_hwe/` changes
+  (the leaderboard itself needs no Space redeploy because the tab links to the
+  live site). Rerun `python scripts/build_hf_space.py` and the upload step.
 
 - [ ] Only after the Space is live: add the cross-links in section 4.
 
@@ -155,8 +188,8 @@ identifiers:
 | Paper → repo/Pages/Space | already drafted in ARXIV_TECH_REPORT.md (footnote URLs; fill Space/arXiv slots at conversion time) | at submission |
 | Repo ↔ CADGenBench bridge | [LANDSCAPE.md](LANDSCAPE.md) ↔ [CADGENBENCH_SUBMISSION.md](CADGENBENCH_SUBMISSION.md) already cross-linked; add a link to the actual submission row only when #52 completes | after #52 |
 
-Keep the Pages site as the canonical leaderboard URL in all copy; the Space is
-described as a mirror.
+Keep the Pages site as the canonical leaderboard URL in all copy; the Space's
+Leaderboard tab links to it rather than mirroring it.
 
 ## 5. Out of scope for this checklist
 
