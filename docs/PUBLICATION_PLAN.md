@@ -149,6 +149,7 @@ identifiers:
 | Repo → Pages | README "Leaderboard" section | already live |
 | Repo → HF Space | README "Leaderboard" section, one line next to the Pages link | after Space upload |
 | HF Space → repo + Pages | Space card README (template already emits these links) | at Space upload |
+| Repo → HF tasks dataset | README, one line; staging + upload runbook in [HF_DATASET.md](HF_DATASET.md) (#1030) | after dataset upload |
 | Repo → arXiv | README citation pointer + CITATION.cff (section 3) | after arXiv ID |
 | HF Space → arXiv | Space card README + HF Papers claim | after arXiv ID |
 | Paper → repo/Pages/Space | already drafted in ARXIV_TECH_REPORT.md (footnote URLs; fill Space/arXiv slots at conversion time) | at submission |
