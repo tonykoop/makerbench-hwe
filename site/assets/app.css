@@ -478,6 +478,10 @@ tr.is-official td.model-col { border-left: 3px solid var(--good); }
 .profile-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 8px; }
 .profile-head h4 { margin: 0; font-size: 0.95rem; letter-spacing: 0; }
 .profile-head span { color: var(--text-faint); font-size: 0.76rem; white-space: nowrap; }
+.profile-legend { list-style: none; margin: 12px 0; padding: 0; display: grid; gap: 8px; color: var(--text-soft); font-size: 0.78rem; }
+.profile-legend li { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.profile-legend-swatch { width: 24px; flex-shrink: 0; border-top: 3px solid; }
+.profile-legend-label { min-width: 0; overflow-wrap: anywhere; }
 .profile-empty { grid-column: 1 / -1; }
 .card .picker { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .card select {

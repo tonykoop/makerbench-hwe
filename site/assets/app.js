@@ -1125,6 +1125,8 @@
       return;
     }
 
+    var comparisonColors = ["#2f6fed", "#d6562b", "#2f8f5b"];
+    var comparisonDashes = [[], [8, 4], [2, 3]];
     var unavailable = [];
     models = models.filter(function (m) {
       var profile = (m.tracks[TRACK] || {}).capability_profile || {};
@@ -1211,7 +1213,7 @@
 
         var datasets = group.models.map(function (m, i) {
           var tr = m.tracks[TRACK];
-          var color = modelColor(i, m);
+          var color = toggle.checked ? modelColor(i, m) : comparisonColors[i];
           var profile = tr.capability_profile || {};
           var values = axes.map(function (axis) {
             var cell = profile[axis.id];
@@ -1231,12 +1233,32 @@
             pointStyle: effortPointStyle(m.reasoning_level),
             pointRadius: 3,
             pointHoverRadius: 5,
-            borderDash: effortLineDash(m.reasoning_level),
+            borderDash: toggle.checked ? effortLineDash(m.reasoning_level) : comparisonDashes[i],
             borderWidth: m.is_control ? 2 : 2.5,
             spanGaps: false,
             _model: m,
           };
         });
+
+        if (!toggle.checked) {
+          var legend = document.createElement("ul");
+          legend.className = "profile-legend";
+          datasets.forEach(function (dataset, i) {
+            var entry = document.createElement("li");
+            var swatch = document.createElement("span");
+            swatch.className = "profile-legend-swatch";
+            swatch.setAttribute("aria-hidden", "true");
+            swatch.style.borderTopColor = dataset.borderColor;
+            swatch.style.borderTopStyle = ["solid", "dashed", "dotted"][i];
+            var text = document.createElement("span");
+            text.className = "profile-legend-label";
+            text.textContent = dataset.label;
+            entry.appendChild(swatch);
+            entry.appendChild(text);
+            legend.appendChild(entry);
+          });
+          card.insertBefore(legend, card.querySelector(".chart-box"));
+        }
 
         charts[chartId] = new Chart(document.getElementById(chartId), {
           type: "radar",
@@ -1256,19 +1278,18 @@
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-              legend: { labels: { color: cssVar("--text-soft"), boxWidth: 12, font: { size: 11 } } },
+              legend: { display: toggle.checked, labels: { color: cssVar("--text-soft"), boxWidth: 12, font: { size: 11 } } },
               tooltip: {
                 callbacks: {
                   title: function (items) {
                     return items.length ? axes[items[0].dataIndex].title : "";
                   },
                   label: function (item) {
-                    var model = item.dataset._model;
                     var actual = item.dataset._actualData
                       ? item.dataset._actualData[item.dataIndex]
                       : item.raw;
                     var value = actual == null ? "missing" : Number(actual).toFixed(2) + "/4";
-                    return modelText(model) + ": " + value;
+                    return item.dataset.label + ": " + value;
                   },
                   afterLabel: function (item) {
                     var axis = axes[item.dataIndex];

@@ -15,7 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize("source", ["real", "fixture"])
-def test_profile_comparison_and_grid(source):
+@pytest.mark.parametrize("width", [1440, 390])
+def test_profile_comparison_and_grid(source, width):
     helpers = runpy.run_path(str(ROOT / "tests/test_site_leaderboard_summary.py"))
     payload = json.loads((ROOT / "site/data/leaderboard.json").read_text())
     if source == "fixture":
@@ -40,7 +41,7 @@ def test_profile_comparison_and_grid(source):
     try:
         with playwright.sync_playwright() as runtime:
             browser = runtime.chromium.launch(headless=True)
-            page = browser.new_page()
+            page = browser.new_page(viewport={"width": width, "height": 1000})
             page.route("**/data/leaderboard.json", lambda route: route.fulfill(
                 content_type="application/json", body=json.dumps(payload)))
             errors = []
@@ -67,9 +68,27 @@ def test_profile_comparison_and_grid(source):
                 assert page.locator('.profile-picker input').count() == len(measured)
                 assert page.locator('.profile-plots canvas').count() == 1
                 rows = page.evaluate("""() => Chart.getChart('chart-profile-0').data.datasets.map(
-                    d => ({id: d._model.row_id, values: d.data, actual: d._actualData}))""")
+                    d => ({id: d._model.row_id, values: d.data, actual: d._actualData,
+                           color: d.borderColor, dash: d.borderDash}))""")
                 assert [r["id"] for r in rows] == [m["row_id"] for m in expected]
                 assert all(r["values"] == r["actual"] for r in rows)
+                assert len({r["color"] for r in rows}) == len(rows)
+                assert len({tuple(r["dash"]) for r in rows}) == len(rows)
+                legend = page.locator('.profile-legend-label')
+                assert legend.all_text_contents() == page.evaluate(
+                    "Chart.getChart('chart-profile-0').data.datasets.map(d => d.label)")
+                assert legend.evaluate_all("""elements => elements.every(el => {
+                    const bounds = el.getBoundingClientRect();
+                    const card = el.closest('.profile-card').getBoundingClientRect();
+                    return el.scrollWidth <= el.clientWidth + 1 && bounds.left >= card.left &&
+                        bounds.right <= card.right;
+                })""")
+                assert page.evaluate("""() => {
+                    const chart = Chart.getChart('chart-profile-0');
+                    return chart.data.datasets.every(d =>
+                        chart.options.plugins.tooltip.callbacks.label({dataset: d, dataIndex: 0,
+                            raw: d.data[0]}).startsWith(d.label + ': '));
+                }""")
                 assert page.locator('.profile-picker input:checked').count() == len(expected)
                 if len(expected) == 3:
                     assert page.locator('.profile-picker input:not(:checked):enabled').count() == 0
