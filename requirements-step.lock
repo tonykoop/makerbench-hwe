@@ -1,0 +1,4 @@
+# Optional STEP intake kernel, also used by the dedicated CI job.
+cadquery-ocp==7.9.3.1
+cadquery-ocp-proxy==7.9.3.1
+vtk==9.5.2
