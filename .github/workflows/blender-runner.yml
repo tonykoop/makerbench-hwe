@@ -1,0 +1,55 @@
+name: blender-runner
+
+# Runs the pinned-Blender runner tests (#1040). Separate from the unit-test matrix
+# on purpose: the matrix never needs Blender (those tests skip without it). The
+# tarball is checksum-pinned in makerbench/blender_runner.py, fetched by
+# scripts/fetch_blender.py and cached outside the repo.
+
+on:
+  pull_request:
+    paths:
+      - "makerbench/blender_runner.py"
+      - "scripts/fetch_blender.py"
+      - "tests/test_blender_runner.py"
+      - ".github/workflows/blender-runner.yml"
+  push:
+    branches: [main]
+    paths:
+      - "makerbench/blender_runner.py"
+      - "scripts/fetch_blender.py"
+      - "tests/test_blender_runner.py"
+  workflow_dispatch:
+
+jobs:
+  blender:
+    name: blender-runner (pinned LTS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MAKERBENCH_BLENDER_CACHE: ${{ github.workspace }}/../makerbench-blender-cache
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Restore pinned Blender
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MAKERBENCH_BLENDER_CACHE }}
+          key: blender-4.2.23-linux-x64-bea0eb3146be
+
+      - name: Fetch pinned Blender (sha256-verified; no-op on cache hit)
+        run: python scripts/fetch_blender.py
+
+      - name: Blender runtime libraries
+        run: sudo apt-get update && sudo apt-get install -y libxi6 libxxf86vm1 libxfixes3 libxrender1 libgl1 libsm6
+
+      - name: Install package and pytest
+        run: python -m pip install -e . pytest
+
+      - name: Run blender tests
+        run: python -m pytest tests/test_blender_runner.py -q -m blender
