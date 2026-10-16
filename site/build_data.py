@@ -35,7 +35,7 @@ LEVELS = (1, 2, 3, 4)
 DEFAULT_SITE_BASE_URL = "https://tonykoop.github.io/makerbench-hwe"
 SATURATION_TOP_MODEL_COUNT = 5
 SATURATION_MIN_MODELS = 3
-# Overall ranking requires breadth; sparse rows remain available as samples.
+# Overall ranking and the hero share this coverage floor; sparse rows remain samples.
 OVERALL_RANKING_MIN_FAMILIES = 4
 SATURATION_THRESHOLDS = {
     "mean_score_near_ceiling": 3.75,
@@ -2836,7 +2836,7 @@ def build_hero_stats(models: list[dict], families: list[dict]) -> dict:
     n_families = len(families)
     ranked = [m for m in non_control if
               m["tracks"]["blind"].get("n_families_scored", 0) >= OVERALL_RANKING_MIN_FAMILIES]
-    top = ranked[0] if ranked else None
+    top = max(ranked, key=lambda m: m["tracks"]["blind"]["overall_mean"], default=None)
     top_mean = top["tracks"]["blind"]["overall_mean"] if top else None
 
     # Hardest tier (Level 4 / DFM) pass rate across every graded blind run.
@@ -2860,17 +2860,30 @@ def build_hero_stats(models: list[dict], families: list[dict]) -> dict:
     lift = (sum(gaps) / len(gaps)) if gaps else None
 
     stats: list[dict] = []
+    top_score_label = (
+        f"top blind score among models measured on ≥{OVERALL_RANKING_MIN_FAMILIES} families"
+    )
     if top_mean is not None:
         stats.append(
             {
                 "key": "top_score",
                 "value": _round(top_mean, 2),
                 "display": f"{top_mean:.2f}/4",
-                "label": "top broad blind score",
+                "label": top_score_label,
                 "detail": (
                     f"{display_model(top)} · "
                     f"{top['tracks']['blind'].get('n_families_scored', 0)}/{n_families} families"
                 ),
+            }
+        )
+    else:
+        stats.append(
+            {
+                "key": "top_score",
+                "value": None,
+                "display": "—",
+                "label": top_score_label,
+                "detail": "No model meets the coverage minimum",
             }
         )
     stats.append(
