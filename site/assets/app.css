@@ -463,7 +463,14 @@ tr.is-official td.model-col { border-left: 3px solid var(--good); }
 .chart-box-frontier { height: 360px; }
 .chart-box-radar { height: 380px; }
 .chart-note { color: var(--text-faint); font-size: 0.78rem; margin: 8px 0 0; }
-.profile-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.profile-grid { display: grid; gap: 16px; }
+.profile-picker { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 16px; max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 12px; min-width: 0; }
+.profile-picker legend { font-weight: 600; padding: 0 6px; }
+.profile-picker label, .profile-show-all { display: flex; align-items: baseline; gap: 8px; font-size: 0.8rem; overflow-wrap: anywhere; }
+.profile-picker input, .profile-show-all input { flex-shrink: 0; }
+.profile-plots { min-width: 0; }
+.profile-plots-all { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 16px; }
+.profile-unavailable { overflow-wrap: anywhere; }
 .profile-card {
   border: 1px solid var(--border); border-radius: 10px; padding: 14px;
   background: var(--bg); min-width: 0;

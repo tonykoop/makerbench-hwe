@@ -1137,7 +1137,7 @@
   function renderProfileCharts() {
     destroyProfileCharts();
     var axes = capabilityAxes();
-    var models = modelsOnTrack(TRACK);
+    var models = DATA.models.slice();
     var grid = document.getElementById("profile-grid");
     var note = document.getElementById("profile-note");
     if (!grid) return;
@@ -1148,108 +1148,182 @@
       return;
     }
 
-    var missingCells = 0;
-    groupModelsByFamily(models).forEach(function (group, groupIndex) {
-      var chartId = profileChartId(groupIndex);
-      var card = document.createElement("div");
-      card.className = "profile-card";
-      card.innerHTML = '<div class="profile-head"><h4>' + escapeHTML(group.family) + '</h4>' +
-        '<span>' + group.models.length + ' variant' +
-        (group.models.length === 1 ? '' : 's') + '</span></div>' +
-        '<div class="chart-box chart-box-radar"><canvas id="' + chartId + '"></canvas></div>';
-      grid.appendChild(card);
-
-      var datasets = group.models.map(function (m, i) {
-        var tr = m.tracks[TRACK];
-        var color = modelColor(i, m);
-        var profile = tr.capability_profile || {};
-        var values = axes.map(function (axis) {
-          var cell = profile[axis.id];
-          if (!cell || cell.mean_score == null) {
-            missingCells += 1;
-            return null;
-          }
-          return cell.mean_score;
-        });
-        return {
-          label: modelVariantText(m),
-          data: values,
-          _actualData: values,
-          borderColor: color,
-          backgroundColor: alphaColor(color, 0.06),
-          pointBackgroundColor: color,
-          pointBorderColor: cssVar("--bg-elev"),
-          pointStyle: effortPointStyle(m.reasoning_level),
-          pointRadius: 3,
-          pointHoverRadius: 5,
-          borderDash: effortLineDash(m.reasoning_level),
-          borderWidth: m.is_control ? 2 : 2.5,
-          spanGaps: false,
-          _model: m,
-        };
+    var unavailable = [];
+    models = models.filter(function (m) {
+      var profile = (m.tracks[TRACK] || {}).capability_profile || {};
+      var measured = axes.some(function (axis) {
+        return profile[axis.id] && profile[axis.id].mean_score != null;
       });
-      revealOverlappingProfiles(datasets);
-
-      charts[chartId] = new Chart(document.getElementById(chartId), {
-        type: "radar",
-        data: {
-          labels: axes.map(function (axis) { return axis.title; }),
-          datasets: datasets,
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { labels: { color: cssVar("--text-soft"), boxWidth: 12, font: { size: 11 } } },
-            tooltip: {
-              callbacks: {
-                title: function (items) {
-                  return items.length ? axes[items[0].dataIndex].title : "";
-                },
-                label: function (item) {
-                  var model = item.dataset._model;
-                  var actual = item.dataset._actualData
-                    ? item.dataset._actualData[item.dataIndex]
-                    : item.raw;
-                  var value = actual == null ? "missing" : Number(actual).toFixed(2) + "/4";
-                  return modelText(model) + ": " + value;
-                },
-                afterLabel: function (item) {
-                  var axis = axes[item.dataIndex];
-                  var profile = item.dataset._model.tracks[TRACK].capability_profile || {};
-                  var cell = profile[axis.id];
-                  if (!cell || cell.mean_score == null) return "missing pack";
-                  return cell.n_families + " task " +
-                    (cell.n_families === 1 ? "family" : "families") +
-                    ", " + cell.n_infra + " infra excluded";
-                },
-              },
-            },
-          },
-          scales: {
-            r: {
-              min: 0,
-              max: 4,
-              ticks: {
-                stepSize: 1,
-                color: cssVar("--text-faint"),
-                backdropColor: "transparent",
-                font: { size: 10 },
-              },
-              grid: { color: cssVar("--border") },
-              angleLines: { color: cssVar("--border") },
-              pointLabels: { color: cssVar("--text-soft"), font: { size: 11 } },
-            },
-          },
-        },
-      });
+      if (!measured) unavailable.push(m);
+      return measured;
+    }).sort(function (a, b) {
+      var av = a.tracks[TRACK].overall_mean;
+      var bv = b.tracks[TRACK].overall_mean;
+      return (bv == null ? -Infinity : bv) - (av == null ? -Infinity : av) ||
+        String(a.row_id).localeCompare(String(b.row_id));
     });
-
-    if (note) {
-      note.textContent = missingCells
-        ? "Each card stacks variants from one model family. Blank vertices mark task packs this model hasn't run yet — they are not counted as zero."
-        : "Each card stacks variants from one model family across all capability axes.";
+    var labels = new Map();
+    var usedLabels = {};
+    models.concat(unavailable).forEach(function (m) {
+      var base = plainLabel(m.identifier) + " · " + effortLabel(m.reasoning_level) +
+        " · " + (harnessLabel(m.agent_identifier) || "Unknown harness");
+      usedLabels[base] = (usedLabels[base] || 0) + 1;
+      labels.set(m, base + (usedLabels[base] > 1 ? " · variant " + usedLabels[base] : ""));
+    });
+    var selected = models.slice(0, 3);
+    var controls = document.createElement("fieldset");
+    controls.className = "profile-picker";
+    controls.innerHTML = '<legend>Compare up to 3 models</legend>';
+    models.forEach(function (m) {
+      var label = document.createElement("label");
+      var input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = selected.indexOf(m) !== -1;
+      input.onchange = function () {
+        selected = models.filter(function (_, i) { return controls.querySelectorAll("input")[i].checked; });
+        drawProfiles();
+      };
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(labels.get(m)));
+      controls.appendChild(label);
+    });
+    grid.appendChild(controls);
+    var toggleLabel = document.createElement("label");
+    toggleLabel.className = "profile-show-all";
+    var toggle = document.createElement("input");
+    toggle.type = "checkbox";
+    toggle.onchange = drawProfiles;
+    toggleLabel.appendChild(toggle);
+    toggleLabel.appendChild(document.createTextNode("Show all models in a grid"));
+    grid.appendChild(toggleLabel);
+    var plots = document.createElement("div");
+    plots.className = "profile-plots";
+    grid.appendChild(plots);
+    if (unavailable.length) {
+      var missing = document.createElement("p");
+      missing.className = "chart-note profile-unavailable";
+      missing.textContent = "No profile data yet: " + unavailable.map(function (m) { return labels.get(m); }).join("; ");
+      grid.appendChild(missing);
     }
+
+    function drawProfiles() {
+      destroyProfileCharts();
+      plots.innerHTML = "";
+      controls.querySelectorAll("input").forEach(function (input) {
+        input.disabled = toggle.checked || (!input.checked && selected.length >= 3);
+      });
+      var groups = toggle.checked ? groupModelsByFamily(models) :
+        [{ family: "Model comparison", models: selected }];
+      plots.classList.toggle("profile-plots-all", toggle.checked);
+      if (!models.length || (!toggle.checked && !selected.length)) {
+        plots.innerHTML = '<p class="empty profile-empty">' +
+          (models.length ? 'Select up to 3 models to compare.' : 'No chartable model profiles on this track yet.') + '</p>';
+        return;
+      }
+      groups.forEach(function (group, groupIndex) {
+        var chartId = profileChartId(groupIndex);
+        var card = document.createElement("div");
+        card.className = "profile-card";
+        card.innerHTML = '<div class="profile-head"><h4>' + escapeHTML(group.family) + '</h4>' +
+          '<span>' + group.models.length + ' variant' +
+          (group.models.length === 1 ? '' : 's') + '</span></div>' +
+          '<div class="chart-box chart-box-radar"><canvas id="' + chartId + '"></canvas></div>';
+        plots.appendChild(card);
+
+        var datasets = group.models.map(function (m, i) {
+          var tr = m.tracks[TRACK];
+          var color = modelColor(i, m);
+          var profile = tr.capability_profile || {};
+          var values = axes.map(function (axis) {
+            var cell = profile[axis.id];
+            if (!cell || cell.mean_score == null) {
+              return null;
+            }
+            return cell.mean_score;
+          });
+          return {
+            label: labels.get(m),
+            data: values,
+            _actualData: values,
+            borderColor: color,
+            backgroundColor: alphaColor(color, 0.06),
+            pointBackgroundColor: color,
+            pointBorderColor: cssVar("--bg-elev"),
+            pointStyle: effortPointStyle(m.reasoning_level),
+            pointRadius: 3,
+            pointHoverRadius: 5,
+            borderDash: effortLineDash(m.reasoning_level),
+            borderWidth: m.is_control ? 2 : 2.5,
+            spanGaps: false,
+            _model: m,
+          };
+        });
+
+        charts[chartId] = new Chart(document.getElementById(chartId), {
+          type: "radar",
+          data: {
+            labels: axes.map(function (axis) {
+              var lines = [""];
+              axis.title.replace(/-/g, "- ").split(" ").forEach(function (word) {
+                var last = lines.length - 1;
+                if (lines[last] && lines[last].length + word.length + 1 > 12) lines.push(word);
+                else lines[last] += (lines[last] ? " " : "") + word;
+              });
+              return lines;
+            }),
+            datasets: datasets,
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { labels: { color: cssVar("--text-soft"), boxWidth: 12, font: { size: 11 } } },
+              tooltip: {
+                callbacks: {
+                  title: function (items) {
+                    return items.length ? axes[items[0].dataIndex].title : "";
+                  },
+                  label: function (item) {
+                    var model = item.dataset._model;
+                    var actual = item.dataset._actualData
+                      ? item.dataset._actualData[item.dataIndex]
+                      : item.raw;
+                    var value = actual == null ? "missing" : Number(actual).toFixed(2) + "/4";
+                    return modelText(model) + ": " + value;
+                  },
+                  afterLabel: function (item) {
+                    var axis = axes[item.dataIndex];
+                    var profile = item.dataset._model.tracks[TRACK].capability_profile || {};
+                    var cell = profile[axis.id];
+                    if (!cell || cell.mean_score == null) return "missing pack";
+                    return cell.n_families + " task " +
+                      (cell.n_families === 1 ? "family" : "families") +
+                      ", " + cell.n_infra + " infra excluded";
+                  },
+                },
+              },
+            },
+            scales: {
+              r: {
+                min: 0,
+                max: 4,
+                ticks: {
+                  stepSize: 1,
+                  color: cssVar("--text-faint"),
+                  backdropColor: "transparent",
+                  font: { size: 10 },
+                },
+                grid: { color: cssVar("--border") },
+                angleLines: { color: cssVar("--border") },
+                pointLabels: { color: cssVar("--text-soft"), font: { size: grid.clientWidth < 420 ? 9 : 11 } },
+              },
+            },
+          },
+        });
+      });
+    }
+    drawProfiles();
+    if (note) note.textContent = "Default selection: top 3 by overall score on this track. Blank vertices are unmeasured packs, not zeros. Overlapping profiles retain their measured values.";
   }
 
   function renderHistChart() {
