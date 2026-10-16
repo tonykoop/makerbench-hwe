@@ -228,45 +228,23 @@ def test_production_render_auto_fail_preserves_pipeline_zero_without_mesh_measur
     assert row['pipeline_objective_pass_rate']==0
 
 
-@pytest.mark.parametrize('failed, expected_rate', [(False, 1.0), (True, 4/5)])
-def test_borderline_count_preserves_decided_check_denominator(tmp_path, failed, expected_rate):
-    from makerbench.code_cad_arena_runner import objective_rate
-
+@pytest.mark.parametrize('checks', [None, []])
+def test_zero_borderline_count_is_hidden(tmp_path, checks):
     sample = bundle()
     row = sample['matchups'][0]['entrants'][0]
-    sub_scores = dict.fromkeys(['renders', 'watertight', 'nonzero_volume', 'fits_envelope', 'min_wall', 'body_count'], 1.0)
-    sub_scores['min_wall'] = 'borderline'
-    sub_scores['body_count'] = 0.0 if failed else 1.0
-    # Use the real #1014 rate: borderline is neither a pass nor a failure.
-    rate = objective_rate(sub_scores)
-    assert rate == expected_rate
-    row.update(sub_scores=sub_scores, objective_pass_rate=rate,
-               failed_checks={'body_count': 1} if failed else {})
-    row['current_gate'] = {'sub_scores': {'min_wall': 0.0}}
-    (tmp_path/'sample.json').write_text(json.dumps(sample))
-    page = b.build_matchups_page(tmp_path)
-    actual = page['matchups'][0]['entrants'][0]
-    assert actual['borderline'] == 1
-    assert actual['objective_pass_rate'] == expected_rate
-    assert actual['n_objective_trials'] == 1
-    assert actual['failed_checks'] == ({'body_count': 1} if failed else {})
-    html = b._prerender_matchups_html(page)
-    assert f'{expected_rate * 100:.2f}% · 1 borderline (excluded)' in html
-    assert html.count('1 borderline (excluded)') == 1
-    assert '0 borderline (excluded)' not in html
-    assert '0.8–1.2%' in html
-    assert 'docs/MIN_WALL_RESCORE.md' in html
-    assert 'excluded from each trial’s pass-rate denominator' in html
-
-
-@pytest.mark.parametrize('sub_scores', [None, {}, {'min_wall': 0.0}, {'min_wall': 1.0}])
-def test_zero_borderline_count_is_hidden(tmp_path, sub_scores):
-    sample = bundle()
-    row = sample['matchups'][0]['entrants'][0]
-    if sub_scores is not None:
-        row['sub_scores'] = sub_scores
-    row['current_gate'] = {'sub_scores': {'min_wall': 'borderline'}}
+    if checks is not None:
+        row['borderline_checks'] = checks
+    row['current_gate'] = {'borderline_checks': ['min_wall']}
     (tmp_path/'sample.json').write_text(json.dumps(sample))
     page = b.build_matchups_page(tmp_path)
     assert all(r.get('borderline', 0) == 0 for r in page['matchups'][0]['entrants'])
     assert 'borderline (excluded)' not in b._prerender_matchups_html(page)
+
+
+@pytest.mark.parametrize('checks', ['min_wall', {'min_wall': 1}, [None], ['unknown']])
+def test_invalid_borderline_metadata_is_rejected(tmp_path, checks):
+    sample = bundle()
+    sample['matchups'][0]['entrants'][0]['borderline_checks'] = checks
+    (tmp_path/'sample.json').write_text(json.dumps(sample))
+    with pytest.raises(ValueError, match='invalid matchup borderline checks'):
+        b.build_matchups_page(tmp_path)

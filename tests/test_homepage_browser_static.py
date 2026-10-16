@@ -117,14 +117,13 @@ def test_ecosystem_never_exposes_private_or_unverified_nodes(javascript):
 def test_matchups_borderline_count_and_footnote_without_javascript(tmp_path):
     import runpy
 
-    controls = runpy.run_path(str(ROOT/'tests/test_site_matchups.py'))
-    builder = controls['b']
-    sample = controls['bundle']()
-    row = sample['matchups'][0]['entrants'][0]
-    row.update(sub_scores={'min_wall': 'borderline', 'body_count': 0.0},
-               objective_pass_rate=0.8, failed_checks={'body_count': 1})
-    (tmp_path/'sample.json').write_text(json.dumps(sample))
-    html = builder._prerender_matchups_html(builder.build_matchups_page(tmp_path))
+    controls = runpy.run_path(str(ROOT/'tests/test_openrouter_replay_builder.py'))
+    builder = controls['site']
+    sample = controls['borderline_bundle'](tmp_path, failed=True)
+    results = tmp_path/'results'
+    results.mkdir()
+    (results/'sample.json').write_text(json.dumps(sample))
+    html = builder._prerender_matchups_html(builder.build_matchups_page(results))
     with playwright.sync_playwright() as runtime:
         try:
             browser = runtime.chromium.launch(
@@ -136,9 +135,11 @@ def test_matchups_borderline_count_and_footnote_without_javascript(tmp_path):
         page = browser.new_page(java_script_enabled=False)
         page.set_content(html)
         rows = page.locator('tbody tr')
-        assert rows.count() == 2
-        assert rows.nth(0).locator('td').nth(2).inner_text() == '80.00% · 1 borderline (excluded)'
-        assert 'borderline' not in rows.nth(1).inner_text()
+        assert rows.count() == 396
+        marked = rows.filter(has_text='1 borderline (excluded)')
+        assert marked.count() == 1
+        assert marked.locator('td').nth(2).inner_text() == '80.00% · 1 borderline (excluded)'
+        assert rows.filter(has_text='0 borderline (excluded)').count() == 0
         assert '0.8–1.2%' in page.locator('body').inner_text()
         link = page.get_by_role('link', name='the min_wall rescore notes')
         assert link.is_visible()

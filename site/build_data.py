@@ -4555,9 +4555,14 @@ def build_matchups_page(results_dir: Path) -> dict:
                     raise ValueError("a failed matchup must record its failed checks")
                 if rate == 1 and failed:
                     raise ValueError("a perfect matchup rate cannot have failed checks")
-                # Replay builders derive failed_checks from this same primary sub-score map.
+                # Replay builders persist primary-gate check names, absent when empty.
                 # The published rate already excludes borderline checks (#1014); keep it intact.
-                borderline = sum(v == "borderline" for v in (row.get("sub_scores") or {}).values())
+                borderline_checks = row.get("borderline_checks", [])
+                if not isinstance(borderline_checks, list) or any(
+                    not isinstance(k, str) or k not in MATCHUP_GATES for k in borderline_checks
+                ):
+                    raise ValueError("invalid matchup borderline checks")
+                borderline = len(borderline_checks)
                 rows.append({"entrant": _matchup_label(row.get("entrant")),
                              "backend": _matchup_label(row.get("backend")),
                              "objective_pass_rate": rate, "n_objective_trials": measured,
