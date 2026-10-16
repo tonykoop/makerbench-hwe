@@ -39,22 +39,130 @@
     return "s-bad";
   }
 
+  // ---- plain-language label helpers (#1021) -------------------------------
+  var HARNESS_LABELS = {
+    legacy_unknown: "Older harness",
+    legacy: "Older harness",
+    codex_cli: "Codex CLI",
+    claude_cli: "Claude CLI",
+    agy_cli: "Antigravity CLI",
+    openrouter_api: "OpenRouter API",
+    gemini_api: "Gemini API",
+    anthropic_api: "Anthropic API",
+    openai_api: "OpenAI API",
+    deepseek_api: "DeepSeek API",
+    grok_api: "Grok API",
+    kimi_api: "Kimi API",
+    qwen_api: "Qwen API",
+  };
+
+  var EFFORT_LABELS = {
+    default_or_unset: "Default effort",
+    default: "Default effort",
+    minimal: "Minimal effort",
+    low: "Low effort",
+    medium: "Medium effort",
+    high: "High effort",
+    xhigh: "Extra-high effort",
+  };
+
+  var PLAIN_LABELS = Object.assign({}, HARNESS_LABELS, {
+    default_or_unset: "Default effort",
+    default: "Default effort",
+  });
+
+  function seedCountLabel(n) {
+    var count = Number(n) || 0;
+    return count + " seed" + (count === 1 ? "" : "s");
+  }
+
+  function infraCountLabel(n) {
+    var count = Number(n) || 0;
+    return count + " run" + (count === 1 ? "" : "s") + " hit an infrastructure error";
+  }
+
+  function harnessLabel(token) {
+    var key = String(token || "legacy_unknown").trim();
+    if (!key) key = "legacy_unknown";
+    if (Object.prototype.hasOwnProperty.call(HARNESS_LABELS, key)) {
+      return HARNESS_LABELS[key];
+    }
+    var lower = key.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(HARNESS_LABELS, lower)) {
+      return HARNESS_LABELS[lower];
+    }
+    return key;
+  }
+
+  function effortLabel(token) {
+    if (token == null || String(token).trim() === "") return "Default effort";
+    var key = String(token).trim();
+    if (Object.prototype.hasOwnProperty.call(EFFORT_LABELS, key)) {
+      return EFFORT_LABELS[key];
+    }
+    var lower = key.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(EFFORT_LABELS, lower)) {
+      return EFFORT_LABELS[lower];
+    }
+    return key;
+  }
+
+  function plainLabel(token) {
+    if (token == null) return "";
+    var raw = String(token).trim();
+    if (!raw) return "";
+    if (Object.prototype.hasOwnProperty.call(PLAIN_LABELS, raw)) {
+      return PLAIN_LABELS[raw];
+    }
+    var lower = raw.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(PLAIN_LABELS, lower)) {
+      return PLAIN_LABELS[lower];
+    }
+    var seedMatch = /^n(\d+)$/i.exec(raw);
+    if (seedMatch) return seedCountLabel(Number(seedMatch[1]));
+    var infraMatch = /^\+?(\d+)\s+infra(?:\s+excluded)?$/i.exec(raw);
+    if (infraMatch) return infraCountLabel(Number(infraMatch[1]));
+    if (Object.prototype.hasOwnProperty.call(EFFORT_LABELS, lower)) {
+      return EFFORT_LABELS[lower];
+    }
+    return raw;
+  }
+
   function modelShort(id) {
     return id; // identifiers are already terse
   }
 
   function modelText(model) {
-    return model.identifier + (model.reasoning_level ? " [" + model.reasoning_level + "]" : "");
+    var effort = model.reasoning_level;
+    var shownEffort = effort
+      ? (Object.prototype.hasOwnProperty.call(PLAIN_LABELS, String(effort).toLowerCase())
+          ? PLAIN_LABELS[String(effort).toLowerCase()]
+          : effort)
+      : "";
+    return model.identifier + (shownEffort ? " [" + shownEffort + "]" : "");
   }
 
   function modelVariantText(model) {
-    return model.reasoning_level || "default";
+    return effortLabel(model.reasoning_level);
   }
 
   function modelLabel(model) {
     var label = modelShort(model.identifier);
     if (model.reasoning_level) {
-      label += '<span class="badge badge-effort">' + model.reasoning_level + "</span>";
+      var rawEffort = String(model.reasoning_level);
+      var isMappedEffort = Object.prototype.hasOwnProperty.call(
+        PLAIN_LABELS,
+        rawEffort.toLowerCase()
+      );
+      var effortText = isMappedEffort
+        ? PLAIN_LABELS[rawEffort.toLowerCase()]
+        : rawEffort;
+      var effortTip = "Reasoning effort: " + effortLabel(rawEffort) + " (" + rawEffort + ")";
+      var effortStyle = isMappedEffort ? ' style="text-transform:none"' : "";
+      label += '<span class="badge badge-effort"' + effortStyle +
+        ' data-effort="' + escapeHTML(rawEffort) +
+        '" title="' + escapeHTML(effortTip) + '">' +
+        escapeHTML(effortText) + "</span>";
     }
     var provenance = model.result_provenance || "community";
     if (provenance !== "community") {
@@ -72,13 +180,16 @@
   function harnessBadge(model) {
     var harness = model.agent_identifier || "legacy_unknown";
     var known = harness !== "legacy_unknown";
+    var text = harnessLabel(harness);
     var env = model.runner_environment || {};
-    var tip = known ? "Harness: " + harness : "Harness not reported (legacy run)";
+    var tip = known
+      ? "Harness: " + text + " (" + harness + ")"
+      : "Older harness — harness not reported (" + harness + ")";
     if (env.adapter_name) tip += " · adapter: " + env.adapter_name;
     if (env.makerbench_cli) tip += " · runner: makerbench " + env.makerbench_cli;
     var cls = known ? "badge badge-harness" : "badge badge-harness badge-legacy";
-    var text = known ? harness : "legacy";
-    return '<span class="' + cls + '" title="' + escapeHTML(tip) + '">' +
+    return '<span class="' + cls + '" data-harness="' + escapeHTML(harness) +
+      '" title="' + escapeHTML(tip) + '">' +
       escapeHTML(text) + "</span>";
   }
 
@@ -545,9 +656,10 @@
       telemetryNote;
   }
 
-  // Compact "n=3 · sd ±0.47 · range 3–4" summary for a cell tooltip.
+  // Compact "3 seeds (n=3) · sd ±0.47 · range 3–4" summary for a cell tooltip.
   function spreadTip(cell) {
-    var parts = ["n=" + (cell.n_seeds || 0) + " seed" + ((cell.n_seeds === 1) ? "" : "s")];
+    var nSeeds = cell.n_seeds || 0;
+    var parts = [seedCountLabel(nSeeds) + " (n=" + nSeeds + ")"];
     if (cell.mean_score != null) parts.push("mean " + cell.mean_score.toFixed(2));
     if (cell.score_ci95_low != null && cell.score_ci95_high != null) {
       parts.push("95% CI " + cell.score_ci95_low.toFixed(2) + "–" +
@@ -558,24 +670,57 @@
     if (cell.score_min != null && cell.score_max != null) {
       parts.push("range " + cell.score_min + "–" + cell.score_max);
     }
-    if (cell.n_infra) parts.push("+" + cell.n_infra + " infra excluded");
+    if (cell.n_infra) {
+      parts.push(infraCountLabel(cell.n_infra) + " (+" + cell.n_infra + " infra excluded)");
+    }
     return parts.join(" · ");
   }
 
   function cellHTML(cell) {
     if (!cell) return '<td class="na">—</td>';
     if (cell.mean_score == null) {
-      var naInfra = cell.n_infra ? (cell.n_infra + " infra excluded") : "no gradable seeds";
-      return '<td class="na" title="' + escapeHTML(naInfra) + '">n/a<span class="why">infra</span></td>';
+      var naInfra = cell.n_infra
+        ? (infraCountLabel(cell.n_infra) + " (+" + cell.n_infra + " infra excluded)")
+        : "no gradable seeds";
+      var naData = cell.n_infra ? ' data-infra="+' + cell.n_infra + ' infra"' : "";
+      return '<td class="na"' + naData + ' title="' + escapeHTML(naInfra) + '">n/a<span class="why">infra</span></td>';
     }
     var c = scoreClass(cell.mean_score);
     var pct = (cell.mean_score / 4 * 100).toFixed(0);
-    var infra = cell.n_infra ? '<span class="infra-tag"> +' + cell.n_infra + " infra</span>" : "";
-    // Faint, always-visible sample size; full spread on hover.
-    var nseeds = cell.n_seeds ? '<span class="cell-n">n' + cell.n_seeds + "</span>" : "";
+    var infra = cell.n_infra
+      ? '<span class="infra-tag" data-infra="+' + cell.n_infra + ' infra" title="' +
+        escapeHTML(infraCountLabel(cell.n_infra)) + '"> +' + cell.n_infra + " infra</span>"
+      : "";
+    // Faint, always-visible sample size; plain tooltip on hover + raw token in data-seeds.
+    var nseeds = cell.n_seeds
+      ? '<span class="cell-n" data-seeds="n' + cell.n_seeds + '" title="' +
+        escapeHTML(seedCountLabel(cell.n_seeds)) + '">n' + cell.n_seeds + "</span>"
+      : "";
     return '<td title="' + escapeHTML(spreadTip(cell)) + '"><span class="score ' + c + '">' +
       cell.mean_score.toFixed(2) +
       '<span class="bar"><i style="width:' + pct + '%"></i></span></span>' + nseeds + infra + "</td>";
+  }
+
+  if (typeof window !== "undefined") {
+    window.MakerBenchLabels = {
+      HARNESS_LABELS: HARNESS_LABELS,
+      EFFORT_LABELS: EFFORT_LABELS,
+      PLAIN_LABELS: PLAIN_LABELS,
+      plainLabel: plainLabel,
+      harnessLabel: harnessLabel,
+      effortLabel: effortLabel,
+      seedCountLabel: seedCountLabel,
+      infraCountLabel: infraCountLabel,
+      modelText: modelText,
+      modelVariantText: modelVariantText,
+      modelLabel: modelLabel,
+      harnessBadge: harnessBadge,
+      spreadTip: spreadTip,
+      cellHTML: cellHTML,
+    };
+    window.plainLabel = plainLabel;
+    window.harnessLabel = harnessLabel;
+    window.effortLabel = effortLabel;
   }
 
   // ---- charts -------------------------------------------------------------
