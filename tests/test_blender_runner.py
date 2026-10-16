@@ -36,7 +36,6 @@ bpy.ops.mesh.primitive_cube_add(size=0.05)  # 0.05 m = 50 mm
 
 def test_unit_scale_to_mm() -> None:
     assert br.unit_scale_to_mm() == 1000.0
-    assert br.unit_scale_to_mm(0.001) == 1.0
 
 
 def test_pin_is_well_formed() -> None:
@@ -79,14 +78,30 @@ def test_known_size_cube_is_normalised_to_mm(tmp_path: Path) -> None:
 
 @needs_blender
 @pytest.mark.blender
-def test_scene_unit_scale_is_honoured(tmp_path: Path) -> None:
-    script = tmp_path / "mmscene.py"
+@pytest.mark.parametrize("scale", ["0.001", "2.0"])
+def test_entrant_scene_unit_scale_is_normalised(tmp_path: Path, scale: str) -> None:
+    script = tmp_path / "scaled.py"
     script.write_text(
         "import bpy\n"
-        "bpy.context.scene.unit_settings.scale_length = 0.001\n"
-        "bpy.ops.mesh.primitive_cube_add(size=50)\n"  # 50 BU * 0.001 m = 50 mm
+        f"bpy.context.scene.unit_settings.scale_length = {scale}\n"
+        "bpy.context.scene.unit_settings.system = 'IMPERIAL'\n"
+        "bpy.ops.mesh.primitive_cube_add(size=1)\n"
+        "o = bpy.context.object\n"
+        "o.scale = (0.02, 0.03, 0.05)\n"
+        "bpy.ops.object.transform_apply(scale=True)\n"
     )
     run = br.run_blender(script, tmp_path / "out")
+    assert run.provenance.bbox_mm == (20.0, 30.0, 50.0)  # metres authored, always x1000
+
+
+@needs_blender
+@pytest.mark.blender
+def test_relative_out_dir(tmp_path: Path, monkeypatch) -> None:
+    script = tmp_path / "cube.py"
+    script.write_text(CUBE_50MM)
+    monkeypatch.chdir(tmp_path)
+    run = br.run_blender(Path("cube.py"), Path("relative-out"))
+    assert run.stl_path == (tmp_path / "relative-out" / "output.stl").resolve()
     assert run.provenance.bbox_mm == (50.0, 50.0, 50.0)
 
 
@@ -132,3 +147,112 @@ def test_entrant_error_and_empty_scene_raise(tmp_path: Path) -> None:
     empty.write_text("import bpy\n")
     with pytest.raises(br.BlenderRunnerError, match="no MESH"):
         br.run_blender(empty, tmp_path / "o2")
+
+
+# --- fake-process tests: no Blender needed ---------------------------------
+
+import struct  # noqa: E402
+import subprocess  # noqa: E402
+
+
+def _write_stl(path: Path) -> None:
+    tri = struct.pack("<12fH", 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 20, 0, 0)
+    path.write_bytes(br.STL_HEADER.ljust(80, b"\0") + struct.pack("<I", 1) + tri)
+
+
+class _Fake:
+    def __init__(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        *,
+        version="4.2.23",
+        rc=0,
+        ok=True,
+        write=True,
+        timeout=False,
+    ):
+        self.calls: list[dict] = []
+        self.binary = tmp_path / "fake-blender"
+        self.binary.write_bytes(b"fake")
+
+        def fake_run(cmd, **kw):
+            self.calls.append({"cmd": [str(c) for c in cmd], **kw})
+            if "--version" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, f"Blender {version} LTS\n", "")
+            if timeout:
+                raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+            if write:
+                _write_stl(Path(cmd[-1]))
+            out = (
+                "BLENDER_DRIVER_OK\n"
+                if ok
+                else "BLENDER_DRIVER_ERROR: entrant script raised: boom\n"
+            )
+            return subprocess.CompletedProcess(cmd, rc, out, "")
+
+        monkeypatch.setattr(br.subprocess, "run", fake_run)
+
+
+@pytest.fixture
+def entrant(tmp_path: Path) -> Path:
+    p = tmp_path / "e.py"
+    p.write_text("import bpy\n")
+    return p
+
+
+def test_fake_success_orchestration_and_provenance(tmp_path: Path, monkeypatch, entrant) -> None:
+    fake = _Fake(tmp_path, monkeypatch)
+    run = br.run_blender(entrant, tmp_path / "out", blender_bin=fake.binary, timeout_s=7)
+    launch = fake.calls[-1]
+    for flag in ("-b", "--factory-startup", "--offline-mode", "--threads"):
+        assert flag in launch["cmd"]
+    assert launch["timeout"] == 7
+    assert Path(launch["cwd"]) != tmp_path  # fresh temp cwd
+    assert Path(launch["cmd"][-1]).is_absolute() and Path(launch["cmd"][-2]).is_absolute()
+    prov = run.provenance
+    assert prov.is_pinned and prov.triangles == 1 and prov.bbox_mm == (10.0, 20.0, 0.0)
+    assert prov.blender_binary_sha256 == hashlib.sha256(b"fake").hexdigest()
+    assert prov.stl_sha256 == hashlib.sha256(run.stl_path.read_bytes()).hexdigest()
+    assert json.loads(run.provenance_path.read_text())["stl_sha256"] == prov.stl_sha256
+
+
+def test_fake_relative_paths_are_absolutised(tmp_path: Path, monkeypatch, entrant) -> None:
+    fake = _Fake(tmp_path, monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    br.run_blender(Path("e.py"), Path("rel-out"), blender_bin=fake.binary)
+    assert Path(fake.calls[-1]["cmd"][-1]) == (tmp_path / "rel-out" / "output.stl").resolve()
+
+
+def test_fake_proxy_vars_removed(tmp_path: Path, monkeypatch, entrant) -> None:
+    for k in ("http_proxy", "HTTPS_PROXY", "all_proxy", "NO_PROXY"):
+        monkeypatch.setenv(k, "http://proxy.invalid:1")
+    fake = _Fake(tmp_path, monkeypatch)
+    br.run_blender(entrant, tmp_path / "out", blender_bin=fake.binary)
+    env = fake.calls[-1]["env"]
+    assert not any(k.lower() in {"http_proxy", "https_proxy", "all_proxy", "no_proxy"} for k in env)
+    assert env["PYTHONHASHSEED"] == "0"
+
+
+def test_fake_wrong_version_rejected(tmp_path: Path, monkeypatch, entrant) -> None:
+    fake = _Fake(tmp_path, monkeypatch, version="4.1.0")
+    with pytest.raises(br.BlenderRunnerError, match="not the pinned"):
+        br.run_blender(entrant, tmp_path / "out", blender_bin=fake.binary)
+
+
+def test_fake_subprocess_failure(tmp_path: Path, monkeypatch, entrant) -> None:
+    fake = _Fake(tmp_path, monkeypatch, rc=3, ok=False, write=False)
+    with pytest.raises(br.BlenderRunnerError, match="boom"):
+        br.run_blender(entrant, tmp_path / "out", blender_bin=fake.binary)
+
+
+def test_fake_missing_output_is_failure(tmp_path: Path, monkeypatch, entrant) -> None:
+    fake = _Fake(tmp_path, monkeypatch, write=False)
+    with pytest.raises(br.BlenderRunnerError):
+        br.run_blender(entrant, tmp_path / "out", blender_bin=fake.binary)
+
+
+def test_fake_timeout(tmp_path: Path, monkeypatch, entrant) -> None:
+    fake = _Fake(tmp_path, monkeypatch, timeout=True)
+    with pytest.raises(br.BlenderRunnerError, match="timed out after 5s"):
+        br.run_blender(entrant, tmp_path / "out", blender_bin=fake.binary, timeout_s=5)
