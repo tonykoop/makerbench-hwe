@@ -1,0 +1,40 @@
+name: freecad-integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  freecad-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      MAKERBENCH_FREECAD_INTEGRATION: "1"
+      MAKERBENCH_FREECAD_APPDIR: ${{ github.workspace }}/.freecad/squashfs-root
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: python -m pip install pytest
+      - name: Read pinned distribution checksum
+        id: pin
+        run: |
+          python -c "from makerbench.freecad_backend import APPIMAGE_SHA256; print('sha256=' + APPIMAGE_SHA256)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: .freecad/squashfs-root
+          key: freecad-extracted-${{ runner.os }}-${{ runner.arch }}-${{ steps.pin.outputs.sha256 }}
+      - name: Install or validate cached extraction (no FUSE)
+        run: python scripts/install_freecad.py .freecad
+      - name: Test headless exports and determinism (runtime required)
+        run: python -m pytest tests/test_freecad_integration.py -q

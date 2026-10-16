@@ -5,10 +5,18 @@ Epic T2 (#978) makes `robust-v1` the default `min_wall` estimator of the arena m
 estimator and how results are versioned. This page shows what the change does to every
 committed result whose recorded meshes could be replayed.
 
-**Nothing committed was rewritten.** Attested bundles under `results/` and the showcase
-scorelines under `docs/showcase/` keep their exact bytes, and the public site keeps showing
-them as published (legacy `min`). This table is evidence for the policy change, not a new
-result. Regrading and re-publishing bundles under `robust-v1` is a **maintainer step**.
+**When this re-score was published, nothing committed was rewritten.** Its tables below
+compare the recorded rates with a replay, and are evidence for the policy change. Since then:
+
+- **The showcase scorelines under `docs/showcase/` were regraded** with the full gate of the
+  day (`robust-v1`, canonical sampling, borderline) by `scripts/regrade_scoreline.py`, which
+  writes regraded copies and never modifies a run directory. Each regraded row carries
+  `"min_wall_method": "robust-v1"`. The "recorded" columns below are the rates before that regrade.
+- **Attested bundles under `results/`** keep their exact bytes, and the public site keeps
+  showing them as published (legacy `min`). Regrading them is a separate **maintainer step**
+  (see #1011).
+- **Arena rounds R1–R10** (`site/data/arena.json`, `agreement-rounds-6-10.json`) are frozen as
+  published and predate `robust-v1`.
 
 ## How it was produced
 

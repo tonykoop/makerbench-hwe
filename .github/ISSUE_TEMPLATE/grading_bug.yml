@@ -1,0 +1,71 @@
+name: Grading bug
+description: A grader marked a correct answer wrong, accepted a wrong one, or gave a misleading explanation.
+title: "grading: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for grader correctness problems. For harness, CLI or site bugs, use **Bug report**.
+        **Security or benchmark-integrity issues** (a grader exploit that inflates scores, canary recall, a leaked oracle) go privately through [Security Advisories](https://github.com/tonykoop/makerbench-hwe/security/advisories/new), not here.
+  - type: input
+    id: family
+    attributes:
+      label: Task family
+      placeholder: "e.g. oring_groove_dfm"
+    validations:
+      required: true
+  - type: input
+    id: seeds
+    attributes:
+      label: Public dev seed(s) and track
+      description: Public dev seeds only (0–4).
+      placeholder: "e.g. seed 2, blind"
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of grading error?
+      options:
+        - False fail (a correct answer was marked wrong)
+        - False pass (a wrong answer was accepted)
+        - Wrong or misleading failure explanation
+        - Rule disagrees with the cited source/standard
+        - Non-deterministic (same input, different grade)
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+      description: What the grader returned (paste the level, `checks` and `detail`), what it should have returned, and why.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Engineering evidence
+      description: Your hand calculation, or the clause or table of the source/standard that shows the grader is wrong.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Exact commands, e.g. `makerbench grade ...` or a short Python snippet calling the task's `grade_source`. Use small inline inputs, and don't attach submitted CAD files.
+      render: bash
+  - type: input
+    id: version
+    attributes:
+      label: MakerBench commit
+      placeholder: "git rev-parse --short HEAD"
+  - type: checkboxes
+    id: integrity
+    attributes:
+      label: Integrity checklist
+      options:
+        - label: This report contains no oracle solutions, held-out seed values, or private task parameters.
+          required: true
+        - label: I haven't attached `results/**/artifacts/*` source files (`.scad`, `.svg`, `.dxf`, meshes).
+          required: true

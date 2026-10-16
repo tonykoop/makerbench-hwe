@@ -39,22 +39,130 @@
     return "s-bad";
   }
 
+  // ---- plain-language label helpers (#1021) -------------------------------
+  var HARNESS_LABELS = {
+    legacy_unknown: "Older harness",
+    legacy: "Older harness",
+    codex_cli: "Codex CLI",
+    claude_cli: "Claude CLI",
+    agy_cli: "Antigravity CLI",
+    openrouter_api: "OpenRouter API",
+    gemini_api: "Gemini API",
+    anthropic_api: "Anthropic API",
+    openai_api: "OpenAI API",
+    deepseek_api: "DeepSeek API",
+    grok_api: "Grok API",
+    kimi_api: "Kimi API",
+    qwen_api: "Qwen API",
+  };
+
+  var EFFORT_LABELS = {
+    default_or_unset: "Default effort",
+    default: "Default effort",
+    minimal: "Minimal effort",
+    low: "Low effort",
+    medium: "Medium effort",
+    high: "High effort",
+    xhigh: "Extra-high effort",
+  };
+
+  var PLAIN_LABELS = Object.assign({}, HARNESS_LABELS, {
+    default_or_unset: "Default effort",
+    default: "Default effort",
+  });
+
+  function seedCountLabel(n) {
+    var count = Number(n) || 0;
+    return count + " seed" + (count === 1 ? "" : "s");
+  }
+
+  function infraCountLabel(n) {
+    var count = Number(n) || 0;
+    return count + " run" + (count === 1 ? "" : "s") + " hit an infrastructure error";
+  }
+
+  function harnessLabel(token) {
+    var key = String(token || "legacy_unknown").trim();
+    if (!key) key = "legacy_unknown";
+    if (Object.prototype.hasOwnProperty.call(HARNESS_LABELS, key)) {
+      return HARNESS_LABELS[key];
+    }
+    var lower = key.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(HARNESS_LABELS, lower)) {
+      return HARNESS_LABELS[lower];
+    }
+    return key;
+  }
+
+  function effortLabel(token) {
+    if (token == null || String(token).trim() === "") return "Default effort";
+    var key = String(token).trim();
+    if (Object.prototype.hasOwnProperty.call(EFFORT_LABELS, key)) {
+      return EFFORT_LABELS[key];
+    }
+    var lower = key.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(EFFORT_LABELS, lower)) {
+      return EFFORT_LABELS[lower];
+    }
+    return key;
+  }
+
+  function plainLabel(token) {
+    if (token == null) return "";
+    var raw = String(token).trim();
+    if (!raw) return "";
+    if (Object.prototype.hasOwnProperty.call(PLAIN_LABELS, raw)) {
+      return PLAIN_LABELS[raw];
+    }
+    var lower = raw.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(PLAIN_LABELS, lower)) {
+      return PLAIN_LABELS[lower];
+    }
+    var seedMatch = /^n(\d+)$/i.exec(raw);
+    if (seedMatch) return seedCountLabel(Number(seedMatch[1]));
+    var infraMatch = /^\+?(\d+)\s+infra(?:\s+excluded)?$/i.exec(raw);
+    if (infraMatch) return infraCountLabel(Number(infraMatch[1]));
+    if (Object.prototype.hasOwnProperty.call(EFFORT_LABELS, lower)) {
+      return EFFORT_LABELS[lower];
+    }
+    return raw;
+  }
+
   function modelShort(id) {
     return id; // identifiers are already terse
   }
 
   function modelText(model) {
-    return model.identifier + (model.reasoning_level ? " [" + model.reasoning_level + "]" : "");
+    var effort = model.reasoning_level;
+    var shownEffort = effort
+      ? (Object.prototype.hasOwnProperty.call(PLAIN_LABELS, String(effort).toLowerCase())
+          ? PLAIN_LABELS[String(effort).toLowerCase()]
+          : effort)
+      : "";
+    return model.identifier + (shownEffort ? " [" + shownEffort + "]" : "");
   }
 
   function modelVariantText(model) {
-    return model.reasoning_level || "default";
+    return effortLabel(model.reasoning_level);
   }
 
   function modelLabel(model) {
     var label = modelShort(model.identifier);
     if (model.reasoning_level) {
-      label += '<span class="badge badge-effort">' + model.reasoning_level + "</span>";
+      var rawEffort = String(model.reasoning_level);
+      var isMappedEffort = Object.prototype.hasOwnProperty.call(
+        PLAIN_LABELS,
+        rawEffort.toLowerCase()
+      );
+      var effortText = isMappedEffort
+        ? PLAIN_LABELS[rawEffort.toLowerCase()]
+        : rawEffort;
+      var effortTip = "Reasoning effort: " + effortLabel(rawEffort) + " (" + rawEffort + ")";
+      var effortStyle = isMappedEffort ? ' style="text-transform:none"' : "";
+      label += '<span class="badge badge-effort"' + effortStyle +
+        ' data-effort="' + escapeHTML(rawEffort) +
+        '" title="' + escapeHTML(effortTip) + '">' +
+        escapeHTML(effortText) + "</span>";
     }
     var provenance = model.result_provenance || "community";
     if (provenance !== "community") {
@@ -72,13 +180,16 @@
   function harnessBadge(model) {
     var harness = model.agent_identifier || "legacy_unknown";
     var known = harness !== "legacy_unknown";
+    var text = harnessLabel(harness);
     var env = model.runner_environment || {};
-    var tip = known ? "Harness: " + harness : "Harness not reported (legacy run)";
+    var tip = known
+      ? "Harness: " + text + " (" + harness + ")"
+      : "Older harness — harness not reported (" + harness + ")";
     if (env.adapter_name) tip += " · adapter: " + env.adapter_name;
     if (env.makerbench_cli) tip += " · runner: makerbench " + env.makerbench_cli;
     var cls = known ? "badge badge-harness" : "badge badge-harness badge-legacy";
-    var text = known ? harness : "legacy";
-    return '<span class="' + cls + '" title="' + escapeHTML(tip) + '">' +
+    return '<span class="' + cls + '" data-harness="' + escapeHTML(harness) +
+      '" title="' + escapeHTML(tip) + '">' +
       escapeHTML(text) + "</span>";
   }
 
@@ -126,19 +237,6 @@
   function defaultSortDir(key) {
     // For resource columns lower is better; for score and normalized score higher is better.
     return (key === "model" || key === "runtime" || key === "tokens" || key === "cost") ? 1 : -1;
-  }
-
-  function hasTelemetry(models) {
-    return models.some(function (m) {
-      var tr = m.tracks[TRACK] || {};
-      var usage = tr.token_usage || {};
-      var local = tr.local_log_token_usage || {};
-      return tr.mean_wall_time_s != null ||
-        tr.mean_cost_usd != null ||
-        tr.mean_api_equivalent_usd != null ||
-        usage.mean_total_tokens != null ||
-        local.mean_total_tokens != null;
-    });
   }
 
   function formatDuration(seconds) {
@@ -252,26 +350,6 @@
       "</span></td>";
   }
 
-  // Tokens column: prefer authoritative measured tokens; else show local-log
-  // estimate distinctly; else n/a with the reason.
-  function tokenCell(tr) {
-    var measured = (tr.token_usage || {}).mean_total_tokens;
-    if (measured != null) {
-      return metricCell(formatTokens(measured), usageTitle(tr), usageMissingReason(tr));
-    }
-    var local = (tr.local_log_token_usage || {}).mean_total_tokens;
-    if (local != null) {
-      return estimateCell(
-        formatTokens(local),
-        "Mean tokens from a subscription coding-CLI's own usage output " +
-          "(e.g. codex --json, ccusage); real token counts, but subscription " +
-          "billing is not visible",
-        "est · local logs"
-      );
-    }
-    return metricCell(null, usageTitle(tr), usageMissingReason(tr));
-  }
-
   // Cost column: prefer actual billed cost; else show API-equivalent estimate
   // distinctly (never as money spent); else "not available" (never $0).
   function costCell(tr) {
@@ -344,24 +422,6 @@
     return usageMissingReason(track);
   }
 
-  function normalizedScoreCell(tr, key) {
-    var metric = efficiencyMetric(tr, key);
-    var label = key === "score_per_dollar" ? "Score per dollar" : "Score per 1M tokens";
-    if (!metric.available || metric.value == null) {
-      return metricCell(null, label + " unavailable", normalizedMissingReason(tr, key));
-    }
-    var title = label + " = overall score divided by " +
-      (key === "score_per_dollar" ? "mean cost" : "mean tokens / 1,000,000") +
-      " · source: " + (metric.source || "unknown");
-    var shown = formatRate(Number(metric.value));
-    if (metric.estimated) {
-      var estLabel = metric.source === "api_equivalent_estimate" ?
-        "API-equiv. est" : "est · local logs";
-      return estimateCell(shown, title, estLabel);
-    }
-    return metricCell(shown, title, "not available");
-  }
-
   // Why a metric is absent. "subscription quota" is a *state* we can name -- the
   // run went through a plan that exposes no per-run token source -- and is kept
   // distinct from "unknown", where the runtime simply reported nothing.
@@ -383,171 +443,173 @@
 
   function renderTable() {
     var fams = familyList();
+    var axes = capabilityAxes().slice(0, 8);
+    var minimum = DATA.overall_ranking_min_families || 4;
     var container = document.getElementById("lb-container");
-
-    // Models that have any data on this track.
     var models = DATA.models.filter(function (m) {
-      var tr = m.tracks[TRACK];
-      return tr && tr.has_data &&
-        (m.is_control || m.is_human_baseline ||
-          (tr.n_families_scored || 0) >= (DATA.overall_ranking_min_families || 4));
+      return m.tracks[TRACK] && m.tracks[TRACK].has_data;
     });
-
     if (!models.length) {
-      container.innerHTML =
-        '<div class="empty"><strong>No broad ' + TRACK + ' results yet.</strong><br>' +
-        "Overall ranking requires at least " + (DATA.overall_ranking_min_families || 4) +
-        " measured families. Smaller samples remain available on their model pages.</div>";
+      container.innerHTML = '<div class="empty">No ' + escapeHTML(TRACK) + ' results yet.</div>';
       document.getElementById("lb-note").textContent = "";
       return;
     }
-
-    // Sort. Reference rows (deterministic control + human/expert baseline, #24)
-    // are anchors, not competitors — always pin them to the bottom regardless of
-    // the active column (human baseline above control), then sort the rest.
-    function refRank(m) { return m.is_control ? 2 : (m.is_human_baseline ? 1 : 0); }
-    models = models.slice().sort(function (a, b) {
-      if (refRank(a) !== refRank(b)) return refRank(a) - refRank(b);
-      var av = sortValue(a, SORT.key), bv = sortValue(b, SORT.key);
-      if (av == null && bv == null) return 0;
+    function coverage(m) { return m.tracks[TRACK].n_families_scored || 0; }
+    function reference(m) { return m.is_control || m.is_human_baseline; }
+    function eligible(m) {
+      return !reference(m) && coverage(m) >= minimum && m.tracks[TRACK].overall_mean != null;
+    }
+    function overallOrder(a, b) {
+      var av = a.tracks[TRACK].overall_mean, bv = b.tracks[TRACK].overall_mean;
+      return (bv == null ? -1 : bv) - (av == null ? -1 : av) ||
+        modelText(a).localeCompare(modelText(b));
+    }
+    // Coverage picks the representative before the board is sorted by score.
+    // This preference is intentionally independent of the profile-chart order.
+    function variantOrder(a, b) {
+      var efforts = { high: 4, xhigh: 3, medium: 2, low: 1 };
+      return coverage(b) - coverage(a) ||
+        ((b.tracks[TRACK].overall_mean == null ? -1 : b.tracks[TRACK].overall_mean) -
+         (a.tracks[TRACK].overall_mean == null ? -1 : a.tracks[TRACK].overall_mean)) ||
+        (efforts[b.reasoning_level] || 0) - (efforts[a.reasoning_level] || 0) ||
+        modelText(a).localeCompare(modelText(b)) ||
+        String(a.agent_identifier || "").localeCompare(String(b.agent_identifier || ""));
+    }
+    function columnValue(m, key) {
+      if (key === "coverage") return coverage(m);
+      if (key.indexOf("axis:") === 0) {
+        var cell = (m.tracks[TRACK].capability_profile || {})[key.slice(5)];
+        return cell ? cell.mean_score : null;
+      }
+      return sortValue(m, key);
+    }
+    function displayOrder(a, b) {
+      if (reference(a.primary) && reference(b.primary) && !!a.primary.is_control !== !!b.primary.is_control) {
+        return a.primary.is_control ? 1 : -1;
+      }
+      var av = columnValue(a.primary, SORT.key), bv = columnValue(b.primary, SORT.key);
+      if (av == null && bv == null) return overallOrder(a.primary, b.primary);
       if (av == null) return 1;
       if (bv == null) return -1;
-      if (typeof av === "string") return SORT.dir * av.localeCompare(bv);
-      return SORT.dir * (av - bv);
-    });
-
-    var showTelemetry = hasTelemetry(models);
-    var arrow = function (key) {
-      if (SORT.key !== key) return "";
-      return '<span class="arrow">' + (SORT.dir < 0 ? "▼" : "▲") + "</span>";
-    };
-
-    // Dual-league separation (mb#90): autonomous and assisted-workflow rows are
-    // NEVER ranked head-to-head. Group the active rows into their leagues (in the
-    // declared order) and render one ranked sub-table per league. A header is only
-    // shown when more than one league is present, so an autonomous-only board
-    // stays visually identical to the single-table layout.
-    var leagueDefs = (DATA.leagues && DATA.leagues.length)
-      ? DATA.leagues
-      : [{ id: "autonomous", label: "Autonomous", blurb: "" }];
-    var groups = leagueDefs.map(function (lg) {
-      return {
-        def: lg,
-        rows: models.filter(function (m) {
-          return (m.league || "autonomous") === lg.id;
-        }),
-      };
-    }).filter(function (g) { return g.rows.length; });
-    var showLeagueHeaders = groups.length > 1;
-
-    function tableHTML(rows) {
-      var html = '<div class="table-scroll"><table class="lb"><thead><tr>';
-      html += '<th class="model-col" data-key="model">Model' + arrow("model") + "</th>";
-      fams.forEach(function (f) {
-        html += '<th data-key="' + f.id + '" title="' + f.title + '">' +
-          f.title.replace(/ \(.*\)$/, "") + arrow(f.id) + "</th>";
-      });
-      html += '<th data-key="overall">Overall' + arrow("overall") + "</th>";
-      if (showTelemetry) {
-        html += '<th data-key="runtime">Runtime' + arrow("runtime") + "</th>";
-        html += '<th data-key="tokens">Tokens' + arrow("tokens") + "</th>";
-        html += '<th data-key="cost">Cost' + arrow("cost") + "</th>";
-        html += '<th data-key="score_per_dollar" title="Overall score divided by mean cost">Score/$' +
-          arrow("score_per_dollar") + "</th>";
-        html += '<th data-key="score_per_million_tokens" title="Overall score divided by mean tokens / 1,000,000">Score/1M tok' +
-          arrow("score_per_million_tokens") + "</th>";
-      }
-      html += "</tr></thead><tbody>";
-
-      rows.forEach(function (m) {
-        var tr = m.tracks[TRACK];
-        var classes = [];
-        if (m.is_control) classes.push("is-control");
-        if (m.is_human_baseline) classes.push("is-human");
-        if (m.result_provenance === "official") classes.push("is-official");
-        html += "<tr" + (classes.length ? ' class="' + classes.join(" ") + '"' : "") + ">";
-        html += '<td class="model-col"><a class="model-name" href="' + m.model_page + '">' +
-          modelLabel(m) + "</a>" +
-          (m.is_control ? '<span class="badge badge-control">control</span>' : "") +
-          (m.is_human_baseline ? '<span class="badge badge-human">human</span>' : "") +
-          "</td>";
-        fams.forEach(function (f) {
-          html += cellHTML(tr.families[f.id]);
-        });
-        // overall
-        if (tr.overall_mean == null) {
-          html += '<td class="cell-overall na">n/a</td>';
-        } else {
-          var oc = scoreClass(tr.overall_mean);
-          var pct = (tr.overall_mean / 4 * 100).toFixed(0);
-          var oTip = (tr.n_seeds_total || 0) + " seeds across " +
-            (tr.n_families_scored || 0) + " famil" + ((tr.n_families_scored === 1) ? "y" : "ies");
-          if (tr.overall_mean_stderr != null) oTip += " · stderr ±" + tr.overall_mean_stderr.toFixed(2);
-          if (tr.overall_score_ci95_low != null && tr.overall_score_ci95_high != null) {
-            oTip += " · 95% CI " + tr.overall_score_ci95_low.toFixed(2) +
-              "–" + tr.overall_score_ci95_high.toFixed(2);
-          }
-          html += '<td class="cell-overall" title="' + escapeHTML(oTip) + '"><span class="score ' + oc + '">' +
-            tr.overall_mean.toFixed(2) +
-            '<span class="bar"><i style="width:' + pct + '%"></i></span></span></td>';
-        }
-        if (showTelemetry) {
-          html += metricCell(formatDuration(tr.mean_wall_time_s), "Mean wall-clock runtime", "unknown");
-          html += tokenCell(tr);
-          html += costCell(tr);
-          html += normalizedScoreCell(tr, "score_per_dollar");
-          html += normalizedScoreCell(tr, "score_per_million_tokens");
-        }
-        html += "</tr>";
-      });
-      html += "</tbody></table></div>";
-      return html;
+      return (typeof av === "string" ? SORT.dir * av.localeCompare(bv) : SORT.dir * (av - bv)) ||
+        overallOrder(a.primary, b.primary);
     }
-
-    var html = groups.map(function (g) {
-      var section = "";
-      if (showLeagueHeaders) {
-        section += '<div class="league-head"><h3 class="league-title">' +
-          escapeHTML(g.def.label || g.def.id) +
-          '<span class="league-count">' + g.rows.length + " row" +
-          (g.rows.length === 1 ? "" : "s") + "</span></h3>";
-        if (g.def.blurb) {
-          section += '<p class="league-blurb">' + escapeHTML(g.def.blurb) + "</p>";
-        }
-        section += "</div>";
+    function labelled(cell, label) {
+      return cell.replace('<td', '<td data-label="' + escapeHTML(label) + '"');
+    }
+    function score(value) {
+      return value == null ? '<span class="na">—</span>' :
+        '<span class="score ' + scoreClass(value) + '">' + value.toFixed(2) + '</span>';
+    }
+    function familyDetails(m) {
+      var tr = m.tracks[TRACK];
+      var html = '<details class="lb-families"><summary>Per-family scores</summary>' +
+        '<table class="lb-family-table"><thead><tr><th scope="col">Task family</th><th scope="col">Score /4</th></tr></thead><tbody>';
+      fams.forEach(function (f) {
+        html += '<tr><th scope="row">' + escapeHTML(f.title) + '</th>' + cellHTML(tr.families[f.id]) + '</tr>';
+      });
+      return html + '</tbody></table></details>';
+    }
+    function row(m, rank, variant) {
+      var tr = m.tracks[TRACK];
+      var cls = variant ? "lb-variant" : "lb-primary";
+      if (m.is_control) cls += " is-control";
+      if (m.is_human_baseline) cls += " is-human";
+      if (m.result_provenance === "official") cls += " is-official";
+      var html = '<tr class="' + cls + '"><td data-label="Rank" class="lb-rank">' + (rank || '—') + '</td>';
+      html += '<td data-label="Model" class="model-col"><a class="model-name" href="' + escapeHTML(m.model_page || "#") + '">' +
+        modelLabel(m) + '</a>' +
+        (m.is_control ? '<span class="badge badge-control">control</span>' : '') +
+        (m.is_human_baseline ? '<span class="badge badge-human">human</span>' : '') + '</td>';
+      var tip = (tr.n_seeds_total || 0) + ' seeds across ' + coverage(m) + ' families';
+      if (tr.overall_mean_stderr != null) tip += ' · stderr ±' + tr.overall_mean_stderr.toFixed(2);
+      if (tr.overall_score_ci95_low != null && tr.overall_score_ci95_high != null) {
+        tip += ' · 95% CI ' + tr.overall_score_ci95_low.toFixed(2) + '–' + tr.overall_score_ci95_high.toFixed(2);
       }
-      return section + tableHTML(g.rows);
-    }).join("");
-    container.innerHTML = html;
-
-    // header sort handlers
-    Array.prototype.forEach.call(container.querySelectorAll("thead th"), function (th) {
-      th.addEventListener("click", function () {
-        var key = th.getAttribute("data-key");
-        if (SORT.key === key) { SORT.dir *= -1; }
+      html += '<td class="cell-overall" data-label="Overall /4" title="' + escapeHTML(tip) + '">' + score(tr.overall_mean) + '</td>';
+      html += '<td data-label="Coverage" class="lb-coverage">' + coverage(m) + ' / ' + fams.length + '</td>';
+      html += labelled(costCell(tr), 'Cost');
+      html += labelled(metricCell(formatDuration(tr.mean_wall_time_s), 'Mean wall-clock runtime', 'unknown'), 'Time');
+      axes.forEach(function (axis) {
+        var cell = (tr.capability_profile || {})[axis.id];
+        html += '<td class="lb-axis" data-label="' + escapeHTML(axis.title) + '" title="' + escapeHTML(axis.title) +
+          ': ' + (cell ? cell.n_families || 0 : 0) + ' measured families">' + score(cell && cell.mean_score) + '</td>';
+      });
+      return html + '</tr>';
+    }
+    function heading(label, key, cls) {
+      var arrow = SORT.key === key ? (SORT.dir < 0 ? ' ▼' : ' ▲') : '';
+      var ariaSort = SORT.key === key ? (SORT.dir < 0 ? 'descending' : 'ascending') : 'none';
+      return '<th scope="col" aria-sort="' + ariaSort + '"' + (cls ? ' class="' + cls + '"' : '') + '><button type="button" data-key="' +
+        escapeHTML(key) + '">' + escapeHTML(label) + arrow + '</button></th>';
+    }
+    function table(entries, ranks) {
+      var html = '<table class="lb lb-summary"><thead><tr><th scope="col" class="lb-rank">Rank</th>' +
+        heading('Model', 'model', 'model-col') + heading('Overall /4', 'overall') + heading('Coverage', 'coverage') +
+        heading('Cost', 'cost') + heading('Time', 'runtime');
+      axes.forEach(function (axis) { html += heading(axis.title, 'axis:' + axis.id, 'lb-axis'); });
+      html += '</tr></thead><tbody>';
+      entries.slice().sort(displayOrder).forEach(function (entry) {
+        html += row(entry.primary, ranks.get(entry.primary), false);
+        html += '<tr class="lb-detail-row"><td colspan="' + (6 + axes.length) + '">' + familyDetails(entry.primary);
+        if (entry.variants.length) {
+          html += '<details class="lb-variants"><summary>+' + entry.variants.length + ' variants</summary>';
+          entry.variants.forEach(function (m) {
+            html += '<table class="lb lb-summary" aria-label="Variant ' + escapeHTML(modelText(m)) + '"><tbody>' + row(m, null, true) +
+              '</tbody></table>' + familyDetails(m);
+          });
+          html += '</details>';
+        }
+        html += '</td></tr>';
+      });
+      return html + '</tbody></table>';
+    }
+    var leagueDefs = DATA.leagues && DATA.leagues.length ? DATA.leagues : [{ id: 'autonomous', label: 'Autonomous' }];
+    var shownCount = 0;
+    container.innerHTML = leagueDefs.map(function (lg) {
+      var grouped = new Map();
+      models.filter(function (m) { return (m.league || 'autonomous') === lg.id; }).forEach(function (m) {
+        // Controls stay separate even if they share a model family with a run.
+        var key = (m.is_control ? 'control:' : m.is_human_baseline ? 'human:' : 'model:') + (m.model_family || m.identifier);
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key).push(m);
+      });
+      var entries = Array.from(grouped.values()).map(function (variants) {
+        variants.sort(variantOrder);
+        return { primary: variants[0], variants: variants.slice(1) };
+      });
+      if (!entries.length) return '';
+      shownCount += entries.length;
+      var broad = entries.filter(function (e) { return eligible(e.primary); });
+      var partial = entries.filter(function (e) { return !reference(e.primary) && !eligible(e.primary); });
+      var refs = entries.filter(function (e) { return reference(e.primary); });
+      refs.sort(function (a, b) { return Number(!!a.primary.is_control) - Number(!!b.primary.is_control); });
+      var ranks = new Map();
+      broad.slice().sort(function (a, b) { return overallOrder(a.primary, b.primary); }).forEach(function (e, i) { ranks.set(e.primary, i + 1); });
+      var html = '<section class="lb-league" aria-label="' + escapeHTML(lg.label || lg.id) + '">';
+      if (leagueDefs.length > 1) html += '<h3>' + escapeHTML(lg.label || lg.id) + '</h3>';
+      if (broad.length) html += table(broad, ranks);
+      if (partial.length) html += '<h3 class="lb-section-label">Limited coverage · unranked</h3><p class="muted-note">Overall ranking requires at least ' +
+        minimum + ' measured families and a measured overall score.</p>' + table(partial, ranks);
+      if (refs.length) html += '<h3 class="lb-section-label">Reference rows · unranked</h3>' + table(refs, ranks);
+      return html + '</section>';
+    }).join('');
+    Array.prototype.forEach.call(container.querySelectorAll('button[data-key]'), function (button) {
+      button.addEventListener('click', function () {
+        var key = button.getAttribute('data-key');
+        if (SORT.key === key) SORT.dir *= -1;
         else { SORT.key = key; SORT.dir = defaultSortDir(key); }
         renderTable();
       });
     });
-
-    var infra = models.reduce(function (a, m) { return a + (m.tracks[TRACK].n_infra || 0); }, 0);
-    var telemetryNote = showTelemetry
-      ? " · telemetry columns shown where reported"
-      : " · usage/cost/runtime not reported in current rows";
-    var leagueNote = showLeagueHeaders
-      ? " · " + groups.length + " leagues, ranked separately"
-      : "";
-    document.getElementById("lb-note").textContent =
-      models.length + " models · " + fams.length + " families · overall ranking requires at least " +
-      (DATA.overall_ranking_min_families || 4) + " measured families" +
-      leagueNote +
-      (infra ? " · " + infra + " infra-errored cell(s) excluded" : "") +
-      telemetryNote;
+    document.getElementById('lb-note').textContent = shownCount + ' models · ' + fams.length +
+      ' families · overall ranking requires at least ' + minimum + ' measured families · variants and family scores expand below each row';
   }
 
-  // Compact "n=3 · sd ±0.47 · range 3–4" summary for a cell tooltip.
+  // Compact "3 seeds (n=3) · sd ±0.47 · range 3–4" summary for a cell tooltip.
   function spreadTip(cell) {
-    var parts = ["n=" + (cell.n_seeds || 0) + " seed" + ((cell.n_seeds === 1) ? "" : "s")];
+    var nSeeds = cell.n_seeds || 0;
+    var parts = [seedCountLabel(nSeeds) + " (n=" + nSeeds + ")"];
     if (cell.mean_score != null) parts.push("mean " + cell.mean_score.toFixed(2));
     if (cell.score_ci95_low != null && cell.score_ci95_high != null) {
       parts.push("95% CI " + cell.score_ci95_low.toFixed(2) + "–" +
@@ -558,24 +620,57 @@
     if (cell.score_min != null && cell.score_max != null) {
       parts.push("range " + cell.score_min + "–" + cell.score_max);
     }
-    if (cell.n_infra) parts.push("+" + cell.n_infra + " infra excluded");
+    if (cell.n_infra) {
+      parts.push(infraCountLabel(cell.n_infra) + " (+" + cell.n_infra + " infra excluded)");
+    }
     return parts.join(" · ");
   }
 
   function cellHTML(cell) {
     if (!cell) return '<td class="na">—</td>';
     if (cell.mean_score == null) {
-      var naInfra = cell.n_infra ? (cell.n_infra + " infra excluded") : "no gradable seeds";
-      return '<td class="na" title="' + escapeHTML(naInfra) + '">n/a<span class="why">infra</span></td>';
+      var naInfra = cell.n_infra
+        ? (infraCountLabel(cell.n_infra) + " (+" + cell.n_infra + " infra excluded)")
+        : "no gradable seeds";
+      var naData = cell.n_infra ? ' data-infra="+' + cell.n_infra + ' infra"' : "";
+      return '<td class="na"' + naData + ' title="' + escapeHTML(naInfra) + '">n/a<span class="why">infra</span></td>';
     }
     var c = scoreClass(cell.mean_score);
     var pct = (cell.mean_score / 4 * 100).toFixed(0);
-    var infra = cell.n_infra ? '<span class="infra-tag"> +' + cell.n_infra + " infra</span>" : "";
-    // Faint, always-visible sample size; full spread on hover.
-    var nseeds = cell.n_seeds ? '<span class="cell-n">n' + cell.n_seeds + "</span>" : "";
+    var infra = cell.n_infra
+      ? '<span class="infra-tag" data-infra="+' + cell.n_infra + ' infra" title="' +
+        escapeHTML(infraCountLabel(cell.n_infra)) + '"> +' + cell.n_infra + " infra</span>"
+      : "";
+    // Faint, always-visible sample size; plain tooltip on hover + raw token in data-seeds.
+    var nseeds = cell.n_seeds
+      ? '<span class="cell-n" data-seeds="n' + cell.n_seeds + '" title="' +
+        escapeHTML(seedCountLabel(cell.n_seeds)) + '">n' + cell.n_seeds + "</span>"
+      : "";
     return '<td title="' + escapeHTML(spreadTip(cell)) + '"><span class="score ' + c + '">' +
       cell.mean_score.toFixed(2) +
       '<span class="bar"><i style="width:' + pct + '%"></i></span></span>' + nseeds + infra + "</td>";
+  }
+
+  if (typeof window !== "undefined") {
+    window.MakerBenchLabels = {
+      HARNESS_LABELS: HARNESS_LABELS,
+      EFFORT_LABELS: EFFORT_LABELS,
+      PLAIN_LABELS: PLAIN_LABELS,
+      plainLabel: plainLabel,
+      harnessLabel: harnessLabel,
+      effortLabel: effortLabel,
+      seedCountLabel: seedCountLabel,
+      infraCountLabel: infraCountLabel,
+      modelText: modelText,
+      modelVariantText: modelVariantText,
+      modelLabel: modelLabel,
+      harnessBadge: harnessBadge,
+      spreadTip: spreadTip,
+      cellHTML: cellHTML,
+    };
+    window.plainLabel = plainLabel;
+    window.harnessLabel = harnessLabel;
+    window.effortLabel = effortLabel;
   }
 
   // ---- charts -------------------------------------------------------------
@@ -584,7 +679,10 @@
   function modelColor(idx, model) {
     if (model && model.is_control) return cssVar("--control") || "#6b46c1";
     if (model && model.is_human_baseline) return cssVar("--human") || "#b45309";
-    return PALETTE[idx % PALETTE.length];
+    var key = String((model && (model.model_family || model.identifier)) || "unknown");
+    var hash = 0;
+    for (var i = 0; i < key.length; i++) hash = (Math.imul(hash, 31) + key.charCodeAt(i)) >>> 0;
+    return PALETTE[hash % PALETTE.length];
   }
 
   function alphaColor(color, alpha) {
@@ -657,12 +755,44 @@
   }
 
   function frontierPoints(points, higherBetter) {
-    return points.filter(function (p) {
-      return !isDominated(p, points, higherBetter);
-    }).sort(function (a, b) {
-      return higherBetter ? (a.x - b.x || a.y - b.y) : (b.x - a.x || a.y - b.y);
+    var eligible = points.filter(function (p) {
+      return Number.isFinite(p.x) && Number.isFinite(p.y) && p.x > 0 && p.y > 0;
     });
+    return eligible.filter(function (p) {
+      return !isDominated(p, eligible, higherBetter);
+    }).sort(function (a, b) { return a.x - b.x || a.y - b.y; });
   }
+
+  var EFFORT_LEVELS = ["low", "medium", "high", "xhigh"];
+
+  function effortCode(model) {
+    var rank = EFFORT_LEVELS.indexOf(model.reasoning_level);
+    return rank < 0 ? "" : ["L", "M", "H", "X"][rank];
+  }
+
+  function effortGroups(points) {
+    var groups = new Map();
+    points.forEach(function (p) {
+      var m = p._model;
+      if (!effortCode(m) || !m.agent_identifier || m.agent_identifier === "legacy_unknown") return;
+      var key = JSON.stringify([m.identifier, m.agent_identifier || "legacy_unknown"]);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(p);
+    });
+    return Array.from(groups.values()).filter(function (g) { return g.length > 1; })
+      .map(function (g) {
+        return g.slice().sort(function (a, b) {
+          return EFFORT_LEVELS.indexOf(a._model.reasoning_level) -
+            EFFORT_LEVELS.indexOf(b._model.reasoning_level);
+        });
+      });
+  }
+
+  // Pure presentation helpers, also exercised by the browser test harness.
+  window.MakerBenchEfficiency = {
+    modelColor: modelColor, effortCode: effortCode, effortGroups: effortGroups,
+    frontierPoints: frontierPoints, isDominated: isDominated,
+  };
 
   function scoreSpreadText(efficiency) {
     var parts = [];
@@ -692,11 +822,16 @@
     if (existing) existing.remove();
     canvas.style.display = "";
 
+    var oldLegend = card ? card.querySelector(".efficiency-model-legend") : null;
+    if (oldLegend) oldLegend.remove();
+
     var metricDef = EFFICIENCY_METRICS[EFFICIENCY_METRIC] || EFFICIENCY_METRICS.time;
     var models = modelsOnTrack(TRACK);
     var points = models.map(function (m, i) {
       return efficiencyPoint(m, i, EFFICIENCY_METRIC);
-    }).filter(Boolean);
+    }).filter(function (p) {
+      return p && Number.isFinite(p.x) && Number.isFinite(p.y) && p.x > 0;
+    });
     var omitted = models.length - points.length;
 
     if (!points.length) {
@@ -716,25 +851,46 @@
       return;
     }
 
+    // Keep every model identifiable, including models with no effort line.
+    if (card) {
+      var legend = document.createElement("div");
+      legend.className = "efficiency-model-legend";
+      legend.setAttribute("aria-label", "Model colors and effort levels");
+      legend.style.cssText = "display:flex;flex-wrap:wrap;gap:6px 12px;max-height:120px;overflow:auto;font-size:11px;margin-top:12px";
+      legend.tabIndex = 0;
+      var legendModels = new Map();
+      points.forEach(function (p) {
+        var id = p._model.identifier;
+        if (!legendModels.has(id)) legendModels.set(id, { color: p._color, efforts: [] });
+        var label = effortCode(p._model);
+        if (label && legendModels.get(id).efforts.indexOf(label) < 0) legendModels.get(id).efforts.push(label);
+      });
+      legendModels.forEach(function (entry, id) {
+        var item = document.createElement("span");
+        var swatch = document.createElement("span");
+        swatch.textContent = "● ";
+        swatch.style.color = entry.color;
+        item.appendChild(swatch);
+        var levels = ["L", "M", "H", "X"].filter(function (l) { return entry.efforts.indexOf(l) >= 0; });
+        item.appendChild(document.createTextNode(id + (levels.length ? " · " + levels.join("/") : "")));
+        legend.appendChild(item);
+      });
+      if (note) note.after(legend);
+      else card.appendChild(legend);
+    }
+
     var higherBetter = Boolean(metricDef.higherBetter);
     var frontier = frontierPoints(points, higherBetter);
-    // Connect a single model's effort / thinking-level variants with a line
-    // (e.g. gpt-5.5 medium -> high), like the DeepSWE cost/score trajectory.
-    var byBase = {};
-    points.forEach(function (p) {
-      var k = p._model.identifier;
-      (byBase[k] = byBase[k] || []).push(p);
-    });
-    var effortLines = Object.keys(byBase).map(function (k) {
-      var g = byBase[k];
-      if (g.length < 2) return null;
-      g = g.slice().sort(function (a, b) { return a.x - b.x; });
+    // Connect only disclosed effort levels within the same model and harness.
+    var effortLines = effortGroups(points).map(function (g) {
+      var m = g[0]._model;
       return {
-        label: "effort — " + k,
+        label: m.identifier + " · " + (m.agent_identifier || "legacy_unknown") + " · " +
+          g.map(function (p) { return effortCode(p._model); }).join(" → "),
         data: g.map(function (p) { return { x: p.x, y: p.y }; }),
         parsing: false,
         type: "line",
-        borderColor: alphaColor(g[0]._color, 0.6),
+        borderColor: g[0]._color,
         borderWidth: 1.5,
         borderDash: [5, 3],
         pointRadius: 0,
@@ -763,13 +919,14 @@
             data: frontier.map(function (p) { return { x: p.x, y: p.y }; }),
             parsing: false,
             type: "line",
-            borderColor: cssVar("--good"),
+            borderColor: alphaColor(cssVar("--good"), 0.4),
             backgroundColor: alphaColor(cssVar("--good"), 0.08),
             pointBackgroundColor: cssVar("--good"),
             pointBorderColor: cssVar("--bg-elev"),
-            pointRadius: 3,
-            pointHoverRadius: 5,
-            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 0,
+            borderWidth: 1,
+            stepped: "after",
             tension: 0,
             fill: false,
           },
@@ -789,7 +946,8 @@
             callbacks: {
               title: function (items) {
                 var raw = items.length ? items[0].raw : null;
-                return raw && raw._model ? modelText(raw._model) : "Efficient frontier";
+                return raw && raw._model ? modelText(raw._model) +
+                  (effortCode(raw._model) ? " · effort " + effortCode(raw._model) : "") : "Efficient frontier";
               },
               label: function (item) {
                 var raw = item.raw;
@@ -819,10 +977,11 @@
         },
         scales: {
           x: {
-            reverse: !higherBetter,
+            reverse: false,
+            type: ["time", "cost", "tokens"].indexOf(EFFICIENCY_METRIC) >= 0 ? "logarithmic" : "linear",
             title: {
               display: true,
-              text: metricDef.label + (higherBetter ? " (higher is better)" : " (lower is better)"),
+              text: metricDef.label + (higherBetter ? " (better: top-right)" : " (better: top-left)"),
               color: cssVar("--text-soft"),
             },
             ticks: {
@@ -848,7 +1007,7 @@
       note.textContent = points.length + " charted · " + omitted +
         " unavailable for " + metricDef.shortLabel +
         (estimates ? " · " + estimates + " estimate-labeled point(s)" : "") +
-        ". Frontier uses " + (higherBetter ? "higher " : "lower ") + metricDef.shortLabel +
+        ". L/M/H/X = low/medium/high/xhigh; unset effort stays unconnected. Zero/nonpositive telemetry is omitted. Frontier excludes zero scores and uses " + (higherBetter ? "higher " : "lower ") + metricDef.shortLabel +
         " and higher score. Efficiency comparisons keep disclosed harness/adapter rows separate.";
     }
   }

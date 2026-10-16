@@ -1,0 +1,13 @@
+{
+  "gemini_rerun": {
+    "model_map": {
+      "antigravity-gemini-3.8-flash-high": {
+        "model": "fixture-model",
+        "provider": "agy"
+      }
+    }
+  },
+  "round_wall_time_s": {
+    "1": 12.0
+  }
+}

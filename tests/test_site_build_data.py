@@ -2020,7 +2020,8 @@ def test_site_builds_data_driven_hero_stats(tmp_path):
     assert by_key["dfm_pass_rate"]["display"] == "50%"
 
     # A single-family fixture provides no overall ranked leader.
-    assert "top_score" not in by_key
+    assert by_key["top_score"]["value"] is None
+    assert by_key["top_score"]["detail"] == "No model meets the coverage minimum"
 
     # Blind→perception lift averaged per model: A +0.0, B +2.0 → +1.00.
     assert by_key["perception_lift"]["value"] == 1.0
@@ -2942,3 +2943,159 @@ def test_inject_prerendered_fills_freshness_markers_everywhere():
     }
     out = build_data.inject_prerendered(template, payload)
     assert out.count("results as of 2026-06-13") == 2
+
+
+# --------------------------------------------------------------------------- #
+# mb#1021: plain-language labels for badges, legends, tooltips, and prerender
+# --------------------------------------------------------------------------- #
+
+
+def test_plain_label_helpers_map_internal_tokens_to_plain_language():
+    assert build_data.plain_label("default_or_unset") == "Default effort"
+    assert build_data.plain_label("legacy_unknown") == "Older harness"
+    assert build_data.plain_label("legacy") == "Older harness"
+    assert build_data.plain_label("codex_cli") == "Codex CLI"
+    assert build_data.plain_label("claude_cli") == "Claude CLI"
+    assert build_data.plain_label("agy_cli") == "Antigravity CLI"
+    assert build_data.plain_label("openrouter_api") == "OpenRouter API"
+    assert build_data.plain_label("gemini_api") == "Gemini API"
+    assert build_data.plain_label("anthropic_api") == "Anthropic API"
+    assert build_data.plain_label("n1") == "1 seed"
+    assert build_data.plain_label("n3") == "3 seeds"
+    assert build_data.plain_label("+1 infra") == "1 run hit an infrastructure error"
+    assert build_data.plain_label("+2 infra") == "2 runs hit an infrastructure error"
+    assert build_data.plain_effort_label(None) == "Default effort"
+    assert build_data.plain_effort_label("default_or_unset") == "Default effort"
+    assert build_data.plain_effort_label("high") == "High effort"
+    assert build_data.plain_harness_label("legacy_unknown") == "Older harness"
+    assert build_data.plain_harness_label("codex_cli") == "Codex CLI"
+    assert (
+        build_data.plain_display_model(
+            {"identifier": "gemini-3-flash", "reasoning_level": "default_or_unset"}
+        )
+        == "gemini-3-flash [Default effort]"
+    )
+
+
+def test_prerender_leaderboard_and_charts_replace_default_or_unset():
+    payload = {
+        "models": [
+            {
+                "identifier": "gemini-3-flash",
+                "reasoning_level": "default_or_unset",
+                "model_page": "models/gemini-3-flash/",
+                "tracks": {
+                    "blind": {
+                        "overall_mean": 2.75,
+                        "n_families_scored": 4,
+                        "level_histogram": {"0": 0, "1": 3, "2": 0, "3": 0, "4": 9},
+                        "n_infra": 0,
+                    }
+                },
+            }
+        ]
+    }
+    lb_html = build_data._prerender_leaderboard_html(payload)
+    assert "gemini-3-flash [Default effort]" in lb_html
+    assert "default_or_unset" not in lb_html
+
+    sections = build_data._prerender_sections(
+        payload, supplemental={"arena": {}, "findings": {}, "landscape": {}}
+    )
+    assert "gemini-3-flash [Default effort]" in sections["charts"]
+    assert "default_or_unset" not in sections["charts"]
+
+
+def test_app_js_plain_labels_and_raw_attributes_preserved():
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not available")
+
+    script = r"""
+const fs = require("fs");
+const vm = require("vm");
+const code = fs.readFileSync("site/assets/app.js", "utf8");
+const noopEl = () => ({
+  addEventListener() {},
+  setAttribute() {},
+  getAttribute() { return ""; },
+  querySelectorAll() { return []; },
+  querySelector() { return null; },
+  appendChild() {},
+  closest() { return { querySelector() { return null; } }; },
+  style: {},
+  parentNode: { appendChild() {}, querySelector() { return null; } },
+  innerHTML: "",
+  textContent: "",
+  hidden: false,
+  value: "",
+});
+const sandbox = {
+  window: {},
+  document: {
+    documentElement: { setAttribute() {}, getAttribute() { return "light"; } },
+    getElementById() { return noopEl(); },
+    querySelectorAll() { return []; },
+    querySelector() { return null; },
+    createElement() { return noopEl(); },
+  },
+  localStorage: { getItem() { return null; }, setItem() {} },
+  getComputedStyle() { return { getPropertyValue() { return ""; } }; },
+  fetch() { return new Promise(() => {}); },
+  Chart: function() { this.destroy = () => {}; },
+  Object, Array, String, Number, Math, RegExp, Error, Promise, setTimeout,
+};
+vm.runInNewContext(code, sandbox);
+const L = sandbox.window.MakerBenchLabels;
+if (!L) throw new Error("MakerBenchLabels not exposed on window");
+
+const assertEq = (actual, expected, msg) => {
+  if (actual !== expected) {
+    throw new Error(`${msg}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+};
+
+assertEq(L.plainLabel("default_or_unset"), "Default effort", "default_or_unset");
+assertEq(L.plainLabel("legacy_unknown"), "Older harness", "legacy_unknown");
+assertEq(L.plainLabel("codex_cli"), "Codex CLI", "codex_cli");
+assertEq(L.plainLabel("claude_cli"), "Claude CLI", "claude_cli");
+assertEq(L.plainLabel("agy_cli"), "Antigravity CLI", "agy_cli");
+assertEq(L.plainLabel("openrouter_api"), "OpenRouter API", "openrouter_api");
+assertEq(L.plainLabel("gemini_api"), "Gemini API", "gemini_api");
+assertEq(L.plainLabel("anthropic_api"), "Anthropic API", "anthropic_api");
+assertEq(L.plainLabel("n3"), "3 seeds", "n3");
+assertEq(L.plainLabel("+1 infra"), "1 run hit an infrastructure error", "+1 infra");
+assertEq(L.modelVariantText({ reasoning_level: "default_or_unset" }), "Default effort", "variant default_or_unset");
+assertEq(L.modelVariantText({ reasoning_level: "high" }), "High effort", "variant high");
+assertEq(L.modelText({ identifier: "m", reasoning_level: "default_or_unset" }), "m [Default effort]", "modelText");
+
+const hBadge = L.harnessBadge({ agent_identifier: "codex_cli" });
+if (!hBadge.includes(">Codex CLI<") || !hBadge.includes('data-harness="codex_cli"') || !hBadge.includes("codex_cli")) {
+  throw new Error("Unexpected harnessBadge: " + hBadge);
+}
+const legBadge = L.harnessBadge({ agent_identifier: "legacy_unknown" });
+if (!legBadge.includes(">Older harness<") || !legBadge.includes('data-harness="legacy_unknown"')) {
+  throw new Error("Unexpected legacy harnessBadge: " + legBadge);
+}
+const mLabel = L.modelLabel({ identifier: "m", reasoning_level: "default_or_unset", agent_identifier: "gemini_api" });
+if (!mLabel.includes(">Default effort<") || !mLabel.includes('data-effort="default_or_unset"') || !mLabel.includes(">Gemini API<")) {
+  throw new Error("Unexpected modelLabel: " + mLabel);
+}
+const cell = L.cellHTML({ mean_score: 3.5, n_seeds: 3, n_infra: 1 });
+if (!cell.includes('title="3 seeds"') || !cell.includes('data-seeds="n3"') ||
+    !cell.includes('title="1 run hit an infrastructure error"') || !cell.includes('data-infra="+1 infra"')) {
+  throw new Error("Unexpected cellHTML: " + cell);
+}
+"""
+    proc = subprocess.run(
+        [node, "-e", script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+

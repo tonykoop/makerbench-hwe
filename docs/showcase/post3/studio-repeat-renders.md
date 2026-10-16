@@ -24,6 +24,9 @@ the committed public scoreline before copying anything. PNGs are verified,
 copied byte-for-byte and have no text metadata. Generated CAD, meshes, raw
 responses, host paths and source code are not copied. Source records remain
 untouched; this extraction supplies no new benchmark attestation.
+The source logs are the regraded copies written by `scripts/regrade_scoreline.py` (today's gate;
+these 15 trials keep every check result), so `run_log_sha256` hashes the regraded log, whose
+`regrade.source_run_log_sha256` names the recorded original.
 
 Use `scripts/import_studio_repeat_renders.py --help` for the four local run
 directory arguments. Then rebuild the demo with

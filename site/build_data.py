@@ -35,7 +35,7 @@ LEVELS = (1, 2, 3, 4)
 DEFAULT_SITE_BASE_URL = "https://tonykoop.github.io/makerbench-hwe"
 SATURATION_TOP_MODEL_COUNT = 5
 SATURATION_MIN_MODELS = 3
-# Overall ranking requires breadth; sparse rows remain available as samples.
+# Overall ranking and the hero share this coverage floor; sparse rows remain samples.
 OVERALL_RANKING_MIN_FAMILIES = 4
 SATURATION_THRESHOLDS = {
     "mean_score_near_ceiling": 3.75,
@@ -2751,7 +2751,10 @@ def model_family(identifier: str) -> str:
         # gpt-5.4-mini don't share one card the legend can't tell apart.
         version = re.search(r"gpt[ ]?(\d+(?:\.\d+)?)", normalized)
         base = f"Codex GPT-{version.group(1)}" if version else "Codex GPT-5.5"
-        for qualifier in ("mini", "nano", "spark"):
+        qualifiers = ("mini", "nano", "spark")
+        if version and version.group(1) == "5.6":
+            qualifiers += ("terra", "sol", "luna")
+        for qualifier in qualifiers:
             if re.search(rf"\b{qualifier}\b", normalized):
                 base += " " + qualifier.title()
         return base
@@ -2831,9 +2834,8 @@ def build_hero_stats(models: list[dict], families: list[dict]) -> dict:
     ]
     n_models = len(non_control)
     n_families = len(families)
-    ranked = [m for m in non_control if
-              m["tracks"]["blind"].get("n_families_scored", 0) >= OVERALL_RANKING_MIN_FAMILIES]
-    top = ranked[0] if ranked else None
+    ranked, _, _ = select_leaderboard_entries(models)
+    top = ranked[0][0] if ranked else None
     top_mean = top["tracks"]["blind"]["overall_mean"] if top else None
 
     # Hardest tier (Level 4 / DFM) pass rate across every graded blind run.
@@ -2857,17 +2859,28 @@ def build_hero_stats(models: list[dict], families: list[dict]) -> dict:
     lift = (sum(gaps) / len(gaps)) if gaps else None
 
     stats: list[dict] = []
+    top_score_label = "#1 on the leaderboard"
     if top_mean is not None:
         stats.append(
             {
                 "key": "top_score",
                 "value": _round(top_mean, 2),
                 "display": f"{top_mean:.2f}/4",
-                "label": "top broad blind score",
+                "label": top_score_label,
                 "detail": (
                     f"{display_model(top)} · "
                     f"{top['tracks']['blind'].get('n_families_scored', 0)}/{n_families} families"
                 ),
+            }
+        )
+    else:
+        stats.append(
+            {
+                "key": "top_score",
+                "value": None,
+                "display": "—",
+                "label": top_score_label,
+                "detail": "No model meets the coverage minimum",
             }
         )
     stats.append(
@@ -2911,6 +2924,104 @@ def build_hero_stats(models: list[dict], families: list[dict]) -> dict:
         }
     )
     return {"schema_version": "0.1", "stats": stats}
+
+
+HARNESS_LABELS: dict[str, str] = {
+    "legacy_unknown": "Older harness",
+    "legacy": "Older harness",
+    "codex_cli": "Codex CLI",
+    "claude_cli": "Claude CLI",
+    "agy_cli": "Antigravity CLI",
+    "openrouter_api": "OpenRouter API",
+    "gemini_api": "Gemini API",
+    "anthropic_api": "Anthropic API",
+    "openai_api": "OpenAI API",
+    "deepseek_api": "DeepSeek API",
+    "grok_api": "Grok API",
+    "kimi_api": "Kimi API",
+    "qwen_api": "Qwen API",
+}
+
+EFFORT_LABELS: dict[str, str] = {
+    "default_or_unset": "Default effort",
+    "default": "Default effort",
+    "minimal": "Minimal effort",
+    "low": "Low effort",
+    "medium": "Medium effort",
+    "high": "High effort",
+    "xhigh": "Extra-high effort",
+}
+
+PLAIN_LABELS: dict[str, str] = {
+    **HARNESS_LABELS,
+    "default_or_unset": "Default effort",
+    "default": "Default effort",
+}
+
+
+def seed_count_label(n: object) -> str:
+    try:
+        count = int(n)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        count = 0
+    return f"{count} seed" if count == 1 else f"{count} seeds"
+
+
+def infra_count_label(n: object) -> str:
+    try:
+        count = int(n)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        count = 0
+    noun = "run" if count == 1 else "runs"
+    return f"{count} {noun} hit an infrastructure error"
+
+
+def plain_harness_label(token: object) -> str:
+    raw = str(token or "legacy_unknown").strip() or "legacy_unknown"
+    if raw in HARNESS_LABELS:
+        return HARNESS_LABELS[raw]
+    lower = raw.lower()
+    return HARNESS_LABELS.get(lower, raw)
+
+
+def plain_effort_label(token: object) -> str:
+    if token is None or str(token).strip() == "":
+        return "Default effort"
+    raw = str(token).strip()
+    if raw in EFFORT_LABELS:
+        return EFFORT_LABELS[raw]
+    lower = raw.lower()
+    return EFFORT_LABELS.get(lower, raw)
+
+
+def plain_label(token: object) -> str:
+    if token is None:
+        return ""
+    raw = str(token).strip()
+    if not raw:
+        return ""
+    if raw in PLAIN_LABELS:
+        return PLAIN_LABELS[raw]
+    lower = raw.lower()
+    if lower in PLAIN_LABELS:
+        return PLAIN_LABELS[lower]
+    seed_match = re.match(r"^n(\d+)$", raw, flags=re.IGNORECASE)
+    if seed_match:
+        return seed_count_label(int(seed_match.group(1)))
+    infra_match = re.match(r"^\+?(\d+)\s+infra(?:\s+excluded)?$", raw, flags=re.IGNORECASE)
+    if infra_match:
+        return infra_count_label(int(infra_match.group(1)))
+    if lower in EFFORT_LABELS:
+        return EFFORT_LABELS[lower]
+    return raw
+
+
+def plain_display_model(model: dict) -> str:
+    effort = model.get("reasoning_level")
+    if not effort:
+        return str(model["identifier"])
+    shown = PLAIN_LABELS.get(str(effort).lower(), str(effort))
+    return f"{model['identifier']} [{shown}]"
 
 
 def display_model(model: dict) -> str:
@@ -4244,46 +4355,176 @@ def _prerender_hero_stats_html(payload: dict) -> str:
     return "".join(parts)
 
 
+def select_leaderboard_entries(
+    models: list[dict], league_id: str = "autonomous",
+    minimum: int = OVERALL_RANKING_MIN_FAMILIES,
+) -> tuple[list, list, list]:
+    """Return ranked, limited-coverage and reference groups for one league.
+
+    Shared by the hero and static board; mirrors renderTable's default variant
+    selection (coverage, score, effort) and score ranking without changing rows.
+    Each entry is (primary, remaining variants).
+    """
+    def track(model):
+        return model.get("tracks", {}).get("blind", {}) or {}
+
+    def coverage(model):
+        return track(model).get("n_families_scored", 0)
+
+    def selection_key(model):
+        value = track(model).get("overall_mean")
+        return (-coverage(model), -(value if value is not None else -1),
+                -{"high": 4, "xhigh": 3, "medium": 2, "low": 1}.get(model.get("reasoning_level"), 0),
+                display_model(model), model.get("agent_identifier") or "")
+
+    def score_key(model):
+        value = track(model).get("overall_mean")
+        return (-(value if value is not None else -1), display_model(model))
+
+    def eligible(model):
+        return (not is_reference_row(model) and coverage(model) >= minimum
+                and track(model).get("overall_mean") is not None)
+
+    groups = {}
+    for model in models:
+        tr = track(model)
+        if ((model.get("league") or "autonomous") != league_id
+                or not tr.get("has_data", tr.get("overall_mean") is not None)):
+            continue
+        kind = "control" if model.get("is_control") else "human" if model.get("is_human_baseline") else "model"
+        key = (kind, model.get("model_family") or model["identifier"])
+        groups.setdefault(key, []).append(model)
+    entries = []
+    for variants in groups.values():
+        variants = sorted(variants, key=selection_key)
+        entries.append((variants[0], variants[1:]))
+    broad = sorted((e for e in entries if eligible(e[0])), key=lambda e: score_key(e[0]))
+    partial = sorted((e for e in entries if not is_reference_row(e[0]) and not eligible(e[0])), key=lambda e: score_key(e[0]))
+    refs = sorted((e for e in entries if is_reference_row(e[0])), key=lambda e: bool(e[0].get("is_control")))
+    return broad, partial, refs
+
+
 def _prerender_leaderboard_html(payload: dict, top_n: int = PRERENDER_TOP_N) -> str:
-    """Static top-N blind-track snapshot; app.js swaps in the full table."""
-    competitors = [
-        m
-        for m in payload.get("models", [])
-        if not is_reference_row(m)
-        and (m.get("tracks", {}).get("blind", {}) or {}).get("overall_mean") is not None
-        and (m.get("tracks", {}).get("blind", {}) or {}).get("n_families_scored", 0) >= OVERALL_RANKING_MIN_FAMILIES
-    ]
-    if not competitors:
-        return (
-            '<div class="empty"><strong>No broad blind results yet.</strong> '
-            f"Overall ranking requires at least {OVERALL_RANKING_MIN_FAMILIES} measured families. "
-            "Smaller samples remain available on their model pages.</div>"
+    """Blind-track summary, with native details for variants and family scores.
+
+    Keep selection and ranking in step with renderTable; aggregate scores and
+    the payload are never modified. top_n is retained for caller compatibility;
+    all groups render so no-JS visitors can inspect every family's metadata.
+    """
+    families = payload.get("task_families", [])
+    axes = payload.get("capability_axes", [])[:8]
+    minimum = payload.get("overall_ranking_min_families", OVERALL_RANKING_MIN_FAMILIES)
+
+    def track(model):
+        return model.get("tracks", {}).get("blind", {}) or {}
+
+    def coverage(model):
+        return track(model).get("n_families_scored", 0)
+
+    def cell(label, content, cls=""):
+        return f'<td data-label="{_esc(label)}" class="{cls}">{content}</td>'
+
+    def details(model):
+        cells = track(model).get("families", {})
+        rows = []
+        for family in families:
+            data = cells.get(family["id"]) or {}
+            value = data.get("mean_score")
+            title = f'{data.get("n_seeds", 0)} seeds · {data.get("n_infra", 0)} infra excluded'
+            rows.append(f'<tr><th scope="row">{_esc(family["title"])}</th>'
+                        f'<td title="{_esc(title)}">{_fmt_mean(value)}</td></tr>')
+        return ('<details class="lb-families"><summary>Per-family scores</summary>'
+                '<table class="lb-family-table"><thead><tr><th scope="col">Task family</th>'
+                '<th scope="col">Score /4</th></tr></thead><tbody>' + "".join(rows)
+                + '</tbody></table></details>')
+
+    def row(model, rank=None, variant=False):
+        tr = track(model)
+        label = _esc(plain_display_model(model))
+        harness = model.get("agent_identifier") or "legacy_unknown"
+        label += f'<span class="badge badge-harness">{_esc(plain_label(harness))}</span>'
+        provenance = model.get("result_provenance", "community")
+        if provenance != "community":
+            label += f'<span class="badge badge-provenance">{_esc(provenance)}</span>'
+        if model.get("is_control"):
+            label += '<span class="badge badge-control">control</span>'
+        if model.get("is_human_baseline"):
+            label += '<span class="badge badge-human">human</span>'
+        env = model.get("grader_environment") or {}
+        if env.get("openscad_comparability") == "non_reference":
+            label += '<span class="badge badge-openscad">non-ref</span>'
+        model_link = f'<a class="model-name" href="{_esc(model.get("model_page") or "#")}">{label}</a>'
+        parts = [cell("Rank", str(rank) if rank else "—", "lb-rank"),
+                 cell("Model", model_link, "model-col"),
+                 cell("Overall /4", _fmt_mean(tr.get("overall_mean")), "cell-overall"),
+                 cell("Coverage", f"{coverage(model)} / {len(families)}", "lb-coverage")]
+        cost = tr.get("mean_cost_usd")
+        estimate = tr.get("mean_api_equivalent_usd")
+        if cost is not None:
+            cost_text = (f"${cost:.4f}" if cost < 0.01 else f"${cost:.2f}")
+        elif estimate is not None:
+            cost_text = "~" + (f"${estimate:.4f}" if estimate < 0.01 else f"${estimate:.2f}") + '<span class="why">API-equiv. est</span>'
+        else:
+            local = (tr.get("local_log_token_usage") or {}).get("mean_total_tokens")
+            opaque = (tr.get("usage_reporting") or {}).get("n_subscription_opaque")
+            reason = "model unpriced" if local is not None else "subscription quota" if opaque else "unknown"
+            cost_text = f'n/a<span class="why">{reason}</span>'
+        parts.append(cell("Cost", cost_text, "est" if cost is None and estimate is not None else ""))
+        duration = tr.get("mean_wall_time_s")
+        parts.append(cell("Time", (f"{duration:.1f}s" if duration < 60 else f"{int(duration // 60)}m {int(duration % 60 + .5):02d}s") if duration is not None else 'n/a<span class="why">unknown</span>'))
+        for axis in axes:
+            data = (tr.get("capability_profile") or {}).get(axis["id"]) or {}
+            parts.append(cell(axis["title"], _fmt_mean(data.get("mean_score")), "lb-axis"))
+        cls = "lb-variant" if variant else "lb-primary"
+        if model.get("is_control"):
+            cls += " is-control"
+        if model.get("is_human_baseline"):
+            cls += " is-human"
+        return f'<tr class="{cls}">' + "".join(parts) + '</tr>'
+
+    def table(entries, ranks):
+        headings = ["Rank", "Model", "Overall /4", "Coverage", "Cost", "Time"]
+        headings += [axis["title"] for axis in axes]
+        headers = "".join(f'<th scope="col">{_esc(label)}</th>' for label in headings)
+        rows = []
+        for primary, variants in entries:
+            rows.append(row(primary, ranks.get(id(primary))))
+            content = details(primary)
+            if variants:
+                content += f'<details class="lb-variants"><summary>+{len(variants)} variants</summary>'
+                for model in variants:
+                    content += ('<table class="lb lb-summary" aria-label="Variant '
+                                + _esc(display_model(model)) + '"><tbody>' + row(model, variant=True)
+                                + '</tbody></table>' + details(model))
+                content += '</details>'
+            rows.append(f'<tr class="lb-detail-row"><td colspan="{len(headings)}">{content}</td></tr>')
+        return ('<table class="lb lb-summary"><thead><tr>' + headers + '</tr></thead><tbody>'
+                + "".join(rows) + '</tbody></table>')
+
+    leagues = payload.get("leagues") or [{"id": "autonomous", "label": "Autonomous"}]
+    sections = []
+    for league in leagues:
+        broad, partial, refs = select_leaderboard_entries(
+            payload.get("models", []), league["id"], minimum,
         )
-    shown = competitors[:top_n]
-    rows = []
-    for rank, model in enumerate(shown, 1):
-        href = model.get("model_page") or "#"
-        overall = model["tracks"]["blind"].get("overall_mean")
-        rows.append(
-            f'<tr><td class="num">{rank}</td>'
-            f'<td class="model-col"><a class="model-name" href="{_esc(href)}">'
-            f"{_esc(display_model(model))}</a></td>"
-            f'<td class="num">{_fmt_mean(overall)}</td></tr>'
-        )
-    note = (
-        f"Static snapshot: top {len(shown)} of {len(competitors)} models on the "
-        "blind track, generated by site/build_data.py. Enable JavaScript for the "
-        "full sortable leaderboard with per-family scores, telemetry, and both tracks. "
-        f"Overall ranking requires at least {OVERALL_RANKING_MIN_FAMILIES} measured families. "
-        "Smaller samples remain available on their model pages and in the dated sample panel."
-    )
-    return (
-        '<div class="table-scroll"><table class="lb"><thead><tr>'
-        '<th class="num">#</th><th class="model-col">Model</th>'
-        '<th class="num">Overall (blind, /4)</th>'
-        "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
-        f'<p class="muted-note">{_esc(note)}</p>'
-    )
+        if not (broad or partial or refs):
+            continue
+        ranks = {id(entry[0]): i for i, entry in enumerate(broad, 1)}
+        html = f'<section class="lb-league" aria-label="{_esc(league.get("label", league["id"]))}">'
+        if len(leagues) > 1:
+            html += f'<h3>{_esc(league.get("label", league["id"]))}</h3>'
+        if broad:
+            html += table(broad, ranks)
+        if partial:
+            html += ('<h3 class="lb-section-label">Limited coverage · unranked</h3>'
+                     f'<p class="muted-note">Overall ranking requires at least {minimum} measured families '
+                     'and a measured overall score.</p>' + table(partial, {}))
+        if refs:
+            html += '<h3 class="lb-section-label">Reference rows · unranked</h3>' + table(refs, {})
+        sections.append(html + '</section>')
+    if not sections:
+        return '<div class="empty">No blind results yet.</div>'
+    return "".join(sections) + '<p class="muted-note">Static snapshot · blind track. Enable JavaScript to sort or switch tracks.</p>'
 
 
 def _prerender_tracks_html(payload: dict) -> str:
@@ -4381,7 +4622,7 @@ def _prerender_sections(payload: dict, supplemental: dict | None = None) -> dict
         perception = (model.get("tracks") or {}).get("perception") or {}
         histogram = blind.get("level_histogram") or {}
         metric_rows.append([
-            display_model(model), _fmt_mean(blind.get("overall_mean")),
+            plain_display_model(model), _fmt_mean(blind.get("overall_mean")),
             _fmt_mean(perception.get("overall_mean")), blind.get("n_families_scored", 0),
             _fmt_mean(blind.get("mean_wall_time_s")), _fmt_mean(blind.get("mean_cost_usd")),
             " / ".join(str(histogram.get(str(level), 0)) for level in range(5)),
