@@ -86,6 +86,7 @@ uploads to Hugging Face.
   python -m venv .venv && . .venv/bin/activate
   pip install -r requirements.txt
   python app.py            # http://127.0.0.1:7860
+  deactivate && cd -       # back to the repository root
   ```
 
   Check: three tabs in the order Grade a part, Explore designs, Leaderboard;
@@ -102,10 +103,13 @@ uploads to Hugging Face.
     --commit-message "Deploy from makerbench-hwe <git sha>" --delete '*'
   ```
 
-  `--delete '*'` removes every remote file that is not in the staged tree
-  (the old app's snapshot data, scripts, Makefile and pyproject). Files in
-  the upload are kept. Alternative: `git clone` the Space repo, replace its
-  contents with `dist/hf_space/`, commit and push.
+  Run this from the repository root (the relative path `dist/hf_space` is
+  resolved against the working directory). `--delete '*'` removes every
+  remote file that is not in the staged tree (the old app's snapshot data,
+  scripts, Makefile and pyproject), **except `.gitattributes`**, which
+  `huggingface_hub` (checked on 0.36.2) always preserves. Files in the upload
+  are kept. Alternative: `git clone` the Space repo, replace its contents
+  with `dist/hf_space/` (keep the remote `.gitattributes`), commit and push.
 
 - [ ] Verify the live Space: it builds without errors (Space "Logs" tab),
   shows the three tabs, the card reads as a public benchmark page (no

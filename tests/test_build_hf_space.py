@@ -153,6 +153,59 @@ def test_stage_fails_closed_on_integrity_problem(tmp_path: Path) -> None:
         build_hf_space.stage(tmp_path / "out", src=src)
 
 
+def _copy_src(tmp_path: Path) -> Path:
+    import shutil
+
+    src = tmp_path / "src"
+    shutil.copytree(SPACE_SRC, src)
+    return src
+
+
+def test_stage_refuses_file_symlink_to_external_private_data(tmp_path: Path) -> None:
+    outside = tmp_path / "outside-space" / "private" / "oracles"
+    outside.mkdir(parents=True)
+    (outside / "synthetic.txt").write_text("synthetic\n", encoding="utf-8")
+    src = _copy_src(tmp_path)
+    (src / "tabs" / "public_note.txt").symlink_to(outside / "synthetic.txt")
+    with pytest.raises(SystemExit, match="symlink"):
+        build_hf_space.stage(tmp_path / "out", src=src)
+
+
+def test_stage_refuses_directory_symlink(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "a.txt").write_text("a\n", encoding="utf-8")
+    src = _copy_src(tmp_path)
+    (src / "tabs" / "linked").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(SystemExit, match="symlink"):
+        build_hf_space.stage(tmp_path / "out", src=src)
+
+
+def test_verify_rejects_symlink_in_staged_tree(staged: Path, tmp_path: Path) -> None:
+    target = tmp_path / "elsewhere.txt"
+    target.write_text("x\n", encoding="utf-8")
+    (staged / "tabs" / "ok.txt").symlink_to(target)
+    problems = build_hf_space.verify_staged(staged)
+    assert "tabs/ok.txt: symlinks are not allowed in the Space tree" in problems
+
+
+@pytest.mark.parametrize("encoding", ["utf-16", "utf-16-le", "utf-16-be", "utf-32"])
+def test_verify_rejects_private_reference_in_utf16_utf32_text(staged: Path, encoding: str) -> None:
+    (staged / "tabs" / "ref.txt").write_bytes(
+        "'../../private/oracles/synthetic.txt'\n".encode(encoding)
+    )
+    problems = build_hf_space.verify_staged(staged)
+    assert "tabs/ref.txt: refers to a private location" in problems
+
+
+def test_verify_rejects_unlisted_binary_but_allows_image(staged: Path) -> None:
+    (staged / "tabs" / "blob.dat").write_bytes(b"\x00\x01\xff\xfe\x00\x80" * 8)
+    (staged / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\xff\x00")
+    problems = build_hf_space.verify_staged(staged)
+    assert any(p.startswith("tabs/blob.dat: binary file type") for p in problems), problems
+    assert not any(p.startswith("logo.png") for p in problems), problems
+
+
 def test_public_term_and_artifact_scripts_pass_on_staged_tree(staged: Path) -> None:
     terms = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "check_public_terms.py"), "--root", str(staged)],
