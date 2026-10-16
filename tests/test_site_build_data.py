@@ -2020,7 +2020,8 @@ def test_site_builds_data_driven_hero_stats(tmp_path):
     assert by_key["dfm_pass_rate"]["display"] == "50%"
 
     # A single-family fixture provides no overall ranked leader.
-    assert "top_score" not in by_key
+    assert by_key["top_score"]["value"] is None
+    assert by_key["top_score"]["detail"] == "No model meets the coverage minimum"
 
     # Blind→perception lift averaged per model: A +0.0, B +2.0 → +1.00.
     assert by_key["perception_lift"]["value"] == 1.0
