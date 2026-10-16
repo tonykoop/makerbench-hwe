@@ -239,19 +239,6 @@
     return (key === "model" || key === "runtime" || key === "tokens" || key === "cost") ? 1 : -1;
   }
 
-  function hasTelemetry(models) {
-    return models.some(function (m) {
-      var tr = m.tracks[TRACK] || {};
-      var usage = tr.token_usage || {};
-      var local = tr.local_log_token_usage || {};
-      return tr.mean_wall_time_s != null ||
-        tr.mean_cost_usd != null ||
-        tr.mean_api_equivalent_usd != null ||
-        usage.mean_total_tokens != null ||
-        local.mean_total_tokens != null;
-    });
-  }
-
   function formatDuration(seconds) {
     if (seconds == null) return null;
     if (seconds < 60) return seconds.toFixed(1) + "s";
@@ -363,26 +350,6 @@
       "</span></td>";
   }
 
-  // Tokens column: prefer authoritative measured tokens; else show local-log
-  // estimate distinctly; else n/a with the reason.
-  function tokenCell(tr) {
-    var measured = (tr.token_usage || {}).mean_total_tokens;
-    if (measured != null) {
-      return metricCell(formatTokens(measured), usageTitle(tr), usageMissingReason(tr));
-    }
-    var local = (tr.local_log_token_usage || {}).mean_total_tokens;
-    if (local != null) {
-      return estimateCell(
-        formatTokens(local),
-        "Mean tokens from a subscription coding-CLI's own usage output " +
-          "(e.g. codex --json, ccusage); real token counts, but subscription " +
-          "billing is not visible",
-        "est · local logs"
-      );
-    }
-    return metricCell(null, usageTitle(tr), usageMissingReason(tr));
-  }
-
   // Cost column: prefer actual billed cost; else show API-equivalent estimate
   // distinctly (never as money spent); else "not available" (never $0).
   function costCell(tr) {
@@ -453,24 +420,6 @@
     if (key === "score_per_dollar") return costMissingReason(track);
     if (hasLocalLogTokens(track)) return "unknown";
     return usageMissingReason(track);
-  }
-
-  function normalizedScoreCell(tr, key) {
-    var metric = efficiencyMetric(tr, key);
-    var label = key === "score_per_dollar" ? "Score per dollar" : "Score per 1M tokens";
-    if (!metric.available || metric.value == null) {
-      return metricCell(null, label + " unavailable", normalizedMissingReason(tr, key));
-    }
-    var title = label + " = overall score divided by " +
-      (key === "score_per_dollar" ? "mean cost" : "mean tokens / 1,000,000") +
-      " · source: " + (metric.source || "unknown");
-    var shown = formatRate(Number(metric.value));
-    if (metric.estimated) {
-      var estLabel = metric.source === "api_equivalent_estimate" ?
-        "API-equiv. est" : "est · local logs";
-      return estimateCell(shown, title, estLabel);
-    }
-    return metricCell(shown, title, "not available");
   }
 
   // Why a metric is absent. "subscription quota" is a *state* we can name -- the
@@ -590,7 +539,8 @@
     }
     function heading(label, key, cls) {
       var arrow = SORT.key === key ? (SORT.dir < 0 ? ' ▼' : ' ▲') : '';
-      return '<th scope="col"' + (cls ? ' class="' + cls + '"' : '') + '><button type="button" data-key="' +
+      var ariaSort = SORT.key === key ? (SORT.dir < 0 ? 'descending' : 'ascending') : 'none';
+      return '<th scope="col" aria-sort="' + ariaSort + '"' + (cls ? ' class="' + cls + '"' : '') + '><button type="button" data-key="' +
         escapeHTML(key) + '">' + escapeHTML(label) + arrow + '</button></th>';
     }
     function table(entries, ranks) {

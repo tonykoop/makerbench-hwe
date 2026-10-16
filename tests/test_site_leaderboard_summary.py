@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import threading
+from collections import defaultdict
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -15,6 +16,27 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("summary_builder", ROOT / "site/build_data.py")
 builder = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(builder)
+
+
+# Only these identifier spellings/harness names denote the same underlying model.
+# Unlisted identifiers stay distinct so future family collisions fail loudly.
+MODEL_ALIASES = {
+    "claude-code-sonnet-4-6": "claude-code-sonnet-4.6",
+    "claude-code-haiku-4-5": "claude-code-haiku-4.5",
+    "antigravity-gemini-3.5-flash": "gemini-3.5-flash",
+}
+
+
+@pytest.mark.parametrize("source", ["committed", "builder"])
+def test_every_model_family_contains_one_underlying_model(source):
+    payload = json.loads((ROOT / "site/data/leaderboard.json").read_text())
+    groups = defaultdict(set)
+    for model in payload["models"]:
+        identifier = model["identifier"]
+        family = model["model_family"] if source == "committed" else builder.model_family(identifier)
+        groups[family].add(MODEL_ALIASES.get(identifier, identifier))
+    collisions = {family: sorted(ids) for family, ids in groups.items() if len(ids) > 1}
+    assert not collisions, f"Distinct underlying models share model_family: {collisions}"
 
 
 def summary_payload():
@@ -117,11 +139,28 @@ def test_summary_rank_details_and_responsiveness(javascript, width):
             assert board.evaluate("el => el.scrollWidth <= el.clientWidth")
             assert broad.evaluate("el => el.scrollWidth <= el.clientWidth + 1")
             if javascript:
+                overall_header = broad.locator('th[aria-sort="descending"]')
+                assert overall_header.locator('button[data-key="overall"]').count() == 1
+                broad.locator('button[data-key="overall"]').click()
+                assert broad.locator('th[aria-sort="ascending"] button[data-key="overall"]').count() == 1
+                broad.locator('button[data-key="model"]').click()
+                assert broad.locator('th[aria-sort="ascending"] button[data-key="model"]').count() == 1
+                assert broad.locator('button[data-key="overall"]').locator('..').get_attribute("aria-sort") == "none"
+                broad.locator('button[data-key="overall"]').click()
                 broad.locator('button[data-key="overall"]').click()
                 # Sorting changes position, never the overall-derived rank.
                 assert broad.locator(":scope > tbody > .lb-primary .lb-rank").all_text_contents() == ["2", "1"]
                 page.get_by_role("button", name="Perception", exact=True).click()
                 assert board.locator(".lb-primary").count() == 4
+            # The committed real-data page must expose every GPT-5.6 model as a
+            # primary row in both JS and static rendering, including on phones.
+            page.unroute("**/data/leaderboard.json")
+            page.unroute(base + "/")
+            page.goto(base + "/", wait_until="networkidle")
+            for tier in ("terra", "sol", "luna"):
+                assert page.locator("#lb-container .lb-primary .model-name").filter(
+                    has_text=f"codex-gpt-5.6-{tier}"
+                ).count() == 1
             browser.close()
     finally:
         server.shutdown()

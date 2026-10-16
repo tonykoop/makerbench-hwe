@@ -2751,7 +2751,10 @@ def model_family(identifier: str) -> str:
         # gpt-5.4-mini don't share one card the legend can't tell apart.
         version = re.search(r"gpt[ ]?(\d+(?:\.\d+)?)", normalized)
         base = f"Codex GPT-{version.group(1)}" if version else "Codex GPT-5.5"
-        for qualifier in ("mini", "nano", "spark"):
+        qualifiers = ("mini", "nano", "spark")
+        if version and version.group(1) == "5.6":
+            qualifiers += ("terra", "sol", "luna")
+        for qualifier in qualifiers:
             if re.search(rf"\b{qualifier}\b", normalized):
                 base += " " + qualifier.title()
         return base
@@ -4393,10 +4396,8 @@ def _prerender_leaderboard_html(payload: dict, top_n: int = PRERENDER_TOP_N) -> 
     def row(model, rank=None, variant=False):
         tr = track(model)
         label = _esc(plain_display_model(model))
-        if model.get("reasoning_level"):
-            label += f'<span class="badge badge-effort">{_esc(model["reasoning_level"])}</span>'
         harness = model.get("agent_identifier") or "legacy_unknown"
-        label += f'<span class="badge badge-harness">{_esc(harness)}</span>'
+        label += f'<span class="badge badge-harness">{_esc(plain_label(harness))}</span>'
         provenance = model.get("result_provenance", "community")
         if provenance != "community":
             label += f'<span class="badge badge-provenance">{_esc(provenance)}</span>'
