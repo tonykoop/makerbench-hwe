@@ -244,6 +244,51 @@ table.lb tbody tr:hover td.model-col { background: var(--bg-soft); }
 
 .model-name { font-weight: 600; }
 
+/* Leaderboard summary (#1018). Scope overrides to this container only. */
+#lb-container .lb-league { margin: 0 0 24px; padding: 0; }
+#lb-container .lb-summary { table-layout: fixed; border: 1px solid var(--border); }
+#lb-container .lb-summary > thead > tr > th,
+#lb-container .lb-summary > tbody > tr > td { white-space: normal; overflow-wrap: anywhere; padding: 8px 5px; }
+#lb-container .lb-summary > thead > tr > th { width: auto; max-width: none; font-size: .7rem; text-transform: none; letter-spacing: 0; overflow-wrap: normal; }
+#lb-container .lb-summary > thead > tr > th:first-child { width: 4%; }
+#lb-container .lb-summary > thead > tr > th:nth-child(2) { width: 20%; }
+#lb-container .lb-summary > thead > tr > th:nth-child(3),
+#lb-container .lb-summary > thead > tr > th:nth-child(4) { width: 7%; }
+#lb-container .lb-summary > thead > tr > th:nth-child(5),
+#lb-container .lb-summary > thead > tr > th:nth-child(6) { width: 8%; }
+#lb-container .model-col { position: static; }
+#lb-container .model-name { overflow-wrap: anywhere; }
+#lb-container .badge { white-space: normal; overflow-wrap: anywhere; margin: 3px 3px 0 0; }
+#lb-container .lb-summary button { border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-transform: inherit; cursor: pointer; }
+#lb-container .lb-detail-row > td > details { display: inline-block; vertical-align: top; margin-right: 16px; }
+#lb-container .lb-detail-row > td > details[open] { display: block; margin-right: 0; }
+#lb-container summary { cursor: pointer; color: var(--accent); font-size: .78rem; padding: 6px 0; }
+#lb-container summary:focus-visible, #lb-container button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+#lb-container .lb-detail-row > td { text-align: left; padding: 0 12px 8px; }
+#lb-container .lb-section-label { border-top: 2px solid var(--border); padding-top: 20px; margin-top: 24px; }
+#lb-container .lb-family-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+#lb-container .lb-family-table th, #lb-container .lb-family-table td { white-space: normal; overflow-wrap: anywhere; text-align: left; padding: 6px; }
+#lb-container .lb-family-table th:first-child { width: 75%; }
+#lb-container .lb-variants[open] { border-left: 2px solid var(--border); padding-left: 10px; }
+#lb-container .lb-variants .lb-summary { margin-top: 8px; }
+#lb-container .lb-variants .model-col { width: 23%; }
+#lb-container .why { overflow-wrap: anywhere; }
+@media (max-width: 900px) {
+  #lb-container .lb-summary, #lb-container .lb-summary > tbody { display: block; width: 100%; }
+  #lb-container .lb-summary > thead { display: block; }
+  #lb-container .lb-summary > thead > tr { display: flex; flex-wrap: wrap; gap: 12px; padding: 10px; }
+  #lb-container .lb-summary > thead > tr > th:nth-child(n) { display: block; width: auto; font-size: .7rem; }
+  #lb-container .lb-summary > thead > tr > th:first-child { display: none; }
+  #lb-container .lb-primary, #lb-container .lb-variant { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 10px; }
+  #lb-container .lb-summary > tbody > tr > td { display: block; text-align: left; border: 0; width: auto; }
+  #lb-container .lb-summary > tbody > tr > td::before { content: attr(data-label); display: block; font-size: .65rem; color: var(--text-soft); margin-bottom: 3px; }
+  #lb-container .lb-summary .model-col { grid-column: 1 / -1; grid-row: 1; }
+  #lb-container .lb-summary .lb-rank { grid-column: 1 / -1; }
+  #lb-container .lb-summary .lb-rank::before { display: inline; margin-right: 6px; }
+  #lb-container .lb-detail-row { display: block; border-bottom: 1px solid var(--border); }
+  #lb-container .lb-summary > tbody > .lb-detail-row > td { padding: 0 15px 10px; }
+}
+
 /* ---- extended / diagnostic families ---- */
 .ext-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
 .ext-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elev); padding: 14px 16px; box-shadow: var(--shadow); }
