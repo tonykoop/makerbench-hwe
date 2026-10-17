@@ -11,6 +11,17 @@ minimum wall >= 1.5 mm (with the grader's measurement tolerance), and fastener-a
 offset <= 0.4 mm. Seeded wall sampling and all dimensions are public; neither
 family reads reference geometry or private data. The worker strips the optional
 parent catalog override as part of its minimal environment.
+A mesh can score **4 on `enclosure_two_body_fastened_no_bom` and 3 on
+`enclosure_dfm_tight`** without any inconsistency. For example, with all other
+checks passing, a measured fastener-axis offset of **0.6 mm** passes the fastened
+rung's **0.8 mm** limit but fails the tight rung's **0.4 mm** limit. The latter
+therefore fails DFM and retains its contiguous level-3 score on the same mesh.
+The comparison uses the unrounded measurement, not its displayed precision.
+
+The worker requires an explicit `family_id`; an omitted or empty family argument
+returns `family_required` before reading mesh bytes. It never defaults to a family.
+The public library and CLI already require a family selection.
+
 Other families return `not_gradable_here`: source/BOM, CAD compilation, external
 solvers and assembly-module fallbacks are outside this interface's contract.
 
@@ -130,7 +141,12 @@ The later Grade-a-part tab should import `makerbench.grade_one` directly.
    corner posts, pass/fail parity at seeds 0–2, absent-hole, absent-bore, axis-offset, mass and
    thin-wall controls. Repeated worker verdicts must match exactly. Fastener
    explanations report public diameter ranges, counts, unrounded axis offsets
-   and the affected body identities.
+   and the affected body identities. They consume the public
+   `makerbench.enclosure.measure_fastener_geometry_fixed(parts, params)` helper,
+   which returns `FixedFastenerMeasurements` without selecting a family or
+   assigning a score. Lengths are millimetres; unavailable counts/offsets are
+   `None` when there are not exactly two bodies. With two bodies, `body_ids`
+   lists base then lid; otherwise it retains the input body identities.
    A Linux control reserves virtual space without allocating resident pages and
    runs the actual worker to guard against the former address-space failure.
 5. Preserve the Git SHA and locked environment with the staged source. Have Tony
