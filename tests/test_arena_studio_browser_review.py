@@ -202,7 +202,7 @@ def test_notes_persist_and_save_writes_the_review_schema(studio_url: str, review
         solid.locator("textarea").fill("Neck is too tall; bring it under 1300 mm.")
         _card(page, CADAM).locator("textarea").fill("Pegs too small.")
         solid.get_by_role("button", name="Revise with my notes").click()
-        assert solid.get_by_role("button", name="Will revise tonight").get_attribute("aria-pressed") == "true"
+        assert solid.get_by_role("button", name="Marked for revision").get_attribute("aria-pressed") == "true"
         _card(page, SOLIDWORKS).get_by_role("button", name="Move SolidWorks up").click()
         _expect_order(page, [CADAM, SOLIDWORKS, FREECAD, FUSION])
 
@@ -217,7 +217,8 @@ def test_notes_persist_and_save_writes_the_review_schema(studio_url: str, review
         page.get_by_role("button", name="Save review").click()
         dialog = page.locator("dialog.review-dialog")
         dialog.wait_for()
-        assert "1 design will be revised" in dialog.inner_text()
+        assert "1 revision request saved for the revision runner" in dialog.inner_text()
+        assert "#1116" in dialog.inner_text() and "tonight" not in dialog.inner_text()
         assert "Queue writes are off" in dialog.inner_text()
         assert not (review_repo / "runs" / "control-room").exists()
         saved = json.loads((run_dir / "morning-review.json").read_text(encoding="utf-8"))

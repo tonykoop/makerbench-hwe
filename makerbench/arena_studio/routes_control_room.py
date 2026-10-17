@@ -39,7 +39,6 @@ def register_control_room_routes(
 ) -> None:
     runs_root = service.repo_root / "runs"
     open_file: cr.Opener = opener or cr.windows_opener
-    revision_queue = runs_root / cr.REVISION_QUEUE
 
     def night_dir(run_id: str) -> Path:
         for path in cr.discover_nights(runs_root):
@@ -66,9 +65,13 @@ def register_control_room_routes(
             raise HTTPException(status_code=400, detail=str(error))
         jobs = cr.next_night_jobs(review, run_dir)
         review["next_night_jobs"] = jobs
-        if jobs and queue_writes:
-            cr.append_to_queue(revision_queue, jobs)
-            review["queued"] = True
+        if queue_writes:
+            # Reconcile even with no requests, so a design no longer sent back is withdrawn.
+            try:
+                review["queue"] = cr.append_to_queue(cr.confined_queue_path(runs_root), jobs, run_id=run_id)
+            except cr.QueueError as error:
+                raise HTTPException(status_code=409, detail=str(error))
+            review["queued"] = bool(jobs)
         cr.save_review(run_dir, review)
         return {"saved": cr.REVIEW_FILE, "review": review}
 

@@ -234,9 +234,7 @@ def _design(run_dir: Path, repo_root: Path, row: Mapping[str, Any], charges: Map
         reason = row.get("error") or result.get("error") or f"it ended with status {status}"
         failures = [f"No graded design: {str(reason).strip()[:300]}"]
     artifacts = _mapping(result.get("artifacts"))
-    native = contained_file(run_dir, result.get("native_path"), repo_root) or contained_file(
-        run_dir, result.get("scad_path") or _mapping(result.get("gen")).get("scad_path"), repo_root
-    )
+    native = _native_file(run_dir, repo_root, result)
     turns = _turns(result)
     provider = str(row.get("provider") or "")
     if entrant in charges:
@@ -292,7 +290,7 @@ def review_view(run_dir: Path, repo_root: Path) -> dict[str, Any]:
     charges = _charges(state)
     designs = [_design(run_dir, repo_root, row, charges) for row in rows]
     finished = state.get("updated_utc") if state.get("status") not in (None, "running") else None
-    reference = next((name for name in REFERENCE_NAMES if (run_dir / name).is_file()), None)
+    reference = reference_path(run_dir)
     saved = _read_json(run_dir / REVIEW_FILE)
     entry = night_entry(run_dir)
     brief.pop("reference_image", None)
@@ -318,7 +316,15 @@ def review_view(run_dir: Path, repo_root: Path) -> dict[str, Any]:
 
 
 def reference_path(run_dir: Path) -> Optional[Path]:
-    return next((run_dir / name for name in REFERENCE_NAMES if (run_dir / name).is_file()), None)
+    """The night's reference photo: a regular file directly in the run folder, never a symlink."""
+    root = Path(run_dir).resolve()
+    for name in REFERENCE_NAMES:
+        path = Path(run_dir) / name
+        if path.is_symlink() or not path.is_file():
+            continue
+        if path.resolve().parent == root:
+            return path
+    return None
 
 
 def _morning_vote_links(run_dir: Path, summary: Mapping[str, Any]) -> dict[str, Any]:
@@ -406,17 +412,51 @@ def next_night_jobs(review: Mapping[str, Any], run_dir: Path) -> list[dict[str, 
     ]
 
 
-def append_to_queue(queue_path: Path, jobs: Sequence[Mapping[str, Any]]) -> int:
-    """Append jobs to the revision queue under its lock; existing job ids are left alone."""
+class QueueError(ValueError):
+    """The revision queue cannot be written where it should be."""
+
+
+def confined_queue_path(runs_root: Path) -> Path:
+    """``runs/control-room/revision-queue.json``, refusing any symlink on the way out of ``runs/``."""
+    root = Path(runs_root)
+    folder = root / REVISION_QUEUE.parent
+    for path in (root, folder, folder / REVISION_QUEUE.name):
+        if path.is_symlink():
+            raise QueueError(f"Refusing to write the revision queue through a symlink ({path.name}).")
+    folder.mkdir(parents=True, exist_ok=True)
+    if not folder.resolve().is_relative_to(root.resolve()):
+        raise QueueError("The revision queue folder resolves outside runs/.")
+    return folder / REVISION_QUEUE.name
+
+
+def append_to_queue(queue_path: Path, jobs: Sequence[Mapping[str, Any]], *, run_id: str) -> dict[str, int]:
+    """Reconcile this night's pending revision jobs with the latest save, under the queue lock.
+
+    The latest save wins: a still-queued job for the same design is replaced with the new
+    note, and a queued job for a design no longer sent back is withdrawn. Jobs a runner has
+    already picked up (status other than ``queued``) are never touched.
+    """
     with file_lock(queue_path):
         payload = _read_json(queue_path) if queue_path.is_file() else None
         payload = dict(payload) if isinstance(payload, Mapping) else {"schema": REVISION_QUEUE_SCHEMA}
-        existing = list(payload.get("jobs") or [])
-        known = {job.get("job_id") for job in existing if isinstance(job, Mapping)}
-        added = [dict(job) for job in jobs if job["job_id"] not in known]
-        payload["jobs"] = existing + added
+        wanted = {job["job_id"]: dict(job) for job in jobs}
+        kept, counts = [], {"added": 0, "replaced": 0, "withdrawn": 0}
+        for job in payload.get("jobs") or []:
+            if not isinstance(job, Mapping):
+                continue
+            ours = _mapping(job.get("revision_of")).get("run_id") == run_id and job.get("status") == "queued"
+            if ours and job.get("job_id") in wanted:
+                kept.append(wanted.pop(job["job_id"]))
+                counts["replaced"] += 1
+            elif ours:
+                counts["withdrawn"] += 1
+            else:
+                kept.append(dict(job))
+                wanted.pop(job.get("job_id"), None)  # a runner already has it: leave it alone
+        counts["added"] = len(wanted)
+        payload["jobs"] = kept + list(wanted.values())
         atomic_write_json(queue_path, payload)
-    return len(added)
+    return counts
 
 
 def save_review(run_dir: Path, review: Mapping[str, Any]) -> Path:
@@ -443,10 +483,16 @@ def native_path(run_dir: Path, repo_root: Path, trial_id: str) -> Optional[Path]
     row = next((r for r in trial_rows(run_log) if str(r.get("trial_id")) == trial_id), None)
     if row is None:
         return None
-    result = _mapping(row.get("result"))
-    return contained_file(run_dir, result.get("native_path"), repo_root) or contained_file(
-        run_dir, result.get("scad_path") or _mapping(result.get("gen")).get("scad_path"), repo_root
-    )
+    return _native_file(run_dir, repo_root, _mapping(row.get("result")))
+
+
+def _native_file(run_dir: Path, repo_root: Path, result: Mapping[str, Any]) -> Optional[Path]:
+    """The design's native CAD file, only with a CAD suffix (it is handed to the OS file opener)."""
+    for raw in (result.get("native_path"), result.get("scad_path") or _mapping(result.get("gen")).get("scad_path")):
+        path = contained_file(run_dir, raw, repo_root)
+        if path is not None and path.suffix.lower() in NATIVE_APPS:
+            return path
+    return None
 
 
 def trial_artifact(run_dir: Path, repo_root: Path, trial_id: str, key: str, suffix: str) -> Optional[Path]:

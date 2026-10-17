@@ -172,3 +172,71 @@ def test_assembly_night_lists_parts_and_cut_list(repo: Path):
     assert freecad["assembly"]["cut_list"][0]["material"] == "padauk"
     cadam = view["designs"][1]
     assert cadam["failures"] == ["The mesh has 1 separate body; the brief needs 6."]
+
+
+def test_reference_route_refuses_a_symlink_out_of_the_run(repo: Path, tmp_path: Path):
+    run = _night(repo)
+    outside = tmp_path / "outside-secret.png"
+    outside.write_bytes(b"\x89PNG\r\n\x1a\nSECRET")
+    (run / "reference.png").unlink()
+    (run / "reference.png").symlink_to(outside)
+    client = _client(repo)
+    assert client.get(f"/api/review/{SAMBUCA_RUN}/reference").status_code == 404
+    assert client.get(f"/api/review/{SAMBUCA_RUN}").json()["brief"]["has_reference"] is False
+
+
+@pytest.mark.parametrize("name", ["untrusted.cmd", "run.exe", "design.lnk", "notes.txt"])
+def test_open_in_app_only_hands_cad_files_to_the_opener(repo: Path, name: str):
+    run = _night(repo)
+    (run / "gen" / name).parent.mkdir(parents=True, exist_ok=True)
+    (run / "gen" / name).write_text("echo pwned", encoding="utf-8")
+    log = json.loads((run / "run_log.json").read_text())
+    log["trials"][2]["result"]["native_path"] = f"gen/{name}"
+    log["trials"][0]["result"]["scad_path"] = f"gen/{name}"  # the fallback path too
+    log["trials"][0]["result"].pop("native_path")
+    (run / "run_log.json").write_text(json.dumps(log))
+    opened: list[Path] = []
+    client = _client(repo, native_opener=opened.append)
+    for trial in (SOLIDWORKS, CADAM):
+        assert client.post(f"/api/review/{SAMBUCA_RUN}/open/{trial}", headers=ORIGIN).status_code == 404
+        assert client.get(f"/api/review/{SAMBUCA_RUN}/native/{trial}").status_code == 404
+    assert opened == []
+    designs = {d["trial_id"]: d for d in client.get(f"/api/review/{SAMBUCA_RUN}").json()["designs"]}
+    assert designs[SOLIDWORKS]["native"] is None and designs[CADAM]["native"] is None
+
+
+def test_later_saves_reconcile_pending_revision_jobs(repo: Path):
+    client = _client(repo, control_room_queue_writes=True)
+    order = client.get(f"/api/review/{SAMBUCA_RUN}").json()["grader_order"]
+    revisions = repo / "runs" / cr.REVISION_QUEUE
+
+    def save(notes, revise):
+        return client.post(f"/api/review/{SAMBUCA_RUN}", json={"ranking": order, "notes": notes, "revise": revise},
+                           headers=ORIGIN).json()["review"]
+
+    first = save({SOLIDWORKS: "Make neck shorter.", CADAM: "Bigger pegs."}, [SOLIDWORKS, CADAM])
+    assert first["queue"] == {"added": 2, "replaced": 0, "withdrawn": 0}
+    second = save({SOLIDWORKS: "Keep neck; enlarge pegs instead."}, [SOLIDWORKS])
+    assert second["queue"] == {"added": 0, "replaced": 1, "withdrawn": 1}
+    jobs = json.loads(revisions.read_text())["jobs"]
+    assert [j["revision_of"]["feedback"] for j in jobs] == ["Keep neck; enlarge pegs instead."]  # the latest note wins
+    # A job a runner already took is never rewritten or withdrawn.
+    payload = json.loads(revisions.read_text())
+    payload["jobs"][0]["status"] = "running"
+    revisions.write_text(json.dumps(payload))
+    third = save({}, [])
+    assert third["queue"]["withdrawn"] == 0 and third["queued"] is False
+    assert json.loads(revisions.read_text())["jobs"][0]["status"] == "running"
+
+
+def test_a_symlinked_control_room_folder_is_refused(repo: Path, tmp_path: Path):
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (repo / "runs" / "control-room").symlink_to(outside, target_is_directory=True)
+    client = _client(repo, control_room_queue_writes=True)
+    order = client.get(f"/api/review/{SAMBUCA_RUN}").json()["grader_order"]
+    response = client.post(f"/api/review/{SAMBUCA_RUN}", json={"ranking": order, "notes": {CADAM: "x"}, "revise": [CADAM]},
+                           headers=ORIGIN)
+    assert response.status_code == 409 and "symlink" in response.text
+    assert list(outside.iterdir()) == []
+    assert not (_night(repo) / cr.REVIEW_FILE).exists()  # nothing half-saved

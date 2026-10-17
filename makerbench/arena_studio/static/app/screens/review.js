@@ -189,7 +189,7 @@ function Card({ runId, design, index, count, state, useWebgl, onMove, onNote, on
             ? html`<button type="button" class="button button-quiet" data-open onClick=${() => onOpen(design)}>Open ${design.native.file} in ${design.native.app}</button>`
             : html`<span class="hint">No native file recorded.</span>`}
           <button type="button" class="button button-quiet review-revise" aria-pressed=${revise ? "true" : "false"} onClick=${() => onRevise(design.trial_id, noteId)}>
-            ${revise ? "Will revise tonight" : "Revise with my notes"}
+            ${revise ? "Marked for revision" : "Revise with my notes"}
           </button>
         </div>
       </div>
@@ -315,7 +315,7 @@ function Night({ view, voter }) {
       <div class="review-tray-in">
         <p class="review-tray-msg" data-testid="tray">
           Your ranking: <b>${state.order.map((id) => byId[id].name).join(" › ")}</b>${" · "}
-          <b>${plural(counts.notes, "note")}</b>${" · "}<b>${counts.revise}</b> sent back for tonight
+          <b>${plural(counts.notes, "note")}</b>${" · "}<b>${counts.revise}</b> marked for revision
         </p>
         <div class="actions">
           <button type="button" class="button button-quiet" onClick=${() => {
@@ -332,10 +332,12 @@ function Night({ view, voter }) {
         <h2>Review saved</h2>
         <p>
           ${requests.length
-            ? `${plural(requests.length, "design")} will be revised with your notes, ${EXTRA_TURNS} more turns each from its best turn. `
-            : "Ranking and notes recorded. Nothing is sent back for revision. "}
+            ? `${plural(requests.length, "revision request")} saved for the revision runner, each with your note, ${EXTRA_TURNS} more turns from its best turn. `
+            : "Ranking and notes recorded. No design is marked for revision. "}
           Written to <code>morning-review.json</code> in the run folder.
-          ${requests.length > 0 && (saved.queued ? " Added to the Control Room revision queue." : " Queue writes are off, so no queue was changed.")}
+          ${requests.length > 0 && (saved.queued
+            ? " Also added to the Control Room revision queue. Nothing runs these requests until the revision runner (#1116) exists."
+            : " Queue writes are off, so no queue was changed. Nothing runs these requests until the revision runner (#1116) exists.")}
         </p>
         <pre class="review-json">${JSON.stringify({ ranking: saved.ranking, notes: saved.notes, revision_requests: requests }, null, 2)}</pre>
         <div class="actions"><button type="button" class="button" onClick=${() => dialog.current?.close()}>Done</button></div>
