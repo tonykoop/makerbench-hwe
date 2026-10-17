@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from . import control_room as cr
 from . import control_room_newrun as nr
+from . import instrument_repo as ir
 from . import library_manifest as lm
 from .service import MATCHUP_MESH_MAX_BYTES, ArenaStudioService, _matchup_glb
 
@@ -174,6 +175,19 @@ def register_control_room_routes(
         except (lm.LibraryError, OSError, ValueError) as error:
             raise HTTPException(status_code=502, detail=f"Could not refresh the library: {error}")
         return {"count": len(snapshot["entries"]), "fetched_utc": snapshot["fetched_utc"], "source": snapshot["source"]}
+
+    def instrument_repo(instrument_id: str) -> Optional[Path]:
+        card = instruments().get(instrument_id)
+        if card is None:
+            raise HTTPException(status_code=404, detail="Unknown instrument")
+        repo_path = ir.registry_repo_path(service.get_registry_tasks(), card.get("arena_task"))
+        return ir.find_repo(service.instruments_root, str(card.get("slug") or instrument_id), repo_path)
+
+    @app.get("/api/newrun/instrument/{instrument_id}/variants")
+    def newrun_variants(instrument_id: str):
+        repo = instrument_repo(instrument_id)
+        return {**ir.variants(repo), "repo_found": repo is not None,
+                "instruments_root": service.instruments_root is not None}
 
     @app.post("/api/newrun/estimate")
     def newrun_estimate(payload: NewRunPayload):

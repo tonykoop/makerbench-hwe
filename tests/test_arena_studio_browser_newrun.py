@@ -336,3 +336,38 @@ def test_run_now_is_disabled_when_a_live_cad_cell_is_ticked(studio: str, live: s
         assert problems == []
         context.close()
         browser.close()
+
+def test_variant_chips_come_from_the_instrument_repo(repo: Path, tmp_path: Path, screenshot_dir: Path):
+    from test_control_room_variants import build_instruments_root
+
+    root = build_instruments_root(tmp_path / "instruments")
+    server, thread, url = _serve(repo, instruments_root=root)
+    try:
+        with sync_playwright() as playwright:
+            browser = _launch(playwright)
+            context, page, problems, _ = _open(browser, url)
+            page.locator('[data-instrument="kora"]').click()
+            page.locator("[data-testid=variant-source]", has_text="From family-spec.csv").wait_for()
+            chips = page.locator(".newrun-variant")
+            assert chips.count() == 2
+            assert "root prototype" in chips.first.get_attribute("title")
+            chips.nth(0).click()
+            chips.nth(1).click()
+            page.get_by_role("button", name="Overnight matchup").click()  # resets the form...
+            page.locator('[data-instrument="kora"]').click()  # ...and back to kora, with no variants picked
+            page.locator(".newrun-variant").first.wait_for()
+            page.locator(".newrun-variant").nth(0).click()
+            page.locator(".newrun-variant").nth(1).click()
+            page.wait_for_function("() => document.querySelector('[data-testid=newrun-summary]').textContent.includes('8 designs')")
+            assert "KORA-21-ROOT, KORA-13-STUDY" in page.get_by_test_id("newrun-summary").inner_text()
+            page.screenshot(path=str(screenshot_dir / "newrun-variants-1440-light.png"), full_page=True)
+
+            page.locator('[data-instrument="sambuca"]').click()  # no repo: back to free text
+            page.locator("[data-testid=variant-source]", has_text="No local repo found").wait_for()
+            assert page.get_by_label("Variants to sweep (optional, comma-separated)").is_visible()
+            assert problems == []
+            context.close()
+            browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)

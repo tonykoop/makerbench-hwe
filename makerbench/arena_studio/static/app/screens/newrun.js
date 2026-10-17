@@ -22,6 +22,7 @@ import {
   parseVariants,
   payload,
   togglePick,
+  toggleVariant,
   usd,
   warnings,
 } from "../lib/newrun.js";
@@ -59,6 +60,7 @@ function Step({ n, title, sub, children }) {
 
 function Hero({ item }) {
   const [failed, setFailed] = useState(false);
+  if (!item.slug) return null; // a registry card (no library snapshot) has no hero
   if (!item.hero || failed) return html`<span class="newrun-hero newrun-hero-empty" aria-hidden="true">${(item.name || "?").slice(0, 1)}</span>`;
   return html`<img class="newrun-hero" src=${item.hero} alt="" loading="lazy" onError=${() => setFailed(true)} />`;
 }
@@ -128,20 +130,49 @@ function InstrumentStep({ catalog, form, setForm, onRefresh, refreshing }) {
 function VariantStep({ form, setForm }) {
   const [text, setText] = useState(form.variants.join(", "));
   useEffect(() => setText(form.variants.join(", ")), [form.instrument]);
+  const table = useResource(form.instrument ? `/api/newrun/instrument/${encodeURIComponent(form.instrument)}/variants` : null);
+  const rows = table.status === "ready" ? table.data.variants : [];
   return html`
-    <${Step} n="2" title="Variant and deliverable">
-      <label class="field">
-        <span class="field-label">Variants to sweep (optional, comma-separated)</span>
-        <input
-          type="text"
-          class="wide-input"
-          value=${text}
-          placeholder="For example: D4, A4"
-          onInput=${(event) => setText(event.currentTarget.value)}
-          onChange=${(event) => setForm((f) => ({ ...f, preset: null, variants: parseVariants(event.currentTarget.value) }))}
-        />
-      </label>
-      <p class="hint">Each variant is its own night job. The instrument repo's variant list arrives with #1109.</p>
+    <${Step} n="2" title="Variant and deliverable" sub=${rows.length > 1 ? "pick several to sweep" : ""}>
+      ${rows.length > 0
+        ? html`
+            <div class="newrun-variants" role="group" aria-label="Variants">
+              ${rows.map(
+                (row) => html`<button key=${row.id} type="button" class="review-night newrun-pill newrun-variant"
+                  aria-pressed=${form.variants.includes(row.id) ? "true" : "false"} title=${[row.label, row.detail, row.status].filter(Boolean).join(" · ")}
+                  onClick=${() => setForm((f) => toggleVariant(f, row.id))}>${row.id}</button>`,
+              )}
+            </div>
+            <p class="hint" data-testid="variant-source">From <code>${table.data.source}</code> in the instrument repo. None picked runs the instrument as briefed.</p>
+          `
+        : html`
+            <label class="field">
+              <span class="field-label">Variants to sweep (optional, comma-separated)</span>
+              <input
+                type="text"
+                class="wide-input"
+                value=${text}
+                placeholder="For example: D4, A4"
+                onInput=${(event) => setText(event.currentTarget.value)}
+                onChange=${(event) => setForm((f) => ({ ...f, preset: null, variants: parseVariants(event.currentTarget.value) }))}
+              />
+            </label>
+            <p class="hint" data-testid="variant-source">
+              ${table.status === "idle"
+                ? "Pick an instrument to see its variants."
+                : table.status === "loading"
+                ? "Reading the instrument repo…"
+                : table.status === "error"
+                  ? `Couldn't read the instrument repo: ${table.error.message}`
+                  : table.status === "ready" && table.data.error
+                  ? `${table.data.error} Type variants here instead.`
+                  : table.status === "ready" && !table.data.instruments_root
+                  ? "Start the Studio with --instruments-root to read variants from the instrument repos. Each variant is its own night job."
+                  : table.status === "ready" && !table.data.repo_found
+                    ? "No local repo found for this instrument. Each variant is its own night job."
+                    : "This repo has no variants.csv or family-spec.csv yet. Each variant is its own night job."}
+            </p>
+          `}
       <div class="newrun-seg" role="group" aria-label="Deliverable">
         ${[["single", "Single part"], ["assembly", "Wood-shop assembly"]].map(
           ([id, label]) => html`<button key=${id} type="button" aria-pressed=${form.deliverable === id ? "true" : "false"}

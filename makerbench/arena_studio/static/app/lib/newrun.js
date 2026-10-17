@@ -140,3 +140,9 @@ export function cardDetail(item) {
   if (item.variants > 1) parts.push(`${item.variants} variants`);
   return parts.join(" · ");
 }
+
+// Variant chips from the instrument repo (#1109): several picked make a variant sweep.
+export function toggleVariant(form, id) {
+  const on = form.variants.includes(id);
+  return { ...form, preset: null, variants: on ? form.variants.filter((v) => v !== id) : [...form.variants, id] };
+}
