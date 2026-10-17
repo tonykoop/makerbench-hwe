@@ -165,7 +165,11 @@ def register_control_room_routes(
             mesh_glb=glb, render=cr.trial_artifact(run_dir, service.repo_root, trial_id, "png_path", ".png"),
         )
         try:
-            result = pm.promote(repo, chosen, worktrees=runs_root / cr.CONTROL_ROOM_PROMOTE_DIR, publish=promote_publish,
+            worktrees = nr.confined(runs_root, *cr.CONTROL_ROOM_PROMOTE_DIR.parts, "x").parent
+        except nr.UnsafePath as error:
+            raise HTTPException(status_code=409, detail=str(error))
+        try:
+            result = pm.promote(repo, chosen, worktrees=worktrees, publish=promote_publish,
                                 pr_opener=promote_pr_opener or pm.gh_pr_opener)
         except pm.PromoteError as error:
             raise HTTPException(status_code=409, detail=str(error))

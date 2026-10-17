@@ -357,13 +357,14 @@ function Night({ view, voter }) {
         <h2>Promote ${promoting.name}'s design?</h2>
         <p>This adds to the instrument repo, on a new branch: the native file, a 3D model for the explorer, the render as a hero image, and a provenance note (tool, model, date, checks passed).</p>
         <p>Scores and the other entrants' designs stay in MakerBench. The repo's release status does not change. You merge the PR yourself.</p>
+        <p data-testid="promote-explorer-note">The explorer is regenerated in a separate step, so the new model shows there only after that.</p>
         <div class="actions">
           <button type="button" class="button button-quiet" onClick=${() => promoteDialog.current?.close()}>Cancel</button>
           <button type="button" class="button" onClick=${confirmPromote}>Promote</button>
         </div>
       `}
     </dialog>
-    ${promoted && html`<p class="hint" role="status" data-testid="promoted">Last promotion: ${promoted.repo}, branch <code>${promoted.branch}</code>${promoted.pr_url ? html`, <a href=${promoted.pr_url} target="_blank" rel="noopener noreferrer">pull request</a>` : ", not pushed"}.</p>`}
+    ${promoted && html`<p class="hint" role="status" data-testid="promoted">Last promotion: ${promoted.repo}, branch <code>${promoted.branch}</code>${promoted.pr_url ? html`, <a href=${promoted.pr_url} target="_blank" rel="noopener noreferrer">pull request</a>` : ", not pushed"}. The explorer is regenerated in a separate step.</p>`}
     <dialog class="review-dialog" ref=${dialog} onClose=${() => setSaved(null)} data-testid="save-dialog">
       ${saved && html`
         <h2>Review saved</h2>

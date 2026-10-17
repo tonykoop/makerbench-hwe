@@ -335,6 +335,7 @@ def test_promote_to_library_confirms_then_commits_a_local_branch(tmp_path: Path,
             dialog = page.get_by_test_id("promote-dialog")
             dialog.get_by_role("heading", name="Promote FreeCAD's design?").wait_for()
             assert "Scores and the other entrants' designs stay in MakerBench" in dialog.inner_text()
+            assert "regenerated in a separate step" in dialog.inner_text()
             dialog.get_by_role("button", name="Cancel").click()
             assert _git(instrument, "branch", "--list", "makerbench/*") == ""
 
@@ -342,6 +343,7 @@ def test_promote_to_library_confirms_then_commits_a_local_branch(tmp_path: Path,
             dialog.get_by_role("button", name="Promote").click()
             page.get_by_test_id("promoted").wait_for()
             assert "not pushed" in page.get_by_test_id("promoted").inner_text()
+            assert "separate step" in page.get_by_test_id("promoted").inner_text()
             assert "freecad-opus" in _git(instrument, "branch", "--list", "makerbench/*")
             assert _git(origin, "branch", "--list", "makerbench/*") == ""
             page.screenshot(path=str(screenshot_dir / "review-promoted-1440-light.png"), full_page=False)

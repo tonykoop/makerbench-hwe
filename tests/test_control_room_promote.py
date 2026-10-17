@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from control_room_fixture import SAMBUCA_RUN, build_control_room_repo  # noqa: E402
 
 from makerbench.arena_studio import create_studio_app  # noqa: E402
+from makerbench.arena_studio import promote as pm  # noqa: E402
 
 ORIGIN = {"Origin": "http://127.0.0.1"}
 SOLIDWORKS = "sambuca__seed0__rep0__solidworks-sol"
@@ -83,8 +84,9 @@ def test_promote_commits_only_the_chosen_design_on_a_local_branch(setup):
     assert manifest["makerbench_promotions"][0]["glb"].endswith("sambuca.glb")
 
 
-def test_publishing_pushes_and_opens_a_refs_pr(setup):
+def test_publishing_pushes_and_opens_a_refs_pr(setup, monkeypatch):
     studio_repo, root, instrument, origin = setup
+    monkeypatch.setattr(pm, "remote_ok", lambda url, name: url == str(origin))  # the scratch origin stands in for GitHub
     opened = []
 
     def opener(worktree, branch, title, body):
@@ -98,6 +100,7 @@ def test_publishing_pushes_and_opens_a_refs_pr(setup):
     branch, title, body = opened[0]
     assert branch == result["branch"] and "SolidWorks" in title
     assert "Refs tonykoop/makerbench-hwe#1111" in body and "Closes" not in body
+    assert "regenerated in a separate step" in body
 
 
 def test_promote_refuses_without_a_repo_or_design(setup, tmp_path):
@@ -109,3 +112,98 @@ def test_promote_refuses_without_a_repo_or_design(setup, tmp_path):
     fusion = _client(studio_repo, root).post(f"/api/review/{SAMBUCA_RUN}/promote/sambuca__seed0__rep0__fusion-sonnet", headers=ORIGIN)
     assert fusion.status_code == 409 and "to promote" in fusion.text
     assert _client(studio_repo, root).post(f"/api/review/{SAMBUCA_RUN}/promote/{SOLIDWORKS}").status_code == 403
+
+
+def _commit(repo: Path, message: str) -> None:
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message)
+    _git(repo, "push", "-q", "origin", "main")
+
+
+def _no_promotion_branch(repo: Path) -> bool:
+    return _git(repo, "branch", "--list", "makerbench/*") == ""
+
+
+@pytest.mark.parametrize("link", ["cad", "capstone-manifest.json", "images"])
+def test_a_tracked_symlink_refuses_the_promotion_and_writes_nothing_outside(setup, tmp_path, link):
+    studio_repo, root, instrument, _origin = setup
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "capstone-manifest.json").write_text('{"sentinel": true}', encoding="utf-8")
+    if link == "capstone-manifest.json":
+        (instrument / link).unlink()
+        (instrument / link).symlink_to(outside / "capstone-manifest.json")
+    else:
+        (instrument / link).symlink_to(outside, target_is_directory=True)
+    _commit(instrument, f"track a {link} symlink")
+    response = _client(studio_repo, root).post(f"/api/review/{SAMBUCA_RUN}/promote/{SOLIDWORKS}", headers=ORIGIN)
+    assert response.status_code == 409 and "symlink" in response.text
+    assert sorted(p.name for p in outside.rglob("*")) == ["capstone-manifest.json"]
+    assert (outside / "capstone-manifest.json").read_text(encoding="utf-8") == '{"sentinel": true}'
+    assert _git(instrument, "worktree", "list").count("\n") == 0 and _no_promotion_branch(instrument)
+
+
+def test_a_gitdir_redirect_is_never_promoted_to(setup, tmp_path):
+    studio_repo, root, instrument, _origin = setup
+    decoy, _ = build_scratch_instrument(tmp_path / "decoy")
+    redirected = root / "strings" / "sambuca"
+    import shutil
+
+    shutil.rmtree(redirected)
+    redirected.mkdir()
+    (redirected / ".git").write_text(f"gitdir: {decoy / '.git'}\n", encoding="utf-8")
+    response = _client(studio_repo, root).post(f"/api/review/{SAMBUCA_RUN}/promote/{SOLIDWORKS}", headers=ORIGIN)
+    assert response.status_code == 409 and "plain git checkout" in response.text
+    assert _no_promotion_branch(decoy)
+
+
+def test_a_commondir_redirect_and_a_foreign_origin_are_refused(setup, tmp_path, monkeypatch):
+    studio_repo, root, instrument, _origin = setup
+    (instrument / ".git" / "commondir").write_text(str(tmp_path / "elsewhere" / ".git"), encoding="utf-8")
+    response = _client(studio_repo, root).post(f"/api/review/{SAMBUCA_RUN}/promote/{SOLIDWORKS}", headers=ORIGIN)
+    assert response.status_code == 409 and "commondir" in response.text
+    (instrument / ".git" / "commondir").unlink()
+    # Publishing checks origin first: the scratch origin is not github.com/tonykoop/sambuca.
+    client = _client(studio_repo, root, control_room_promote=True, promote_pr_opener=lambda *a: pytest.fail("opened"))
+    response = client.post(f"/api/review/{SAMBUCA_RUN}/promote/{SOLIDWORKS}", headers=ORIGIN)
+    assert response.status_code == 409 and "refusing to push" in response.text
+    assert _no_promotion_branch(instrument)
+    assert pm.remote_ok("https://github.com/tonykoop/sambuca.git", "sambuca")
+    assert pm.remote_ok("git@github.com:tonykoop/sambuca", "sambuca")
+    assert not pm.remote_ok("https://github.com/someone/sambuca.git", "sambuca")
+    assert not pm.remote_ok("https://github.com/tonykoop/sambuca.git.evil.example/x", "sambuca")
+
+
+def test_git_environment_cannot_redirect_the_repo(setup, tmp_path, monkeypatch):
+    studio_repo, root, instrument, _origin = setup
+    decoy, _ = build_scratch_instrument(tmp_path / "decoy")
+    monkeypatch.setenv("GIT_DIR", str(decoy / ".git"))
+    result = _client(studio_repo, root).post(f"/api/review/{SAMBUCA_RUN}/promote/{SOLIDWORKS}", headers=ORIGIN).json()
+    monkeypatch.delenv("GIT_DIR")
+    assert _no_promotion_branch(decoy) and result["branch"] in _git(instrument, "branch", "--list", "makerbench/*")
+
+
+def test_an_oversized_or_invalid_manifest_is_refused(setup):
+    studio_repo, root, instrument, _origin = setup
+    big = {**MANIFEST, "padding": "x" * pm.MAX_MANIFEST_BYTES}
+    (instrument / "capstone-manifest.json").write_text(json.dumps(big), encoding="utf-8")
+    _commit(instrument, "big manifest")
+    response = _client(studio_repo, root).post(f"/api/review/{SAMBUCA_RUN}/promote/{SOLIDWORKS}", headers=ORIGIN)
+    assert response.status_code == 409 and "larger than" in response.text
+    (instrument / "capstone-manifest.json").write_text("[1, 2]", encoding="utf-8")
+    _commit(instrument, "list manifest")
+    response = _client(studio_repo, root).post(f"/api/review/{SAMBUCA_RUN}/promote/{SOLIDWORKS}", headers=ORIGIN)
+    assert response.status_code == 409 and "JSON object" in response.text
+    assert _no_promotion_branch(instrument)
+
+
+def test_a_symlinked_worktree_folder_is_refused(setup, tmp_path):
+    studio_repo, root, _instrument, _origin = setup
+    outside = tmp_path / "wt-outside"
+    outside.mkdir()
+    control = studio_repo / "runs" / "control-room"
+    control.mkdir(exist_ok=True)
+    (control / "promote-worktrees").symlink_to(outside, target_is_directory=True)
+    response = _client(studio_repo, root).post(f"/api/review/{SAMBUCA_RUN}/promote/{SOLIDWORKS}", headers=ORIGIN)
+    assert response.status_code == 409 and "symlink" in response.text
+    assert list(outside.iterdir()) == []
