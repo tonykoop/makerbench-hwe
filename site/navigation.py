@@ -37,9 +37,18 @@ OLD_HEADER_RE = re.compile(r'<header\b[^>]*class="nav"[^>]*>.*?</header>', re.S)
 def render_header(page: Path) -> str:
     prefix = '../' * len(page.parent.parts)
 
+    def destination(href):
+        path = href.split('#', 1)[0]
+        return path + 'index.html' if path.endswith('/') else path
+
+    # Several homepage fragments share one document; mark only its first link.
+    current = next((href for _, href in PRIMARY + MORE
+                    if destination(href) == page.as_posix()), None)
+
     def links(entries):
         return '\n'.join(
             f'        <a href="{escape(href if href.startswith("https:") else prefix + href, quote=True)}"'
+            + (' aria-current="page"' if href == current else '')
             + (' id="repo-link" rel="noopener"' if label == 'GitHub' else '')
             + f'>{escape(label)}</a>' for label, href in entries
         )

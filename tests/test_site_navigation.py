@@ -49,6 +49,41 @@ def test_navigation_has_one_canonical_destination_per_primary_link():
     assert 'Methodology' not in dict(nav.PRIMARY)
 
 
+@pytest.mark.parametrize('page, expected', [
+    *((href, label) for label, href in nav.PRIMARY + nav.MORE
+      if not href.startswith('https:') and '#' not in href and not href.endswith('/')),
+    ('index.html', 'About'),
+    ('blog/index.html', 'Blog'),
+    ('blog/failure-gallery.html', None),
+    ('models/baseline-v0-default-community/index.html', None),
+    ('tasks/beam_bending_dfm/index.html', None),
+])
+def test_navigation_marks_only_the_matching_page_current(page, expected):
+    from html.parser import HTMLParser
+
+    class CurrentLinks(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.labels = []
+            self.current = False
+
+        def handle_starttag(self, tag, attrs):
+            if tag == 'a':
+                self.current = dict(attrs).get('aria-current') == 'page'
+
+        def handle_data(self, data):
+            if self.current:
+                self.labels.append(data)
+
+        def handle_endtag(self, tag):
+            if tag == 'a':
+                self.current = False
+
+    parser = CurrentLinks()
+    parser.feed(nav.render_header(Path(page)))
+    assert parser.labels == ([expected] if expected else [])
+
+
 @pytest.mark.parametrize('deleted', ['matchups.html', 'landscape.html', 'tasks.html', 'arena.html', 'charts.html', 'leaderboard.html'])
 def test_deleting_a_detail_template_is_drift_even_if_builder_also_omits_it(tmp_path, monkeypatch, deleted):
     site = tmp_path / 'site'
