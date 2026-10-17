@@ -5,7 +5,6 @@ import glob
 import json
 from pathlib import Path
 
-import pytest
 import trimesh
 
 from makerbench import code_cad_arena_runner as runner
