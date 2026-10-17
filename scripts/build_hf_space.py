@@ -179,6 +179,20 @@ def verify_staged(out_dir: Path) -> list[str]:
         for line in terms.matched_lines(text, hashes):
             problems.append(f"{rel}:{line}: forbidden term fingerprint")
 
+    requirements = out_dir / "requirements.txt"
+    if requirements.is_file():
+        content = requirements.read_text(encoding="utf-8")
+        package_lines = [line.strip() for line in content.splitlines()
+                         if re.match(r"makerbench(?:-hwe)?\b", line.strip(), re.I)]
+        if len(package_lines) != 1 or not re.fullmatch(
+            r"makerbench-hwe @ https://github\.com/tonykoop/makerbench-hwe/archive/[0-9a-f]{40}\.zip",
+            package_lines[0],
+        ):
+            problems.append("requirements.txt: MakerBench must use a full 40-character commit SHA")
+    for rel in rel_paths:
+        if {part.lower() for part in Path(rel).parts} & {"makerbench", "tasks"}:
+            problems.append(f"{rel}: vendored benchmark code is not allowed in the Space")
+
     readme_path = out_dir / "README.md"
     requirements_path = out_dir / "requirements.txt"
     if readme_path.is_file():
@@ -279,7 +293,9 @@ def main() -> None:
     print("Smoke-test locally:")
     print(f"  cd {args.out} && pip install -r requirements.txt && python app.py")
     print("Manual upload (maintainer action, see docs/PUBLICATION_PLAN.md section 1):")
-    print(f"  hf upload {args.space_id} {args.out} . --repo-type space --delete '*'")
+    print("  Use HfApi().upload_folder with repo_type='space', path_in_repo='.',")
+    print(f"  repo_id={args.space_id!r}, folder_path={str(args.out)!r}, delete_patterns=['*'].")
+    print("  The CLI create call fails with HTTP 402; update the existing cpu-basic Space.")
 
 
 if __name__ == "__main__":

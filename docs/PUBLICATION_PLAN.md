@@ -20,7 +20,8 @@ nothing in this repo publishes anything automatically.
   ([ASSEMBLY_TASKS.md](ASSEMBLY_TASKS.md)), and the CADGenBench
   cross-submission prep ([CADGENBENCH_SUBMISSION.md](CADGENBENCH_SUBMISSION.md),
   #62 — note **#52 is still open**: no CADGenBench submission has been made).
-- Not yet existing: any Hugging Face presence, any arXiv ID.
+- The HF Space is live, deployed from `1741f832`, on grandfathered free
+  `cpu-basic` hardware (maintainer update, 2026-10-16). No arXiv ID yet.
 - Paper source: [ARXIV_TECH_REPORT.md](ARXIV_TECH_REPORT.md) (draft in this
   repo). Generated LaTeX staging source lives at `paper/main.tex` and must be
   regenerated from the markdown draft immediately before submission.
@@ -41,9 +42,8 @@ only source is [`spaces/makerbench_hwe/`](../spaces/makerbench_hwe/) in this
 repo (#1026): a Gradio Blocks app (`sdk: gradio`, `sdk_version: 5.43.1`,
 pinned in `requirements.txt`) with one module per tab under `tabs/`. The
 Leaderboard tab links to (and embeds) the live GitHub Pages board and keeps no
-copy of it, so the Space never goes stale between deploys. Grade a part
-(#1027/#1028) and Explore designs (#1029) are placeholders until their stories
-land.
+copy of it, so the Space never goes stale between deploys. Grade a part (#1028) uses the public STL grader; Explore designs (#1029)
+remains a placeholder until its story lands.
 
 This replaces the three earlier Space codebases:
 
@@ -58,6 +58,13 @@ This replaces the three earlier Space codebases:
 
 `spaces/studio_demo/` is a separate, never-deployed build recipe; #1029 folds
 the showcase into the Explore designs tab.
+
+The Space is live at <https://huggingface.co/spaces/tonykoop/makerbench-hwe>,
+deployed from `1741f832`, on grandfathered free `cpu-basic` hardware (maintainer
+update, 2026-10-16). Keep that hardware; creating a new Gradio Space now requires
+PRO. `hf upload ... --repo-type space` calls `repos/create` even for this existing
+Space and fails with HTTP 402. Update the existing repository directly with
+`HfApi.upload_folder`, which skips creation, as below.
 
 Every step below is a manual maintainer action (Tony). Nothing in this repo
 uploads to Hugging Face.
@@ -78,7 +85,8 @@ uploads to Hugging Face.
   `scripts/check_public_terms.py` fingerprints pass on every staged file;
   every file is a `.py`, `.md` or `.txt` that is strict UTF-8 with no NUL or
   control bytes except tab/LF/CR; the card carries the canary; the gradio pin equals the card's
-  `sdk_version`. `--out` overrides the staging directory; `--space-id` only
+  `sdk_version`; MakerBench is an exact 40-character commit archive dependency
+  rather than vendored source. `--out` overrides the staging directory; `--space-id` only
   changes the printed upload command. The same checks run in CI
   (`tests/test_build_hf_space.py`, `tests/test_hf_space_app.py`).
 
@@ -92,6 +100,24 @@ uploads to Hugging Face.
   deactivate && cd -       # back to the repository root
   ```
 
+  Install in a fresh environment outside the repository with `PYTHONPATH` unset.
+  The package archive commit must be reachable publicly before deployment. Do
+  not replace it with a moving branch or Git VCS checkout (which can initialize
+  submodules). The wheel contains only the three allowlisted public task module
+  pairs needed by `grade_one`. No model submissions or protected data are used.
+
+  Check the installed route from outside the checkout: select each family/seed,
+  read its brief, and grade both one-click examples. The basic two-slab control
+  scores 4/4 and the cube scores 1/4 for seeds 0–2. These are teaching controls,
+  not reference designs. Upload a malformed STL and verify a readable error;
+  upload a valid STL and download its JSON. Verify no mesh remains under the
+  temporary `space-grade-*` directory after success or failure, and no STL is
+  present in the staged tree or Gradio cache. The picker sends bytes in the
+  grading request rather than using Gradio's file-upload cache. Keep request
+  body logging and flagging disabled. The CPU queue concurrency is one, with
+  eight waiting slots; grading retains the 30-second / 4 GiB worker limits.
+  Mesh limits (10 MiB, 100,000 triangles, 16 bodies) appear on the tab.
+
   Check: three tabs in the order Grade a part, Explore designs, Leaderboard;
   the Leaderboard button opens <https://tonykoop.github.io/makerbench-hwe/>
   and the embed loads. Delete `.venv` before uploading (or upload from a fresh
@@ -102,12 +128,24 @@ uploads to Hugging Face.
 - [ ] Upload, replacing the old Space contents in one commit:
 
   ```bash
-  hf upload tonykoop/makerbench-hwe dist/hf_space . --repo-type space \
-    --commit-message "Deploy from makerbench-hwe <git sha>" --delete '*'
+  python - <<'PY'
+  import subprocess
+  from huggingface_hub import HfApi
+
+  sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+  HfApi().upload_folder(
+      repo_id="tonykoop/makerbench-hwe",
+      repo_type="space",
+      folder_path="dist/hf_space",
+      path_in_repo=".",
+      delete_patterns=["*"],
+      commit_message=f"Deploy from makerbench-hwe {sha}",
+  )
+  PY
   ```
 
   Run this from the repository root (the relative path `dist/hf_space` is
-  resolved against the working directory). `--delete '*'` removes every
+  resolved against the working directory). `delete_patterns=["*"]` removes every
   remote file that is not in the staged tree (the old app's snapshot data,
   scripts, Makefile and pyproject), **except `.gitattributes`**, which
   `huggingface_hub` (checked on 0.36.2) always preserves. Files in the upload
@@ -123,7 +161,7 @@ uploads to Hugging Face.
   (the leaderboard itself needs no Space redeploy because the tab links to the
   live site). Rerun `python scripts/build_hf_space.py` and the upload step.
 
-- [ ] Only after the Space is live: add the cross-links in section 4.
+- [ ] After verifying the updated live Space: reconcile the cross-links in section 4.
 
 ## 2. arXiv tech report
 

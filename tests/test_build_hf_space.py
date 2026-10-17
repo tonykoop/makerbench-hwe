@@ -238,7 +238,10 @@ def test_main_prints_upload_command_for_the_one_space(tmp_path, monkeypatch, cap
 
     captured = capsys.readouterr().out
     assert build_hf_space.DEFAULT_SPACE_ID == "tonykoop/makerbench-hwe"
-    assert f"hf upload tonykoop/makerbench-hwe {out} . --repo-type space" in captured
+    assert "HfApi().upload_folder" in captured
+    assert "repo_type='space'" in captured
+    assert str(out) in captured
+    assert "hf upload " not in captured
     assert (out / "app.py").is_file()
 
 
@@ -367,3 +370,20 @@ def test_committed_tree_staging_ignores_untracked_and_aliased_working_files() ->
     finally:
         extra.unlink()
     assert before == after and "tabs/untracked_probe.txt" not in after
+
+
+@pytest.mark.parametrize("pin", ["main", "a" * 7, "a" * 39, "a" * 41])
+def test_rejects_moving_or_short_makerbench_pin(staged, pin):
+    import re
+
+    path = staged / "requirements.txt"
+    path.write_text(re.sub(r"/archive/[0-9a-f]{40}\.zip", f"/archive/{pin}.zip",
+                           path.read_text()))
+    assert any("40-character" in issue for issue in build_hf_space.verify_staged(staged))
+
+
+def test_rejects_vendored_benchmark_code(staged):
+    path = staged / "makerbench" / "single_part.py"
+    path.parent.mkdir()
+    path.write_text("# synthetic vendored code")
+    assert any("vendored" in issue for issue in build_hf_space.verify_staged(staged))
