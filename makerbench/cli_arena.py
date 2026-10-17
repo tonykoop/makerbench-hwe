@@ -1495,6 +1495,11 @@ def arena_studio(
             None,
             "--library-manifest",
             help="A library-manifest.json for New Run's Refresh (#1107). Without it, Refresh reads the published library page.",
+        ),
+        control_room_promote: bool = typer.Option(
+            False,
+            "--control-room-promote",
+            help="Let Morning Review's Promote to library push its branch and open a PR in the instrument repo. Off: the branch stays local.",
         )):
     """Launch the MakerBench Arena Studio web interface (Issue #696)."""
 
@@ -1530,6 +1535,7 @@ def arena_studio(
         instruments_root=Path(instruments_root) if instruments_root else None,
         control_room_queue_writes=control_room_queue_writes,
         library_manifest=Path(library_manifest) if library_manifest else None,
+        control_room_promote=control_room_promote,
     )
     console.print(f"[bold green]MakerBench Arena Studio running at http://{host}:{port}/[/bold green]")
     uvicorn.run(app, host=host, port=port)
