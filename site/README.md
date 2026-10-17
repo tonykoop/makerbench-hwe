@@ -283,11 +283,11 @@ The committed generated files mean the site also works when opened or served
 directly without Actions (see *View locally* above); the workflow simply keeps
 the published copy fresh.
 
-## Mirror to a Hugging Face Space
+## Hugging Face Space
 
-Because the site is fully static, it can be mirrored 1:1 into a Hugging Face
-**static** Space. `python scripts/build_hf_space.py` regenerates the data,
-stages the site plus a Space card README under `dist/hf_space/` (git-ignored),
-and prints the manual upload command. Uploading is a maintainer action; the
-step-by-step checklist is in
-[`../docs/PUBLICATION_PLAN.md`](../docs/PUBLICATION_PLAN.md).
+The site is not mirrored to Hugging Face. The Space `tonykoop/makerbench-hwe`
+is a Gradio app built from [`../spaces/makerbench_hwe/`](../spaces/makerbench_hwe/)
+whose Leaderboard tab links to this site, so the site stays the only copy of
+the leaderboard. `python scripts/build_hf_space.py` stages the Space under
+`dist/hf_space/` (git-ignored); uploading is a maintainer action described in
+[`../docs/PUBLICATION_PLAN.md`](../docs/PUBLICATION_PLAN.md), section 1.

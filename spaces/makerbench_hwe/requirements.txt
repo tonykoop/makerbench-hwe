@@ -1,0 +1,7 @@
+# MakerBench HWE Hugging Face Space (#1026).
+#
+# The Space uses the gradio SDK: Hugging Face installs gradio at the
+# `sdk_version` in README.md, so this pin MUST match that value
+# (tests/test_hf_space_app.py enforces it). Keep it here so a local
+# `pip install -r requirements.txt && python app.py` runs the same version.
+gradio==5.43.1
