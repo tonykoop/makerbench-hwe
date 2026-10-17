@@ -120,12 +120,14 @@ def test_ecosystem_never_exposes_private_or_unverified_nodes(javascript):
         thread.join(timeout=5)
 
 
-def test_matchups_borderline_count_and_footnote_without_javascript(tmp_path):
+def test_matchups_show_one_plain_table_per_card_without_javascript(tmp_path):
+    """Wall thickness left scoring (2026-10-16): even a bundle built from a regrade that still
+    replays the retired check renders one table per card, with no borderline or wall wording."""
     import runpy
 
     controls = runpy.run_path(str(ROOT/'tests/test_openrouter_replay_builder.py'))
     builder = controls['site']
-    sample = controls['borderline_bundle'](tmp_path, failed=True)
+    sample = controls['retired_wall_bundle'](tmp_path, failed=True)
     results = tmp_path/'results'
     results.mkdir()
     (results/'sample.json').write_text(json.dumps(sample))
@@ -140,29 +142,13 @@ def test_matchups_borderline_count_and_footnote_without_javascript(tmp_path):
             pytest.skip('Chromium is not installed')
         page = browser.new_page(java_script_enabled=False)
         page.set_content(html)
-        rows = page.locator('tbody tr')
-        assert rows.count() == 396
-        marked = rows.filter(has_text='1 borderline (excluded)')
-        assert marked.count() == 1
-        assert marked.locator('td').nth(2).inner_text() == '80.00% · 1 borderline (excluded)'
-        assert rows.filter(has_text='0 borderline (excluded)').count() == 0
-        assert '0.8–1.2%' in page.locator('body').inner_text()
-        card = page.locator('article').filter(has_text='1 borderline (excluded)')
-        assert card.count() == 1
-        link = card.get_by_role('link', name='the min_wall rescore notes')
-        assert link.is_visible()
-        assert link.get_attribute('href').endswith('/docs/MIN_WALL_RESCORE.md')
-        assert page.get_by_role('link', name='the min_wall rescore notes').count() == 66
-        # A mixed card remains split and labelled with JavaScript disabled.
-        item = sample['matchups'][0]
-        item['entrants'][0].pop('min_wall_method')
-        (results/'sample.json').write_text(json.dumps(sample))
-        page.set_content(builder._prerender_matchups_html(builder.build_matchups_page(results)))
-        mixed = page.locator('article').filter(has_text=item['id'])
-        assert mixed.count() == 1
-        assert mixed.locator('table').count() == 2
-        assert mixed.get_by_role('heading', name=builder.LEGACY_MIN_WALL_LABEL, exact=True).is_visible()
-        assert mixed.get_by_role('heading', name=builder.MIN_WALL_ESTIMATOR_LABELS['robust-v1'], exact=True).is_visible()
-        assert 'Estimators differ within this matchup; rows are not comparable across groups.' in mixed.inner_text()
-        assert mixed.get_by_role('link', name='the min_wall rescore notes').count() == 1
+        assert page.locator('tbody tr').count() == 396
+        assert page.locator('article').count() == 66
+        assert page.locator('article table').count() == 66  # one table per card, no estimator split
+        body = page.locator('body').inner_text().lower()
+        for forbidden in ('borderline', 'min_wall', 'robust-v1', 'estimator', 'rescore notes'):
+            assert forbidden not in body
+        assert page.get_by_role('link', name='the min_wall rescore notes').count() == 0
+        marked = page.locator('tbody tr').filter(has_text='80.00%')
+        assert marked.count() >= 1  # the cell whose body_count fails: 4 of 5 checks
         browser.close()
