@@ -19,7 +19,7 @@ def test_installed_package_version_matches_metadata_not_legacy(tmp_path, distrib
     wheel = tmp_path / f"{normalized}-{version}-py3-none-any.whl"
     info = f"{normalized}-{version}.dist-info"
     entries = {}
-    for name in ("__init__.py", "provenance.py", "render.py", "run_log_io.py"):
+    for name in ("__init__.py", "provenance.py", "render.py", "run_log_io.py", "track_isolation.py"):
         entries["makerbench/" + name] = (ROOT / "makerbench" / name).read_bytes()
     for name in ("__init__.py", "scoring.py"):
         entries["makerbench_core/" + name] = (ROOT / "makerbench_core" / name).read_bytes()

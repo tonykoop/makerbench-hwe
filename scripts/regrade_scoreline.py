@@ -50,9 +50,10 @@ def _regrade(job: tuple) -> tuple[str, dict]:
 
 def collect_jobs(run_dir: Path, log: dict, registry: dict) -> list[tuple]:
     from makerbench.code_cad_generator import instrument_spec_from_registry
+    from makerbench.run_log_io import trial_rows
 
     jobs = []
-    for trial in log.get("trials") or []:
+    for trial in trial_rows(log):
         result = trial.get("result") or {}
         render = run_dir / "render" / str(trial.get("trial_id"))
         stl, png = render / "output.stl", render / "preview.png"
@@ -72,6 +73,7 @@ def collect_jobs(run_dir: Path, log: dict, registry: dict) -> list[tuple]:
 def regrade(run_dir: Path, out_run: Path, registry_path: Path, workers: int) -> dict:
     from makerbench.code_cad_arena_runner import (is_consensus_row, load_arena_registry, mesh_objective_gate,
                                                   trial_min_wall_policy)
+    from makerbench.run_log_io import trial_rows
 
     run_dir, out_run = run_dir.resolve(), out_run.resolve()
     if out_run == run_dir or run_dir in out_run.parents or out_run in run_dir.parents:
@@ -87,6 +89,8 @@ def regrade(run_dir: Path, out_run: Path, registry_path: Path, workers: int) -> 
             results = dict(pool.map(_regrade, jobs, chunksize=1))
 
     regraded = copy.deepcopy(log)
+    # The regraded log is a new scoring source: it carries only code-CAD trials.
+    regraded["trials"] = copy.deepcopy(trial_rows(log))
     for trial in regraded.get("trials") or []:
         if trial.get("trial_id") in results:
             trial["result"]["objective"] = results[trial["trial_id"]]

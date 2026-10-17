@@ -33,6 +33,43 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Mapping, Sequence
 
+from .track_isolation import is_blender_row
+
+
+EXTERNAL_STEP = "external_step"
+
+
+def _off_track(entry: Mapping[str, object], config: Mapping[str, object]) -> bool:
+    """Not a blind code-CAD trial: external STEP export, or a Blender (mesh) trial."""
+    return is_external_step(entry) or is_blender_row(entry, config)
+
+
+def is_external_step(entry: Mapping[str, object]) -> bool:
+    """External exports never enter blind code-CAD scorelines, reports or vote queues."""
+    return any(
+        isinstance(part, Mapping) and part.get(key) == EXTERNAL_STEP
+        for part in (entry, entry.get("result"), entry.get("meta"))
+        for key in ("entrant_type", "modality", "track")
+    )
+
+
+def trial_rows(run_log: Mapping[str, object]) -> list:
+    """The run log's blind code-CAD trial rows: the ONE reader for scoring and publishing.
+
+    Rows that are not on the code-CAD tracks are excluded here, before any cell
+    indexing, summing or ranking: external (STEP) exports (#1069) and Blender
+    (mesh, freeform) trials (#1041), whether tagged on the row, its result/meta, or
+    the whole run's config. Every consumer that aggregates, ranks, reports, queues
+    or publishes trials must iterate this, never ``run_log["trials"]``;
+    ``tests/test_track_isolation_publishers.py`` fails on any other raw access.
+    Writers that must preserve every row (orchestrator merge, ingest) and by
+    ``trial_id`` lookups keep the raw list (explicit allowlist in that test).
+    """
+    config = run_log.get("config") or {}
+    if is_external_step(config) or is_blender_row({}, config):
+        return []
+    return [row for row in run_log.get("trials") or [] if not _off_track(row, config)]
+
 
 def lock_path_for(path: Path) -> Path:
     """Return the sidecar lock path for a run log (or any JSON file)."""

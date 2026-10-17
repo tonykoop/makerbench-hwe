@@ -326,6 +326,22 @@ def public_ecosystem_nodes(nodes: list[dict]) -> list[dict]:
             and n.get("private") is False and n.get("url") in ECOSYSTEM_PUBLIC_TARGETS]
 
 
+def _load_track_isolation():
+    """Load makerbench/track_isolation.py by path (stdlib-only; no package import)."""
+    import importlib.util
+    import sys as _sys
+
+    path = Path(__file__).resolve().parents[1] / "makerbench" / "track_isolation.py"
+    spec = importlib.util.spec_from_file_location("_mb_track_isolation", path)
+    module = importlib.util.module_from_spec(spec)
+    _sys.modules.setdefault("_mb_track_isolation", module)
+    spec.loader.exec_module(module)
+    return module
+
+
+_ISOLATION = _load_track_isolation()
+
+
 def is_human_baseline_identifier(identifier: object) -> bool:
     """True for a human/expert calibration row (issue #24), keyed off the id prefix."""
     return str(identifier or "").startswith(HUMAN_BASELINE_PREFIX)
@@ -483,6 +499,20 @@ def _public_agreement(stat: dict, rows: list) -> dict:
     return public
 
 
+def _is_external_config(config: dict) -> bool:
+    return any(config.get(key) == "external_step" for key in ("entrant_type", "modality", "track"))
+
+
+def _is_off_track_row(row: dict, config: dict | None = None) -> bool:
+    """A scoreline/replay row from a track other than blind code-CAD (Blender, external STEP)."""
+    if _ISOLATION.is_blender_row(row, config):
+        return True
+    return any(
+        isinstance(part, dict) and _is_external_config(part)
+        for part in (row, row.get("result"), row.get("meta"), config)
+    )
+
+
 def _arena_run_entry(run_id: str, payloads: dict) -> dict | None:
     """Fold one run's payloads into a public, aggregate-only arena entry.
 
@@ -492,10 +522,17 @@ def _arena_run_entry(run_id: str, payloads: dict) -> dict | None:
     elo = payloads.get("elo") or {}
     # #901/#983: rows scored with a marked min_wall estimator (robust-v1, the default since #979)
     # are published in their own labelled list, never alongside the legacy rows.
-    all_rows = [row for row in (payloads.get("scoreline") or []) if isinstance(row, dict)]
+    config = ((payloads.get("run_log") or {}).get("config")) or {}
+    if _ISOLATION.is_blender_row({}, config) or _is_external_config(config):
+        return None  # another track's run: never the blind arena page
+    # Rows from other tracks (Blender, external STEP) are routed out at the load boundary,
+    # so no table below (objective rates, estimator tables, completeness) can see them.
+    all_rows = [
+        row for row in (payloads.get("scoreline") or [])
+        if isinstance(row, dict) and not _is_off_track_row(row)
+    ]
     scoreline, by_estimator = _split_by_min_wall_method(all_rows)
     agreement = payloads.get("agreement") or {}
-    config = ((payloads.get("run_log") or {}).get("config")) or {}
 
     entrants_expected = [str(m) for m in (config.get("model_ids") or [])]
     if not entrants_expected:
@@ -736,9 +773,15 @@ def _arena_page_round(number: int, run_dir: Path) -> dict | None:
     Returns ``None`` when the round has no objective scoreline yet.
     """
     scoreline = _arena_read_json(run_dir / "objective_scoreline.json")
+    log_config = _arena_read_json(run_dir / "run_log.json").get("config") or {}
+    if _ISOLATION.is_blender_row({}, log_config) or _is_external_config(log_config):
+        return None  # another track's run: never the blind arena page
     rows = []
     marked: dict[str, list] = {}
-    scored = [row for row in scoreline.get("rows") or [] if isinstance(row, dict) and row.get("entrant")]
+    scored = [
+        row for row in scoreline.get("rows") or []
+        if isinstance(row, dict) and row.get("entrant") and not _is_off_track_row(row)
+    ]
     for row in scored:
         if row.get("confinement") == "unconfined":
             # #785: a non-blind trial whose entrant could read outside its staged
@@ -4817,6 +4860,10 @@ def build_matchups_page(results_dir: Path) -> dict:
         if bundle.get("schema") != "makerbench-frontier-arena-replay-v1":
             continue
         for item in bundle.get("matchups") or []:
+            if _is_off_track_row(item) or any(
+                _is_off_track_row(row, item.get("matchup")) for row in item.get("entrants") or []
+            ):
+                continue  # another track's entrants (Blender, external STEP) never join this table
             metadata = _public_matchup_metadata(item.get("matchup") or {})
             rows = []
             for row in item.get("entrants") or []:

@@ -17,6 +17,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping, Optional
+from .run_log_io import trial_rows
 
 
 # Qualitative palette for assembly part identification (distinct hues that
@@ -176,7 +177,7 @@ def instrument_vote_tallies(revealed_jsonl: Path) -> dict[str, dict[str, float]]
 
 def _scored_trials(run_log: Mapping[str, object]) -> list[dict]:
     trials = []
-    for entry in run_log.get("trials") or []:
+    for entry in trial_rows(run_log):
         result = entry.get("result") or {}
         objective = result.get("objective") or {}
         rate = objective.get("objective_pass_rate")
