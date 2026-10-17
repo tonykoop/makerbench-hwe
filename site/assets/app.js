@@ -1231,9 +1231,14 @@
       corner.scope = "col";
       heading.appendChild(corner);
       families.forEach(function (family) {
-        var th = heatmapElement("th", "heatmap-family-heading", family.title);
+        var th = heatmapElement("th", "heatmap-family-heading");
         th.scope = "col";
         th.dataset.familyId = family.id;
+        th.title = family.title;
+        th.setAttribute("aria-label", family.title);
+        var shortTitle = family.title.length > 36
+          ? family.title.slice(0, 23) + "…" + family.title.slice(-10) : family.title;
+        th.appendChild(heatmapElement("span", "heatmap-family-label", shortTitle));
         heading.appendChild(th);
       });
       head.appendChild(heading);
@@ -1247,10 +1252,12 @@
           (harnessLabel(model.agent_identifier) || "Unknown harness");
         var th = heatmapElement("th", "heatmap-model-heading");
         th.scope = "row";
-        th.title = label;
+        th.title = label + " · " + ranking.coverage(model) + " / " + familyList().length + " families";
+        th.setAttribute("aria-label", th.title);
         th.appendChild(heatmapElement("span", "heatmap-model-name", plainLabel(model.identifier)));
-        th.appendChild(heatmapElement("small", "heatmap-model-meta", label.slice(plainLabel(model.identifier).length + 3)));
-        th.appendChild(heatmapElement("small", "heatmap-coverage", ranking.coverage(model) + " / " + familyList().length + " families"));
+        var shortEffort = effortCode(model) || (model.reasoning_level == null ? "Unspecified" : effortLabel(model.reasoning_level));
+        th.appendChild(heatmapElement("small", "heatmap-coverage",
+          ranking.coverage(model) + "/" + familyList().length + " · " + shortEffort));
         row.appendChild(th);
         families.forEach(function (family) {
           var score = familyScore(model, family);

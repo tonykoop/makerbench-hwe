@@ -54,6 +54,10 @@ def test_real_heatmap_values_selection_structure_and_contrast(heatmap_page, widt
     active = [f['id'] for f in payload['task_families'] if any(
         (m['tracks'][track]['families'].get(f['id']) or {}).get('mean_score') is not None for m in models)]
     assert page.locator('.heatmap-family-heading').evaluate_all('nodes => nodes.map(n => n.dataset.familyId)') == active
+    names = {f['id']: f['title'] for f in payload['task_families']}
+    assert page.locator('.heatmap-family-heading').evaluate_all(
+        'nodes => nodes.map(n => [n.title, n.getAttribute("aria-label")])'
+    ) == [[names[f], names[f]] for f in active]
     assert f"{len(payload['task_families']) - len(active)} empty families hidden" in page.locator('.heatmap-summary').inner_text()
     selected = _rows(page)
     assert len(selected) == min(12, len(models))
@@ -68,7 +72,7 @@ def test_real_heatmap_values_selection_structure_and_contrast(heatmap_page, widt
     for row in all_rows:
         values = model_by_id[row['id']]['tracks'][track]['families']
         assert row['cells'] == [dict(family=f, score=(values.get(f) or {}).get('mean_score')) for f in active]
-    result = page.evaluate('''() => {
+    result = page.evaluate('''width => {
       const root = document.querySelector('#family-heatmap');
       const wrap = root.querySelector('.heatmap-scroll');
       const luminance = color => {
@@ -89,11 +93,17 @@ def test_real_heatmap_values_selection_structure_and_contrast(heatmap_page, widt
         fits: document.documentElement.scrollWidth <= innerWidth+1 &&
           wrap.getBoundingClientRect().right <= innerWidth,
         cellSize: Array.from(root.querySelectorAll('.heatmap-cell')).every(cell =>
-          cell.getBoundingClientRect().width >= 64 && cell.getBoundingClientRect().height >= 44),
+          cell.getBoundingClientRect().width >= (width === 1440 ? 44 : 64) && cell.getBoundingClientRect().height >= 44),
         headers: Array.from(root.querySelectorAll('th')).every(th => th.scrollWidth <= th.clientWidth+1),
-        scrolls: wrap.scrollWidth > wrap.clientWidth && wrap.scrollHeight > wrap.clientHeight,
+        familyColumnsFit: width !== 1440 || (wrap.scrollWidth <= wrap.clientWidth+1 &&
+          Array.from(root.querySelectorAll('.heatmap-family-heading')).every(th => {
+            const rect = th.getBoundingClientRect(), frame = wrap.getBoundingClientRect();
+            const label = root.querySelector('.heatmap-model-heading').getBoundingClientRect();
+            return rect.left >= label.right && rect.right <= frame.right;
+          })),
+        scrolls: (width === 1440 || wrap.scrollWidth > wrap.clientWidth) && wrap.scrollHeight > wrap.clientHeight,
       };
-    }''')
+    }''', width)
     assert all(result.values()), (width, theme, track, result)
     page.locator('.heatmap-scroll').evaluate('(el) => {el.scrollLeft=220; el.scrollTop=180;}')
     assert page.evaluate('''() => {
