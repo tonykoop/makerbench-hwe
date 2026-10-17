@@ -27,4 +27,4 @@ jobs:
       - name: Require kernel and confinement, then run real STEP tests
         env:
           MAKERBENCH_REQUIRE_STEP: '1'
-        run: python -m pytest tests/test_step_mesh.py tests/test_step_brep.py -q
+        run: python -m pytest tests/test_step_mesh.py tests/test_step_brep.py tests/test_external_step.py -q
