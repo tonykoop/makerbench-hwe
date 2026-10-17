@@ -103,8 +103,47 @@ def entrant_for(tool: Tool, model: Model) -> nightly_cad.NightlyEntrant:
     )
 
 
+def registry_instruments(registry: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Arena registry tasks as New Run cards (the fallback when there is no library snapshot)."""
+    return [
+        {
+            "id": str(item["id"]), "name": str(item.get("display_name") or item["id"]), "family": item.get("family"),
+            "subtype": "", "variants": 1, "hero": "", "cad": "", "completeness": "", "wolfram": "",
+            "arena_task": str(item["id"]), "assembly": bool(item.get("assembly")),
+            "envelope_mm": item.get("envelope_mm"), "brief": item.get("task_brief") or "",
+        }
+        for item in registry
+        if item.get("id")
+    ]
+
+
+def library_instruments(entries: Sequence[Mapping[str, Any]], registry: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Library cards, each linked to its arena task when the registry has one (#1107).
+
+    A linked card uses the task id, so its job is graded and its reference image found;
+    an unlinked one keeps the library slug and needs an uploaded reference image.
+    """
+    from .library_manifest import registry_links
+
+    links = registry_links(registry)
+    tasks = {str(task.get("id")): task for task in registry}
+    out = []
+    for entry in entries:
+        task_id = links.get(entry["slug"])
+        task = tasks.get(task_id or "", {})
+        out.append({
+            "id": task_id or entry["slug"], "slug": entry["slug"], "name": entry["title"],
+            "family": entry["family"], "family_label": entry.get("family_label"), "subtype": entry["subtype"],
+            "variants": entry["variants"], "hero": entry["hero"], "cad": entry["cad"],
+            "completeness": entry["completeness"], "wolfram": entry["wolfram"], "arena_task": task_id,
+            "assembly": bool(task.get("assembly")), "envelope_mm": task.get("envelope_mm"),
+            "brief": task.get("task_brief") or "",
+        })
+    return out
+
+
 def catalog(instruments: Sequence[Mapping[str, Any]], availability: Optional[Callable[[str], Mapping[str, Any]]] = None) -> dict:
-    """What the form offers: instruments, the entrant grid and its unavailable cells."""
+    """What the form offers: instruments (already shaped as cards), the entrant grid and its unavailable cells."""
     availability = availability or doe.backend_availability
     backends = {}
     for tool in TOOLS:
@@ -114,18 +153,7 @@ def catalog(instruments: Sequence[Mapping[str, Any]], availability: Optional[Cal
         except doe.DoeValidationError:
             backends[tool.backend] = {"status": "requires_preflight", "reason": "Checked when the run starts"}
     return {
-        "instruments": [
-            {
-                "id": str(item.get("id")),
-                "name": str(item.get("display_name") or item.get("id")),
-                "family": item.get("family"),
-                "assembly": bool(item.get("assembly")),
-                "envelope_mm": item.get("envelope_mm"),
-                "brief": item.get("task_brief") or "",
-            }
-            for item in instruments
-            if item.get("id")
-        ],
+        "instruments": list(instruments),
         "models": [{"id": m.id, "name": m.name, "family": m.family} for m in MODELS],
         "tools": [
             {

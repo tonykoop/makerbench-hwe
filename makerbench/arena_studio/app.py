@@ -107,6 +107,8 @@ def create_studio_app(
     instruments_root: Optional[Path] = None,
     control_room_queue_writes: bool = False,
     native_opener: Optional[Callable[[Path], None]] = None,
+    library_fetch: Optional[Callable[[], str]] = None,
+    library_manifest: Optional[Path] = None,
 ) -> FastAPI:
     """Create and configure the Arena Studio FastAPI instance."""
 
@@ -178,7 +180,8 @@ def create_studio_app(
 
     register_delta_routes(app, service, _resolve_run_dir)  # delta lane (#699)
     register_control_room_routes(  # Control Room (#1104); queue writes stay off unless asked
-        app, service, queue_writes=control_room_queue_writes, opener=native_opener
+        app, service, queue_writes=control_room_queue_writes, opener=native_opener,
+        library_fetch=library_fetch, library_manifest=library_manifest,
     )
     register_workbench_routes(  # design workbench (#788 W3)
         app, service.workbench, _resolve_run_dir, lambda value: _publish_value(value, service.repo_root)
