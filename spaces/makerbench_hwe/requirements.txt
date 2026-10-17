@@ -5,3 +5,20 @@
 # (tests/test_hf_space_app.py enforces it). Keep it here so a local
 # `pip install -r requirements.txt && python app.py` runs the same version.
 gradio==5.43.1
+
+# Commit archive avoids recursive Git submodule checkout. No code is vendored.
+makerbench-hwe @ https://github.com/tonykoop/makerbench-hwe/archive/eb3cebdee3923086d3a8b737595c82a65747ee08.zip
+# Public grade_one geometry stack (geometry pins match requirements.lock).
+trimesh==4.12.2
+manifold3d==3.5.1
+rtree==1.4.1
+scipy==1.15.3
+networkx==3.4.2
+numpy==2.2.6
+shapely==2.1.2
+# Gradio 5 requires Pydantic <2.12.
+pydantic==2.11.10
+typer==0.26.7
+rich==15.0.0
+# Gradio 5 requires Pillow <12.
+pillow==11.3.0

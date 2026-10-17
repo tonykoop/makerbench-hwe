@@ -29,13 +29,19 @@ def _markdown_table(markdown: str, heading: str) -> list[dict[str, str]]:
     return parsed
 
 
-def test_publication_plan_records_unlaunched_distribution_state() -> None:
+def test_publication_plan_records_live_hf_and_unsubmitted_arxiv_state() -> None:
     plan = PLAN.read_text(encoding="utf-8")
     report = REPORT.read_text(encoding="utf-8")
 
     state = plan.split("---", 1)[0]
     state_words = " ".join(state.split())
-    assert "Not yet existing: any Hugging Face presence, any arXiv ID" in state
+    assert (
+        "Live: HF dataset `tonykoop/makerbench-hwe-tasks` (uploaded from `d3215818`) "
+        "and Space `tonykoop/makerbench-hwe` (deployed from `1741f832`, HF commit "
+        "`b4a17ee2`), on grandfathered free `cpu-basic` hardware (maintainer update, "
+        "2026-10-16). arXiv is still not submitted; no arXiv ID yet."
+    ) in state_words
+    assert "Not yet existing: any Hugging Face presence" not in state
     assert "do not link to the Space before it is uploaded" in state_words
     assert "do not cite an arXiv ID before" in state_words
     assert "#52 is still open" in state

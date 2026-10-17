@@ -117,12 +117,16 @@ def test_staged_tree_contains_no_private_or_oracle_paths(staged: Path) -> None:
     assert build_hf_space.verify_staged(staged) == []
 
 
-def test_space_source_reads_nothing_outside_its_directory() -> None:
-    """The app must not reach into the repo (results/, private/, site/ data)."""
+def test_space_source_uses_installed_package_without_repo_data_paths() -> None:
+    """Only the installed package may supply allowlisted public task modules."""
     for path in SPACE_SRC.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         assert "parents[" not in text, path
-        assert ".parent.parent" not in text, path
+        if path.name == "grade.py":
+            assert text.count(".parent.parent") == 1
+            assert 'Path(makerbench.__file__).resolve().parent.parent / "tasks" / family' in text
+        else:
+            assert ".parent.parent" not in text, path
         assert "open(" not in text, path
         assert "read_text" not in text, path
 
@@ -233,12 +237,21 @@ def test_space_card_is_public_and_accurate(staged: Path) -> None:
 def test_main_prints_upload_command_for_the_one_space(tmp_path, monkeypatch, capsys):
     out = tmp_path / "hf_space"
     monkeypatch.setattr(sys, "argv", ["build_hf_space.py", "--out", str(out)])
+    checked = []
+    # Ancestry uses a controlled Git DAG in test_hf_space_pin.py; this CLI test
+    # must also work in CI's shallow PR checkout without origin/main.
+    monkeypatch.setattr(build_hf_space, "assert_package_pin_on_main",
+                        lambda requirements: checked.append(requirements))
 
     build_hf_space.main()
 
     captured = capsys.readouterr().out
+    assert len(checked) == 1 and "makerbench-hwe @" in checked[0]
     assert build_hf_space.DEFAULT_SPACE_ID == "tonykoop/makerbench-hwe"
-    assert f"hf upload tonykoop/makerbench-hwe {out} . --repo-type space" in captured
+    assert "HfApi().upload_folder" in captured
+    assert "repo_type='space'" in captured
+    assert str(out) in captured
+    assert "hf upload " not in captured
     assert (out / "app.py").is_file()
 
 
@@ -367,3 +380,20 @@ def test_committed_tree_staging_ignores_untracked_and_aliased_working_files() ->
     finally:
         extra.unlink()
     assert before == after and "tabs/untracked_probe.txt" not in after
+
+
+@pytest.mark.parametrize("pin", ["main", "a" * 7, "a" * 39, "a" * 41])
+def test_rejects_moving_or_short_makerbench_pin(staged, pin):
+    import re
+
+    path = staged / "requirements.txt"
+    path.write_text(re.sub(r"/archive/[0-9a-f]{40}\.zip", f"/archive/{pin}.zip",
+                           path.read_text()))
+    assert any("40-character" in issue for issue in build_hf_space.verify_staged(staged))
+
+
+def test_rejects_vendored_benchmark_code(staged):
+    path = staged / "makerbench" / "single_part.py"
+    path.parent.mkdir()
+    path.write_text("# synthetic vendored code")
+    assert any("vendored" in issue for issue in build_hf_space.verify_staged(staged))
