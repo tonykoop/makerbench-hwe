@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -90,7 +91,7 @@ def test_refresh_snapshots_offline_and_the_catalog_reads_it(tmp_path: Path):
 def test_refresh_failure_keeps_the_last_snapshot(tmp_path: Path):
     repo = build_newrun_repo(tmp_path)
     snapshot = repo / "runs" / lm.SNAPSHOT_PATH
-    lm.refresh(snapshot, fetch=lambda: PAGE, now=datetime(2026, 10, 1, tzinfo=timezone.utc))
+    lm.refresh(repo / "runs", fetch=lambda: PAGE, now=datetime(2026, 10, 1, tzinfo=timezone.utc))
 
     def broken():
         raise OSError("offline")
@@ -105,5 +106,95 @@ def test_refresh_failure_keeps_the_last_snapshot(tmp_path: Path):
 def test_manifest_file_refresh(tmp_path: Path):
     manifest = tmp_path / "library-manifest.json"
     manifest.write_text(json.dumps({"schema": lm.MANIFEST_SCHEMA, "entries": [{"slug": "kora", "title": "Kora"}]}))
-    snap = lm.refresh(tmp_path / "library.json", manifest_path=manifest, fetch=lambda: pytest.fail("fetched"))
+    snap = lm.refresh(tmp_path / "runs", manifest_path=manifest, fetch=lambda: pytest.fail("fetched"))
+    assert (tmp_path / "runs" / lm.SNAPSHOT_PATH).is_file()
     assert snap["source"] == "manifest:library-manifest.json" and len(snap["entries"]) == 1
+
+
+def _studio(repo: Path, **kwargs) -> TestClient:
+    return TestClient(create_studio_app(registry_path=repo / "registry.json", repo_root=repo, library_fetch=lambda: PAGE,
+                                        **kwargs), base_url="http://127.0.0.1")
+
+
+def test_a_symlinked_control_room_folder_is_never_read_or_written(tmp_path: Path):
+    repo = build_newrun_repo(tmp_path)
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    planted = lm.build_snapshot(lm.entries_from_html(PAGE), source="planted")
+    (outside / "library.json").write_text(json.dumps(planted))
+    (repo / "runs" / "control-room").symlink_to(outside, target_is_directory=True)
+    client = _studio(repo)
+    assert client.get("/api/newrun/catalog").json()["library"] is None  # the planted cache is ignored
+    response = client.post("/api/newrun/library/refresh", headers=ORIGIN)
+    assert response.status_code == 502 and "symlink" in response.text
+    assert json.loads((outside / "library.json").read_text())["source"] == "planted"  # nothing written outside
+
+
+def test_a_symlinked_snapshot_file_is_ignored(tmp_path: Path):
+    repo = build_newrun_repo(tmp_path)
+    outside = tmp_path / "elsewhere.json"
+    outside.write_text(json.dumps(lm.build_snapshot(lm.entries_from_html(PAGE), source="planted")))
+    (repo / "runs" / "control-room").mkdir()
+    (repo / "runs" / lm.SNAPSHOT_PATH).symlink_to(outside)
+    assert lm.load_snapshot(repo / "runs") is None
+    with pytest.raises(lm.LibraryError):
+        lm.refresh(repo / "runs", fetch=lambda: PAGE)
+
+
+def test_oversized_manifest_and_snapshot_are_refused(tmp_path: Path):
+    repo = build_newrun_repo(tmp_path)
+    big_entries = [{"slug": f"x{i}", "title": "y" * 200} for i in range(25000)]
+    manifest = tmp_path / "library-manifest.json"
+    manifest.write_text(json.dumps({"schema": lm.MANIFEST_SCHEMA, "entries": big_entries}))
+    assert manifest.stat().st_size > lm.MAX_JSON_BYTES
+    with pytest.raises(lm.LibraryError, match="larger than"):
+        lm.refresh(repo / "runs", manifest_path=manifest)
+    (repo / "runs" / "control-room").mkdir()
+    (repo / "runs" / lm.SNAPSHOT_PATH).write_text(json.dumps({"schema": lm.SNAPSHOT_SCHEMA, "entries": big_entries}))
+    assert lm.load_snapshot(repo / "runs") is None
+    assert _studio(repo).get("/api/newrun/catalog").json()["library"] is None
+
+
+@pytest.mark.parametrize("cached", [
+    {"schema": "makerbench-control-room-library-v1"},
+    {"schema": "makerbench-control-room-library-v1", "entries": "nope"},
+    {"schema": "makerbench-control-room-library-v1", "entries": [1, "x", None, {"slug": "../evil"}, {"title": "no slug"}]},
+    {"schema": "makerbench-control-room-library-v1", "entries": [{"slug": "kora", "cad": {"nested": True}}]},
+    "not an object",
+])
+def test_a_corrupt_cache_falls_back_to_the_registry(tmp_path: Path, cached):
+    repo = build_newrun_repo(tmp_path)
+    (repo / "runs" / "control-room").mkdir()
+    (repo / "runs" / lm.SNAPSHOT_PATH).write_text(json.dumps(cached))
+    data = _studio(repo).get("/api/newrun/catalog")
+    assert data.status_code == 200
+    assert data.json()["library"] is None and len(data.json()["instruments"]) == 3
+
+
+def test_a_partly_valid_cache_keeps_its_good_entries_and_an_invalid_refresh_keeps_the_cache(tmp_path: Path):
+    repo = build_newrun_repo(tmp_path)
+    (repo / "runs" / "control-room").mkdir()
+    good = {"slug": "kora", "title": "Kora", "cad": "none", "variants": 3}
+    (repo / "runs" / lm.SNAPSHOT_PATH).write_text(json.dumps(
+        {"schema": lm.SNAPSHOT_SCHEMA, "fetched_utc": "2026-10-01T00:00:00+00:00", "entries": [good, {"slug": "../x"}]}))
+    snap = lm.load_snapshot(repo / "runs")
+    assert [e["slug"] for e in snap["entries"]] == ["kora"] and snap["entries"][0]["variants"] == 3
+    bad = tmp_path / "bad-manifest.json"
+    bad.write_text("[1, 2]")
+    with pytest.raises(lm.LibraryError):
+        lm.refresh(repo / "runs", manifest_path=bad)
+    assert lm.load_snapshot(repo / "runs")["fetched_utc"] == "2026-10-01T00:00:00+00:00"
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0, reason="needs POSIX permissions as a non-root user")
+def test_an_unreadable_cache_falls_back_to_the_registry(tmp_path: Path):
+    repo = build_newrun_repo(tmp_path)
+    lm.refresh(repo / "runs", fetch=lambda: PAGE)
+    cache = repo / "runs" / lm.SNAPSHOT_PATH
+    cache.chmod(0)
+    try:
+        assert lm.load_snapshot(repo / "runs") is None
+        data = _studio(repo).get("/api/newrun/catalog")
+        assert data.status_code == 200 and data.json()["library"] is None and len(data.json()["instruments"]) == 3
+    finally:
+        cache.chmod(0o644)

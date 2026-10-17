@@ -141,11 +141,10 @@ def register_control_room_routes(
     nightly_queue = runs_root / "nightly-cad-queue.json"
     telemetry_store = str(service.repo_root / "data" / "sessions.jsonl")
 
-    snapshot_path = runs_root / lm.SNAPSHOT_PATH
 
     def cards() -> tuple[list[dict], Optional[dict]]:
         registry = service.get_registry_tasks()
-        snapshot = lm.load_snapshot(snapshot_path)
+        snapshot = lm.load_snapshot(runs_root)
         if snapshot is None:
             return nr.registry_instruments(registry), None
         return nr.library_instruments(snapshot["entries"], registry), snapshot
@@ -171,7 +170,7 @@ def register_control_room_routes(
     @app.post("/api/newrun/library/refresh")
     def newrun_library_refresh():
         try:
-            snapshot = lm.refresh(snapshot_path, manifest_path=library_manifest, fetch=library_fetch or lm.fetch_page)
+            snapshot = lm.refresh(runs_root, manifest_path=library_manifest, fetch=library_fetch or lm.fetch_page)
         except (lm.LibraryError, OSError, ValueError) as error:
             raise HTTPException(status_code=502, detail=f"Could not refresh the library: {error}")
         return {"count": len(snapshot["entries"]), "fetched_utc": snapshot["fetched_utc"], "source": snapshot["source"]}
