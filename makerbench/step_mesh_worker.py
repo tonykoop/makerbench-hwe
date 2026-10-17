@@ -75,6 +75,47 @@ def _cylinders(body):
     return cylinders
 
 
+MAX_OVERLAP_PAIRS = 200
+
+
+def _solid_interference(add, bodies, summaries):
+    """Pairwise solid overlap by boolean common volume; independent of mate recognition.
+
+    Pairs whose bounding boxes do not overlap cannot interfere and are skipped
+    without a boolean. More than ``MAX_OVERLAP_PAIRS`` candidate pairs fails
+    closed with an explicit, non-numeric explanation rather than running unbounded.
+    """
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
+    from OCP.BRepGProp import BRepGProp
+    from OCP.GProp import GProp_GProps
+    from OCP.TopAbs import TopAbs_SOLID
+    solids = [i for i, body in enumerate(bodies) if body.ShapeType() == TopAbs_SOLID]
+    pairs = []
+    for a, i in enumerate(solids):
+        for j in solids[a + 1:]:
+            lo_i, hi_i = summaries[i]["bounds"][:3], summaries[i]["bounds"][3:]
+            lo_j, hi_j = summaries[j]["bounds"][:3], summaries[j]["bounds"][3:]
+            if all(lo_i[k] <= hi_j[k] and lo_j[k] <= hi_i[k] for k in range(3)):
+                pairs.append((i, j))
+    if len(pairs) > MAX_OVERLAP_PAIRS:
+        add("solid_interference", None, 1e-7, "mm^3", [summaries[i]["body_id"] for i in solids],
+            False, "<=", detail=f"{len(pairs)} candidate body pairs exceed the "
+            f"{MAX_OVERLAP_PAIRS}-pair limit; overlap could not be measured")
+        return
+    for i, j in pairs:
+        common = BRepAlgoAPI_Common(bodies[i], bodies[j])
+        common.SetRunParallel(False)
+        common.Build()
+        volume = None
+        if common.IsDone():
+            props = GProp_GProps()
+            BRepGProp.VolumeProperties_s(common.Shape(), props)
+            volume = abs(props.Mass())
+        add("solid_interference", volume, 1e-7, "mm^3",
+            [summaries[i]["body_id"], summaries[j]["body_id"]],
+            volume is not None and volume <= 1e-7, "<=")
+
+
 def analyze_brep(bodies, task=None):
     """Trusted worker-only native checks, called before any tessellation."""
     import math
@@ -87,6 +128,11 @@ def analyze_brep(bodies, task=None):
     checks = []
 
     def add(name, measured, threshold, unit, body_id, passed, requires="==", detail=""):
+        if not detail:
+            # #903: a check never carries an empty explanation.
+            shown = "n/a" if measured is None else measured
+            detail = (f"{name}: measured {shown}{f' {unit}' if unit else ''}, "
+                      f"required {requires} {threshold}")
         checks.append({"check": name, "measured": measured, "threshold": threshold,
                        "unit": unit,
                        "body_id": ("assembly" if isinstance(body_id, list) else
@@ -189,26 +235,14 @@ def analyze_brep(bodies, task=None):
         else:
             add("hole_features", None, 1, "count", None, False,
                 detail="cannot identify the required shaft/support bodies")
-        # Pairwise solid overlap is independent of mate recognition.
-        from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
-        from OCP.BRepGProp import BRepGProp
-        from OCP.GProp import GProp_GProps
-        for i, left in enumerate(bodies):
-            for j in range(i + 1, len(bodies)):
-                common = BRepAlgoAPI_Common(left, bodies[j])
-                common.SetRunParallel(False)
-                common.Build()
-                volume = None
-                if common.IsDone():
-                    props = GProp_GProps()
-                    BRepGProp.VolumeProperties_s(common.Shape(), props)
-                    volume = abs(props.Mass())
-                add("solid_interference", volume, 1e-7, "mm^3",
-                    [summaries[i]["body_id"], summaries[j]["body_id"]],
-                    volume is not None and volume <= 1e-7, "<=")
+        _solid_interference(add, bodies, summaries)
     else:
         na("hole_features", "no supported feature-count contract for this task")
         na("mating_features", "no supported mating-feature contract for this task")
+    if task_id != "assembly_pillow_block_shaft":
+        # Single-part tasks: several solids in one submission must not overlap
+        # either (the assembly branch above runs the same check).
+        _solid_interference(add, bodies, summaries)
     failures = [c for c in checks if c["passed"] is False]
     return {"backend": "step", "track": task.get("track"), "task_id": task_id,
             "seed": task.get("seed"), "status": "checked", "passed": not failures,

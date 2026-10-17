@@ -278,3 +278,96 @@ def test_explanations_match_903_field_types():
         if failure["check"] == "solid_interference":
             assert failure["body_id"] == "assembly"
             assert len(failure["body_ids"]) == 2
+
+
+# --- #1073: overlap for single-part tasks, external track, explanations --------
+
+
+def overlapping_boxes():
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
+    return compound([BRepPrimAPI_MakeBox(10, 10, 10).Shape(),
+                     BRepPrimAPI_MakeBox(gp_Pnt(5, 0, 0), 10, 10, 10).Shape()])
+
+
+def separate_boxes():
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
+    return compound([BRepPrimAPI_MakeBox(10, 10, 10).Shape(),
+                     BRepPrimAPI_MakeBox(gp_Pnt(50, 0, 0), 10, 10, 10).Shape()])
+
+
+@confined
+@pytest.mark.parametrize("task_spec", [spec("other"),
+                                       spec("brep_plate_hole_pattern", holes_x=1, holes_y=1)])
+def test_overlapping_solids_in_single_part_task_fail_via_real_conversion(tmp_path, task_spec):
+    path = export(overlapping_boxes(), tmp_path / "input.step")
+    report = check_brep_submission(path, tmp_path / "out", task_spec, track="blind")
+    overlaps = rows(report, "solid_interference")
+    assert len(overlaps) == 1 and overlaps[0]["passed"] is False
+    assert overlaps[0]["measured"] > 100  # 5 x 10 x 10 mm3 of shared volume
+    assert not report["passed"]
+    assert overlaps[0]["body_id"] == "assembly" and len(overlaps[0]["body_ids"]) == 2
+
+
+@confined
+def test_disjoint_solids_do_not_trip_the_overlap_check(tmp_path):
+    path = export(separate_boxes(), tmp_path / "input.step")
+    report = check_brep_submission(path, tmp_path / "out", spec("other"), track="blind")
+    assert rows(report, "solid_interference") == []  # bbox-disjoint pairs need no boolean
+    assert report["passed"]
+
+
+@confined
+def test_single_solid_has_no_overlap_rows(tmp_path):
+    path = export(box(), tmp_path / "input.step")
+    report = check_brep_submission(path, tmp_path / "out", spec("other"), track="blind")
+    assert rows(report, "solid_interference") == []
+
+
+@confined
+def test_overlap_through_full_conversion_keeps_mesh_and_reports(tmp_path):
+    from makerbench import step_mesh
+    path = export(overlapping_boxes(), tmp_path / "input.step")
+    artifacts = step_mesh.convert_step_to_mesh(path, tmp_path / "out", spec=spec("other"),
+                                               track="blind")
+    report = json.loads(artifacts.brep_path.read_text())
+    assert any(c["check"] == "solid_interference" and c["passed"] is False
+               for c in report["checks"])
+    assert artifacts.stl_path.is_file()
+
+
+@confined
+def test_external_track_is_accepted_and_labelled(tmp_path):
+    path = export(box(), tmp_path / "input.step")
+    report = check_brep_submission(path, tmp_path / "out", spec("other"), track="external_step")
+    assert report["track"] == "external_step" and report["backend"] == "step"
+    na = check_brep_submission(tmp_path / "m.stl", tmp_path / "o2", spec("other"),
+                               track="external_step")
+    assert na["track"] == "external_step" and na["status"] == "not applicable"
+
+
+@confined
+@pytest.mark.parametrize("name,build", [("box", box), ("plate", lambda: plate(holes=2)),
+                                        ("overlap", overlapping_boxes),
+                                        ("assembly", assembly)])
+def test_every_check_has_a_nonempty_explanation(tmp_path, name, build):
+    task = assembly_spec() if name == "assembly" else spec("other")
+    path = export(build(), tmp_path / "input.step")
+    report = check_brep_submission(path, tmp_path / "out", task, track="blind")
+    assert report["checks"]
+    for check in report["checks"]:
+        assert isinstance(check["detail"], str) and check["detail"].strip(), check
+    for failure in report["failures"]:
+        assert failure["detail"].strip()
+
+
+@native
+def test_failed_check_without_detail_gets_a_generated_explanation():
+    from makerbench.step_mesh_worker import analyze_brep
+    report = analyze_brep([box(), box()], {"task_id": "assembly_pillow_block_shaft",
+                                           "params": assembly_spec().params})
+    assert report["failures"]
+    assert all(f["detail"].strip() for f in report["failures"])
+    count = next(f for f in report["failures"] if f["check"] == "body_count")
+    assert "measured 2" in count["detail"] and "required == 3" in count["detail"]

@@ -70,7 +70,10 @@ closed shells (`BRepCheck_Shell.Closed`), and runs serial
 `BOPAlgo_CheckerSI` at level 9. Self-interference is read from the checker's
 interference data structure; an algorithm error/warning is an incomplete failed
 check, never a clean result. Separate solids are checked individually; assembly
-body overlaps are checked by pairwise solid boolean intersection volume.
+body overlaps are checked by pairwise solid boolean intersection volume. The same
+`solid_interference` check runs for every other task too (#1073), so two overlapping
+solids cannot pass as a single part; pairs with disjoint bounding boxes are skipped,
+and more than 200 candidate pairs fails closed with an explicit explanation.
 
 For task-specific diagnostics, pass the public `TaskSpec` and an explicit track:
 
@@ -90,10 +93,13 @@ raises an environment error; malformed/untransferable STEP raises a candidate
 these checks to a normal conversion; `StepMeshArtifacts.brep_path` locates them.
 A conversion that fails does not publish partial worker output.
 
-The report carries backend `step`, track (`blind` or `perception`), task ID,
+The report carries backend `step`, track (`blind`, `perception`, or `external_step` for the
+external-entrant track, whose intake now writes `brep_checks` into `external_step.json` using the
+public `tasks/<id>/task.py` parameters when that family exists), task ID,
 seed, per-check status and `passed`, and a `failures` list. Each explanation
 follows #903: `check`, `measured`, `threshold`, `unit`, `requires`, `body_id`,
-`detail`. A boolean failure measures `false` against `true`; counts use exact
+`detail` (never empty: a check without a specific note gets a generated
+"measured X, required Y" explanation). A boolean failure measures `false` against `true`; counts use exact
 integer thresholds; tolerances state `<=`; fit bands state `in`. Checks without
 a B-rep or an applicable task rule have status **`not applicable`** and null
 `passed`/measurement/threshold. A mesh-only submission returns five explicit N/A
