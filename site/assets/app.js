@@ -7,6 +7,7 @@
   var DATA = null;
   var TRACK = "blind";
   var EFFICIENCY_METRIC = "time";
+  var FAMILY_HEATMAP_SHOW_ALL = false;
   var SORT = { key: "overall", dir: -1 }; // default: overall desc
   var charts = {}; // canvas id -> Chart instance
 
@@ -468,7 +469,7 @@
       return { primary: variants[0], variants: variants.slice(1) };
     });
     return { entries: entries, coverage: coverage, reference: reference,
-      eligible: eligible, overallOrder: overallOrder };
+      eligible: eligible, overallOrder: overallOrder, coverageOrder: variantOrder };
   }
 
   function renderTable() {
@@ -1121,81 +1122,177 @@
     }
   }
 
-  function renderFamilyChart() {
-    destroyChart("chart-family");
-    var fams = familyList();
-    var models = modelsOnTrack(TRACK);
-    var ctx = document.getElementById("chart-family");
-    var box = ctx.parentNode;
-    box.classList.add("chart-box-family");
-    var card = ctx.closest(".card");
-    var oldLegend = card.querySelector(".family-model-legend");
-    if (oldLegend) oldLegend.remove();
-    if (!models.length) { return; }
-    var legend = document.createElement("div");
-    legend.className = "family-model-legend";
-    legend.setAttribute("aria-label", "Model legend");
-    box.insertAdjacentElement("afterend", legend);
-
-    function drawFamilyLegend(chart) {
-      legend.innerHTML = "";
-      var limit = chart.width < 500 ? 4 : 8;
-      chart.options.scales.x.ticks.autoSkip = chart.width < 500;
-      chart.data.datasets.slice(0, limit).forEach(function (dataset, index) {
-        var entry = document.createElement("button");
-        entry.type = "button";
-        entry.className = "family-legend-entry";
-        entry.title = dataset.label;
-        entry.setAttribute("aria-pressed", String(chart.isDatasetVisible(index)));
-        var swatch = document.createElement("span");
-        swatch.className = "family-legend-swatch";
-        swatch.style.backgroundColor = dataset.backgroundColor;
-        swatch.setAttribute("aria-hidden", "true");
-        var label = document.createElement("span");
-        label.className = "family-legend-label";
-        label.textContent = dataset.label;
-        entry.appendChild(swatch);
-        entry.appendChild(label);
-        entry.addEventListener("click", function () {
-          chart.setDatasetVisibility(index, !chart.isDatasetVisible(index));
-          entry.setAttribute("aria-pressed", String(chart.isDatasetVisible(index)));
-          chart.update();
-        });
-        legend.appendChild(entry);
-      });
-      if (chart.data.datasets.length > limit) {
-        var more = document.createElement("span");
-        more.className = "family-legend-more";
-        more.textContent = "+" + (chart.data.datasets.length - limit) + " more (hover bars)";
-        legend.appendChild(more);
-      }
+  function renderFamilyHeatmap() {
+    var root = document.getElementById("family-heatmap");
+    if (!root) return;
+    root.innerHTML = "";
+    var models = modelsOnTrack(TRACK).slice();
+    var ranking = leaderboardRanking(models);
+    models.sort(ranking.coverageOrder);
+    function familyScore(model, family) {
+      var cell = (model.tracks[TRACK].families || {})[family.id];
+      return cell && typeof cell.mean_score === "number" && Number.isFinite(cell.mean_score)
+        ? cell.mean_score : null;
     }
-    var datasets = models.map(function (m, i) {
-      var tr = m.tracks[TRACK];
-      return {
-        label: modelText(m),
-        data: fams.map(function (f) {
-          var c = tr.families[f.id];
-          return c && c.mean_score != null ? c.mean_score : null;
-        }),
-        backgroundColor: modelColor(i, m),
-        borderRadius: 4,
-      };
+    var families = familyList().filter(function (family) {
+      return models.some(function (model) { return familyScore(model, family) !== null; });
     });
-    charts["chart-family"] = new Chart(ctx, {
-      type: "bar",
-      data: { labels: fams.map(function (f) { return f.title.replace(/ \(.*\)$/, ""); }), datasets: datasets },
-      options: commonOpts({
-        onResize: drawFamilyLegend,
-        plugins: { legend: { display: false } },
-        scales: {
-          y: { beginAtZero: true, max: 4, ticks: { stepSize: 1, color: cssVar("--text-soft") }, grid: { color: cssVar("--border") } },
-          x: { ticks: { color: cssVar("--text-soft"), font: { size: 10 },
-            minRotation: 60, maxRotation: 60, autoSkip: box.clientWidth < 500 }, grid: { display: false } },
-        },
-      }),
+    function heatmapElement(tag, className, text) {
+      var element = document.createElement(tag);
+      if (className) element.className = className;
+      if (text != null) element.textContent = text;
+      return element;
+    }
+    var palette = [0, 1, 2, 3, 4].map(function (score) {
+      var hex = getComputedStyle(root).getPropertyValue("--heatmap-" + score).trim();
+      return [1, 3, 5].map(function (offset) { return parseInt(hex.slice(offset, offset + 2), 16); });
     });
-    drawFamilyLegend(charts["chart-family"]);
+    function heatmapColors(score) {
+      var bounded = Math.max(0, Math.min(4, score));
+      var low = Math.floor(bounded), high = Math.ceil(bounded), mix = bounded - low;
+      var rgb = palette[low].map(function (value, i) {
+        return Math.round(value + (palette[high][i] - value) * mix);
+      });
+      var linear = rgb.map(function (value) {
+        var v = value / 255;
+        return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+      });
+      var luminance = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+      return { backgroundColor: "rgb(" + rgb.join(",") + ")", color: luminance > 0.179 ? "#000" : "#fff" };
+    }
+    var controls = heatmapElement("div", "heatmap-controls");
+    var toggleLabel = heatmapElement("label", "heatmap-show-all");
+    var toggle = heatmapElement("input");
+    toggle.type = "checkbox";
+    toggle.checked = FAMILY_HEATMAP_SHOW_ALL;
+    toggleLabel.appendChild(toggle);
+    toggleLabel.appendChild(document.createTextNode("Show all model rows"));
+    controls.appendChild(toggleLabel);
+    var summary = heatmapElement("p", "chart-note heatmap-summary");
+    summary.setAttribute("aria-live", "polite");
+    controls.appendChild(summary);
+    root.appendChild(controls);
+    var legend = heatmapElement("div", "heatmap-scale", "Mean score /4: ");
+    [0, 1, 2, 3, 4].forEach(function (score) {
+      var swatch = heatmapElement("span", "heatmap-scale-score", String(score));
+      Object.assign(swatch.style, heatmapColors(score));
+      legend.appendChild(swatch);
+    });
+    legend.appendChild(heatmapElement("span", "heatmap-missing-key", "— No data"));
+    root.appendChild(legend);
+    root.appendChild(heatmapElement("p", "chart-note", "Rows ordered by coverage. Hover, focus or tap a cell for details. Scroll the grid to see more families and rows."));
+    var wrap = heatmapElement("div", "heatmap-scroll");
+    wrap.tabIndex = 0;
+    wrap.setAttribute("role", "region");
+    wrap.setAttribute("aria-label", "Model by family scores, scrollable");
+    root.appendChild(wrap);
+    var tooltip = heatmapElement("div", "heatmap-tooltip");
+    tooltip.id = "family-heatmap-tooltip";
+    tooltip.setAttribute("role", "tooltip");
+    tooltip.hidden = true;
+    root.appendChild(tooltip);
+    var heatmapTooltipTarget = null;
+    function hideHeatmapTooltip() { tooltip.hidden = true; }
+    function showHeatmapTooltip(button, text) {
+      heatmapTooltipTarget = button;
+      tooltip.textContent = text;
+      tooltip.hidden = false;
+      var bounds = button.getBoundingClientRect();
+      var tip = tooltip.getBoundingClientRect();
+      tooltip.style.left = Math.max(8, Math.min(innerWidth - tip.width - 8, bounds.left)) + "px";
+      tooltip.style.top = Math.max(8, bounds.bottom + tip.height + 8 < innerHeight
+        ? bounds.bottom + 8 : bounds.top - tip.height - 8) + "px";
+    }
+    wrap.addEventListener("scroll", function () {
+      if (!tooltip.hidden && heatmapTooltipTarget === document.activeElement) {
+        showHeatmapTooltip(heatmapTooltipTarget, heatmapTooltipTarget.getAttribute("aria-label"));
+      } else hideHeatmapTooltip();
+    });
+    wrap.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") hideHeatmapTooltip();
+    });
+    function drawHeatmapRows() {
+      hideHeatmapTooltip();
+      wrap.innerHTML = "";
+      var shown = FAMILY_HEATMAP_SHOW_ALL ? models : models.slice(0, 12);
+      var hidden = familyList().length - families.length;
+      summary.textContent = "Showing " + shown.length + " of " + models.length + " model rows · " +
+        families.length + " families with data · " + hidden + " empty families hidden on this track.";
+      toggle.disabled = models.length <= 12;
+      if (!families.length) {
+        wrap.appendChild(heatmapElement("p", "empty heatmap-empty", "No family scores on this track yet."));
+        return;
+      }
+      var table = heatmapElement("table", "family-heatmap-table");
+      var caption = heatmapElement("caption", "heatmap-caption", "Mean scores by model and task family · " + TRACK + " track");
+      table.appendChild(caption);
+      var head = heatmapElement("thead"), heading = heatmapElement("tr");
+      var corner = heatmapElement("th", "heatmap-model-heading", "Model / coverage");
+      corner.scope = "col";
+      heading.appendChild(corner);
+      families.forEach(function (family) {
+        var th = heatmapElement("th", "heatmap-family-heading");
+        th.scope = "col";
+        th.dataset.familyId = family.id;
+        th.title = family.title;
+        th.setAttribute("aria-label", family.title);
+        var shortTitle = family.title.length > 36
+          ? family.title.slice(0, 23) + "…" + family.title.slice(-10) : family.title;
+        th.appendChild(heatmapElement("span", "heatmap-family-label", shortTitle));
+        heading.appendChild(th);
+      });
+      head.appendChild(heading);
+      table.appendChild(head);
+      var body = heatmapElement("tbody");
+      shown.forEach(function (model) {
+        var row = heatmapElement("tr");
+        row.dataset.modelRowId = model.row_id;
+        var label = plainLabel(model.identifier) + " · " +
+          (model.reasoning_level == null ? "Unspecified effort" : effortLabel(model.reasoning_level)) + " · " +
+          (harnessLabel(model.agent_identifier) || "Unknown harness");
+        var th = heatmapElement("th", "heatmap-model-heading");
+        th.scope = "row";
+        th.title = label + " · " + ranking.coverage(model) + " / " + familyList().length + " families";
+        th.setAttribute("aria-label", th.title);
+        th.appendChild(heatmapElement("span", "heatmap-model-name", plainLabel(model.identifier)));
+        var shortEffort = effortCode(model) || (model.reasoning_level == null ? "Unspecified" : effortLabel(model.reasoning_level));
+        th.appendChild(heatmapElement("small", "heatmap-coverage",
+          ranking.coverage(model) + "/" + familyList().length + " · " + shortEffort));
+        row.appendChild(th);
+        families.forEach(function (family) {
+          var score = familyScore(model, family);
+          var td = heatmapElement("td");
+          var cell = heatmapElement("button", "heatmap-cell" + (score === null ? " heatmap-cell-missing" : ""),
+            score === null ? "—" : score.toFixed(2));
+          cell.type = "button";
+          cell.dataset.familyId = family.id;
+          if (score !== null) {
+            cell.dataset.score = String(score);
+            Object.assign(cell.style, heatmapColors(score));
+          }
+          var detail = label + " — " + family.title + ": " + (score === null ? "No data" : score.toFixed(2) + "/4");
+          cell.setAttribute("aria-label", detail);
+          cell.setAttribute("aria-describedby", tooltip.id);
+          cell.addEventListener("mouseenter", function () { showHeatmapTooltip(cell, detail); });
+          cell.addEventListener("focus", function () { showHeatmapTooltip(cell, detail); });
+          cell.addEventListener("click", function () { showHeatmapTooltip(cell, detail); });
+          cell.addEventListener("mouseleave", function () {
+            if (document.activeElement !== cell) hideHeatmapTooltip();
+          });
+          cell.addEventListener("blur", hideHeatmapTooltip);
+          td.appendChild(cell);
+          row.appendChild(td);
+        });
+        body.appendChild(row);
+      });
+      table.appendChild(body);
+      wrap.appendChild(table);
+    }
+    toggle.addEventListener("change", function () {
+      FAMILY_HEATMAP_SHOW_ALL = toggle.checked;
+      drawHeatmapRows();
+    });
+    drawHeatmapRows();
   }
 
   function capabilityAxes() {
@@ -1543,10 +1640,10 @@
 
   function rerenderCharts() {
     if (!DATA) return;
+    if (document.getElementById("family-heatmap")) renderFamilyHeatmap();
     if (typeof Chart === "undefined") return;
     if (document.getElementById("chart-efficiency")) renderEfficiencyChart();
     if (document.getElementById("profile-grid")) renderProfileCharts();
-    if (document.getElementById("chart-family")) renderFamilyChart();
     if (document.getElementById("chart-hist")) renderHistChart();
     if (document.getElementById("chart-delta")) renderDeltaChart();
     var fallback = document.getElementById("chart-static-data");

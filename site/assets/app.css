@@ -1577,14 +1577,35 @@ tr.lscape-detail td { background: var(--bg-soft); }
 .efficiency-legend-swatch { width: 10px; height: 10px; flex: 0 0 10px; border: 1.5px solid; border-radius: 50%; }
 .efficiency-legend-more { color: var(--text-soft); }
 
-/* Reserve space for full rotated category labels and the bounded model legend. */
-.chart-box-family { height: 1100px; }
-.family-model-legend { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px 12px; margin-top: 10px; }
-.family-legend-entry { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 2px 0; border: 0; background: none; color: var(--text-soft); font: inherit; font-size: 0.75rem; text-align: left; cursor: pointer; }
-.family-legend-entry[aria-pressed="false"] .family-legend-label { text-decoration: line-through; }
-.family-legend-swatch { width: 10px; height: 10px; flex: 0 0 10px; border: 1px solid var(--text-soft); border-radius: 2px; }
-.family-legend-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.family-legend-more { grid-column: 1 / -1; color: var(--text-soft); font-size: 0.75rem; }
+/* Model × family scores: the grid scrolls, while both label axes stay visible. */
+.family-heatmap { --heatmap-0: #e8f1fb; --heatmap-1: #bed5f1; --heatmap-2: #82addd; --heatmap-3: #3976b9; --heatmap-4: #174572; }
+.family-heatmap-card .sub, .family-heatmap .chart-note { color: var(--text-soft); }
+[data-theme="dark"] .family-heatmap { --heatmap-0: #172b45; --heatmap-1: #23486e; --heatmap-2: #336e9f; --heatmap-3: #649ac7; --heatmap-4: #b2d3ed; }
+.heatmap-controls { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; }
+.heatmap-show-all { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; }
+.heatmap-summary { margin: 0; }
+.heatmap-scale { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; color: var(--text-soft); font-size: 0.8rem; }
+.heatmap-scale-score { padding: 4px 12px; border-radius: 4px; font-variant-numeric: tabular-nums; }
+.heatmap-missing-key { margin-left: 8px; }
+.heatmap-scroll { overflow: auto; max-height: 720px; max-width: 100%; margin-top: 12px; border: 1px solid var(--border); border-radius: 8px; isolation: isolate; }
+.family-heatmap-table { border-collapse: separate; border-spacing: 3px; table-layout: fixed; width: max-content; background: var(--bg-elev); font-size: 0.8rem; }
+.family-heatmap-table th { padding: 8px; background: var(--bg-elev); color: var(--text); text-align: left; overflow-wrap: anywhere; }
+.family-heatmap-table thead th { position: sticky; top: 0; z-index: 3; vertical-align: bottom; }
+.family-heatmap-table .heatmap-family-heading { width: 48px; min-width: 48px; max-width: 48px; height: 240px; font-size: 0.75rem; line-height: 1.4; text-align: center; }
+.heatmap-family-label { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; }
+.family-heatmap-table .heatmap-model-heading { position: sticky; left: 0; z-index: 2; width: 160px; min-width: 160px; max-width: 160px; }
+.family-heatmap-table thead .heatmap-model-heading { z-index: 4; }
+.heatmap-model-name, .heatmap-coverage { display: block; }
+.heatmap-coverage { color: var(--text-soft); font-size: 0.72rem; line-height: 1.4; font-weight: 400; margin-top: 3px; }
+.heatmap-cell { width: 100%; min-height: 44px; border: 0; border-radius: 4px; padding: 6px; font: inherit; font-variant-numeric: tabular-nums; cursor: pointer; }
+.heatmap-cell-missing { color: var(--text-soft); background: repeating-linear-gradient(135deg, var(--bg-soft) 0 5px, var(--border) 5px 6px); }
+.family-heatmap :is(button, input, .heatmap-scroll):focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.heatmap-tooltip { position: fixed; z-index: 200; max-width: min(360px, calc(100vw - 16px)); padding: 10px 12px; border: 1px solid var(--text-soft); border-radius: 8px; background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow); font-size: 0.8rem; pointer-events: none; }
+.heatmap-tooltip[hidden] { display: none; }
+.heatmap-caption { text-align: left; padding: 8px; color: var(--text-soft); }
 @media (max-width: 600px) {
-  .family-model-legend { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .heatmap-scroll { max-height: 70vh; }
+  .family-heatmap-table .heatmap-model-heading { width: 140px; min-width: 140px; max-width: 140px; }
+  .family-heatmap-table .heatmap-family-heading { width: 96px; min-width: 96px; max-width: 96px; height: auto; text-align: left; }
+  .heatmap-family-label { display: block; writing-mode: horizontal-tb; transform: none; white-space: normal; }
 }
