@@ -93,7 +93,7 @@ def test_backend_and_driver_axes_cannot_hide_other_model_changes(tmp_path, fault
     item['entrants'][0]['backend'] = 'openscad'
     item['entrants'][1]['backend'] = 'cadquery'
     if fault == 'unselected-backends':
-        for row, backend in zip(item['entrants'], ['blender', 'build123d']):
+        for row, backend in zip(item['entrants'], ['freecad', 'build123d']):
             row.update(entrant='stub-a', backend=backend)
     elif fault == 'wrong-live-driver':
         item['matchup']['values'] = ['solidworks-live', 'fusion-live']

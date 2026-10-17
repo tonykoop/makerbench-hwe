@@ -19,7 +19,7 @@ from . import code_cad_providers as providers
 from .cadam_adapter import CadamClient, CadamConfig, CadamRecoveryRequiredError
 from .code_cad_orchestrator import OrchestrationConfig, run_orchestration
 from .live_cad_runner import LiveCadConfig, connector_available, make_live_execute_trial
-from .run_log_io import atomic_write_json, file_lock
+from .run_log_io import atomic_write_json, file_lock, trial_rows
 from .schema import MatchupMetadata, matchup_metadata
 
 
@@ -377,7 +377,7 @@ def _append_error_trial(
             }
         )
         counts: dict[str, int] = {}
-        for row in payload["trials"]:
+        for row in trial_rows(payload):
             status = str(row.get("status") or "pending")
             counts[status] = counts.get(status, 0) + 1
         payload.setdefault("summary", {})["counts"] = counts
@@ -393,7 +393,7 @@ def finalize_morning_bundle(run_dir: Path, *, cost_usd: float) -> dict:
     run_dir = Path(run_dir)
     run_log = json.loads((run_dir / "run_log.json").read_text(encoding="utf-8"))
     cells = arena_runner.build_vote_candidates(run_log)
-    rows_by_id = {str(row.get("trial_id")): row for row in run_log.get("trials") or []}
+    rows_by_id = {str(row.get("trial_id")): row for row in trial_rows(run_log)}
     vote_pages = run_dir / "morning-vote"
     vote_pages.mkdir(parents=True, exist_ok=True)
     pair_files: list[str] = []
@@ -436,7 +436,7 @@ def finalize_morning_bundle(run_dir: Path, *, cost_usd: float) -> dict:
             "status": row.get("status"),
             "error": row.get("error"),
         }
-        for row in run_log.get("trials") or []
+        for row in trial_rows(run_log)
         if row.get("trial_id") not in valid_ids
     ]
     summary = {

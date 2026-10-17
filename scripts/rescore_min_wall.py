@@ -63,11 +63,12 @@ def collect_jobs(label: str, run_dir: Path, registry: dict) -> tuple[list[tuple]
     """Jobs for the meshes to regrade, and pass-through rows for trials with no mesh."""
 
     from makerbench.code_cad_generator import instrument_spec_from_registry
+    from makerbench.run_log_io import trial_rows
 
     log = json.loads((run_dir / "run_log.json").read_text(encoding="utf-8"))
     run_backend = str((log.get("config") or {}).get("backend") or "openscad")
     jobs, passthrough = [], []
-    for trial in log.get("trials") or []:
+    for trial in trial_rows(log):
         status = str(trial.get("status") or "pending")
         if status == "pending":
             continue

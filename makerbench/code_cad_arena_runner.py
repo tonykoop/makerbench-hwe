@@ -898,7 +898,7 @@ def ingest_candidate(
             raise ValueError(f"trial {trial_id} already exists in the run log")
         log.setdefault("trials", []).append(entry)
         counts: dict[str, int] = {}
-        for t in log["trials"]:
+        for t in trial_rows(log):
             status = str(t.get("status") or "pending")
             counts[status] = counts.get(status, 0) + 1
         log.setdefault("summary", {})["counts"] = counts

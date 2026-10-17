@@ -17,6 +17,8 @@ BACKENDS = ("openscad", "cadquery", "build123d")
 
 
 def prepare(root: Path, model_run: Path, backend_runs: dict[str, Path]):
+    from makerbench.run_log_io import trial_rows
+
     records = []
     copies = []
     sources = [("post3-models", "openscad", model_run, MODELS)]
@@ -25,7 +27,7 @@ def prepare(root: Path, model_run: Path, backend_runs: dict[str, Path]):
         run = run.resolve()
         log = run / "run_log.json"
         content = json.loads(log.read_text())
-        selected = [trial for trial in content["trials"] if trial["model_id"] in entrants]
+        selected = [trial for trial in trial_rows(content) if trial["model_id"] in entrants]
         keys = [(trial["model_id"], trial["seed"]) for trial in selected]
         if sorted(keys) != sorted((entrant, seed) for entrant in entrants for seed in range(3)):
             raise ValueError("Each recorded entrant must have exactly seeds 0, 1 and 2")

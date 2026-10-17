@@ -1,4 +1,7 @@
-"""#1073: external (STEP) rows never reach a blind-arena trial reader.
+"""#1073/#1041: off-track rows never reach a blind-arena trial reader.
+
+Off-track = external (STEP) exports and Blender (mesh) trials; every reader test below runs
+once per kind.
 
 One shared helper (``run_log_io.trial_rows``) backs every reader that aggregates,
 ranks, reports or queues trials. This plants an external row (and an
@@ -45,20 +48,21 @@ def _trial(model: str, tmp: Path, **extra) -> dict:
     }
 
 
-@pytest.fixture
-def run_dir(tmp_path: Path) -> Path:
+OFF_TRACK_TAGS = {
+    "external": {"entrant_type": "external_step", "modality": "external_step", "track": "external_step"},
+    "blender": {"result_backend": "blender"},
+}
+
+
+@pytest.fixture(params=sorted(OFF_TRACK_TAGS))
+def run_dir(request, tmp_path: Path) -> Path:
+    tags = dict(OFF_TRACK_TAGS[request.param])
+    off_track = _trial(EXT, tmp_path, **{k: v for k, v in tags.items() if k != "result_backend"})
+    if "result_backend" in tags:
+        off_track["result"]["backend"] = tags["result_backend"]
     log = {
         "config": {"model_ids": [BLIND], "backend": "openscad"},
-        "trials": [
-            _trial(BLIND, tmp_path),
-            _trial(
-                EXT,
-                tmp_path,
-                entrant_type="external_step",
-                modality="external_step",
-                track="external_step",
-            ),
-        ],
+        "trials": [_trial(BLIND, tmp_path), off_track],
     }
     (tmp_path / "run_log.json").write_text(json.dumps(log))
     return tmp_path
@@ -142,3 +146,25 @@ def test_studio_run_summary_excludes_external_row(run_dir: Path, tmp_path: Path)
     summary = service.get_run_summary(run_dir)
     assert [t["model_id"] for t in summary["trials"]] == [BLIND]
     assert summary["compiled_count"] <= 1
+
+
+def test_whole_blender_log_is_off_track(run_dir: Path) -> None:
+    log = _log(run_dir)
+    assert trial_rows({**log, "config": {**log["config"], "backend": "blender"}}) == []
+    assert trial_rows({**log, "config": {"track": "blender-freeform"}}) == []
+
+
+def test_orchestrator_summary_counts_only_code_cad_trials(run_dir: Path) -> None:
+    """Review finding 3: preserved off-track rows must not inflate the stored summary."""
+    from makerbench.code_cad_orchestrator import _merge_and_write
+
+    log = _log(run_dir)
+
+    class Config:  # _merge_and_write only needs the recorded config block
+        def as_dict(self):
+            return log["config"]
+
+    payload = _merge_and_write(run_dir / "run_log.json", Config(), {"t-" + BLIND: log["trials"][0]})
+    assert len(payload["trials"]) == 2  # the writer preserves every row...
+    assert payload["summary"]["total_trials"] == 1  # ...the reporting aggregate does not
+    assert payload["summary"]["counts"] == {"scored": 1}
