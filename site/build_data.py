@@ -4895,12 +4895,16 @@ def build_matchups_page(results_dir: Path) -> dict:
                     not isinstance(k, str) or k not in MATCHUP_GATES for k in borderline_checks
                 ):
                     raise ValueError("invalid matchup borderline checks")
+                method = row.get("min_wall_method", MIN_WALL_METHOD_LEGACY)
+                if method not in {MIN_WALL_METHOD_LEGACY, *MIN_WALL_ESTIMATOR_LABELS}:
+                    raise ValueError("invalid matchup min_wall estimator")
                 borderline = len(borderline_checks)
                 rows.append({"entrant": _matchup_label(row.get("entrant")),
                              "backend": _matchup_label(row.get("backend")),
                              "objective_pass_rate": rate, "n_objective_trials": measured,
                              "n_infra_errors": infra, "n_execution_errors": errors,
                              "n_compile_errors": compile_errors, "failed_checks": failed,
+                             **({"min_wall_method": method} if "min_wall_method" in row else {}),
                              **({"borderline": borderline} if borderline else {})})
             if len(rows) < 2 or len({(r["entrant"], r["backend"]) for r in rows}) != len(rows):
                 raise ValueError("matchup needs at least two distinct entrants")
@@ -4947,36 +4951,54 @@ def _prerender_matchups_html(page: dict | None) -> str:
         varied = ", ".join(metadata["varied_axes"])
         if metadata["factorial"]:
             varied += " (factorial)"
-        rows = []
+        # Unmeasured failures do not introduce an estimator into a measured table.
+        methods = {r.get("min_wall_method", MIN_WALL_METHOD_LEGACY)
+                   for r in item["entrants"] if r["n_objective_trials"]}
+        default = next(iter(methods)) if len(methods) == 1 else MIN_WALL_METHOD_LEGACY
+        groups = {}
         for row in item["entrants"]:
-            rate = f'{row["objective_pass_rate"] * 100:.2f}%' if row["objective_pass_rate"] is not None else "Unmeasured"
-            if row["objective_pass_rate"] is None and row["n_infra_errors"]:
-                rate += " (infrastructure)"
-            elif row["objective_pass_rate"] is None and row["n_compile_errors"]:
-                rate += " (compile failure)"
-            elif row["objective_pass_rate"] is None and row["n_execution_errors"]:
-                rate += " (execution error)"
-            if row.get("borderline", 0):
-                rate += f' · {row["borderline"]} borderline (excluded)'
-            failures = ", ".join(f"{k} ({v})" for k, v in sorted(row["failed_checks"].items())) or (
-                "None observed" if row["n_objective_trials"] else "Not measured")
-            rows.append('<tr>' + ''.join(f'<td>{_esc(str(v))}</td>' for v in (
-                row["entrant"], row["backend"], rate, row["n_objective_trials"],
-                failures, f'{row["n_execution_errors"]} total · {row["n_compile_errors"]} compile · {row["n_infra_errors"]} infrastructure')) + '</tr>')
+            method = row.get("min_wall_method", MIN_WALL_METHOD_LEGACY) if row["n_objective_trials"] else default
+            groups.setdefault(method, []).append(row)
+        mixed = len(groups) > 1
+        tables = []
+        for method, group in groups.items():
+            rows = []
+            for row in group:
+                rate = f'{row["objective_pass_rate"] * 100:.2f}%' if row["objective_pass_rate"] is not None else "Unmeasured"
+                if row["objective_pass_rate"] is None and row["n_infra_errors"]:
+                    rate += " (infrastructure)"
+                elif row["objective_pass_rate"] is None and row["n_compile_errors"]:
+                    rate += " (compile failure)"
+                elif row["objective_pass_rate"] is None and row["n_execution_errors"]:
+                    rate += " (execution error)"
+                if row.get("borderline", 0):
+                    rate += f' · {row["borderline"]} borderline (excluded)'
+                failures = ", ".join(f"{k} ({v})" for k, v in sorted(row["failed_checks"].items())) or (
+                    "None observed" if row["n_objective_trials"] else "Not measured")
+                rows.append('<tr>' + ''.join(f'<td>{_esc(str(v))}</td>' for v in (
+                    row["entrant"], row["backend"], rate, row["n_objective_trials"],
+                    failures, f'{row["n_execution_errors"]} total · {row["n_compile_errors"]} compile · {row["n_infra_errors"]} infrastructure')) + '</tr>')
+            label = MIN_WALL_ESTIMATOR_LABELS.get(method, LEGACY_MIN_WALL_LABEL)
+            tables.append((f'<h4>{_esc(label)}</h4>' if mixed else '') +
+                          '<div class="arena-scoreline"><table><thead><tr><th>Entrant</th><th>Backend</th>'
+                          '<th>Measured gate pass rate</th><th>Measured trials</th><th>Failed checks</th>'
+                          '<th>Execution errors</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>')
+            if method == "robust-v1":
+                tables.append(
+                    '<p class="muted-note">Under robust-v1, min_wall is borderline when 0.8–1.2% '
+                    '(inclusive) of wall samples fall below the printable-wall threshold. Borderline '
+                    'checks are excluded from each trial’s pass-rate denominator; measured trials '
+                    'still count. See <a href="https://github.com/tonykoop/makerbench-hwe/blob/main/'
+                    'docs/MIN_WALL_RESCORE.md">the min_wall rescore notes</a>.</p>'
+                )
+        note = ('<p class="muted-note">Estimators differ within this matchup; rows are not comparable across groups.</p>'
+                if mixed else '')
         cards.append(f'<article class="arena-card"><h3>{_esc(item["id"])}</h3>'
                      f'<p>Varied: {_esc(varied)} · Values: {_esc(", ".join(map(str, metadata["values"])))}</p>'
                      f'<p>Held: {_esc(held)}</p><p>Verification: {_esc(item["verification_status"])}</p>'
-                     '<div class="arena-scoreline"><table><thead><tr><th>Entrant</th><th>Backend</th>'
-                     '<th>Measured gate pass rate</th><th>Measured trials</th><th>Failed checks</th>'
-                     '<th>Execution errors</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>'
+                     + note + ''.join(tables) +
                      f'<p class="muted-note">Source: {_esc(item["source_bundle"])}</p></article>')
-    return ''.join(cards) + (
-        '<p class="muted-note">Under robust-v1, min_wall is borderline when 0.8–1.2% '
-        '(inclusive) of wall samples fall below the printable-wall threshold. Borderline '
-        'checks are excluded from each trial’s pass-rate denominator; measured trials '
-        'still count. See <a href="https://github.com/tonykoop/makerbench-hwe/blob/main/'
-        'docs/MIN_WALL_RESCORE.md">the min_wall rescore notes</a>.</p>'
-    )
+    return ''.join(cards)
 
 
 def _prerender_frontier_html(payload: dict) -> str:

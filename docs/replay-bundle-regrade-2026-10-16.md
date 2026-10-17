@@ -7,9 +7,9 @@ Spec: [Tony’s #1011 decision](https://github.com/tonykoop/makerbench-hwe/issue
 ## Scope and provenance
 
 - First commit: shared strict provenance validator and OpenRouter `--regrade-provenance`; existing `--regrade` trial-score input remains unchanged. Provenance is absent by default. Extra/missing fields and missing/extra/mismatched consumed-log hashes are rejected. No grader or task changes.
-- Second commit: the two replay bundles, derived site outputs, and this evidence report.
+- Second commit: the two replay bundles, derived site outputs, and this evidence report. A follow-up review commit implements Tony’s estimator split and the mechanical review fixes.
 - Gate base: `1950613948be34dc378cf9b0feb73d2e6009a53f`. Runtime: OpenSCAD 2021.01; trimesh 4.12.2; NumPy 2.2.6; SciPy 1.15.3.
-- Original `harness_git_revision`, `harness_file_sha256`, canary, OpenSCAD version, `verification_status`, source hashes, historical secondary-gate pins, costs and model disclosures remain unchanged. Scores governed by the new `regrade` block use today’s gate; original harness pins and the historical OpenRouter grading description describe the recorded baseline.
+- Original `harness_git_revision`, `harness_file_sha256`, canary, OpenSCAD version, `verification_status`, source hashes, historical secondary-gate pins, costs and model disclosures remain unchanged. Scores governed by the new `regrade` block use the robust-v1 gate; original harness pins describe the recorded baseline, while OpenRouter’s primary-row description now explicitly follows the regrade block.
 - All 70 recorded runs are read-only. `scripts/regrade_scoreline.py --run-dir <recorded-run> --out-run /tmp/mb-regrade-20261016/<bundle>/<run> --workers 2` produced scratch logs with source-log hashes. No model/provider calls; no oracle access; no source geometry in this PR.
 
 **Disclosed limitation:** the 198 carried-forward frontier cells (Opus, Sonnet and Codex; 66 each) are **NOT regraded: no recorded logs are available**. Their verdicts keep the old estimator. Each complete JSON cell is byte-identical to the committed bundle; the evidence JSON lists before/after SHA-256 for every one of the 198 cells. Do not treat these as current-gate comparisons across all ten entrants.
@@ -80,8 +80,8 @@ export PYTHONPATH=/home/tony/mb-wt/regrade
 python=/tmp/mb-b2-clean-venv/bin/python
 scratch=/tmp/mb-regrade-20261016
 
-git show 1950613948be34dc378cf9b0feb73d2e6009a53f:results/arena-replay-2026-09-30.json > "$scratch/frontier-committed.json"
-git show 1950613948be34dc378cf9b0feb73d2e6009a53f:results/arena-replay-openrouter-2026-09-30.json > "$scratch/openrouter-committed.json"
+git show 4deb781c36b03ea73c3baf5c87f954b9383edff9:results/arena-replay-2026-09-30.json > "$scratch/frontier-committed.json"
+git show 4deb781c36b03ea73c3baf5c87f954b9383edff9:results/arena-replay-openrouter-2026-09-30.json > "$scratch/openrouter-committed.json"
 git show 602450bf:results/arena-replay-2026-09-30.json > "$scratch/frontier-prior.json"
 "$python" scripts/build_frontier_replay.py \
   --runs /home/tony/mb-agy-rerun/runs/frontier-gemini-rerun \
@@ -112,12 +112,30 @@ Both `cmp` commands exit 0. Matching source/rebuilt SHA-256:
 
 ## Validation
 
-- Final non-browser suite: `5637 passed, 26 skipped, 3 xfailed, 4 warnings in 1304.60s (0:21:44)`.
+- Original pre-review non-browser suite: `5637 passed, 26 skipped, 3 xfailed, 4 warnings in 1304.60s (0:21:44)`.
 - Command: `PYTHONPATH=/home/tony/mb-wt/regrade PLAYWRIGHT_BROWSERS_PATH=/tmp/mb-b2-browsers ARENA_STUDIO_BROWSER_ARGS="--disable-gpu --disable-software-rasterizer" xvfb-run -a /tmp/mb-b2-clean-venv/bin/python -m pytest tests/ -q --ignore-glob="tests/test_arena_studio_browser*.py"` with `set -o pipefail`.
 - First final-suite attempt without DISPLAY: 1 failed, 5635 passed, 27 skipped, 3 xfailed. The sole failure was OpenSCAD preview creation in test_cadquery_and_openscad_meshes_receive_identical_objective_verdicts (DISPLAY empty), before verdict comparison. The unchanged parity module passed under Xvfb (2 passed); the full suite was then rerun under Xvfb. No grader, test assertion, or fixture edits were made for this environment failure.
-- Focused builders: 35 passed; ruff on all changed Python files passed.
+- Original focused builders: 35 passed; ruff on all changed Python files passed.
 - `python site/build_data.py`, `python site/check_data_drift.py`, `python scripts/check_showcase_claims.py --strict`, `python scripts/check_public_terms.py`, and `python scripts/audit_public_artifacts.py` passed.
 - Frozen-input inventory, original pin comparisons, per-cell carried-byte comparisons, primary-row denominator checks, and final scope check passed.
-- Browser specs excluded by the assignment’s local WebGL exception; no browser result is claimed.
+- Arena Studio browser specs are excluded by the assignment’s local WebGL exception. Homepage static/no-JS browser tests are included; the scoped footnote and mixed-card browser checks passed (4 tests in the focused module).
 
 Evidence: [`docs/replay-bundle-regrade-2026-10-16.json`](replay-bundle-regrade-2026-10-16.json). Tony merges this published-results change himself after manager review. **Do not merge.**
+
+## Claude review revisions (B1/B2/N1/N2)
+
+Rebased onto `4deb781c36b03ea73c3baf5c87f954b9383edff9` (main after #1079); the obsolete `site/index.html` hunk is gone. `site/build_data.py` now regenerates `site/matchups.html` and `site/data/matchups.json`. Only measured regraded rows carry `min_wall_method: robust-v1` (58 frontier + 298 OpenRouter); carried rows and no-mesh failures remain byte-identical. Mixed cards split into estimator-labelled tables with the comparability note; the robust-v1 borderline footnote appears only after its group. Single-estimator OpenRouter cards retain one table, including unmeasured failures.
+
+Scratch logs record `3d55f439`, an amended builder-only predecessor; bundle `regrade_commit: 19506139` identifies the gate baseline, with unchanged grader/task bytes between those revisions.
+
+Condition (b) was re-proven after the rebase and metadata changes using the exact reproduction commands above against rebased main (`4deb781c`): both SHA-256 values remain identical. Condition (c) was exhaustively rechecked, allowing only the newly approved estimator labels and primary-row disclosure alongside the previous score/provenance changes; every original pin and all 198 carried frontier cells remain unchanged. Condition (d) covers all 2,786 original frozen inputs plus eight showcase scorelines newly inherited from main, all unchanged; the complete tracked frozen inventory is also byte-identical to rebased main.
+
+#1079 merged during the initial full gate. This PR was then rebased again, preserving its shared `trial_rows` reader in both builders alongside provenance hashing. Condition (b) was repeated against `4deb781c` with both `cmp` commands exiting 0 and the same hashes.
+
+Review-focused builder, Matchups, and prerender tests: **73 passed**. Ruff on all eight affected Python files, data drift, public terms, artifact audit, and strict showcase claims (**67 matched, 0 errors, 0 uncited**) pass. Full post-review unit-gate result follows below.
+
+Production-data display parity: all **66 OpenRouter table HTML bodies** are byte-identical to main’s renderer. Exactly **58 measured frontier cards** split into labelled groups; the other eight retain an unmeasured Gemini failure and a single legacy measured group. The complete committed no-JS prerender exactly matches the generated Matchups JSON.
+
+The first post-review full run on `eb3cebde` reported **5833 passed, 27 skipped, 3 xfailed, 1 failed**. Its sole failure was the old no-JS browser locator expecting one global rescore link; the revised layout has one per robust-v1 group. The browser test now scopes that assertion to the affected card and also checks the mixed-card split with JavaScript disabled. No score or rendering behavior was weakened.
+
+Final post-#1079 full gate under Xvfb: **5893 passed, 27 skipped, 3 xfailed, 4 warnings in 1240.81s (0:20:40)**, exit 0, using the full command above. Conditions (b), (c), and (d), including all frozen inputs, were re-proven after this run.

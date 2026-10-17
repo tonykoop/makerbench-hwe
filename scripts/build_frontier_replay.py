@@ -112,6 +112,8 @@ def build(runs: Path, prior_snapshot: dict, recording: dict, regrade: dict | Non
                 if key not in trials:
                     raise ValueError("run log and prior snapshot have different cell matrices")
                 row = _row(trials.pop(key), run_dir, model)
+                if regrade is not None and row["n_objective_trials"]:
+                    row["min_wall_method"] = "robust-v1"
                 matchup["entrants"][index] = row
                 new_rows.append(row)
         if trials or not new_rows:

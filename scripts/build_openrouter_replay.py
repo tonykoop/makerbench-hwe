@@ -250,6 +250,13 @@ def build(runs: Path, ledger: Path, code_revision: str, repo: Path, credits=(Non
     ])
     if regrade_provenance is not None:
         bundle["regrade"] = validate_regrade_provenance(regrade_provenance, hashes)
+        bundle["openrouter_run"]["grading"]["primary_rows"] = (
+            "gate replay following the regrade block; original harness pins retained, "
+            "recorded meshes reused, no model or network call")
+        for matchup in bundle["matchups"]:
+            for row in matchup["entrants"]:
+                if row["n_objective_trials"]:
+                    row["min_wall_method"] = "robust-v1"
     return bundle
 
 
@@ -260,7 +267,7 @@ def main() -> int:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--code-revision", required=True)
     ap.add_argument("--repo", type=Path, default=Path("."))
-    ap.add_argument("--regrade", type=Path, help="baseline replay JSON from regrade_openrouter_baseline.py")
+    ap.add_argument("--regrade", type=Path, help="trial-keyed gate replay scores JSON (baseline or regraded); provenance supplied separately")
     ap.add_argument("--regrade-provenance", type=Path, help="optional regrade provenance JSON; no score overrides")
     ap.add_argument("--current-revision", help="gate revision of the original run (labelled secondary scores)")
     ap.add_argument("--credits-before", type=float)
