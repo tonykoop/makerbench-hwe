@@ -131,7 +131,7 @@ def any_interference(parts: Iterable[PartMesh], tol_mm3: float = 1.0) -> list[tu
 
 
 #: Rays cast per batch by the wall estimators. trimesh's pure-Python ray caster (no embree)
-#: builds every ray x candidate-triangle pair up front, so one 20,000-ray robust-v1 cast on a
+#: builds every ray x candidate-triangle pair up front, so one 20,000-ray cast on a
 #: large mesh peaked at ~18 GB and got CI runners killed (#997). Per-ray results do not depend
 #: on the other rays in a batch, and the combined hits are put back in the order an unbatched
 #: cast returns, so batching changes memory, not values.
@@ -197,7 +197,7 @@ def _wall_samples(
 
 def _wall_distances(mesh: trimesh.Trimesh, samples: int, seed: int | None) -> np.ndarray:
     """Ray-cast wall distances (mm) for ``samples`` random surface points, or an empty array
-    when no ray hit anything. Shared by the minimum and the robust statistics."""
+    when no ray hit anything. Shared by the wall estimators."""
     return _wall_samples(mesh, samples, seed)[0]
 
 
@@ -236,25 +236,6 @@ def estimate_min_wall_mm(
         return 0.0
     dists = _wall_distances(mesh, samples, seed)
     return float(dists.min()) if len(dists) else float("inf")
-
-
-# --- min_wall estimator policy (#901 option; default since epic T2) ------------------
-# The legacy estimator above is a minimum over a few thousand random samples, so one grazing
-# or sliver sample decides pass/fail and the verdict flips with the sample seed (see
-# docs/showcase/strings/min-wall-analysis.md). "robust-v1" uses a fixed seed, more samples
-# and a low percentile instead of the minimum, so it fails only when at least
-# ROBUST_V1_PERCENTILE percent of the sampled surface is thinner than the floor.
-# "robust-v1" is the DEFAULT policy of the arena mesh gate; "min" (the legacy minimum) stays
-# selectable so older results can be reproduced exactly. Every new gate result records which
-# policy scored it (min_wall_method); a persisted result with no marker predates this
-# versioning and was scored with "min". See docs/MIN_WALL_RESCORE.md.
-MIN_WALL_METHOD_LEGACY = "min"
-MIN_WALL_METHOD_ROBUST_V1 = "robust-v1"
-MIN_WALL_METHOD_DEFAULT = MIN_WALL_METHOD_ROBUST_V1
-MIN_WALL_METHODS = (MIN_WALL_METHOD_LEGACY, MIN_WALL_METHOD_ROBUST_V1)
-ROBUST_V1_PERCENTILE = 1.0
-ROBUST_V1_SAMPLES = 20000
-ROBUST_V1_SEED = 0
 
 
 def canonical_mesh(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
@@ -299,8 +280,8 @@ def _smallest_rotation(faces: np.ndarray) -> np.ndarray:
 
 def canonical_order_key(mesh: trimesh.Trimesh) -> tuple:
     """A deterministic, order-independent sort key for choosing between bodies: face count,
-    then volume, then the canonical vertex and face bytes, all taken from the canonical mesh. Used by robust-v1 to break ties
-    between equally large bodies regardless of the order a mesh lists them in."""
+    then volume, then the canonical vertex and face bytes, all taken from the canonical mesh. Used to break ties between
+    equally large bodies regardless of the order a mesh lists them in."""
     canon = canonical_mesh(mesh)
     try:
         # from the CANONICAL mesh: a raw mesh.volume sums in face order, and that noise
@@ -309,57 +290,6 @@ def canonical_order_key(mesh: trimesh.Trimesh) -> tuple:
     except Exception:  # noqa: BLE001 - degenerate bodies still need a key
         volume = 0.0
     return (len(canon.faces), volume, canon.vertices.tobytes(), canon.faces.tobytes())
-
-
-#: #1011 (Tony, 2026-10-04): when 0.8-1.2 % of robust-v1's wall samples lie below the
-#: threshold (about +/-3 binomial standard errors around the 1 % cut at n = 20,000), the 1st
-#: percentile sits on that cliff and pass/fail is a coin flip. The verdict is then
-#: ``"borderline"``: excluded from the objective pass rate, neither a pass nor a fail.
-MIN_WALL_BORDERLINE = "borderline"
-ROBUST_V1_BORDERLINE_PERMILLE = (8, 12)  # the inclusive band, in samples per thousand
-
-
-def is_borderline_share(below: int, n_samples: int) -> bool:
-    """Whether ``below`` of ``n_samples`` wall samples under the threshold is within the
-    borderline band (inclusive). Counts, not floats, so the band edges are exact."""
-    lo, hi = ROBUST_V1_BORDERLINE_PERMILLE
-    return n_samples > 0 and lo * n_samples <= 1000 * below <= hi * n_samples
-
-
-def estimate_wall_robust_v1(mesh: trimesh.Trimesh, floor_mm: float | None = None) -> dict:
-    """The ``robust-v1`` wall statistic: the 1st percentile of ray-cast wall distances over
-    20,000 samples with a fixed seed, drawn from the :func:`canonical_mesh` layout so the
-    result does not depend on vertex or face order. Also returns the raw minimum of the same samples and
-    the number of samples, so a reader can see what the minimum would have said.
-
-    ``wall_mm`` is 0.0 for a non-watertight mesh and ``inf`` when no ray hit anything, the
-    same conventions as :func:`estimate_min_wall_mm`.
-
-    With ``floor_mm`` (#1011) it also returns ``below_floor``, the number of samples that fail
-    :func:`printable_wall` against that floor (the same comparison the verdict uses), and
-    ``below_floor_share``, that count over ``n_samples`` (``None`` with no samples).
-    """
-    out = _robust_v1_stats(mesh)
-    if floor_mm is not None:
-        dists = out.pop("_dists")
-        below = int(np.count_nonzero(~printable_wall(dists, floor_mm))) if len(dists) else 0
-        out["below_floor"] = below
-        out["below_floor_share"] = below / out["n_samples"] if out["n_samples"] else None
-    else:
-        out.pop("_dists")
-    return out
-
-
-def _robust_v1_stats(mesh: trimesh.Trimesh) -> dict:
-    if not mesh.is_watertight:
-        return {"wall_mm": 0.0, "min_mm": 0.0, "n_samples": 0, "_dists": np.empty(0)}
-    # Sample the canonical layout: the fixed-seed sample set (and so p1, the raw
-    # minimum and pass/fail) must not depend on triangle or vertex order (#1007).
-    dists = _wall_distances(canonical_mesh(mesh), ROBUST_V1_SAMPLES, ROBUST_V1_SEED)
-    if not len(dists):
-        return {"wall_mm": float("inf"), "min_mm": float("inf"), "n_samples": 0, "_dists": dists}
-    return {"wall_mm": float(np.percentile(dists, ROBUST_V1_PERCENTILE)),
-            "min_mm": float(dists.min()), "n_samples": int(len(dists)), "_dists": dists}
 
 
 # The ray-cast estimate in `estimate_min_wall_mm` is a *conservative* proxy: a

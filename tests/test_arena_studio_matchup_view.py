@@ -20,9 +20,9 @@ def make_matchup_repo(root):
     for n, model in enumerate(('stub-a', 'stub-b')):
         image = directory / f'preview-{n}.png'
         image.write_bytes(PNG)
-        gates = {k: 1.0 for k in ('renders', 'watertight', 'nonzero_volume', 'body_count', 'fits_envelope', 'min_wall')}
+        gates = {k: 1.0 for k in ('renders', 'watertight', 'nonzero_volume', 'body_count', 'fits_envelope')}
         if n == 0:
-            gates['min_wall'] = 0.0
+            gates['fits_envelope'] = 0.0
         trials.append({'trial_id': f'fixture-{n}', 'model_id': model, 'instrument_id': 'ocarina', 'seed': 0, 'rep': 0,
                        'status': 'scored', **({'wall_time_s': 2.5} if n == 0 else {}),
                        'result': {'backend': 'openscad', 'artifacts': {'png_path': str(image)},
@@ -40,7 +40,7 @@ def test_summary_and_contained_render_route(tmp_path):
     assert data['matchup']['varied_axis'] == 'models'
     assert len(data['matchup_trials']) == 2
     a, b = data['matchup_trials']
-    assert a['gates']['min_wall'] == 0.0
+    assert a['gates']['fits_envelope'] == 0.0
     assert a['wall_time_s'] == 2.5 and b['wall_time_s'] is None
     image = client.get(a['render_url'])
     assert image.status_code == 200 and image.content == PNG
@@ -86,13 +86,13 @@ def test_invalid_metrics_and_legacy_runs_remain_unknown(tmp_path):
     payload = json.loads(path.read_text())
     payload['trials'][0]['wall_time_s'] = -1
     payload['trials'][0]['result']['objective']['objective_pass_rate'] = 2
-    payload['trials'][0]['result']['objective']['sub_scores']['min_wall'] = -1
+    payload['trials'][0]['result']['objective']['sub_scores']['fits_envelope'] = -1
     path.write_text(json.dumps(payload))
     client = TestClient(create_studio_app(registry_path=tmp_path/'registry.json', repo_root=tmp_path), base_url='http://127.0.0.1')
     data = client.get('/api/runs/matchup-fixture/summary').json()
     assert data['instruments'] == ['ocarina']
     row = data['matchup_trials'][0]
-    assert row['wall_time_s'] is row['objective_pass_rate'] is row['gates']['min_wall'] is None
+    assert row['wall_time_s'] is row['objective_pass_rate'] is row['gates']['fits_envelope'] is None
     del payload['config']['matchup']
     path.write_text(json.dumps(payload))
     data = client.get('/api/runs/matchup-fixture/summary').json()

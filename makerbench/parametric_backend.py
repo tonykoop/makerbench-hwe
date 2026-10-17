@@ -26,11 +26,8 @@ from typing import Callable, Mapping
 
 from .code_cad_arena_runner import (
     evaluate_objective_trial,
-    gate_min_wall_policy,
     mesh_objective_gate,
     raise_with_trial_meta,
-    stamp_min_wall_policy,
-    trial_min_wall_policy,
 )
 from .code_cad_generator import instrument_spec_from_registry
 from .code_cad_objective import RenderArtifacts
@@ -72,13 +69,8 @@ def make_parametric_execute_trial(
         try:
             return _execute_body(trial)
         except Exception as exc:
-            # #997 P1: a trial that failed before scoring keeps its gate's min_wall policy,
-            # so it never lands in another policy's scoreline row.
-            # The row also keeps its backend/tier, or it would land in the run config's row.
+            # The row keeps its backend/tier, or it would land in the run config's row.
             meta = {"backend": PARAMETRIC_BACKEND, "tier": "parametric"}
-            policy = trial_min_wall_policy(registry, trial.instrument_id, gate_factory)
-            if policy:
-                meta["min_wall_method"] = policy
             raise_with_trial_meta(exc, meta)
 
     def _execute_body(trial: ArenaTrial) -> dict:
@@ -111,7 +103,6 @@ def make_parametric_execute_trial(
             compiler=compiler,
         )
         payload["rep"] = trial.rep
-        stamp_min_wall_policy(payload, gate_min_wall_policy(objective_gate, spec))
         payload["backend"] = PARAMETRIC_BACKEND
         payload["tier"] = "parametric"
         payload["gen"] = {

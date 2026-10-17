@@ -72,7 +72,7 @@ def test_committed_scorelines_from_before_the_change_still_validate():
 
 def test_schema_rejects_a_failure_without_its_explanation():
     bad = _doc([{"entrant": "e", "backend": "openscad", "objective_pass_rate": 0.5, "n_objective_trials": 1,
-                 "failed_checks": [{"check": "min_wall"}]}])
+                 "failed_checks": [{"check": "body_count"}]}])
     errors = _check(bad, SCHEMA)
     assert any("missing 'threshold'" in e for e in errors) and any("missing 'body_id'" in e for e in errors)
 
@@ -92,14 +92,11 @@ def _by_check(payload):
 
 
 def test_each_gate_failure_carries_measured_threshold_and_body(tmp_path):
-    thin = trimesh.creation.box(extents=[30, 30, 0.4])  # thin wall, small volume
-    spec = {"id": "x", "envelope_mm": [10, 10, 10], "min_bodies": 3, "min_wall_mm": 1.0}
+    thin = trimesh.creation.box(extents=[30, 30, 0.4])  # small volume
+    spec = {"id": "x", "envelope_mm": [10, 10, 10], "min_bodies": 3}
     payload = _gate_payload(tmp_path, thin, spec)
     got = _by_check(payload)
-    assert set(got) == {"nonzero_volume", "fits_envelope", "min_wall", "body_count"}
-    wall = got["min_wall"]
-    assert wall["measured"] == pytest.approx(0.4, abs=0.05) and wall["threshold"] == 1.0
-    assert wall["body_id"] == "body_0" and wall["unit"] == "mm" and wall["tolerance"] == 0.05
+    assert set(got) == {"nonzero_volume", "fits_envelope", "body_count"}  # wall thickness is not scored
     assert got["body_count"]["measured"] == 1 and got["body_count"]["threshold"] == 3
     assert got["fits_envelope"]["measured"] == 30.0 and got["fits_envelope"]["threshold"] == 15.0
     assert got["fits_envelope"]["body_id"] == "assembly"
@@ -112,15 +109,14 @@ def test_a_passing_design_has_no_failures(tmp_path):
     assert payload["failures"] == [] and payload["passed"] is True
 
 
-def test_no_watertight_body_says_no_wall_was_measured(tmp_path, monkeypatch):
+def test_non_watertight_body_is_explained_and_no_wall_check_exists(tmp_path, monkeypatch):
     from makerbench import geometry
 
     monkeypatch.setattr(geometry, "is_watertight", lambda _mesh: False)
     payload = _gate_payload(tmp_path, trimesh.creation.box(extents=[30, 30, 30]),
                             {"id": "x", "envelope_mm": [100, 100, 100], "min_bodies": 1})
     got = _by_check(payload)
-    assert got["min_wall"]["measured"] is None and got["min_wall"]["body_id"] is None
-    assert "no watertight body" in got["min_wall"]["detail"]
+    assert "min_wall" not in got
     assert got["watertight"]["measured"] == 1 and got["watertight"]["body_id"] == "body_0"
     assert got["watertight"]["body_ids"] == ["body_0"]
 
@@ -146,19 +142,33 @@ def test_scoreline_rows_carry_failed_checks_only_when_something_failed(tmp_path)
 def test_older_results_without_explanations_are_listed_not_dropped():
     old = {"trial_id": "t", "model_id": "m", "instrument_id": "x", "seed": 1, "status": "scored",
            "result": {"objective": {"objective_pass_rate": 0.8333, "passed": False,
-                                    "sub_scores": {"renders": 1.0, "min_wall": 0.0}}}}
+                                    "sub_scores": {"renders": 1.0, "body_count": 0.0}}}}
     (row,) = runner.collect_objective_scoreline({"trials": [old]})
     (failed,) = row["failed_checks"]
-    assert failed["check"] == "min_wall" and failed["measured"] is None and "predates" in failed["detail"]
+    assert failed["check"] == "body_count" and failed["measured"] is None and "predates" in failed["detail"]
     assert _check(_doc([row]), SCHEMA) == []
 
 
-def test_borderline_rows_validate():
-    """#1011: the additive borderline_checks row field is in the schema, and a bad share fails."""
+def test_a_retired_wall_check_in_an_older_result_is_ignored():
+    """A result recorded before wall thickness left scoring may still name min_wall; it neither
+    fails the trial's row nor appears in its failed checks."""
+    old = {"trial_id": "t", "model_id": "m", "instrument_id": "x", "seed": 1, "status": "scored",
+           "result": {"objective": {"objective_pass_rate": 0.8333, "passed": False,
+                                    "sub_scores": {"renders": 1.0, "min_wall": 0.0},
+                                    "failures": [{"check": "min_wall", "measured": 0.3, "threshold": 1.0,
+                                                  "unit": "mm", "requires": "measured >= threshold",
+                                                  "body_id": "body_0", "detail": "thin"}]}}}
+    (row,) = runner.collect_objective_scoreline({"trials": [old]})
+    assert "failed_checks" not in row
+    assert runner.objective_rate({"renders": 1.0, "min_wall": 0.0}) == 1.0
+
+
+def test_rows_with_retired_fields_still_validate():
+    """Committed scorelines from before the change carry min_wall_method / borderline_checks; the
+    schema no longer describes them but does not reject them."""
     row = {"entrant": "m", "backend": "openscad", "objective_pass_rate": 1.0, "n_objective_trials": 1,
            "min_wall_method": "robust-v1",
            "borderline_checks": [{"trial_id": "t", "instrument_id": "x", "seed": 0, "check": "min_wall",
                                   "below_floor_share": 0.01}]}
     assert _check(_doc([row]), SCHEMA) == []
-    bad = {**row, "borderline_checks": [{"check": "min_wall", "below_floor_share": 1.5}]}
-    assert _check(_doc([bad]), SCHEMA)
+    assert "min_wall_method" not in json.dumps(SCHEMA)

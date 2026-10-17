@@ -18,8 +18,8 @@ def bundle():
         'varied_axes': ['models'], 'factorial': False,
         'held': {'instruments': 'ocarina', 'seeds': 0, 'backends': 'openscad', 'context_tiers': 'blind', 'levels': 'L1'}},
         'entrants': [
-            {'entrant': 'stub-a', 'backend': 'openscad', 'objective_pass_rate': 5/6, 'n_objective_trials': 1,
-             'n_infra_errors': 0, 'failed_checks': {'min_wall': 1}, 'elos': 1500, 'raw_error': '/home/test/private'},
+            {'entrant': 'stub-a', 'backend': 'openscad', 'objective_pass_rate': 4/5, 'n_objective_trials': 1,
+             'n_infra_errors': 0, 'failed_checks': {'body_count': 1}, 'elos': 1500, 'raw_error': '/home/test/private'},
             {'entrant': 'stub-b', 'backend': 'openscad', 'objective_pass_rate': None, 'n_objective_trials': 0,
              'n_infra_errors': 1, 'failed_checks': {}},
         ]}]}
@@ -33,8 +33,8 @@ def test_whitelist_and_static_provenance_with_infrastructure_unknown(tmp_path):
     assert 'elos' not in text and '/home/test' not in text
     card = b._prerender_matchups_html(page)
     assert 'models' in card and 'ocarina' in card and 'openscad' in card
-    assert 'min_wall (1)' in card
-    assert '83.33%' in card
+    assert 'body_count (1)' in card
+    assert '80.00%' in card
     assert 'Unmeasured' in card and 'infrastructure' in card
     assert 'stub-a' in card and 'stub-b' in card
     assert 'unverified' in card
@@ -225,70 +225,37 @@ def test_production_render_auto_fail_preserves_pipeline_zero_without_mesh_measur
     assert published['failed_checks']=={}
     html=b._prerender_matchups_html(page)
     assert 'Unmeasured (execution error)' in html and 'Not measured' in html
-    assert '0.00%' not in html and 'renders (1)' not in html
+    assert '<td>0.00%</td>' not in html and 'renders (1)' not in html
     assert row['pipeline_objective_pass_rate']==0
 
 
-@pytest.mark.parametrize('checks', [None, []])
-def test_zero_borderline_count_is_hidden(tmp_path, checks):
+def test_retired_wall_fields_are_not_published(tmp_path):
+    """Older bundles carried min_wall_method / borderline_checks / current_gate on a row; the page
+    copies a fixed whitelist, so none of it (and no borderline wording) reaches the page."""
     sample = bundle()
     row = sample['matchups'][0]['entrants'][0]
-    if checks is not None:
-        row['borderline_checks'] = checks
-    row['current_gate'] = {'borderline_checks': ['min_wall']}
+    row.update(min_wall_method='robust-v1', borderline_checks=['body_count'],
+               current_gate={'borderline_checks': ['body_count']})
     (tmp_path/'sample.json').write_text(json.dumps(sample))
     page = b.build_matchups_page(tmp_path)
-    assert all(r.get('borderline', 0) == 0 for r in page['matchups'][0]['entrants'])
-    assert 'borderline (excluded)' not in b._prerender_matchups_html(page)
+    text = json.dumps(page).lower()
+    assert 'borderline' not in text and 'min_wall' not in text and 'robust' not in text
+    html = b._prerender_matchups_html(page).lower()
+    assert 'borderline' not in html and 'min_wall' not in html and 'robust-v1' not in html
+    assert html.count('<table>') == 1 and 'estimator' not in html
 
 
-@pytest.mark.parametrize('checks', ['min_wall', {'min_wall': 1}, [None], ['unknown']])
-def test_invalid_borderline_metadata_is_rejected(tmp_path, checks):
+def test_a_recorded_wall_failure_must_be_recomputed_not_published(tmp_path):
+    """Wall thickness is not a published check (2026-10-16): a bundle that still lists it as a
+    failed check was not recomputed and is rejected rather than shown."""
     sample = bundle()
-    sample['matchups'][0]['entrants'][0]['borderline_checks'] = checks
+    sample['matchups'][0]['entrants'][0]['failed_checks'] = {'min_wall': 1}
     (tmp_path/'sample.json').write_text(json.dumps(sample))
-    with pytest.raises(ValueError, match='invalid matchup borderline checks'):
+    with pytest.raises(ValueError, match='failed checks'):
         b.build_matchups_page(tmp_path)
 
 
-def test_mixed_estimators_split_labelled_tables_and_scope_borderline_note(tmp_path):
-    sample = bundle()
-    rows = sample['matchups'][0]['entrants']
-    rows[1].update(objective_pass_rate=1.0, n_objective_trials=1, n_infra_errors=0,
-                   min_wall_method='robust-v1')
-    (tmp_path/'sample.json').write_text(json.dumps(sample))
-    page = b.build_matchups_page(tmp_path)
-    assert page['matchups'][0]['entrants'][1]['min_wall_method'] == 'robust-v1'
-    html = b._prerender_matchups_html(page)
-    assert html.count('<table>') == 2
-    assert b.LEGACY_MIN_WALL_LABEL in html
-    assert b.MIN_WALL_ESTIMATOR_LABELS['robust-v1'] in html
-    assert 'Estimators differ within this matchup; rows are not comparable across groups.' in html
-    legacy, robust = html.split('<h4>' + b.MIN_WALL_ESTIMATOR_LABELS['robust-v1'])
-    legacy = legacy.split('<tbody>')[1]
-    assert 'stub-a' in legacy and 'stub-b' not in legacy
-    assert 'Under robust-v1' not in legacy
-    assert 'stub-b' in robust and 'stub-a' not in robust
-    assert robust.count('Under robust-v1') == 1
+def test_matchup_gate_names_equal_the_arena_checks():
+    from makerbench.code_cad_arena_runner import ARENA_GATE_CHECKS
 
-
-def test_single_estimator_preserves_table_and_unmeasured_failure_placement(tmp_path):
-    sample = bundle()
-    (tmp_path/'sample.json').write_text(json.dumps(sample))
-    legacy = b._prerender_matchups_html(b.build_matchups_page(tmp_path))
-    sample['matchups'][0]['entrants'][0]['min_wall_method'] = 'robust-v1'
-    (tmp_path/'sample.json').write_text(json.dumps(sample))
-    robust = b._prerender_matchups_html(b.build_matchups_page(tmp_path))
-    # The measured table, including the infrastructure failure, is byte-identical.
-    assert legacy.split('<table>')[1].split('</table>')[0] == robust.split('<table>')[1].split('</table>')[0]
-    assert robust.count('<table>') == 1
-    assert '<h4>' not in robust and 'Estimators differ' not in robust
-    assert 'Under robust-v1' in robust and 'Under robust-v1' not in legacy
-
-
-def test_unknown_matchup_estimator_is_rejected(tmp_path):
-    sample = bundle()
-    sample['matchups'][0]['entrants'][0]['min_wall_method'] = 'unknown'
-    (tmp_path/'sample.json').write_text(json.dumps(sample))
-    with pytest.raises(ValueError, match='estimator'):
-        b.build_matchups_page(tmp_path)
+    assert b.MATCHUP_GATES == frozenset((*ARENA_GATE_CHECKS, 'topology', 'interfaces'))

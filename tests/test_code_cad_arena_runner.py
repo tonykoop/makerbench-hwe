@@ -93,7 +93,6 @@ class TestArenaRegistry:
             spec = instrument_spec_from_registry(registry, instrument_id)
             assert spec["assembly"] is True
             assert spec["min_bodies"] >= 4
-            assert spec["min_wall_mm"] > 0
             assert spec["repo_path"]
 
     def test_stave_djembe_brief_carries_no_tuning_claims(self):
@@ -141,7 +140,7 @@ class TestMeshObjectiveGate:
         assert result["sub_scores"]["watertight"] == 1.0
         assert result["sub_scores"]["nonzero_volume"] == 1.0
         assert result["sub_scores"]["fits_envelope"] == 1.0
-        assert result["sub_scores"]["min_wall"] == 1.0
+        assert tuple(result["sub_scores"]) == runner.ARENA_GATE_CHECKS
         assert result["sub_scores"]["body_count"] == 1.0
         assert result["passed"] is True
         assert result["metrics"]["body_count"] == 1
@@ -404,16 +403,13 @@ class TestExecuteTrialEndToEnd:
         )
         entry = log["trials"][0]
         assert entry["status"] == "error" and entry["result"] is None
-        assert entry["meta"] == {"context_tier": "repo", "confinement": "unconfined", "min_wall_method": "robust-v1"}
+        assert entry["meta"] == {"context_tier": "repo", "confinement": "unconfined"}
 
         rows = runner.collect_objective_scoreline(log)
         assert rows == [{
             "entrant": "codex-gpt-5.6-sol", "backend": "openscad", "objective_pass_rate": 0.0,
-            "n_objective_trials": 1, "confinement": "unconfined", "min_wall_method": "robust-v1",
+            "n_objective_trials": 1, "confinement": "unconfined",
         }]
-        # The site publishes robust-v1 rows in their own table (#983); strip the marker so this test isolates
-        # the confinement rule.
-        rows = [{k: v for k, v in row.items() if k != "min_wall_method"} for row in rows]
 
         root = Path(__file__).resolve().parents[1]
         spec = importlib.util.spec_from_file_location("mb_site_build_data_785", root / "site" / "build_data.py")
@@ -475,8 +471,7 @@ class TestExecuteTrialEndToEnd:
         log = run_orchestration(
             config=config, run_log_path=tmp_path / "run_log.json", execute_trial=execute,
         )
-        assert log["trials"][0]["meta"] == {"context_tier": "repo", "confinement": expected,
-                                            "min_wall_method": "robust-v1"}
+        assert log["trials"][0]["meta"] == {"context_tier": "repo", "confinement": expected}
 
     def test_scored_codex_trial_is_verified_only_when_sandboxed(self, tmp_path):
         registry = self._stage_instrument(tmp_path)
@@ -976,32 +971,6 @@ class TestJudgeScoreline:
         return path
 
 
-class TestPerInstrumentMinWall:
-    def test_min_wall_mm_override_is_honored(self, tmp_path):
-        # A solid 30mm cube has no thin features; a 50mm floor must fail it
-        # while a 0.5mm floor passes — proving the spec override reaches the
-        # gate (#595).
-        strict = runner.mesh_objective_gate(
-            {"id": "x", "envelope_mm": [100, 100, 100], "min_bodies": 1, "min_wall_mm": 50.0}
-        )
-        lenient = runner.mesh_objective_gate(
-            {"id": "x", "envelope_mm": [100, 100, 100], "min_bodies": 1, "min_wall_mm": 0.5}
-        )
-        box = trimesh.creation.box(extents=[30, 30, 30])
-        strict_result = strict(_context(tmp_path, box))
-        lenient_result = lenient(_context(tmp_path / "b", box))
-        assert strict_result["sub_scores"]["min_wall"] == 0.0
-        assert lenient_result["sub_scores"]["min_wall"] == 1.0
-        assert strict_result["metrics"]["min_wall_floor_mm"] == 50.0
-
-    def test_missing_min_wall_mm_falls_back_to_default(self, tmp_path):
-        gate = runner.mesh_objective_gate(
-            {"id": "x", "envelope_mm": [100, 100, 100], "min_bodies": 1}
-        )
-        result = gate(_context(tmp_path, trimesh.creation.box(extents=[30, 30, 30])))
-        assert result["metrics"]["min_wall_floor_mm"] == runner.MIN_WALL_FLOOR_MM
-
-
 class TestAssemblyModuleFallback:
     ASSEMBLY_SPEC = {
         "id": "kora", "envelope_mm": [1500, 700, 700],
@@ -1105,7 +1074,6 @@ class TestRound3Registry:
         registry = runner.load_arena_registry(ARENA_REGISTRY)
         for instrument_id in ("handpan", "udu", "cajon", "duduk"):
             spec = instrument_spec_from_registry(registry, instrument_id)
-            assert spec["min_wall_mm"] > 0
             assert spec["repo_path"]
         handpan = instrument_spec_from_registry(registry, "handpan")
         text = handpan["task_brief"].lower()
@@ -1118,7 +1086,6 @@ class TestRound4Registry:
         registry = runner.load_arena_registry(ARENA_REGISTRY)
         for instrument_id in ("brian-boru-harp", "hammered-dulcimer", "guzheng"):
             spec = instrument_spec_from_registry(registry, instrument_id)
-            assert spec["min_wall_mm"] > 0
             assert spec["repo_path"]
             assert "geometry only" in spec["task_brief"].lower()
         harp = instrument_spec_from_registry(registry, "brian-boru-harp")
@@ -1270,7 +1237,6 @@ class TestRoundsR5R10Registry:
                 assert spec["family"] == "strings"
                 assert spec["task_brief"].strip()
                 assert len(spec["envelope_mm"]) == 3
-                assert spec["min_wall_mm"] > 0
                 assert spec["repo_path"].startswith("strings/")
 
     def test_each_round_has_an_assembly_task(self):

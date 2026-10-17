@@ -1,5 +1,5 @@
 """scripts/regrade_scoreline.py: never writes into the recorded run, and keeps unregraded
-(no-mesh) failures in their entrant's row under today's min_wall policy."""
+(no-mesh) failures in their entrant's row."""
 from __future__ import annotations
 
 import importlib.util
@@ -32,7 +32,7 @@ def test_refuses_an_output_overlapping_the_recorded_run(tmp_path, inside):
         regrade_scoreline.regrade(run, out, ROOT / "tasks/code_cad_arena/registry.json", 1)
 
 
-def test_unregraded_failure_keeps_the_policy_row_and_the_source_is_untouched(tmp_path):
+def test_unregraded_failure_keeps_its_row_and_the_source_is_untouched(tmp_path):
     run = _run(tmp_path)
     before = (run / "run_log.json").read_bytes()
     scoreline = tmp_path / "scoreline.json"
@@ -40,8 +40,8 @@ def test_unregraded_failure_keeps_the_policy_row_and_the_source_is_untouched(tmp
                             "--scoreline-out", str(scoreline), "--workers", "1"])
     assert (run / "run_log.json").read_bytes() == before
     regraded = json.loads((tmp_path / "out/run_log.json").read_text())
-    assert regraded["trials"][0]["meta"]["min_wall_method"] == "robust-v1"
+    assert not regraded["trials"][0].get("meta")  # nothing is stamped on a trial that has no mesh
     assert regraded["regrade"]["trials_regraded"] == 0
     rows = json.loads(scoreline.read_text())["rows"]
-    assert len(rows) == 1 and rows[0]["min_wall_method"] == "robust-v1"
+    assert len(rows) == 1 and "min_wall_method" not in rows[0]
     assert rows[0]["objective_pass_rate"] == 0.0 and rows[0]["n_objective_trials"] == 1

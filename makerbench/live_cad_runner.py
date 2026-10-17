@@ -31,11 +31,8 @@ from typing import Callable, Mapping, Optional
 from . import render
 from .code_cad_arena_runner import (
     evaluate_objective_trial,
-    gate_min_wall_policy,
     mesh_objective_gate,
     raise_with_trial_meta,
-    stamp_min_wall_policy,
-    trial_min_wall_policy,
 )
 from .code_cad_generator import instrument_spec_from_registry
 from .code_cad_objective import RenderArtifacts
@@ -56,9 +53,9 @@ CONNECTOR: `{connector}` MCP tools are registered ({tool_menu}). A disposable em
 INSTRUMENT: {instrument_id} ({family}).
 BRIEF: {brief}
 
-CONSTRAINTS (arena mesh-gate — you are scored on these): envelope {env} mm; min wall {min_wall} mm; >= {min_bodies} distinct bodies; every body a WATERTIGHT solid (bodies must NOT interpenetrate — braze or gap cleanly); nonzero volume. Use the right features: revolve for flares/cups; sweep/loft for tubing; shell for hollow bores; boss-extrude + revolve for casings/buttons. If a feature fails, read the error and self-correct (gentler bends, loft segments, reposition) — never fake geometry.
+CONSTRAINTS (arena mesh-gate — you are scored on these): envelope {env} mm; >= {min_bodies} distinct bodies; every body a WATERTIGHT solid (bodies must NOT interpenetrate — braze or gap cleanly); nonzero volume. Use the right features: revolve for flares/cups; sweep/loft for tubing; shell for hollow bores; boss-extrude + revolve for casings/buttons. If a feature fails, read the error and self-correct (gentler bends, loft segments, reposition) — never fake geometry.
 
-LOOP: plan -> stage -> list_pending -> confirm -> capture_view (compare to the reference) -> measure (bbox in envelope? min-wall? bodies?) -> self-correct -> iterate until it matches the reference.
+LOOP: plan -> stage -> list_pending -> confirm -> capture_view (compare to the reference) -> measure (bbox in envelope? bodies?) -> self-correct -> iterate until it matches the reference.
 
 WHEN DONE you MUST export the finished part: call the connector `{export_tool}` tool with format "stl" (the bridge writes mm), absolute path exactly:
     {win_stl}
@@ -159,7 +156,6 @@ def build_assignment(
         family=spec.get("family", "instrument"),
         brief=spec.get("task_brief") or spec.get("task_brief_short") or instrument_id,
         env=" x ".join(str(x) for x in env) if env else "533 x 200 x 180",
-        min_wall=spec.get("min_wall_mm") or 0.6,
         min_bodies=spec.get("min_bodies") or 5,
         win_stl=win_stl,
     )
@@ -315,13 +311,9 @@ def make_live_execute_trial(
         try:
             return _execute_body(trial)
         except Exception as exc:
-            # #997 P1: a live build that failed (driver error, no STL) keeps its gate's
-            # min_wall policy, so the failure stays in that policy's scoreline row.
-            # The row also keeps its backend/tier, or it would land in the run config's row.
+            # A live build that failed (driver error, no STL) keeps its backend/tier, or it
+            # would land in the run config's row.
             meta = {"backend": config.backend, "tier": "live", "context_tier": config.context_tier}
-            policy = trial_min_wall_policy(registry, trial.instrument_id, gate_factory)
-            if policy:
-                meta["min_wall_method"] = policy
             raise_with_trial_meta(exc, meta)
 
     def _execute_body(trial: ArenaTrial) -> dict:
@@ -353,7 +345,6 @@ def make_live_execute_trial(
             compiler=compiler,
         )
         payload["rep"] = trial.rep
-        stamp_min_wall_policy(payload, gate_min_wall_policy(objective_gate, spec))
         payload["gen"] = {"transcript_path": (gen_dir / "build_transcript.txt").as_posix(),
                           "assignment_path": (gen_dir / "assignment.md").as_posix()}
         payload["backend"] = config.backend

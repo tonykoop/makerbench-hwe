@@ -1,3 +1,7 @@
+> **Historical record.** Wall thickness (`min_wall`) was removed from arena scoring on 2026-10-16 by
+> maintainer decision; the estimator comparison below describes scoring that no longer exists, and
+> `scripts/rescore_min_wall.py` has been removed. See `CODE_CAD_OBJECTIVE.md`.
+
 # `min_wall` re-score: legacy `min` vs `robust-v1` (#979)
 
 Epic T2 (#978) makes `robust-v1` the default `min_wall` estimator of the arena mesh gate

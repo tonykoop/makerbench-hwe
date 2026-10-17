@@ -8,24 +8,21 @@ export const CHECK_ORDER = [
   "nonzero_volume",
   "body_count",
   "fits_envelope",
-  "min_wall",
   "topology",
   "interfaces",
 ];
 
-const STATE_TEXT = { pass: "Pass", fail: "Fail", borderline: "Borderline", unknown: "Not recorded", absent: "Not checked" };
+const STATE_TEXT = { pass: "Pass", fail: "Fail", unknown: "Not recorded", absent: "Not checked" };
 
 export function checkState(gates, name) {
   if (!gates || !Object.prototype.hasOwnProperty.call(gates, name)) return "absent";
   const value = gates[name];
-  // #1011: a borderline min_wall is neither a pass nor a fail (excluded from the pass rate).
-  if (value === "borderline") return "borderline";
   if (typeof value !== "number" || !Number.isFinite(value)) return "unknown";
   return value >= 1 ? "pass" : "fail";
 }
 
 // One row per check, one cell per entrant, in the same order for everyone,
-// so a chip for "min_wall" always sits beside the other entrant's "min_wall".
+// so a chip for "watertight" always sits beside the other entrant's "watertight".
 export function checkGrid(trials) {
   const list = trials || [];
   const seen = new Set(list.flatMap((trial) => Object.keys(trial?.gates || {})));

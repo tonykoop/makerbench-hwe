@@ -14,40 +14,35 @@ import {
   toggleSelection,
 } from "../../makerbench/arena_studio/static/app/lib/matchupCompare.js";
 
-const A = { trial_id: "a", gates: { renders: 1, watertight: 1, min_wall: 0, topology: 0 }, mesh_url: "/m/a" };
-const B = { trial_id: "b", gates: { renders: 1, min_wall: 1, watertight: null, zeta_extra: 1 }, mesh_url: "/m/b" };
+const A = { trial_id: "a", gates: { renders: 1, watertight: 1, fits_envelope: 0, topology: 0 }, mesh_url: "/m/a" };
+const B = { trial_id: "b", gates: { renders: 1, fits_envelope: 1, watertight: null, zeta_extra: 1 }, mesh_url: "/m/b" };
 
 test("check state: pass, fail, not recorded, not checked", () => {
   assert.equal(checkState(A.gates, "renders"), "pass");
-  assert.equal(checkState(A.gates, "min_wall"), "fail");
+  assert.equal(checkState(A.gates, "fits_envelope"), "fail");
   assert.equal(checkState(B.gates, "watertight"), "unknown");
   assert.equal(checkState(B.gates, "topology"), "absent");
   assert.equal(checkState(null, "renders"), "absent");
   assert.equal(checkState({ renders: "1" }, "renders"), "unknown");
 });
 
-test("#1011: a borderline min_wall is its own state, never a pass or fail", () => {
-  assert.equal(checkState({ min_wall: "borderline" }, "min_wall"), "borderline");
-  const [row] = checkGrid([{ gates: { min_wall: "borderline" } }, { gates: { min_wall: 1 } }])
-    .filter((r) => r.check === "min_wall");
-  assert.deepEqual(row.cells.map((c) => c.state), ["borderline", "pass"]);
-  assert.equal(row.cells[0].text, "Borderline");
-  assert.equal(row.differs, false); // only decided cells (pass/fail) can differ
+test("a retired verdict value is not a result", () => {
+  assert.equal(checkState({ fits_envelope: "borderline" }, "fits_envelope"), "unknown");
 });
 
 test("the grid aligns every check across both entrants in one fixed order", () => {
   const rows = checkGrid([A, B]);
-  assert.deepEqual(rows.map((row) => row.check), ["renders", "watertight", "min_wall", "topology", "zeta_extra"]);
+  assert.deepEqual(rows.map((row) => row.check), ["renders", "watertight", "fits_envelope", "topology", "zeta_extra"]);
   const byCheck = Object.fromEntries(rows.map((row) => [row.check, row]));
   assert.deepEqual(byCheck.renders.cells.map((cell) => cell.state), ["pass", "pass"]);
-  assert.deepEqual(byCheck.min_wall.cells.map((cell) => cell.text), ["Fail", "Pass"]);
-  assert.equal(byCheck.min_wall.differs, true);
+  assert.deepEqual(byCheck.fits_envelope.cells.map((cell) => cell.text), ["Fail", "Pass"]);
+  assert.equal(byCheck.fits_envelope.differs, true);
   assert.equal(byCheck.renders.differs, false);
   // Unknown or unchecked never counts as a difference.
   assert.deepEqual(byCheck.watertight.cells.map((cell) => cell.text), ["Pass", "Not recorded"]);
   assert.equal(byCheck.watertight.differs, false);
   assert.deepEqual(byCheck.topology.cells.map((cell) => cell.text), ["Fail", "Not checked"]);
-  assert.equal(byCheck.min_wall.label, "min wall");
+  assert.equal(byCheck.fits_envelope.label, "fits envelope");
   // Order follows the trials passed in.
   assert.deepEqual(checkGrid([B, A])[2].cells.map((cell) => cell.text), ["Pass", "Fail"]);
   assert.deepEqual(checkGrid([]), []);
