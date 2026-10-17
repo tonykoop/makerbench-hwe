@@ -15,7 +15,9 @@ part, Explore designs, Leaderboard). Its only source is
    - ``scripts/check_public_terms.py`` fingerprints find nothing in any staged
      text file;
    - the Space card carries the contamination canary and the gradio pin in
-     ``requirements.txt`` matches the card's ``sdk_version``.
+     ``requirements.txt`` matches the card's ``sdk_version``;
+   - CLI staging also proves the package commit is an ancestor of the locally
+     fetched ``origin/main`` (fetch it first; missing history fails closed).
 
 This replaces the old behaviour, which staged a static mirror of ``site/``.
 That mirror was a copy of the leaderboard that went stale between uploads; the
@@ -272,6 +274,27 @@ def stage(out_dir: Path, repo: Path = REPO_ROOT) -> int:
     return len(staged_files(out_dir))
 
 
+
+def assert_package_pin_on_main(requirements: str, repo: Path = REPO_ROOT) -> None:
+    """Deployment gate: the exact installed package must already be merged."""
+    match = re.search(
+        r"^makerbench-hwe @ https://github\.com/tonykoop/makerbench-hwe/archive/([0-9a-f]{40})\.zip$",
+        requirements, re.MULTILINE,
+    )
+    if not match:
+        raise SystemExit("MakerBench package pin must contain a full 40-character commit SHA")
+    pin = match.group(1)
+    try:
+        _git(repo, "rev-parse", "--verify", "refs/remotes/origin/main^{commit}")
+        _git(repo, "merge-base", "--is-ancestor", pin, "refs/remotes/origin/main")
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise SystemExit(
+            f"MakerBench package pin {pin} is not proven to be an ancestor of origin/main. "
+            "Fetch origin/main with sufficient history; merge the package prep and re-pin "
+            "before staging for deployment."
+        ) from exc
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -288,6 +311,7 @@ def main() -> None:
     args = parser.parse_args()
 
     n_files = stage(args.out)
+    assert_package_pin_on_main((args.out / "requirements.txt").read_text(encoding="utf-8"))
 
     print(f"Staged {n_files} files in {args.out} (integrity checks passed)")
     print("Smoke-test locally:")

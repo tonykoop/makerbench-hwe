@@ -237,10 +237,16 @@ def test_space_card_is_public_and_accurate(staged: Path) -> None:
 def test_main_prints_upload_command_for_the_one_space(tmp_path, monkeypatch, capsys):
     out = tmp_path / "hf_space"
     monkeypatch.setattr(sys, "argv", ["build_hf_space.py", "--out", str(out)])
+    checked = []
+    # Ancestry uses a controlled Git DAG in test_hf_space_pin.py; this CLI test
+    # must also work in CI's shallow PR checkout without origin/main.
+    monkeypatch.setattr(build_hf_space, "assert_package_pin_on_main",
+                        lambda requirements: checked.append(requirements))
 
     build_hf_space.main()
 
     captured = capsys.readouterr().out
+    assert len(checked) == 1 and "makerbench-hwe @" in checked[0]
     assert build_hf_space.DEFAULT_SPACE_ID == "tonykoop/makerbench-hwe"
     assert "HfApi().upload_folder" in captured
     assert "repo_type='space'" in captured

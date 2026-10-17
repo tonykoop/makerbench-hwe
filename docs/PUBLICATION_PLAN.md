@@ -72,6 +72,7 @@ uploads to Hugging Face.
 - [ ] Stage the Space from a clean `main` checkout:
 
   ```bash
+  git fetch origin main
   python scripts/build_hf_space.py
   ```
 
@@ -86,7 +87,10 @@ uploads to Hugging Face.
   every file is a `.py`, `.md` or `.txt` that is strict UTF-8 with no NUL or
   control bytes except tab/LF/CR; the card carries the canary; the gradio pin equals the card's
   `sdk_version`; MakerBench is an exact 40-character commit archive dependency
-  rather than vendored source. `--out` overrides the staging directory; `--space-id` only
+  rather than vendored source. CLI staging also fails closed unless the package
+  SHA is an ancestor of the fetched `origin/main`; missing refs or insufficient
+  shallow history require fetching main/history first. A PR-only package commit
+  is never an acceptable deploy pin. `--out` overrides the staging directory; `--space-id` only
   changes the printed upload command. The same checks run in CI
   (`tests/test_build_hf_space.py`, `tests/test_hf_space_app.py`).
 
