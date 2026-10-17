@@ -44,6 +44,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+try:
+    from .track_isolation import is_blender_row
+except ImportError:  # loaded by path (scripts/tests), outside the package
+    import importlib.util as _ilu
+
+    _spec = _ilu.spec_from_file_location("_mb_track_isolation", Path(__file__).with_name("track_isolation.py"))
+    _mod = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    is_blender_row = _mod.is_blender_row
+
 
 SCHEMA = "makerbench-opportunity-matrix-v1"
 
@@ -233,7 +243,7 @@ def load_model_capability(results_dir: Path, catalog: Optional[Catalog] = None) 
         if family is None:
             continue
         for row in doc.get("results", []):
-            if (row.get("track") or "") != "blind":
+            if is_blender_row(row, doc) or (row.get("track") or "") != "blind":
                 continue
             grade = row.get("grade") or {}
             score = grade.get("score")

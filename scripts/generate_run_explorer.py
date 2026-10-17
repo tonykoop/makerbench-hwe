@@ -123,6 +123,17 @@ def _first(*vals, default=""):
     return default
 
 
+def _isolation():
+    """Load makerbench/track_isolation.py by path (stdlib-only; no package import)."""
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[1] / "makerbench" / "track_isolation.py"
+    spec = importlib.util.spec_from_file_location("_mb_track_isolation", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def load_run(run_dir: Path) -> RunView:
     """Read run.json + optional partner artifacts into a RunView. Defensive throughout."""
     run_dir = Path(run_dir)
@@ -131,8 +142,9 @@ def load_run(run_dir: Path) -> RunView:
         raise FileNotFoundError(f"{run_dir}: no run.json")
     data = json.loads(run_path.read_text(encoding="utf-8"))
 
-    rows = data.get("results") or []
-    if not rows and data.get("task_id"):  # tolerate a bare single-result object
+    # Track isolation (#1041): Blender rows never enter the explorer's blind scores.
+    rows = _isolation().main_series_rows(data)
+    if not rows and data.get("task_id") and not _isolation().is_blender_row(data):  # tolerate a bare single-result object
         rows = [data]
     primary = rows[0] if rows else {}
     pg = primary.get("grade") or {}

@@ -95,6 +95,16 @@ def registry_version(registry_path: str | Path) -> str | None:
     return registry.get("benchmark_version")
 
 
+def _isolation():
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[1] / "makerbench" / "track_isolation.py"
+    spec = importlib.util.spec_from_file_location("_mb_track_isolation", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def iter_result_bundles(root: str | Path):
     """Yield parsed ``*.json`` result bundles under ``root`` (a dict with ``results``)."""
     root = Path(root)
@@ -137,7 +147,7 @@ def scan(bundles, core_ids: list[str]) -> dict:
         present_agent_ids.add(agent_id)
         b_model = bundle.get("model_identifier")
         b_rl = bundle.get("reasoning_level")
-        for row in bundle.get("results", []):
+        for row in _isolation().main_series_rows(bundle):
             fid = row.get("task_id")
             if fid not in core:
                 continue

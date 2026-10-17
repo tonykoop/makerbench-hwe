@@ -35,6 +35,16 @@ from pathlib import Path
 
 from . import render
 
+try:
+    from .track_isolation import is_blender_row
+except ImportError:  # loaded by path (scripts/tests), outside the package
+    import importlib.util as _ilu
+
+    _spec = _ilu.spec_from_file_location("_mb_track_isolation", Path(__file__).with_name("track_isolation.py"))
+    _mod = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    is_blender_row = _mod.is_blender_row
+
 # Submissions live here; nothing outside this tree is ever read for a mesh.
 SUBMISSION_ROOT = "results"
 # A defensive cap so a pathological submission can't bloat the Pages payload.
@@ -110,6 +120,8 @@ def iter_submissions(results_dir: Path):
         agent_identifier = run.get("agent_identifier") or "legacy_unknown"
 
         for row in run.get("results", []):
+            if is_blender_row(row, run):
+                continue
             dossier = row.get("dossier") or {}
             sources = [
                 a for a in (dossier.get("artifacts") or [])

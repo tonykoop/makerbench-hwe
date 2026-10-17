@@ -16,6 +16,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+try:
+    from .track_isolation import is_blender_row
+except ImportError:  # loaded by path from site/build_data.py, outside the package
+    import importlib.util as _ilu
+
+    _spec = _ilu.spec_from_file_location("_mb_track_isolation", Path(__file__).with_name("track_isolation.py"))
+    _mod = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    is_blender_row = _mod.is_blender_row
+
 
 HII_RANK = {"L0": 0, "L1": 1, "L2": 2}
 
@@ -109,7 +119,7 @@ def load_observations(results_dir: str | Path) -> list[DeltaObservation]:
             continue
         rel_path = _relative_path(path, root)
         for row_index, row in enumerate(run["results"]):
-            if not isinstance(row, dict):
+            if not isinstance(row, dict) or is_blender_row(row, run):
                 continue
             obs = _observation_from_row(run, row, rel_path, row_index)
             if obs is not None:
