@@ -145,7 +145,7 @@ def test_a_tracked_symlink_refuses_the_promotion_and_writes_nothing_outside(setu
 
 def test_a_gitdir_redirect_is_never_promoted_to(setup, tmp_path):
     studio_repo, root, instrument, _origin = setup
-    decoy, _ = build_scratch_instrument(tmp_path / "decoy")
+    decoy, _ = build_scratch_instrument(tmp_path / "decoy" / "instruments")
     redirected = root / "strings" / "sambuca"
     import shutil
 
@@ -176,7 +176,7 @@ def test_a_commondir_redirect_and_a_foreign_origin_are_refused(setup, tmp_path, 
 
 def test_git_environment_cannot_redirect_the_repo(setup, tmp_path, monkeypatch):
     studio_repo, root, instrument, _origin = setup
-    decoy, _ = build_scratch_instrument(tmp_path / "decoy")
+    decoy, _ = build_scratch_instrument(tmp_path / "decoy" / "instruments")
     monkeypatch.setenv("GIT_DIR", str(decoy / ".git"))
     result = _client(studio_repo, root).post(f"/api/review/{SAMBUCA_RUN}/promote/{SOLIDWORKS}", headers=ORIGIN).json()
     monkeypatch.delenv("GIT_DIR")
@@ -207,3 +207,39 @@ def test_a_symlinked_worktree_folder_is_refused(setup, tmp_path):
     response = _client(studio_repo, root).post(f"/api/review/{SAMBUCA_RUN}/promote/{SOLIDWORKS}", headers=ORIGIN)
     assert response.status_code == 409 and "symlink" in response.text
     assert list(outside.iterdir()) == []
+
+
+def _set_origin(repo: Path, url: str, *pushurls: str) -> None:
+    _git(repo, "remote", "set-url", "origin", url)
+    for pushurl in pushurls:
+        _git(repo, "config", "--add", "remote.origin.pushurl", pushurl)
+
+
+def test_every_push_url_must_be_the_instrument_repo(setup, tmp_path):
+    studio_repo, root, instrument, origin = setup
+    elsewhere = tmp_path / "elsewhere.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(elsewhere)], check=True)
+    good = "https://github.com/tonykoop/sambuca.git"
+    _set_origin(instrument, good, good, str(elsewhere))  # the second push URL is the one git push would also hit
+    client = _client(studio_repo, root, control_room_promote=True, promote_pr_opener=lambda *a: pytest.fail("opened"))
+    response = client.post(f"/api/review/{SAMBUCA_RUN}/promote/{SOLIDWORKS}", headers=ORIGIN)
+    assert response.status_code == 409 and "push URL" in response.text
+    assert _git(elsewhere, "branch", "--list") == "" and _no_promotion_branch(instrument)
+    with pytest.raises(pm.PromoteError, match="push URL"):
+        pm._check_remote(instrument)
+    _git(instrument, "config", "--unset-all", "remote.origin.pushurl")
+    _set_origin(instrument, good, good, "git@github.com:tonykoop/sambuca.git")
+    assert pm._check_remote(instrument) == good  # two valid push URLs: the first is pushed to explicitly
+
+
+@pytest.mark.parametrize("rule", ["insteadOf", "pushInsteadOf"])
+def test_a_url_rewrite_of_origin_is_refused(setup, tmp_path, rule):
+    _studio_repo, _root, instrument, _origin = setup
+    _set_origin(instrument, "https://github.com/tonykoop/sambuca.git")
+    _git(instrument, "config", f"url.{tmp_path / 'decoy.git'}.{rule}", "https://github.com/tonykoop/")
+    with pytest.raises(pm.PromoteError, match="insteadOf"):
+        pm._check_remote(instrument)
+    _git(instrument, "config", "--unset", f"url.{tmp_path / 'decoy.git'}.{rule}")
+    _git(instrument, "config", "url.https://example.invalid/.insteadOf", "https://unrelated.example/")
+    assert pm._check_remote(instrument) == "https://github.com/tonykoop/sambuca.git"  # unrelated rules are fine
+    assert pm.github_repo("git@github.com:tonykoop/sambuca.git", "sambuca") == "tonykoop/sambuca"

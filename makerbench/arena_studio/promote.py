@@ -90,17 +90,42 @@ def confine_repo(repo: Path) -> None:
         raise PromoteError("The instrument repo's git directory resolves outside its folder; refusing.")
 
 
-def remote_ok(url: str, name: str) -> bool:
+def _remote_match(url: str, name: str) -> Optional[re.Match]:
     owners = "|".join(re.escape(owner) for owner in REMOTE_OWNERS)
-    pattern = rf"(https://github\.com/|git@github\.com:|ssh://git@github\.com/)({owners})/{re.escape(name)}(\.git)?/?"
-    return re.fullmatch(pattern, url.strip(), flags=re.I) is not None
+    pattern = rf"(https://github\.com/|git@github\.com:|ssh://git@github\.com/)({owners})/({re.escape(name)})(\.git)?/?"
+    return re.fullmatch(pattern, url.strip(), flags=re.I)
 
 
-def _check_remote(repo: Path) -> None:
-    """Both the fetch and push URL of origin must be the instrument's own GitHub repo."""
-    urls = {_git(repo, "remote", "get-url", "origin", check=False), _git(repo, "remote", "get-url", "--push", "origin", check=False)}
-    if not all(url and remote_ok(url, repo.name) for url in urls):
-        raise PromoteError(f"origin is not github.com/{'|'.join(REMOTE_OWNERS)}/{repo.name}; refusing to push.")
+def remote_ok(url: str, name: str) -> bool:
+    return _remote_match(url, name) is not None
+
+
+def _check_remote(repo: Path) -> str:
+    """The one URL to push to: every origin url and pushurl must be the instrument's own GitHub repo.
+
+    The raw configured URLs are read (not ``remote get-url``, which shows only the first push
+    URL while ``git push`` sends to all of them), and any insteadOf/pushInsteadOf rule that
+    would rewrite one of them is refused, so the URL checked is the URL pushed to.
+    """
+    fetch = _git(repo, "config", "--get-all", "remote.origin.url", check=False).splitlines()
+    push = _git(repo, "config", "--get-all", "remote.origin.pushurl", check=False).splitlines()
+    urls = [url.strip() for url in [*fetch, *push]]
+    allowed = f"github.com/{'|'.join(REMOTE_OWNERS)}/{repo.name}"
+    if not fetch or not all(url and remote_ok(url, repo.name) for url in urls):
+        raise PromoteError(f"Every origin URL and push URL must be {allowed}; refusing to push.")
+    rules = _git(repo, "config", "--get-regexp", r"^url\..*\.(push)?insteadof$", check=False).splitlines()
+    prefixes = [line.split(None, 1)[1].strip() for line in rules if len(line.split(None, 1)) == 2]
+    if any(prefix and url.startswith(prefix) for prefix in prefixes for url in urls):
+        raise PromoteError("A git insteadOf/pushInsteadOf rule rewrites origin's URL; refusing to push.")
+    return (push or fetch)[0].strip()
+
+
+def github_repo(url: str, name: str) -> str:
+    """``owner/name`` of a validated remote URL, for ``gh --repo``."""
+    match = _remote_match(url, name)
+    if match is None:
+        raise PromoteError(f"{url} is not an allowed GitHub repo.")
+    return f"{match.group(2)}/{match.group(3)}"
 
 
 def _inside(root: Path, relative: str) -> Path:
@@ -167,8 +192,7 @@ def promote(
 ) -> dict[str, Any]:
     """Commit the design on a new branch of ``repo``; push and open a PR only when ``publish``."""
     confine_repo(repo)
-    if publish:
-        _check_remote(repo)
+    push_url = _check_remote(repo) if publish else None
     if worktrees.is_symlink() or (worktrees.exists() and not worktrees.is_dir()):
         raise PromoteError("The promotion worktree folder is a link or not a folder; refusing.")
     when = now or datetime.now(timezone.utc)
@@ -234,7 +258,8 @@ def promote(
         result: dict[str, Any] = {"branch": branch, "commit": commit, "files": sorted(record["files"].values()),
                                   "pushed": False, "pr_url": None}
         if publish:
-            _git(target, "push", "-q", "-u", "origin", branch)
+            # Pushed to the one validated URL, never to "origin" (which may fan out to other push URLs).
+            _git(repo, "push", "-q", str(push_url), f"refs/heads/{branch}:refs/heads/{branch}")
             result["pushed"] = True
             if pr_opener is not None:
                 body = (f"Adds the MakerBench design chosen in Morning Review: {design.route}, "
@@ -252,7 +277,10 @@ def promote(
 
 def gh_pr_opener(worktree: Path, branch: str, title: str, body: str) -> str:
     """Open the PR with the gh CLI from inside the instrument repo's worktree."""
-    result = subprocess.run(["gh", "pr", "create", "--head", branch, "--title", title, "--body", body],
+    url = _git(worktree, "config", "--get", "remote.origin.url")
+    name = re.sub(r"\.git$", "", url.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1])
+    repo_slug = github_repo(url, name)  # the origin promote() already validated, named explicitly
+    result = subprocess.run(["gh", "pr", "create", "--repo", repo_slug, "--head", branch, "--title", title, "--body", body],
                             cwd=str(worktree), capture_output=True, text=True, timeout=120)
     if result.returncode != 0:
         raise PromoteError(f"gh pr create failed: {result.stderr.strip()[:300]}")
