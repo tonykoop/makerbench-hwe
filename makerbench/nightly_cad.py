@@ -19,6 +19,7 @@ from . import code_cad_providers as providers
 from .cadam_adapter import CadamClient, CadamConfig, CadamRecoveryRequiredError
 from .code_cad_orchestrator import OrchestrationConfig, run_orchestration
 from .live_cad_runner import LiveCadConfig, connector_available, make_live_execute_trial
+from . import nightly_revisions as revisions
 from .run_log_io import atomic_write_json, file_lock, find_trial, has_trial, trial_rows
 from .schema import MatchupMetadata, matchup_metadata
 
@@ -81,6 +82,9 @@ class NightlyJob:
     status: str = "queued"
     run_id: Optional[str] = None
     run_dir: Optional[str] = None
+    # A Control Room revision (#1116): one entrant continued from its best turn with feedback.
+    # Never read from the nightly queue file; the executor builds it from the revision queue.
+    revision: Optional[dict] = None
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, object]) -> "NightlyJob":
@@ -103,9 +107,10 @@ class NightlyJob:
     def validate(self) -> None:
         if not self.job_id or not self.instrument_id:
             raise ValueError("nightly jobs require job_id and instrument_id")
-        if not Path(self.reference_image).is_file():
-            raise ValueError(f"nightly reference image is missing: {self.reference_image}")
-        if len(self.entrants) < 2:
+        if self.reference_image or not self.revision:
+            if not Path(self.reference_image).is_file():
+                raise ValueError(f"nightly reference image is missing: {self.reference_image}")
+        if len(self.entrants) < (1 if self.revision else 2):
             raise ValueError("nightly jobs require at least two entrants")
         if self.budget_usd < 0:
             raise ValueError("budget_usd cannot be negative")
@@ -477,6 +482,7 @@ class NightlyExecutor:
         instruments_root: Optional[Path] = None,
         lease_path: Optional[Path] = None,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        runs_root: Optional[Path] = None,
         handlers: Optional[
             Mapping[
                 str,
@@ -491,6 +497,9 @@ class NightlyExecutor:
         self.lease_path = Path(lease_path or self.output_root / ".nightly-cad.lock")
         self.now = now
         self.handlers = dict(handlers or {})
+        # Where ``control-room/revision-queue.json`` lives. Revisions run only when this is set
+        # AND a ``revision`` handler is given: nothing is claimed that cannot be generated.
+        self.runs_root = Path(runs_root) if runs_root else None
 
     def _state(self, run_dir: Path, job: NightlyJob, **extra: object) -> None:
         atomic_write_json(
@@ -651,6 +660,52 @@ class NightlyExecutor:
         )
         return 0.0
 
+    def _revision_job(
+        self, jobs: list[NightlyJob], request: revisions.RevisionRequest
+    ) -> NightlyJob:
+        """The NightlyJob a revision request stands for: its entrant, continued from a turn.
+
+        Seed, budget, reference image and the entrant's configuration come from the nightly job
+        that produced the source run, so a revision cannot widen what that night was allowed.
+        """
+        assert self.runs_root is not None
+        revisions.source_run_dir(self.runs_root, request.source_run_id)  # confinement only
+        original = next((j for j in jobs if j.run_id == request.source_run_id), None)
+        if original is None:
+            raise ValueError(f"source run {request.source_run_id} is not in the nightly queue")
+        entrant = next((e for e in original.entrants if e.entrant_id == request.entrant_id), None)
+        if entrant is None:
+            raise ValueError(f"{request.entrant_id} did not take part in {request.source_run_id}")
+        return NightlyJob(
+            job_id=request.job_id,
+            instrument_id=request.instrument_id,
+            reference_image=original.reference_image,
+            entrants=[NightlyEntrant.from_dict(entrant.__dict__)],
+            seed=original.seed,
+            budget_usd=original.budget_usd,
+            revision={
+                **request.as_dict(),
+                "source_run_dir": (self.runs_root / request.source_run_id).as_posix(),
+            },
+        )
+
+    def _claim_revision(
+        self, payload: Mapping[str, object], jobs: list[NightlyJob]
+    ) -> Optional[tuple[NightlyJob, revisions.RevisionRequest]]:
+        if self.runs_root is None or "revision" not in self.handlers:
+            return None
+        while True:
+            request = revisions.claim_next(self.runs_root, now=self.now())
+            if request is None:
+                return None
+            try:
+                job = self._revision_job(jobs, request)
+                job.validate()
+            except (ValueError, OSError) as exc:  # unusable request: record it, try the next one
+                revisions.finish(self.runs_root, request, ok=False, error=str(exc), now=self.now())
+                continue
+            return job, request
+
     def run(self) -> dict:
         with nightly_lease(self.lease_path, now=self.now):
             payload, jobs = load_queue(self.queue_path)
@@ -658,8 +713,12 @@ class NightlyExecutor:
                 (item for item in jobs if item.status in {"queued", "running"}),
                 None,
             )
+            claimed: Optional[revisions.RevisionRequest] = None
             if job is None:
-                return {"status": "queue-empty"}
+                taken = self._claim_revision(payload, jobs)
+                if taken is None:
+                    return {"status": "queue-empty"}
+                job, claimed = taken
             job.validate()
             matchup = matchup_metadata(payload)
             if not job.run_id:
@@ -669,7 +728,8 @@ class NightlyExecutor:
             run_dir.mkdir(parents=True, exist_ok=True)
             job.run_dir = run_dir.as_posix()
             job.status = "running"
-            save_queue(self.queue_path, payload, jobs)
+            if claimed is None:
+                save_queue(self.queue_path, payload, jobs)
             _fresh_run_log(run_dir, job, matchup=matchup)
             registry = arena_runner.load_arena_registry(self.registry_path)
             budget = _resume_budget(run_dir, limit_usd=job.budget_usd)
@@ -697,7 +757,7 @@ class NightlyExecutor:
                     budget.reserve(entrant)
                     dispatch = None
                     resume_only = False
-                    if entrant.kind == "cadam" and entrant.kind not in self.handlers:
+                    if entrant.kind == "cadam" and entrant.kind not in self.handlers and not job.revision:
                         dispatch = budget.prepare_dispatch(job, entrant)
                         resume_only = str(dispatch.get("status")) == "dispatched"
                         if not resume_only:
@@ -708,7 +768,7 @@ class NightlyExecutor:
                     # The reservation and paid-dispatch identity must be durable
                     # before any provider request can leave this process.
                     self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
-                    handler = self.handlers.get(entrant.kind)
+                    handler = self.handlers.get("revision" if job.revision else entrant.kind)
                     if handler is not None:
                         cost = handler(job, entrant, run_dir, registry)
                     elif entrant.kind == "cadam":
@@ -782,7 +842,13 @@ class NightlyExecutor:
                 morning["safety_block"] = safety_block
                 atomic_write_json(run_dir / "morning-summary.json", morning)
             job.status = "votable" if morning["votable"] else "blocked"
-            save_queue(self.queue_path, payload, jobs)
+            if claimed is None:
+                save_queue(self.queue_path, payload, jobs)
+            else:
+                failure = next((row.get("error") for row in outcomes if row.get("status") in {"error", "paid-dispatch-uncertain"}), None)
+                revisions.finish(
+                    self.runs_root, claimed, ok=failure is None, run_id=job.run_id, error=failure, now=self.now()
+                )
             self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__, morning=morning)
             return {
                 "status": job.status,
@@ -790,6 +856,7 @@ class NightlyExecutor:
                 **({"matchup": matchup} if matchup else {}),
                 "run_id": job.run_id,
                 "run_dir": run_dir.as_posix(),
+                **({"revision_of": job.revision} if job.revision else {}),
                 "morning": morning,
                 "outcomes": outcomes,
                 "budget": budget.__dict__,
