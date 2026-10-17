@@ -9,6 +9,7 @@ public-artifact audit and public-term checks pass on it.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import subprocess
 import sys
@@ -127,7 +128,16 @@ def test_space_source_uses_installed_package_without_repo_data_paths() -> None:
             assert 'Path(makerbench.__file__).resolve().parent.parent / "tasks" / family' in text
         else:
             assert ".parent.parent" not in text, path
-        assert "open(" not in text, path
+        for node in ast.walk(ast.parse(text)):
+            if not isinstance(node, ast.Call):
+                continue
+            assert not (isinstance(node.func, ast.Name) and node.func.id == "open"), path
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "open":
+                # Explore fetches two fixed public URLs; local file reads stay forbidden.
+                assert path.name == "explore.py", path
+                assert ast.unparse(node.func.value) == "build_opener(NoRedirect())"
+                assert [ast.unparse(arg) for arg in node.args] == ["request"]
+                assert [(kw.arg, ast.literal_eval(kw.value)) for kw in node.keywords] == [("timeout", 8)]
         assert "read_text" not in text, path
 
 

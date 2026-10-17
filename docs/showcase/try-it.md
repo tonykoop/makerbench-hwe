@@ -14,11 +14,14 @@ showcase browsing; launching, editing and voting are unavailable.
 
 ## Hosted demo
 
-The [planned Hugging Face Studio demo](https://huggingface.co/spaces/tonykoop/makerbench-studio-demo)
-is **pending Tony's deployment**. It is not available yet, and the Space name may
-change when Tony deploys it. Use the local demo today. The
-[local Space build recipe](../../spaces/studio_demo/README.md) explains the
-Docker bundle and the deployment boundary.
+Use **Explore designs** in the single
+[MakerBench HWE Space](https://huggingface.co/spaces/tonykoop/makerbench-hwe).
+The tab's source is staged in this repository; Tony must deploy this update
+before it appears in the live Space. Load the showcase, choose a study and
+compare two designs. Only public renders and recorded objective checks are
+shown. If offline, retry later or use the local demo below.
+The [deployment runbook](../PUBLICATION_PLAN.md#1-hugging-face-space-deploy-runbook-tonykoopmakerbench-hwe)
+covers the one Space; the older Docker demo recipe remains for local use.
 
 ## Local demo
 
