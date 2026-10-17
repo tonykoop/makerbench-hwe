@@ -11,15 +11,7 @@
   var charts = {}; // canvas id -> Chart instance
 
   // ---- theme --------------------------------------------------------------
-  function applyTheme(t) {
-    document.documentElement.setAttribute("data-theme", t);
-    try { localStorage.setItem("mb-theme", t); } catch (e) {}
-    rerenderCharts(); // chart colors are theme-derived
-  }
-  document.getElementById("theme-toggle").addEventListener("click", function () {
-    var cur = document.documentElement.getAttribute("data-theme");
-    applyTheme(cur === "dark" ? "light" : "dark");
-  });
+  window.addEventListener("makerbench:themechange", rerenderCharts);
 
   function cssVar(name) {
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -1831,6 +1823,7 @@
           rounds.map(arenaRoundCard).join("") +
           arenaPendingHTML(page);
         section.hidden = false;
+        window.dispatchEvent(new Event("makerbench:contentready"));
       })
       .catch(function () { /* leave the section hidden on any error */ });
   }
@@ -1986,6 +1979,7 @@
         document.getElementById("findings-lede").textContent = sec.lede || "";
         grid.innerHTML = findings.map(findingCardHTML).join("");
         section.hidden = false;
+        window.dispatchEvent(new Event("makerbench:contentready"));
       })
       .catch(function () { /* leave the section hidden on any error */ });
   }
@@ -2151,6 +2145,8 @@
   // switching versions doesn't bounce the user back to Blind.
   function applyData(data) {
     DATA = data;
+    var status = document.querySelector("[data-site-data-status]");
+    if (status) status.hidden = true;
     var headline = document.getElementById("headline");
     if (headline) headline.textContent = data.headline || "";
     renderHeroStats();
@@ -2163,6 +2159,7 @@
     renderRoadmap();
     renderCitation();
     setTrack(TRACK);
+    window.dispatchEvent(new Event("makerbench:contentready"));
   }
 
   // Load the live latest payload (empty path) or an archived snapshot.
@@ -2174,6 +2171,7 @@
       .catch(function () {
         var note = document.getElementById("lb-note");
         if (note) note.textContent = "Could not load " + url + ".";
+        showSiteDataError();
       });
   }
 
@@ -2205,6 +2203,14 @@
         sel.addEventListener("change", function () { loadVersion(sel.value); });
       })
       .catch(function () { /* no archive index → selector stays hidden */ });
+  }
+
+  function showSiteDataError() {
+    var status = document.querySelector("[data-site-data-status]");
+    if (!status) return;
+    status.textContent = "Live results could not be loaded. Showing the last published snapshot.";
+    status.hidden = false;
+    window.dispatchEvent(new Event("makerbench:contentready"));
   }
 
   // ---- boot ---------------------------------------------------------------
@@ -2317,7 +2323,7 @@
       return r.json();
     })
     .then(boot)
-    .catch(function (err) {
-      console.warn("Could not load leaderboard data; showing the static snapshot.", err);
+    .catch(function () {
+      showSiteDataError();
     });
 })();

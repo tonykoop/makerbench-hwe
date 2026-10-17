@@ -25,23 +25,53 @@
       } catch (e) {}
     })();
   </script>
+<!-- site-nav:assets -->
+<link rel="stylesheet" href="../assets/navigation.css?v=1023" />
+<!-- /site-nav:assets -->
 </head>
 <body>
   <!-- ================= NAV ================= -->
-  <header class="nav">
-    <div class="nav-inner">
-      <a class="brand" href="../"><span class="dot"></span> MakerBench HWE</a>
-      <nav class="nav-links">
-        <a href="../#leaderboard">Leaderboard</a>
-        <a href="../#charts">Charts</a>
-        <a href="../#tasks">Tasks</a>
-        <a href="../#methodology">Methodology</a>
-        <a href="./">Blog</a>
-        <a href="https://github.com/tonykoop/makerbench" rel="noopener">GitHub</a>
-      </nav>
-      <button class="theme-btn" id="theme-toggle" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
-    </div>
-  </header>
+  <!-- site-nav:header -->
+<header class="site-nav">
+  <div class="site-nav-inner">
+    <a class="site-nav-brand" href="../index.html" aria-label="MakerBench home"><span aria-hidden="true">◆</span> MakerBench</a>
+    <button class="site-menu-button" id="site-menu-button" type="button" aria-expanded="false" aria-controls="site-navigation" hidden>Menu</button>
+    <nav class="site-navigation" id="site-navigation" aria-label="Primary">
+        <a href="../leaderboard.html">Leaderboard</a>
+        <a href="../matchups.html">Matchups</a>
+        <a href="../charts.html">Charts</a>
+        <a href="../tasks.html">Tasks</a>
+        <a href="../arena.html">Arena</a>
+        <a href="../index.html#about">About</a>
+      <details class="site-nav-more">
+        <summary>More</summary>
+        <div class="site-nav-secondary">
+        <a href="../index.html#methodology">Methodology</a>
+        <a href="../index.html#why">Why MakerBench</a>
+        <a href="../index.html#tracks-leagues">Tracks &amp; leagues</a>
+        <a href="../domains.html">Domains</a>
+        <a href="../index.html#covers">What MakerBench covers</a>
+        <a href="../index.html#delta-dossier">Regressions</a>
+        <a href="../landscape.html">Landscape</a>
+        <a href="../index.html#ecosystem">Ecosystem</a>
+        <a href="../opportunity-matrix.html">Opportunity Matrix</a>
+        <a href="../explorer.html">Explorer</a>
+        <a href="../inspect.html">Inspect a Run</a>
+        <a href="../run-library.html">Run library</a>
+        <a href="../index.html#findings">Findings</a>
+        <a href="../blog/">Blog</a>
+        <a href="../index.html#roadmap">Roadmap</a>
+        <a href="../index.html#get-started">Get started</a>
+        <a href="https://github.com/tonykoop/makerbench-hwe" id="repo-link" rel="noopener">GitHub</a>
+        </div>
+      </details>
+    </nav>
+    <button class="site-theme-button" id="theme-toggle" type="button" aria-label="Toggle light / dark" title="Toggle light / dark" hidden>◐</button>
+  </div>
+  <p class="site-data-status" data-site-data-status role="status" hidden></p>
+</header>
+<script src="../assets/navigation.js?v=1023"></script>
+<!-- /site-nav:header -->
 
   <!-- ================= HERO ================= -->
   <div class="hero">
@@ -179,13 +209,6 @@ R10 basses/large     ρ =  0.00</pre>
     </div>
   </footer>
 
-  <script>
-    document.getElementById("theme-toggle").addEventListener("click", function () {
-      var cur = document.documentElement.getAttribute("data-theme");
-      var next = cur === "dark" ? "light" : "dark";
-      document.documentElement.setAttribute("data-theme", next);
-      try { localStorage.setItem("mb-theme", next); } catch (e) {}
-    });
-  </script>
+
 </body>
 </html>

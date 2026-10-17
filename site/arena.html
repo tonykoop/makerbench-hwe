@@ -30,39 +30,53 @@
     })();
   </script>
 <noscript><style>#charts .chart-box,#charts .profile-grid {display:none}</style></noscript>
+<!-- site-nav:assets -->
+<link rel="stylesheet" href="assets/navigation.css?v=1023" />
+<!-- /site-nav:assets -->
 </head>
 <body>
   <a class="skip-link" href="#arena">Skip to Code-CAD Arena</a>
-  <header class="nav">
-    <div class="nav-inner">
-      <span class="brand"><span class="dot"></span> MakerBench HWE</span>
-      <nav class="nav-links" aria-label="Primary">
-        <a href="index.html">Home</a>
-        <a href="index.html#why">Why</a>
-        <a href="index.html#leaderboard">Leaderboard</a>
-        <a href="index.html#tracks-leagues">Tracks</a>
-        <a href="index.html#charts">Charts</a>
-        <a href="index.html#tasks">Tasks</a>
-        <a href="index.html#covers">Covers</a>
+  <!-- site-nav:header -->
+<header class="site-nav">
+  <div class="site-nav-inner">
+    <a class="site-nav-brand" href="index.html" aria-label="MakerBench home"><span aria-hidden="true">◆</span> MakerBench</a>
+    <button class="site-menu-button" id="site-menu-button" type="button" aria-expanded="false" aria-controls="site-navigation" hidden>Menu</button>
+    <nav class="site-navigation" id="site-navigation" aria-label="Primary">
+        <a href="leaderboard.html">Leaderboard</a>
+        <a href="matchups.html">Matchups</a>
+        <a href="charts.html">Charts</a>
+        <a href="tasks.html">Tasks</a>
+        <a href="arena.html" aria-current="page">Arena</a>
+        <a href="index.html#about">About</a>
+      <details class="site-nav-more">
+        <summary>More</summary>
+        <div class="site-nav-secondary">
+        <a href="index.html#methodology">Methodology</a>
+        <a href="index.html#why">Why MakerBench</a>
+        <a href="index.html#tracks-leagues">Tracks &amp; leagues</a>
+        <a href="domains.html">Domains</a>
+        <a href="index.html#covers">What MakerBench covers</a>
         <a href="index.html#delta-dossier">Regressions</a>
-        <a href="#arena">Arena</a>
-        <a href="index.html#matchups">Matchups</a>
+        <a href="landscape.html">Landscape</a>
         <a href="index.html#ecosystem">Ecosystem</a>
-        <a href="opportunity-matrix.html">Matrix</a>
-        <a href="inspect.html">Inspect</a>
+        <a href="opportunity-matrix.html">Opportunity Matrix</a>
+        <a href="explorer.html">Explorer</a>
+        <a href="inspect.html">Inspect a Run</a>
         <a href="run-library.html">Run library</a>
         <a href="index.html#findings">Findings</a>
-        <a href="index.html#methodology">Methodology</a>
-        <a href="index.html#roadmap">Roadmap</a>
-        <a href="index.html#landscape">Landscape</a>
         <a href="blog/">Blog</a>
+        <a href="index.html#roadmap">Roadmap</a>
         <a href="index.html#get-started">Get started</a>
-        <a href="index.html#about">About</a>
         <a href="https://github.com/tonykoop/makerbench-hwe" id="repo-link" rel="noopener">GitHub</a>
-      </nav>
-      <button class="theme-btn" id="theme-toggle" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
-    </div>
-  </header>
+        </div>
+      </details>
+    </nav>
+    <button class="site-theme-button" id="theme-toggle" type="button" aria-label="Toggle light / dark" title="Toggle light / dark" hidden>◐</button>
+  </div>
+  <p class="site-data-status" data-site-data-status role="status" hidden></p>
+</header>
+<script src="assets/navigation.js?v=1023"></script>
+<!-- /site-nav:header -->
 <main>
   <section id="arena">
     <div class="wrap">
@@ -96,9 +110,9 @@
         <div class="sm-col">
           <h3>Results &amp; data</h3>
           <ul>
-            <li><a href="index.html#leaderboard">Leaderboard</a></li>
-            <li><a href="index.html#charts">Charts</a></li>
-            <li><a href="index.html#tasks">Domains &amp; tasks</a></li>
+            <li><a href="leaderboard.html">Leaderboard</a></li>
+            <li><a href="charts.html">Charts</a></li>
+            <li><a href="tasks.html">Domains &amp; tasks</a></li>
             <li><a href="domains.html">What we cover</a></li>
             <li><a href="index.html#delta-dossier">Delta-Dossier regressions</a></li>
             <li><a href="opportunity-matrix.html">Opportunity Matrix</a></li>
@@ -145,7 +159,7 @@
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="assets/app.js?v=2026-10-03-subscription-refresh"></script>
+  <script src="assets/app.js?v=2026-10-16-navigation"></script>
   <script src="assets/landscape.js?v=2026-06-15-bench-of-benchmarks"></script>
 </body>
 </html>
