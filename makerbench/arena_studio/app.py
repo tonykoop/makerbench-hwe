@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -18,6 +18,7 @@ from makerbench import __version__
 from makerbench.cli_arena import DEFAULT_REGISTRY
 from makerbench.redaction import find_host_paths, redact_host_paths, run_relative_path
 
+from .routes_control_room import register_control_room_routes
 from .routes_delta import register_delta_routes
 from .routes_workbench import register_workbench_routes
 from .service import ArenaStudioService, is_valid_task_id
@@ -104,6 +105,8 @@ def create_studio_app(
     extra_run_roots: Optional[Sequence[Path]] = None,
     allowed_hosts: Sequence[str] = LOOPBACK_HOSTS,
     instruments_root: Optional[Path] = None,
+    control_room_queue_writes: bool = False,
+    native_opener: Optional[Callable[[Path], None]] = None,
 ) -> FastAPI:
     """Create and configure the Arena Studio FastAPI instance."""
 
@@ -174,6 +177,9 @@ def create_studio_app(
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
 
     register_delta_routes(app, service, _resolve_run_dir)  # delta lane (#699)
+    register_control_room_routes(  # Control Room (#1104); queue writes stay off unless asked
+        app, service, queue_writes=control_room_queue_writes, opener=native_opener
+    )
     register_workbench_routes(  # design workbench (#788 W3)
         app, service.workbench, _resolve_run_dir, lambda value: _publish_value(value, service.repo_root)
     )

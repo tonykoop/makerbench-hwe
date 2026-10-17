@@ -11,6 +11,7 @@ import { LaunchScreen } from "./screens/launch.js";
 import { AnalyticsScreen } from "./screens/agreement.js";
 import { CompareScreen } from "./screens/compare.js";
 import { MorningScreen, NightlyScreen } from "./screens/nightly.js";
+import { ReviewScreen } from "./screens/review.js";
 import { RunsScreen } from "./screens/runs.js";
 import { VoteScreen } from "./screens/vote.js";
 import { WorkbenchScreen } from "./screens/workbench.js";
@@ -24,6 +25,8 @@ export const SCREENS = [
   { id: "vote", label: "Blind voting", component: VoteScreen, takesRun: true, blind: true },
   { id: "nightly", label: "Nightly cockpit", component: NightlyScreen },
   { id: "morning", label: "Morning review", component: MorningScreen, blind: true },
+  // Control Room (#1105): names entrants on purpose, so blind screens never link to it.
+  { id: "review", label: "Review the night", component: ReviewScreen, hideOnBlind: true },
   { id: "launch", label: "Launch", component: LaunchScreen },
   { id: "analytics", label: "Agreement analytics", component: AnalyticsScreen, takesRun: true },
   { id: "compare", label: "Compare runs", component: CompareScreen },

@@ -74,6 +74,7 @@ RAIL = [
     ("vote", "Blind voting", True),
     ("nightly", "Nightly cockpit", False),
     ("morning", "Morning review", False),
+    ("review", "Review the night", False),
     ("launch", "Launch", False),
     ("analytics", "Agreement analytics", True),
     ("compare", "Compare runs", False),

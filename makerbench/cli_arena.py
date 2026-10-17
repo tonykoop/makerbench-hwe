@@ -1485,6 +1485,11 @@ def arena_studio(
             None,
             "--instruments-root",
             help="Root of the instrument build repos (registry repo_path values are relative to it); enables opening masters in the design workbench (#788).",
+        ),
+        control_room_queue_writes: bool = typer.Option(
+            False,
+            "--control-room-queue-writes",
+            help="Let Control Room write queues: Morning Review revisions go to runs/control-room/revision-queue.json. Off: a review only writes morning-review.json.",
         )):
     """Launch the MakerBench Arena Studio web interface (Issue #696)."""
 
@@ -1518,6 +1523,7 @@ def arena_studio(
         # a deliberate remote bind accepts any Host header.
         allowed_hosts=LOOPBACK_HOSTS if is_loopback else ("*",),
         instruments_root=Path(instruments_root) if instruments_root else None,
+        control_room_queue_writes=control_room_queue_writes,
     )
     console.print(f"[bold green]MakerBench Arena Studio running at http://{host}:{port}/[/bold green]")
     uvicorn.run(app, host=host, port=port)
