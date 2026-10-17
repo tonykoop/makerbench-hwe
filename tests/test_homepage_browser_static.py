@@ -35,23 +35,27 @@ def test_homepage_without_javascript_exposes_committed_section_data():
             page.goto(f"http://127.0.0.1:{server.server_port}/", wait_until="load")
             data = json.loads((ROOT / "site/data/leaderboard.json").read_text())
             assert f"results as of {data['data_updated'][:10]}" in page.locator("#freshness").inner_text()
-            assert page.locator("#task-grid .task").count() == len(data["task_families"])
             assert page.locator("#pack-grid .pack-card").count() == len(data["roadmap"]["packs"])
             assert page.locator("#chart-static-data tbody tr").count() > 0
-            assert page.locator("#arena").is_visible()
-            assert page.locator("#arena-runs tbody tr").count() > 0
             assert page.locator("#findings").is_visible()
             assert page.locator("#ecosystem-grid .eco-node").count() == len(data["ecosystem"]["nodes"])
-            assert page.locator("#lscape-container tbody tr").count() == len(
-                json.loads((ROOT / "site/data/landscape.json").read_text())["entries"]
-            )
+            page.locator("#about > details > summary").click()
             assert page.locator("#cite-bibtex").inner_text() == data["citation"]["bibtex"]
-            matchups = json.loads((ROOT / "site/data/matchups.json").read_text())["matchups"]
-            assert page.locator("#matchups").is_visible()
-            assert page.locator("#matchups article.arena-card").count() == len(matchups)
-            assert page.locator("#matchups tbody tr").count() == sum(
-                len(item["entrants"]) for item in matchups
-            )
+            for name, selector, count in (
+                ("tasks", "#task-grid .task", len(data["task_families"])),
+                ("arena", "#arena-runs tbody tr", None),
+                ("landscape", "#lscape-container tbody tr", len(json.loads(
+                    (ROOT / "site/data/landscape.json").read_text())["entries"])),
+                ("matchups", "#matchups article.arena-card", len(json.loads(
+                    (ROOT / "site/data/matchups.json").read_text())["matchups"])),
+            ):
+                assert page.locator(f'#{name} a[href="{name}.html"]').count() == 1
+                detail = context.new_page()
+                detail.goto(f"http://127.0.0.1:{server.server_port}/{name}.html")
+                actual = detail.locator(selector).count()
+                assert actual == count if count is not None else actual > 0
+                assert detail.locator(selector).first.is_visible()
+                detail.close()
             assert "Loading" not in page.locator("body").inner_text()
             assert all(section.is_visible() for section in page.locator("main section").all())
             screenshot = os.environ.get("HOMEPAGE_STATIC_SCREENSHOT")

@@ -126,7 +126,7 @@ def test_summary_rank_details_and_responsiveness(javascript, width):
     playwright = pytest.importorskip("playwright.sync_api")
     payload = summary_payload()
     payload['hero_stats'] = builder.build_hero_stats(payload['models'], payload['task_families'])
-    html = (ROOT / "site/index.html").read_text()
+    html = (ROOT / "site/leaderboard.html").read_text()
     import re
     html = re.sub(r'(<!-- prerender:leaderboard -->).*?(<!-- /prerender:leaderboard -->)',
                   lambda m: m[1] + builder._prerender_leaderboard_html(payload) + m[2],
@@ -204,7 +204,7 @@ def test_summary_rank_details_and_responsiveness(javascript, width):
             # primary row in both JS and static rendering, including on phones.
             page.unroute("**/data/leaderboard.json")
             page.unroute(base + "/")
-            page.goto(base + "/", wait_until="networkidle")
+            page.goto(base + "/leaderboard.html", wait_until="networkidle")
             assert 'claude-code-sonnet-5' in page.locator('#hero-stats .stat').first.inner_text()
             assert page.locator('#hero-stats .stat-val').first.inner_text() == '2.93/4'
             assert 'claude-code-sonnet-5' in page.locator('#lb-container .lb-primary').first.inner_text()

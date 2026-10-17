@@ -85,3 +85,7 @@ Disallow: /
 
 User-agent: omgili
 Disallow: /
+
+# The summary homepage and Matchups, Landscape, Tasks, and Arena pages
+# are discoverable through sitemap.xml and share the training opt-out meta tag.
+# The full sortable leaderboard is published at leaderboard.html.
