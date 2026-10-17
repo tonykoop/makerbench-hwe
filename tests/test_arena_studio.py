@@ -23,6 +23,15 @@ from makerbench.arena_studio.service import ArenaStudioService
 from makerbench.cli import app as cli_app
 from makerbench.redaction import find_host_paths
 
+
+@pytest.fixture(autouse=True)
+def _healthy_cadam_probe(monkeypatch):
+    """The Studio preflight now probes the CADAM app (#660); keep these tests off the network."""
+
+    from makerbench import nightly_preflight
+
+    monkeypatch.setattr(nightly_preflight, "_probe_transport", lambda *_a: b"ok")
+
 runner = CliRunner()
 
 
