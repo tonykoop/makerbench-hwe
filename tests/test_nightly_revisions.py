@@ -146,7 +146,7 @@ def test_an_edited_note_saved_through_morning_review_replaces_the_queued_request
         (lambda n: _job(n, entrant="someone-else"), "did not take part"),
         (lambda n: _job(n, feedback="   "), "malformed"),
         (lambda n: _job(n, extra=0), "malformed"),
-        (lambda n: _job(n, run_id="../escape"), "directly under runs"),
+        (lambda n: _job(n, run_id="../escape"), "malformed"),
     ],
 )
 def test_unusable_requests_are_failed_with_a_reason_and_do_not_block_the_next(night, job, reason):

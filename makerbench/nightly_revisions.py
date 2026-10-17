@@ -22,6 +22,7 @@ Nothing here talks to a model: generation is the ``revision`` handler the execut
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +38,20 @@ RUNNING = "running"
 DONE = "done"
 FAILED = "failed"
 SUPERSEDED = "superseded"
+
+
+# Ids that name folders or jobs: no separators, no spaces, no leading dot, no ``..``. ``:`` and ``+``
+# are allowed in a job id (matchup entrant ids use ``::``) but never reach a folder name raw.
+_SLUG = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:+-]{0,119}")
+
+
+def is_slug(value: object) -> bool:
+    return isinstance(value, str) and bool(_SLUG.fullmatch(value)) and ".." not in value
+
+
+def folder_name(value: str) -> str:
+    """A job id as a folder-name component (``:`` and ``+`` become ``-``; safe on Windows too)."""
+    return re.sub(r"[^A-Za-z0-9._-]", "-", value)
 
 
 class RevisionQueueError(ValueError):
@@ -84,7 +99,7 @@ def revision_queue_path(runs_root: Path) -> Path:
 
 
 def source_run_dir(runs_root: Path, run_id: str) -> Path:
-    if not run_id or Path(run_id).name != run_id or run_id in {".", ".."}:
+    if not is_slug(run_id):
         raise RevisionQueueError("A revision must name a run folder directly under runs/.")
     return confined_child(runs_root, run_id)
 
@@ -108,6 +123,8 @@ def _request(job: Mapping[str, Any]) -> Optional[RevisionRequest]:
     extra = of.get("extra_turns")
     if not (job.get("job_id") and job.get("instrument_id") and entrant and of.get("run_id") and of.get("trial_id")):
         return None
+    if not is_slug(job.get("job_id")) or not is_slug(of.get("run_id")):
+        return None  # these become folder names: refuse anything that is not a plain slug
     if not isinstance(feedback, str) or not feedback.strip():
         return None
     if not isinstance(extra, int) or isinstance(extra, bool) or extra < 1:

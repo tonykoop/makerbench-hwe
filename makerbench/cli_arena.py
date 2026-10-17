@@ -1385,10 +1385,12 @@ def arena_overnight(
         output_root: str = typer.Option(..., "--output-root", help="Root for timestamped nightly runs."),
         registry: str = typer.Option(DEFAULT_REGISTRY, help="Arena registry JSON path."),
         instruments_root: Optional[str] = typer.Option(None, "--instruments-root"),
-        lease_path: Optional[str] = typer.Option(None, "--lease-path")):
+        lease_path: Optional[str] = typer.Option(None, "--lease-path"),
+        revisions: bool = typer.Option(True, "--revisions/--no-revisions", help="When the nightly queue is empty, run pending Morning Review revision requests from <output-root>/control-room/revision-queue.json (#1116).")):
     """Run or resume one queued overnight instrument experiment."""
 
     from .nightly_cad import NightlyExecutor
+    from .nightly_revise import make_revision_handler
 
     try:
         result = NightlyExecutor(
@@ -1397,6 +1399,8 @@ def arena_overnight(
             output_root=Path(output_root),
             instruments_root=Path(instruments_root) if instruments_root else None,
             lease_path=Path(lease_path) if lease_path else None,
+            runs_root=Path(output_root) if revisions else None,
+            handlers={"revision": make_revision_handler()} if revisions else None,
         ).run()
     except (RuntimeError, ValueError, OSError) as exc:
         console.print(f"[red]overnight arena failed: {exc}[/red]")

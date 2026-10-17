@@ -723,8 +723,18 @@ class NightlyExecutor:
             matchup = matchup_metadata(payload)
             if not job.run_id:
                 stamp = self.now().astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-                job.run_id = f"{stamp}-{job.job_id}"
-            run_dir = Path(job.run_dir) if job.run_dir else self.output_root / job.run_id
+                name = revisions.folder_name(job.job_id) if job.revision else job.job_id
+                job.run_id = f"{stamp}-{name}"
+            if job.revision:
+                # the destination is derived from queue data: resolve and confine it under the
+                # output root (refusing a pre-existing symlinked folder) before anything is made
+                try:
+                    run_dir = revisions.confined_child(self.output_root, job.run_id)
+                except revisions.RevisionQueueError as exc:
+                    revisions.finish(self.runs_root, claimed, ok=False, error=str(exc), now=self.now())
+                    raise ValueError(str(exc)) from None
+            else:
+                run_dir = Path(job.run_dir) if job.run_dir else self.output_root / job.run_id
             run_dir.mkdir(parents=True, exist_ok=True)
             job.run_dir = run_dir.as_posix()
             job.status = "running"
