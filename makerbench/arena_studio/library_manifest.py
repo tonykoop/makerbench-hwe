@@ -31,6 +31,10 @@ MANIFEST_SCHEMA = "instrument-showcase-library-manifest-v1"
 LIBRARY_URL = "https://tonykoop.github.io/library.html"
 SNAPSHOT_PATH = Path("control-room") / "library.json"
 MAX_PAGE_BYTES = 8 * 1024 * 1024
+#: Local manifest and cached snapshot files: the real library is well under 1 MB.
+MAX_JSON_BYTES = 4 * 1024 * 1024
+ENTRY_FIELDS = ("slug", "title", "family", "family_label", "subtype", "variants", "hero", "explorer",
+                "cad", "completeness", "wolfram", "status")
 FILTERS = ("family", "completeness", "cad", "wolfram")
 #: The library page's own filter values, offered even when no card has them today.
 KNOWN_FILTERS = {
@@ -164,14 +168,57 @@ def build_snapshot(entries: Iterable[Mapping[str, Any]], *, source: str, fetched
     }
 
 
-def load_snapshot(path: Path) -> Optional[dict]:
+def snapshot_path(runs_root: Path) -> Path:
+    """``runs/control-room/library.json``, refusing a symlink anywhere on the way out of ``runs/``."""
+    root = Path(runs_root)
+    folder = root / SNAPSHOT_PATH.parent
+    for path in (root, folder, folder / SNAPSHOT_PATH.name):
+        if path.is_symlink():
+            raise LibraryError(f"Refusing a symlinked library snapshot path ({path.name}).")
+    if folder.exists() and not folder.resolve().is_relative_to(root.resolve()):
+        raise LibraryError("The library snapshot folder resolves outside runs/.")
+    return folder / SNAPSHOT_PATH.name
+
+
+def read_json_bounded(path: Path, limit: int = MAX_JSON_BYTES) -> Any:
+    """Parse a regular (non-symlink) JSON file of at most ``limit`` bytes, or raise LibraryError."""
+    path = Path(path)
+    if path.is_symlink() or not path.is_file():
+        raise LibraryError(f"{path.name} is not a regular file.")
+    with path.open("rb") as handle:
+        data = handle.read(limit + 1)
+    if len(data) > limit:
+        raise LibraryError(f"{path.name} is larger than {limit // (1024 * 1024)} MB.")
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        return json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as error:
+        raise LibraryError(f"{path.name} is not valid JSON: {error}") from None
+
+
+def _valid_entry(entry: Any) -> Optional[dict[str, Any]]:
+    if not isinstance(entry, Mapping) or not _SLUG.match(str(entry.get("slug") or "")):
+        return None
+    if any(not isinstance(entry.get(key, ""), (str, int)) or isinstance(entry.get(key), bool) for key in ENTRY_FIELDS):
+        return None
+    return _entry(**{key: entry.get(key) for key in ENTRY_FIELDS if key != "subtype"}, acoustic_class=entry.get("subtype"))
+
+
+def load_snapshot(runs_root: Path) -> Optional[dict]:
+    """The cached snapshot, or None when it is absent, unsafe, oversized or malformed (offline fallback)."""
+    try:
+        payload = read_json_bounded(snapshot_path(runs_root))
+    except (LibraryError, OSError):  # unreadable (e.g. permissions) counts as no cache
         return None
     if not isinstance(payload, Mapping) or payload.get("schema") != SNAPSHOT_SCHEMA:
         return None
-    return dict(payload)
+    raw = payload.get("entries")
+    if not isinstance(raw, list):
+        return None
+    entries = [entry for entry in map(_valid_entry, raw) if entry is not None]
+    if not entries:
+        return None
+    return {"schema": SNAPSHOT_SCHEMA, "source": str(payload.get("source") or ""),
+            "fetched_utc": str(payload.get("fetched_utc") or ""), "entries": entries}
 
 
 def fetch_page(url: str = LIBRARY_URL, timeout: float = 20.0) -> str:
@@ -183,15 +230,25 @@ def fetch_page(url: str = LIBRARY_URL, timeout: float = 20.0) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-def refresh(snapshot_path: Path, *, manifest_path: Optional[Path] = None,
+def refresh(runs_root: Path, *, manifest_path: Optional[Path] = None,
             fetch: Callable[[], str] = fetch_page, now: Optional[datetime] = None) -> dict:
-    """Rebuild the snapshot from a manifest file when given, else from the published page."""
+    """Rebuild the snapshot from a manifest file when given, else from the published page.
+
+    The previous snapshot is replaced only after the new one parsed and validated.
+    """
+    target = snapshot_path(runs_root)
     if manifest_path is not None:
-        payload = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+        payload = read_json_bounded(Path(manifest_path))
+        if not isinstance(payload, Mapping):
+            raise LibraryError("The library manifest is not a JSON object.")
         snapshot = build_snapshot(entries_from_manifest(payload), source=f"manifest:{Path(manifest_path).name}", fetched_at=now)
     else:
         snapshot = build_snapshot(entries_from_html(fetch()), source=LIBRARY_URL, fetched_at=now)
-    atomic_write_json(snapshot_path, snapshot)
+    if not snapshot["entries"]:
+        raise LibraryError("The library source has no usable instrument entries.")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path(runs_root)  # re-check after mkdir: nothing may have become a symlink
+    atomic_write_json(target, snapshot)
     return snapshot
 
 
