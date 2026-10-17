@@ -35,6 +35,10 @@ class CadamAuthError(RuntimeError):
     """Sign-in to the self-hosted CADAM Supabase failed. Never carries a token or password."""
 
 
+class CadamTransportError(RuntimeError):
+    """A CADAM/Supabase call failed. Fixed text only: never a header, token, key or response body."""
+
+
 @dataclass(frozen=True)
 class CadamConfig:
     """Secrets are ``repr=False`` so a stray ``print(config)`` or traceback cannot leak them."""
@@ -56,10 +60,16 @@ class CadamConfig:
     def has_bot_credentials(self) -> bool:
         return bool(self.bot_email.strip() and self.bot_password.strip())
 
+    @property
+    def has_partial_bot_credentials(self) -> bool:
+        return bool(self.bot_email.strip() or self.bot_password.strip()) and not self.has_bot_credentials
+
     def validate(self) -> None:
         for name in ("base_url", "supabase_url", "user_id", "service_role_key", "model"):
             if not str(getattr(self, name)).strip():
                 raise ValueError(f"CADAM {name} is required")
+        if self.has_partial_bot_credentials:  # never fall back to the static token behind a half-set bot login
+            raise ValueError("CADAM bot_email and bot_password must be set together")
         if self.has_bot_credentials:
             if not self.anon_key.strip():
                 raise ValueError("CADAM anon_key is required with bot_email/bot_password")
@@ -208,6 +218,21 @@ class CadamClient:
             "Authorization": f"Bearer {self.config.service_role_key}",
         }
 
+    def _send(self, method: str, url: str, headers: Mapping[str, str], body: Optional[bytes]) -> bytes:
+        """``transport`` with failures reduced to fixed text (headers may carry a live bearer token
+        or service key, and servers/proxies echo them in reasons). Raised outside the ``except`` so
+        the original error is not chained as ``__context__``."""
+
+        failure = ""
+        try:
+            return self.transport(method, url, headers, body)
+        except urllib.error.HTTPError as exc:
+            failure = f"HTTP {exc.code}"
+        except Exception as exc:  # noqa: BLE001 - any transport failure is redacted the same way
+            failure = type(exc).__name__
+        path = urllib.parse.urlsplit(url).path
+        raise CadamTransportError(f"CADAM {method} {path} failed ({failure})")
+
     def _access_token(self) -> str:
         """Fresh bot sign-in when bot credentials are set; the static token only otherwise."""
 
@@ -224,7 +249,7 @@ class CadamClient:
             "Content-Type": "application/json",
             "Prefer": "return=minimal",
         }
-        self.transport(
+        self._send(
             "POST",
             f"{self.config.supabase_url.rstrip('/')}/rest/v1/{table}",
             headers,
@@ -239,7 +264,7 @@ class CadamClient:
             "x-upsert": "false",
         }
         quoted = urllib.parse.quote(storage_path, safe="/")
-        self.transport(
+        self._send(
             "POST",
             f"{self.config.supabase_url.rstrip('/')}/storage/v1/object/images/{quoted}",
             headers,
@@ -256,7 +281,7 @@ class CadamClient:
                 "limit": "8",
             }
         )
-        raw = self.transport(
+        raw = self._send(
             "GET",
             f"{self.config.supabase_url.rstrip('/')}/rest/v1/messages?{query}",
             self._service_headers,
@@ -329,7 +354,7 @@ class CadamClient:
                     "parent_message_id": None,
                 },
             )
-            stream = self.transport(
+            stream = self._send(
                 "POST",
                 f"{self.config.base_url.rstrip('/')}/api/parametric-chat",
                 {

@@ -196,7 +196,7 @@ def test_resume_only_refuses_to_repost_unresolved_paid_dispatch(tmp_path):
 
 import urllib.error  # noqa: E402
 
-from makerbench.cadam_adapter import CadamAuthError, sign_in  # noqa: E402
+from makerbench.cadam_adapter import CadamAuthError, CadamTransportError, sign_in  # noqa: E402
 
 BOT_PASSWORD = "bot-pass-SECRET-123"
 SIGNED_IN_TOKEN = "signed-in-jwt-SECRET-456"
@@ -311,3 +311,39 @@ def test_config_repr_never_contains_a_secret():
     text = repr(_bot_config(access_token=STATIC_TOKEN))
     for secret in (BOT_PASSWORD, ANON_KEY, STATIC_TOKEN, "bot@example.test", "service-token"):
         assert secret not in text
+
+
+@pytest.mark.parametrize("partial", [{"bot_email": "bot@example.test"}, {"bot_password": BOT_PASSWORD}])
+def test_half_set_bot_credentials_are_rejected_not_silently_replaced_by_the_static_token(partial):
+    with pytest.raises(ValueError, match="together"):
+        CadamClient(_config(access_token=STATIC_TOKEN, anon_key=ANON_KEY, **partial))
+
+
+def test_dispatch_failure_does_not_leak_the_fresh_token_or_keys(tmp_path):
+    echo = urllib.error.HTTPError("http://cadam.test/api/parametric-chat", 401, f"bad Authorization: Bearer {SIGNED_IN_TOKEN}", {}, None)
+    base = _recording_transport([])
+
+    def transport(method, url, headers, body):
+        if "/api/parametric-chat" in url:
+            raise echo
+        return base(method, url, headers, body)
+
+    client = CadamClient(_bot_config(), transport=transport, sleep_fn=lambda _s: None)
+    with pytest.raises(CadamTransportError) as raised:
+        client.generate(prompt="x", output_dir=tmp_path / "out")
+    text = f"{raised.value!s} {raised.value!r} {raised.value.__cause__!r} {raised.value.__context__!r}"
+    for secret in (SIGNED_IN_TOKEN, BOT_PASSWORD, ANON_KEY, "service-token"):
+        assert secret not in text
+    assert "HTTP 401" in str(raised.value)
+
+
+@pytest.mark.parametrize("failure", [ConnectionError(f"reset {STATIC_TOKEN}"), TimeoutError("slow service-token")])
+def test_non_http_transport_failures_are_redacted_on_every_call(tmp_path, failure):
+    def transport(method, url, headers, body):
+        raise failure
+
+    client = CadamClient(_config(access_token=STATIC_TOKEN), transport=transport, sleep_fn=lambda _s: None)
+    with pytest.raises(CadamTransportError) as raised:
+        client.generate(prompt="x", output_dir=tmp_path / "out")
+    assert STATIC_TOKEN not in repr(raised.value) and "service-token" not in repr(raised.value)
+    assert raised.value.__context__ is None and raised.value.__cause__ is None

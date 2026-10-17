@@ -4,6 +4,7 @@ All secrets in this file are fakes written to temp files — the real external
 secrets file is never read by any test.
 """
 
+import pytest
 import json
 import subprocess
 import sys
@@ -148,6 +149,15 @@ def test_report_go_when_everything_green(tmp_path):
     )
     assert report.ok
     assert "preflight: GO" in render_report_lines(report)[-1]
+
+
+@pytest.fixture(autouse=True)
+def _healthy_cadam_server(monkeypatch):
+    """CLI/report tests must not touch the network: the doctor's probe transport is stubbed."""
+
+    from makerbench import nightly_preflight
+
+    monkeypatch.setattr(nightly_preflight, "_probe_transport", lambda *_a: b"ok")
 
 
 def _cli_args(tmp_path, secrets, queue):
@@ -346,21 +356,61 @@ def test_urls_come_from_the_secrets_file_and_reach_the_probes(tmp_path):
     assert seen[1].startswith("http://sb.local:9/auth/v1/token")
 
 
-def test_static_token_mode_does_not_probe_cadam(tmp_path):
+def test_static_token_mode_still_probes_the_server_but_never_signs_in(tmp_path):
     secrets = _secrets_file(
         tmp_path,
         f"CADAM_USER_ID={FAKE_VALUE}\nCADAM_ACCESS_TOKEN={FAKE_TOKEN}\nSUPABASE_SERVICE_ROLE_KEY={FAKE_TOKEN}\n",
     )
     queue = _queue_file(tmp_path, [{"job_id": "job-1", "status": "queued"}])
 
-    def never(*_args):
-        raise AssertionError("static-token mode must not probe the network")
+    seen = []
+
+    def server_only(method, url, headers, body):
+        seen.append(url)
+        if "/auth/v1/token" in url:
+            raise AssertionError("static-token mode must not sign in")
+        return b"ok"
 
     report = build_report(
         secrets_path=secrets,
         lock_path=tmp_path / ".nightly-cad.lock",
         queue_path=queue,
         named_paths={"repo_root": tmp_path},
-        cadam_transport=never,
+        cadam_transport=server_only,
+        environ={},
     )
-    assert report.cadam is None and report.ok
+    assert seen == ["http://127.0.0.1:3000"]
+    assert report.ok and report.cadam.signin_ok
+
+
+def test_stopped_app_is_no_go_in_static_token_mode_too(tmp_path):
+    secrets = _secrets_file(
+        tmp_path,
+        f"CADAM_USER_ID={FAKE_VALUE}\nCADAM_ACCESS_TOKEN={FAKE_TOKEN}\nSUPABASE_SERVICE_ROLE_KEY={FAKE_TOKEN}\n",
+    )
+    queue = _queue_file(tmp_path, [{"job_id": "job-1", "status": "queued"}])
+
+    def down(*_args):
+        raise _urlerror.URLError("refused")
+
+    report = build_report(
+        secrets_path=secrets,
+        lock_path=tmp_path / ".nightly-cad.lock",
+        queue_path=queue,
+        named_paths={"repo_root": tmp_path},
+        cadam_transport=down,
+        environ={},
+    )
+    assert not report.ok
+    assert "npm run dev" in "\n".join(render_report_lines(report))
+
+
+def test_a_5xx_from_the_app_is_no_go_even_when_sign_in_would_succeed(tmp_path):
+    def broken_app(method, url, headers, body):
+        if "/auth/v1/token" in url:
+            return _healthy(method, url, headers, body)
+        raise _urlerror.HTTPError(url, 503, "unavailable", {}, None)
+
+    report = _bot_report(tmp_path, broken_app)
+    assert not report.ok and not report.cadam.server_ok
+    assert "HTTP 503" in "\n".join(render_report_lines(report))

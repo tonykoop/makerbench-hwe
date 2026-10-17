@@ -297,3 +297,50 @@ def test_nightly_build123d_threads_backend_into_trial_payload(tmp_path, monkeypa
     assert seen["backend"] == "build123d"
     assert seen["compiler"] is nightly_cad.arena_runner.compiler_for_backend("build123d")
     assert seen["config"].backend == "build123d"
+
+
+def test_failed_cadam_dispatch_persists_no_token_in_run_log_or_state(tmp_path, monkeypatch):
+    """#660: a transport error that echoes the fresh bearer token must not reach run_log/state."""
+
+    import urllib.error
+
+    from makerbench import cadam_adapter
+
+    token = "fresh-bearer-SECRET-token"
+
+    def transport(method, url, headers, body):
+        if "/auth/v1/token" in url:
+            return json.dumps({"access_token": token}).encode()
+        if method == "GET":
+            return b"[]"
+        if "/api/parametric-chat" in url:
+            raise urllib.error.HTTPError(url, 401, f"rejected Authorization: Bearer {token}", {}, None)
+        return b"{}"
+
+    real_client = cadam_adapter.CadamClient
+    monkeypatch.setattr(
+        nightly_cad, "CadamClient", lambda config: real_client(config, transport=transport, sleep_fn=lambda _s: None)
+    )
+    for key, value in {
+        "CADAM_USER_ID": "user-1",
+        "SUPABASE_SERVICE_ROLE_KEY": "service-role",
+        "CADAM_BOT_EMAIL": "bot@example.test",
+        "CADAM_BOT_PASSWORD": "bot-password",
+        "VITE_SUPABASE_ANON_KEY": "anon-key",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("CADAM_ACCESS_TOKEN", raising=False)
+
+    queue = _queue(tmp_path / "queue.json", _image(tmp_path / "reference.png"))
+    executor = NightlyExecutor(
+        queue_path=queue,
+        registry_path=_registry(tmp_path / "registry.json"),
+        output_root=tmp_path / "runs",
+        now=lambda: datetime(2026, 7, 19, 7, 30, tzinfo=timezone.utc),
+        handlers={"arena": _synthetic_handler, "live": _synthetic_handler},
+    )
+    result = executor.run()
+    run_dir = Path(result["run_dir"])
+    persisted = "".join(p.read_text(errors="replace") for p in run_dir.rglob("*.json"))
+    assert token not in persisted and token not in json.dumps(result, default=str)
+    assert "HTTP 401" in persisted  # the redacted reason is what gets recorded

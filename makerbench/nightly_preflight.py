@@ -5,8 +5,9 @@ Audits activation state without ever printing secret values:
 - Secrets: each required key is PRESENT / MISSING / PLACEHOLDER. With bot sign-in
   credentials (``CADAM_BOT_EMAIL`` / ``CADAM_BOT_PASSWORD`` / ``VITE_SUPABASE_ANON_KEY``) the static
   ``CADAM_ACCESS_TOKEN`` is no longer required.
-- CADAM (#660, only when bot credentials are configured): the local app at ``CADAM_BASE_URL`` answers,
-  and a real password sign-in succeeds. Only the outcome is reported, never a token or a reply body.
+- CADAM (#660): the local app at ``CADAM_BASE_URL`` answers (any HTTP reply below 500; a 5xx or no
+  answer is NO-GO), in both authentication modes. With bot credentials a real password sign-in must
+  also succeed. Only the outcome is reported, never a token or a reply body.
 - Lock: ``runs/.nightly-cad.lock`` — absent, held by a live PID, or stale.
 - Queue: per-job status summary (job ids + statuses, blocked jobs called out).
 - Paths: runner script, repo root, queue, output root, instruments root.
@@ -21,11 +22,12 @@ from __future__ import annotations
 import os
 import re
 import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping, Optional, Sequence
 
-from .cadam_adapter import CadamAuthError, HttpTransport, _default_transport, sign_in
+from .cadam_adapter import CadamAuthError, HttpTransport, sign_in
 
 BOT_SECRET_KEYS: tuple[str, ...] = (
     "CADAM_BOT_EMAIL",
@@ -246,10 +248,18 @@ def audit_paths(named_paths: Mapping[str, Path]) -> tuple[PathStatus, ...]:
     )
 
 
+def _probe_transport(method: str, url: str, headers: Mapping[str, str], body: Optional[bytes]) -> bytes:
+    """Short-timeout transport so a hung app cannot stall the doctor."""
+
+    request = urllib.request.Request(url, data=body, headers=dict(headers), method=method)
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return response.read()
+
+
 def audit_cadam(
     entries: Mapping[str, str],
     *,
-    transport: HttpTransport = _default_transport,
+    transport: Optional[HttpTransport] = None,
     environ: Optional[Mapping[str, str]] = None,
 ) -> CadamStatus:
     """The local CADAM app answers at ``CADAM_BASE_URL`` and the bot can sign in.
@@ -259,6 +269,7 @@ def audit_cadam(
     """
 
     env = os.environ if environ is None else environ
+    transport = transport or _probe_transport
 
     def setting(key: str, default: str) -> str:
         return (entries.get(key) or env.get(key) or default).strip()
@@ -267,10 +278,16 @@ def audit_cadam(
     supabase_url = setting("VITE_SUPABASE_URL", DEFAULT_SUPABASE_URL)
     try:
         transport("GET", base_url, {}, None)
-    except urllib.error.HTTPError:
-        pass  # any HTTP answer, even 404, proves the app is listening
+    except urllib.error.HTTPError as exc:
+        if exc.code >= 500:
+            return CadamStatus(
+                base_url, False, False, f"CADAM server at {base_url} answered HTTP {exc.code} ({CADAM_START_HINT})"
+            )
+        # 4xx (e.g. 404 on the root route) still proves the app is listening
     except (OSError, ValueError):
         return CadamStatus(base_url, False, False, f"CADAM server not reachable at {base_url} ({CADAM_START_HINT})")
+    if not _bot_mode(entries):
+        return CadamStatus(base_url, True, True, f"CADAM server up at {base_url} (static-token mode; no sign-in)")
     try:
         sign_in(
             supabase_url,
@@ -294,7 +311,7 @@ def build_report(
     named_paths: Mapping[str, Path],
     required_keys: Optional[Sequence[str]] = None,
     pid_alive: Callable[[int], bool] = _pid_alive,
-    cadam_transport: HttpTransport = _default_transport,
+    cadam_transport: Optional[HttpTransport] = None,
     environ: Optional[Mapping[str, str]] = None,
 ) -> PreflightReport:
     entries = parse_secrets_file(secrets_path) if secrets_path.exists() else {}
@@ -303,7 +320,7 @@ def build_report(
         lock=audit_lock(lock_path, pid_alive=pid_alive),
         queue=audit_queue(queue_path),
         paths=audit_paths(named_paths),
-        cadam=audit_cadam(entries, transport=cadam_transport, environ=environ) if _bot_mode(entries) else None,
+        cadam=audit_cadam(entries, transport=cadam_transport, environ=environ),
     )
 
 

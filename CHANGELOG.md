@@ -4,7 +4,7 @@ All notable changes to MakerBench should be recorded here.
 
 ## Unreleased
 
-- **CADAM self-hosted sign-in (#660):** the CADAM adapter signs in with a bot account (`CADAM_BOT_EMAIL` / `CADAM_BOT_PASSWORD` / `VITE_SUPABASE_ANON_KEY`, password grant) at the start of each dispatch and falls back to the static `CADAM_ACCESS_TOKEN` only when no bot credentials are set; the reference image is now optional; secrets are `repr=False` and sign-in errors carry only a fixed message/HTTP status. `arena preflight` checks the local CADAM app at `CADAM_BASE_URL` and that sign-in succeeds when bot credentials are configured.
+- **CADAM self-hosted sign-in (#660):** the CADAM adapter signs in with a bot account (`CADAM_BOT_EMAIL` / `CADAM_BOT_PASSWORD` / `VITE_SUPABASE_ANON_KEY`, password grant) at the start of each dispatch and falls back to the static `CADAM_ACCESS_TOKEN` only when no bot credentials are set; the reference image is now optional; secrets are `repr=False` and sign-in errors carry only a fixed message/HTTP status. `arena preflight` checks the local CADAM app at `CADAM_BASE_URL` and that sign-in succeeds when bot credentials are configured. Review fixes: half-set bot credentials are rejected (no silent static-token fallback), preflight probes the CADAM app in both auth modes (5xx is NO-GO), and every CADAM/Supabase transport failure is reduced to fixed text so no bearer token or key reaches exceptions, `run_log.json` or state.
 
 - **Wall thickness removed from arena scoring (2026-10-16, maintainer decision; Refs #1011):** the
   Code-CAD Arena gate scores five base checks (`ARENA_GATE_CHECKS`: renders, watertight,
