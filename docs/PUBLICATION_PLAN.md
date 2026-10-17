@@ -45,7 +45,7 @@ repo (#1026): a Gradio Blocks app (`sdk: gradio`, `sdk_version: 5.43.1`,
 pinned in `requirements.txt`) with one module per tab under `tabs/`. The
 Leaderboard tab links to (and embeds) the live GitHub Pages board and keeps no
 copy of it, so the Space never goes stale between deploys. Grade a part (#1028) uses the public STL grader; Explore designs (#1029)
-remains a placeholder until its story lands.
+browses public renders and recorded checks with side-by-side comparisons.
 
 This replaces the three earlier Space codebases:
 
@@ -58,8 +58,8 @@ This replaces the three earlier Space codebases:
 - the old `sdk: static` mirror of `site/` that `scripts/build_hf_space.py`
   used to stage is gone; the script now stages the Gradio Space.
 
-`spaces/studio_demo/` is a separate, never-deployed build recipe; #1029 folds
-the showcase into the Explore designs tab.
+`spaces/studio_demo/` remains a local Docker recipe. Its public showcase is
+folded into Explore designs; do not create a second hosted Space.
 
 The Space is live at <https://huggingface.co/spaces/tonykoop/makerbench-hwe>,
 deployed from `1741f832`, on grandfathered free `cpu-basic` hardware (maintainer
@@ -124,6 +124,20 @@ uploads to Hugging Face.
   body logging and flagging disabled. The CPU queue concurrency is one, with
   eight waiting slots; grading retains the 30-second / 4 GiB worker limits.
   Mesh limits (10 MiB, 100,000 triangles, 16 bodies) appear on the tab.
+
+  Explore designs (#1029): press Load showcase, switch between all five studies,
+  select two designs and expand Objective checks. The image cards come first.
+  No wall-thickness score, aggregate score or estimator explanation is displayed.
+  The JSON and render URLs use the merged public commit in
+  `tabs/explore.py:SOURCE_COMMIT`; no images are staged or server-cached.
+  Only render paths allowed by the existing Studio showcase recipe are used,
+  plus the already-public djembe render. Reference photos are omitted. The
+  djembe photo (person/GPS) and unresolved sambuca reference remain excluded.
+  To refresh data, change that full SHA to an audited merged commit, rerun
+  the Explore tests and staging, then deploy manually. Block network access
+  and press Load showcase again: a readable retry message should replace the
+  gallery; failed images retain descriptive alternative text and a study link.
+  Confirm there are no launch, edit or vote controls in Explore.
 
   Check: three tabs in the order Grade a part, Explore designs, Leaderboard;
   the Leaderboard button opens <https://tonykoop.github.io/makerbench-hwe/>

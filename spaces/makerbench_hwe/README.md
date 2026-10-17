@@ -37,8 +37,11 @@ with `python scripts/build_hf_space.py`.
 - **Grade a part**: grade an STL against one of three public enclosure families
   at seeds 0–2. Read the brief, upload your mesh, inspect explained checks, and
   download JSON. One-click examples generate public-parameter meshes at runtime.
-- **Explore designs** (coming soon): a read-only gallery of designs from the
-  MakerBench Code-CAD Arena with their public objective checks.
+- **Explore designs**: load public renders of strings, kora, ocarinas and a
+  djembe; choose two designs from a study to compare, then expand their
+  recorded objective checks. No launching, editing or voting. Images and data
+  are fetched from a pinned public GitHub commit at runtime; retry Load
+  showcase if offline. Images stay on the public host, outside the Space.
 - **Leaderboard**: a short summary and a link to the live leaderboard at
   <https://tonykoop.github.io/makerbench-hwe/>, which is rebuilt from the
   repository's committed results on every merge. The Space keeps no copy of

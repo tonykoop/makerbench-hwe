@@ -4,7 +4,7 @@ One Gradio Blocks app with three tabs, each in its own module under
 ``tabs/``:
 
 * **Grade a part** (``tabs/grade.py``): STL upload and public-dev mesh grading.
-* **Explore designs** (``tabs/explore.py``): placeholder until #1029 lands.
+* **Explore designs** (``tabs/explore.py``): read-only public showcase and comparisons.
 * **Leaderboard** (``tabs/leaderboard.py``): a summary plus a link to (and
   embed of) the live leaderboard. No copied snapshot.
 
