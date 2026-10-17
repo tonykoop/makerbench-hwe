@@ -441,6 +441,44 @@
     return title;
   }
 
+  function leaderboardRanking(models) {
+    var minimum = DATA.overall_ranking_min_families || 4;
+    function coverage(m) { return m.tracks[TRACK].n_families_scored || 0; }
+    function reference(m) { return m.is_control || m.is_human_baseline; }
+    function eligible(m) {
+      return !reference(m) && coverage(m) >= minimum && m.tracks[TRACK].overall_mean != null;
+    }
+    function overallOrder(a, b) {
+      var av = a.tracks[TRACK].overall_mean, bv = b.tracks[TRACK].overall_mean;
+      return (bv == null ? -1 : bv) - (av == null ? -1 : av) ||
+        modelText(a).localeCompare(modelText(b));
+    }
+    // Coverage picks the representative before the board is sorted by score.
+    function variantOrder(a, b) {
+      var efforts = { high: 4, xhigh: 3, medium: 2, low: 1 };
+      return coverage(b) - coverage(a) ||
+        ((b.tracks[TRACK].overall_mean == null ? -1 : b.tracks[TRACK].overall_mean) -
+         (a.tracks[TRACK].overall_mean == null ? -1 : a.tracks[TRACK].overall_mean)) ||
+        (efforts[b.reasoning_level] || 0) - (efforts[a.reasoning_level] || 0) ||
+        modelText(a).localeCompare(modelText(b)) ||
+        String(a.agent_identifier || "").localeCompare(String(b.agent_identifier || ""));
+    }
+    var grouped = new Map();
+    models.filter(function (m) { return m.tracks[TRACK] && m.tracks[TRACK].has_data; }).forEach(function (m) {
+      var key = (m.league || 'autonomous') + ':' +
+        (m.is_control ? 'control:' : m.is_human_baseline ? 'human:' : 'model:') +
+        (m.model_family || m.identifier);
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(m);
+    });
+    var entries = Array.from(grouped.values()).map(function (variants) {
+      variants.sort(variantOrder);
+      return { primary: variants[0], variants: variants.slice(1) };
+    });
+    return { entries: entries, coverage: coverage, reference: reference,
+      eligible: eligible, overallOrder: overallOrder };
+  }
+
   function renderTable() {
     var fams = familyList();
     var axes = capabilityAxes().slice(0, 8);
@@ -454,27 +492,9 @@
       document.getElementById("lb-note").textContent = "";
       return;
     }
-    function coverage(m) { return m.tracks[TRACK].n_families_scored || 0; }
-    function reference(m) { return m.is_control || m.is_human_baseline; }
-    function eligible(m) {
-      return !reference(m) && coverage(m) >= minimum && m.tracks[TRACK].overall_mean != null;
-    }
-    function overallOrder(a, b) {
-      var av = a.tracks[TRACK].overall_mean, bv = b.tracks[TRACK].overall_mean;
-      return (bv == null ? -1 : bv) - (av == null ? -1 : av) ||
-        modelText(a).localeCompare(modelText(b));
-    }
-    // Coverage picks the representative before the board is sorted by score.
-    // This preference is intentionally independent of the profile-chart order.
-    function variantOrder(a, b) {
-      var efforts = { high: 4, xhigh: 3, medium: 2, low: 1 };
-      return coverage(b) - coverage(a) ||
-        ((b.tracks[TRACK].overall_mean == null ? -1 : b.tracks[TRACK].overall_mean) -
-         (a.tracks[TRACK].overall_mean == null ? -1 : a.tracks[TRACK].overall_mean)) ||
-        (efforts[b.reasoning_level] || 0) - (efforts[a.reasoning_level] || 0) ||
-        modelText(a).localeCompare(modelText(b)) ||
-        String(a.agent_identifier || "").localeCompare(String(b.agent_identifier || ""));
-    }
+    var ranking = leaderboardRanking(models);
+    var coverage = ranking.coverage, reference = ranking.reference;
+    var eligible = ranking.eligible, overallOrder = ranking.overallOrder;
     function columnValue(m, key) {
       if (key === "coverage") return coverage(m);
       if (key.indexOf("axis:") === 0) {
@@ -567,16 +587,8 @@
     var leagueDefs = DATA.leagues && DATA.leagues.length ? DATA.leagues : [{ id: 'autonomous', label: 'Autonomous' }];
     var shownCount = 0;
     container.innerHTML = leagueDefs.map(function (lg) {
-      var grouped = new Map();
-      models.filter(function (m) { return (m.league || 'autonomous') === lg.id; }).forEach(function (m) {
-        // Controls stay separate even if they share a model family with a run.
-        var key = (m.is_control ? 'control:' : m.is_human_baseline ? 'human:' : 'model:') + (m.model_family || m.identifier);
-        if (!grouped.has(key)) grouped.set(key, []);
-        grouped.get(key).push(m);
-      });
-      var entries = Array.from(grouped.values()).map(function (variants) {
-        variants.sort(variantOrder);
-        return { primary: variants[0], variants: variants.slice(1) };
+      var entries = ranking.entries.filter(function (entry) {
+        return (entry.primary.league || 'autonomous') === lg.id;
       });
       if (!entries.length) return '';
       shownCount += entries.length;
@@ -1095,41 +1107,6 @@
     return "rect";
   }
 
-  function profileSignature(values) {
-    return values.map(function (v) {
-      return v == null ? "x" : Number(v).toFixed(3);
-    }).join("|");
-  }
-
-  function insetOverlappingProfile(values, overlapIndex, overlapCount) {
-    if (overlapCount < 2) return values;
-    var inset = (overlapCount - overlapIndex - 1) * 0.08;
-    return values.map(function (v) {
-      if (v == null) return null;
-      return Math.max(0, Math.min(4, v - inset));
-    });
-  }
-
-  function revealOverlappingProfiles(datasets) {
-    var buckets = {};
-    datasets.forEach(function (dataset) {
-      var signature = profileSignature(dataset._actualData);
-      if (!buckets[signature]) buckets[signature] = [];
-      buckets[signature].push(dataset);
-    });
-    Object.keys(buckets).forEach(function (signature) {
-      var bucket = buckets[signature];
-      if (bucket.length < 2) return;
-      bucket.forEach(function (dataset, overlapIndex) {
-        dataset.data = insetOverlappingProfile(
-          dataset._actualData,
-          overlapIndex,
-          bucket.length
-        );
-      });
-    });
-  }
-
   function profileChartId(index) {
     return "chart-profile-" + index;
   }
@@ -1137,7 +1114,7 @@
   function renderProfileCharts() {
     destroyProfileCharts();
     var axes = capabilityAxes();
-    var models = modelsOnTrack(TRACK);
+    var models = DATA.models.slice();
     var grid = document.getElementById("profile-grid");
     var note = document.getElementById("profile-note");
     if (!grid) return;
@@ -1148,108 +1125,205 @@
       return;
     }
 
-    var missingCells = 0;
-    groupModelsByFamily(models).forEach(function (group, groupIndex) {
-      var chartId = profileChartId(groupIndex);
-      var card = document.createElement("div");
-      card.className = "profile-card";
-      card.innerHTML = '<div class="profile-head"><h4>' + escapeHTML(group.family) + '</h4>' +
-        '<span>' + group.models.length + ' variant' +
-        (group.models.length === 1 ? '' : 's') + '</span></div>' +
-        '<div class="chart-box chart-box-radar"><canvas id="' + chartId + '"></canvas></div>';
-      grid.appendChild(card);
-
-      var datasets = group.models.map(function (m, i) {
-        var tr = m.tracks[TRACK];
-        var color = modelColor(i, m);
-        var profile = tr.capability_profile || {};
-        var values = axes.map(function (axis) {
-          var cell = profile[axis.id];
-          if (!cell || cell.mean_score == null) {
-            missingCells += 1;
-            return null;
-          }
-          return cell.mean_score;
-        });
-        return {
-          label: modelVariantText(m),
-          data: values,
-          _actualData: values,
-          borderColor: color,
-          backgroundColor: alphaColor(color, 0.06),
-          pointBackgroundColor: color,
-          pointBorderColor: cssVar("--bg-elev"),
-          pointStyle: effortPointStyle(m.reasoning_level),
-          pointRadius: 3,
-          pointHoverRadius: 5,
-          borderDash: effortLineDash(m.reasoning_level),
-          borderWidth: m.is_control ? 2 : 2.5,
-          spanGaps: false,
-          _model: m,
-        };
+    var comparisonColors = ["#2f6fed", "#d6562b", "#2f8f5b"];
+    var comparisonDashes = [[], [8, 4], [2, 3]];
+    var unavailable = [];
+    models = models.filter(function (m) {
+      var profile = (m.tracks[TRACK] || {}).capability_profile || {};
+      var measured = axes.some(function (axis) {
+        return profile[axis.id] && profile[axis.id].mean_score != null;
       });
-      revealOverlappingProfiles(datasets);
-
-      charts[chartId] = new Chart(document.getElementById(chartId), {
-        type: "radar",
-        data: {
-          labels: axes.map(function (axis) { return axis.title; }),
-          datasets: datasets,
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { labels: { color: cssVar("--text-soft"), boxWidth: 12, font: { size: 11 } } },
-            tooltip: {
-              callbacks: {
-                title: function (items) {
-                  return items.length ? axes[items[0].dataIndex].title : "";
-                },
-                label: function (item) {
-                  var model = item.dataset._model;
-                  var actual = item.dataset._actualData
-                    ? item.dataset._actualData[item.dataIndex]
-                    : item.raw;
-                  var value = actual == null ? "missing" : Number(actual).toFixed(2) + "/4";
-                  return modelText(model) + ": " + value;
-                },
-                afterLabel: function (item) {
-                  var axis = axes[item.dataIndex];
-                  var profile = item.dataset._model.tracks[TRACK].capability_profile || {};
-                  var cell = profile[axis.id];
-                  if (!cell || cell.mean_score == null) return "missing pack";
-                  return cell.n_families + " task " +
-                    (cell.n_families === 1 ? "family" : "families") +
-                    ", " + cell.n_infra + " infra excluded";
-                },
-              },
-            },
-          },
-          scales: {
-            r: {
-              min: 0,
-              max: 4,
-              ticks: {
-                stepSize: 1,
-                color: cssVar("--text-faint"),
-                backdropColor: "transparent",
-                font: { size: 10 },
-              },
-              grid: { color: cssVar("--border") },
-              angleLines: { color: cssVar("--border") },
-              pointLabels: { color: cssVar("--text-soft"), font: { size: 11 } },
-            },
-          },
-        },
-      });
+      if (!measured) unavailable.push(m);
+      return measured;
+    }).sort(function (a, b) {
+      var av = a.tracks[TRACK].overall_mean;
+      var bv = b.tracks[TRACK].overall_mean;
+      return (bv == null ? -Infinity : bv) - (av == null ? -Infinity : av) ||
+        String(a.row_id).localeCompare(String(b.row_id));
     });
-
-    if (note) {
-      note.textContent = missingCells
-        ? "Each card stacks variants from one model family. Blank vertices mark task packs this model hasn't run yet — they are not counted as zero."
-        : "Each card stacks variants from one model family across all capability axes.";
+    var labels = new Map();
+    models.concat(unavailable).forEach(function (m) {
+      var base = plainLabel(m.identifier) + " · " + (m.reasoning_level == null ? "Unspecified effort" : effortLabel(m.reasoning_level)) +
+        " · " + (harnessLabel(m.agent_identifier) || "Unknown harness");
+      labels.set(m, base);
+    });
+    var ranking = leaderboardRanking(DATA.models);
+    var selected = ranking.entries.map(function (entry) { return entry.primary; })
+      .filter(function (m) { return ranking.eligible(m) && models.indexOf(m) !== -1 &&
+        (m.league || 'autonomous') === 'autonomous'; })
+      .sort(ranking.overallOrder).slice(0, 3);
+    var controls = document.createElement("fieldset");
+    controls.className = "profile-picker";
+    controls.innerHTML = '<legend>Compare up to 3 models</legend>';
+    models.forEach(function (m) {
+      var label = document.createElement("label");
+      var input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = selected.indexOf(m) !== -1;
+      input.onchange = function () {
+        selected = models.filter(function (_, i) { return controls.querySelectorAll("input")[i].checked; });
+        drawProfiles();
+      };
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(labels.get(m)));
+      controls.appendChild(label);
+    });
+    grid.appendChild(controls);
+    var toggleLabel = document.createElement("label");
+    toggleLabel.className = "profile-show-all";
+    var toggle = document.createElement("input");
+    toggle.type = "checkbox";
+    toggle.onchange = drawProfiles;
+    toggleLabel.appendChild(toggle);
+    toggleLabel.appendChild(document.createTextNode("Show all models in a grid"));
+    grid.appendChild(toggleLabel);
+    var plots = document.createElement("div");
+    plots.className = "profile-plots";
+    grid.appendChild(plots);
+    if (unavailable.length) {
+      var missing = document.createElement("p");
+      missing.className = "chart-note profile-unavailable";
+      missing.textContent = "No profile data yet: " + unavailable.map(function (m) { return labels.get(m); }).join("; ");
+      grid.appendChild(missing);
     }
+
+    function drawProfiles() {
+      destroyProfileCharts();
+      plots.innerHTML = "";
+      controls.querySelectorAll("input").forEach(function (input) {
+        input.disabled = toggle.checked || (!input.checked && selected.length >= 3);
+      });
+      var groups = toggle.checked ? groupModelsByFamily(models) :
+        [{ family: "Model comparison", models: selected }];
+      plots.classList.toggle("profile-plots-all", toggle.checked);
+      if (!models.length || (!toggle.checked && !selected.length)) {
+        plots.innerHTML = '<p class="empty profile-empty">' +
+          (models.length ? 'Select up to 3 models to compare.' : 'No chartable model profiles on this track yet.') + '</p>';
+        return;
+      }
+      groups.forEach(function (group, groupIndex) {
+        var chartId = profileChartId(groupIndex);
+        var card = document.createElement("div");
+        card.className = "profile-card";
+        card.innerHTML = '<div class="profile-head"><h4>' + escapeHTML(group.family) + '</h4>' +
+          '<span>' + group.models.length + ' model' +
+          (group.models.length === 1 ? '' : 's') + '</span></div>' +
+          '<div class="chart-box chart-box-radar"><canvas id="' + chartId + '"></canvas></div>';
+        plots.appendChild(card);
+
+        var datasets = group.models.map(function (m, i) {
+          var tr = m.tracks[TRACK];
+          var color = toggle.checked ? modelColor(i, m) : comparisonColors[i];
+          var profile = tr.capability_profile || {};
+          var values = axes.map(function (axis) {
+            var cell = profile[axis.id];
+            if (!cell || cell.mean_score == null) {
+              return null;
+            }
+            return cell.mean_score;
+          });
+          return {
+            label: labels.get(m),
+            data: values,
+            _actualData: values,
+            borderColor: color,
+            backgroundColor: alphaColor(color, 0.06),
+            pointBackgroundColor: color,
+            pointBorderColor: cssVar("--bg-elev"),
+            pointStyle: effortPointStyle(m.reasoning_level),
+            pointRadius: 3,
+            pointHoverRadius: 5,
+            borderDash: toggle.checked ? effortLineDash(m.reasoning_level) : comparisonDashes[i],
+            borderWidth: m.is_control ? 2 : 2.5,
+            spanGaps: false,
+            _model: m,
+          };
+        });
+
+        if (!toggle.checked) {
+          var legend = document.createElement("ul");
+          legend.className = "profile-legend";
+          datasets.forEach(function (dataset, i) {
+            var entry = document.createElement("li");
+            var swatch = document.createElement("span");
+            swatch.className = "profile-legend-swatch";
+            swatch.setAttribute("aria-hidden", "true");
+            swatch.style.borderTopColor = dataset.borderColor;
+            swatch.style.borderTopStyle = ["solid", "dashed", "dotted"][i];
+            var text = document.createElement("span");
+            text.className = "profile-legend-label";
+            text.textContent = dataset.label;
+            entry.appendChild(swatch);
+            entry.appendChild(text);
+            legend.appendChild(entry);
+          });
+          card.insertBefore(legend, card.querySelector(".chart-box"));
+        }
+
+        charts[chartId] = new Chart(document.getElementById(chartId), {
+          type: "radar",
+          data: {
+            labels: axes.map(function (axis) {
+              var lines = [""];
+              axis.title.replace(/-/g, "- ").split(" ").forEach(function (word) {
+                var last = lines.length - 1;
+                if (lines[last] && lines[last].length + word.length + 1 > 12) lines.push(word);
+                else lines[last] += (lines[last] ? " " : "") + word;
+              });
+              return lines;
+            }),
+            datasets: datasets,
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: toggle.checked, labels: { color: cssVar("--text-soft"), boxWidth: 12, font: { size: 11 } } },
+              tooltip: {
+                callbacks: {
+                  title: function (items) {
+                    return items.length ? axes[items[0].dataIndex].title : "";
+                  },
+                  label: function (item) {
+                    var actual = item.dataset._actualData
+                      ? item.dataset._actualData[item.dataIndex]
+                      : item.raw;
+                    var value = actual == null ? "missing" : Number(actual).toFixed(2) + "/4";
+                    return item.dataset.label + ": " + value;
+                  },
+                  afterLabel: function (item) {
+                    var axis = axes[item.dataIndex];
+                    var profile = item.dataset._model.tracks[TRACK].capability_profile || {};
+                    var cell = profile[axis.id];
+                    if (!cell || cell.mean_score == null) return "missing pack";
+                    return cell.n_families + " task " +
+                      (cell.n_families === 1 ? "family" : "families") +
+                      ", " + cell.n_infra + " infra excluded";
+                  },
+                },
+              },
+            },
+            scales: {
+              r: {
+                min: 0,
+                max: 4,
+                ticks: {
+                  stepSize: 1,
+                  color: cssVar("--text-faint"),
+                  backdropColor: "transparent",
+                  font: { size: 10 },
+                },
+                grid: { color: cssVar("--border") },
+                angleLines: { color: cssVar("--border") },
+                pointLabels: { color: cssVar("--text-soft"), font: { size: grid.clientWidth < 420 ? 9 : 11 } },
+              },
+            },
+          },
+        });
+      });
+    }
+    drawProfiles();
+    if (note) note.textContent = "Default selection: top 3 ranked models on this track, using leaderboard coverage and variant selection. Blank vertices are unmeasured packs, not zeros. Identical profiles overlap exactly.";
   }
 
   function renderHistChart() {
