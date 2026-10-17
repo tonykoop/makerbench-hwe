@@ -195,6 +195,10 @@ RAW_TRIAL_ALLOWLIST: dict[str, dict[str, str]] = {
         'if any(t.get("trial_id") == trial_id for t in log.get("trials") or []):': _LOOKUP,
         'log.setdefault("trials", []).append(entry)': _WRITER,
     },
+    "makerbench/arena_studio/demo.py": {
+        'if isinstance(node.get("trials"), list):': "packaged showcase rows, not a run log",
+        'node["trials"] = [_without_retired(t) for t in node["trials"]]': "packaged showcase rows, not a run log",
+    },
     "makerbench/code_cad_orchestrator.py": {
         'existing = {entry["trial_id"]: entry for entry in log["trials"]}': _WRITER,
         'payload.setdefault("trials", [])': _WRITER,

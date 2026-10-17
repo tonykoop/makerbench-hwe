@@ -478,57 +478,12 @@ def _arena_matrix_label(config: dict) -> str:
     )
 
 
-# #983: min_wall estimators whose scoreline rows the site publishes, each under its own label and
-# never in the same table as rows of another estimator. Unmarked rows were scored with the legacy
-# minimum (every committed round); a marked row whose estimator is not listed here stays withheld
-# (fail closed, #901).
-MIN_WALL_ESTIMATOR_LABELS: dict[str, str] = {
-    "robust-v1": "min_wall estimator robust-v1 (1st-percentile wall thickness, the default since T2)",
-}
-MIN_WALL_METHOD_LEGACY = "min"
-LEGACY_MIN_WALL_LABEL = "min_wall estimator min (legacy minimum)"
+def _public_agreement(stat: dict) -> dict:
+    """The public rank-agreement statistic: rho, n and the interpretation, as computed.
 
-
-def _split_by_min_wall_method(rows: list) -> tuple[list, dict[str, list]]:
-    """``(legacy rows, {estimator: rows})`` for the labelled estimators; rows of an unknown
-    estimator are dropped (#901/#983)."""
-    legacy: list = []
-    marked: dict[str, list] = {}
-    for row in rows:
-        method = row.get("min_wall_method")
-        if not method:
-            legacy.append(row)
-        elif method in MIN_WALL_ESTIMATOR_LABELS:
-            marked.setdefault(str(method), []).append(row)
-    return legacy, marked
-
-
-AGREEMENT_MIXED_ESTIMATORS_REASON = (
-    "Withheld: this run's objective rows were scored with more than one min_wall estimator, "
-    "and its rank agreement was computed over all of them, so it cannot be attributed to one.")
-AGREEMENT_UNKNOWN_ESTIMATOR_REASON = (
-    "Withheld: this run's objective rows were scored with a min_wall estimator the site cannot "
-    "label, so its rank agreement cannot be attributed.")
-
-
-def _public_agreement(stat: dict, rows: list) -> dict:
-    """The public rank-agreement statistic, attributed to the min_wall estimator it was computed
-    over (#983 review). ``agreement.json`` is one Spearman rho over every objective row of the
-    run, and the site never re-derives it. So it is published only when every row (withheld ones
-    included) was scored with ONE estimator the site can label: the legacy minimum keeps its
-    exact committed shape, a labelled estimator adds ``min_wall_method`` and ``label``. Otherwise
-    rho/n/interpretation are withheld, with the reason."""
-    methods = {str(row.get("min_wall_method") or MIN_WALL_METHOD_LEGACY)
-               for row in rows if isinstance(row, dict)}
-    public = {"rho": stat.get("rho"), "n": stat.get("n"), "interpretation": stat.get("interpretation")}
-    if len(methods) > 1 or not (methods <= {MIN_WALL_METHOD_LEGACY, *MIN_WALL_ESTIMATOR_LABELS}):
-        reason = (AGREEMENT_MIXED_ESTIMATORS_REASON if len(methods) > 1
-                  else AGREEMENT_UNKNOWN_ESTIMATOR_REASON)
-        return {"rho": None, "n": None, "interpretation": None, "withheld_reason": reason}
-    (method,) = methods or {MIN_WALL_METHOD_LEGACY}
-    if method != MIN_WALL_METHOD_LEGACY:
-        public.update(min_wall_method=method, label=MIN_WALL_ESTIMATOR_LABELS[method])
-    return public
+    ``agreement.json`` is one Spearman rho over the run's objective rows; the site never
+    re-derives it."""
+    return {"rho": stat.get("rho"), "n": stat.get("n"), "interpretation": stat.get("interpretation")}
 
 
 def _is_external_config(config: dict) -> bool:
@@ -552,18 +507,15 @@ def _arena_run_entry(run_id: str, payloads: dict) -> dict | None:
     which fails the publication bar and is skipped entirely.
     """
     elo = payloads.get("elo") or {}
-    # #901/#983: rows scored with a marked min_wall estimator (robust-v1, the default since #979)
-    # are published in their own labelled list, never alongside the legacy rows.
     config = ((payloads.get("run_log") or {}).get("config")) or {}
     if _ISOLATION.is_blender_row({}, config) or _is_external_config(config):
         return None  # another track's run: never the blind arena page
     # Rows from other tracks (Blender, external STEP) are routed out at the load boundary,
-    # so no table below (objective rates, estimator tables, completeness) can see them.
-    all_rows = [
+    # so no table below (objective rates, completeness) can see them.
+    scoreline = [
         row for row in (payloads.get("scoreline") or [])
         if isinstance(row, dict) and not _is_off_track_row(row)
     ]
-    scoreline, by_estimator = _split_by_min_wall_method(all_rows)
     agreement = payloads.get("agreement") or {}
 
     entrants_expected = [str(m) for m in (config.get("model_ids") or [])]
@@ -597,25 +549,7 @@ def _arena_run_entry(run_id: str, payloads: dict) -> dict | None:
         for row in scoreline
     ]
 
-    estimator_pass_rates = [
-        {
-            "min_wall_method": method,
-            "label": MIN_WALL_ESTIMATOR_LABELS[method],
-            "rows": [
-                {
-                    "entrant": row.get("entrant"),
-                    "objective_pass_rate": row.get("objective_pass_rate"),
-                    "n_objective_trials": row.get("n_objective_trials", 0),
-                }
-                for row in rows
-            ],
-        }
-        for method, rows in sorted(by_estimator.items())
-    ]
-
-    # An entrant has an objective row under any published (labelled) estimator.
     objective_entrants = {str(row.get("entrant")) for row in scoreline}
-    objective_entrants |= {str(row.get("entrant")) for rows in by_estimator.values() for row in rows}
     objective_complete = set(entrants_expected) <= objective_entrants
 
     # Elo publication bar: strictly more than one voter (population claim) AND
@@ -656,14 +590,8 @@ def _arena_run_entry(run_id: str, payloads: dict) -> dict | None:
         "objective_pass_rate": objective_pass_rate,
         # Agreement is a correlation between the two rankings, reported as its own
         # statistic — it is evidence, never folded back into a composite score.
-        # #983 review: attributed to its min_wall estimator, or withheld when it cannot be.
-        "agreement": _public_agreement(agreement_stat, all_rows),
+        "agreement": _public_agreement(agreement_stat),
     }
-    if estimator_pass_rates:
-        # #983: objective rows of a labelled non-legacy min_wall estimator, one list per
-        # estimator; never merged with ``objective_pass_rate`` (the legacy rows). Absent when
-        # empty, so runs scored with the legacy minimum keep their exact entry.
-        entry["objective_pass_rate_by_estimator"] = estimator_pass_rates
     return entry
 
 
@@ -704,6 +632,11 @@ def build_arena_section(runs_dir: Path) -> dict | None:
         "runs": entries,
     }
 
+
+# Wall thickness was removed from arena scoring on 2026-10-16; the published rounds predate that.
+ARENA_HISTORICAL_NOTE = (
+    "Rounds 1-10 are historical records scored before wall thickness was removed on 2026-10-16."
+)
 
 # --- Arena objective-scoreline page data (#669, epic #666) -------------------
 # The public arena page renders from a CHECKED-IN ``site/data/arena.json`` so
@@ -809,7 +742,6 @@ def _arena_page_round(number: int, run_dir: Path) -> dict | None:
     if _ISOLATION.is_blender_row({}, log_config) or _is_external_config(log_config):
         return None  # another track's run: never the blind arena page
     rows = []
-    marked: dict[str, list] = {}
     scored = [
         row for row in scoreline.get("rows") or []
         if isinstance(row, dict) and row.get("entrant") and not _is_off_track_row(row)
@@ -824,21 +756,11 @@ def _arena_page_round(number: int, run_dir: Path) -> dict | None:
             "objective_pass_rate": row.get("objective_pass_rate"),
             "n_objective_trials": int(row.get("n_objective_trials") or 0),
         }
-        method = row.get("min_wall_method")
-        if not method:
-            rows.append(public)
-        elif method in MIN_WALL_ESTIMATOR_LABELS:
-            # #983: a row scored with a labelled non-legacy min_wall estimator (robust-v1) is
-            # published in its own labelled table, never in the legacy table.
-            marked.setdefault(str(method), []).append(public)
-        # #901: a row of an unknown estimator cannot be labelled; withhold it (fail closed).
-    if not rows and not marked:
+        rows.append(public)
+    if not rows:
         return None
 
-    def _rank(table: list) -> list:
-        return sorted(table, key=lambda r: (-(r["objective_pass_rate"] or 0.0), r["entrant"]))
-
-    rows = _rank(rows)
+    rows = sorted(rows, key=lambda r: (-(r["objective_pass_rate"] or 0.0), r["entrant"]))
 
     config = _arena_read_json(run_dir / "run_log.json").get("config") or {}
     stat = _arena_read_json(run_dir / "agreement.json").get("agreement") or {}
@@ -854,30 +776,22 @@ def _arena_page_round(number: int, run_dir: Path) -> dict | None:
         "scoreline": rows,
         # Rank agreement between the (off-site) blind preference ordering and
         # the objective ordering — a standalone statistic, never a score.
-        # #983 review: computed over every scored row, so attributed to their one min_wall
-        # estimator, or withheld when the round mixes estimators or has an unlabelled one.
-        "agreement": _public_agreement(stat, scored),
+        "agreement": _public_agreement(stat),
     }
-    if marked:
-        # #983: one labelled table per non-legacy estimator. Absent when empty, so rounds
-        # scored with the legacy minimum keep their exact published entry.
-        entry["estimator_scorelines"] = [
-            {"min_wall_method": method, "label": MIN_WALL_ESTIMATOR_LABELS[method], "rows": _rank(table)}
-            for method, table in sorted(marked.items())
-        ]
-        entry["legacy_scoreline_label"] = LEGACY_MIN_WALL_LABEL
     return entry
 
 
-def _arena_headline_for(rounds: list[dict], method: str) -> dict | None:
-    """Mean Spearman rho over the comparable rounds whose agreement is attributed to ``method``."""
+def _arena_page_headline(rounds: list[dict]) -> dict | None:
+    """The decorrelation headline: mean Spearman rho over comparable rounds.
+
+    Matches the published finding (see blog/arena-elo-decorrelation.html): the
+    R5–R10 head-to-head window, keeping only rounds where the agreement rank
+    has at least three comparable entrants (two-entrant rho is degenerate)."""
     used: list[dict] = []
     for entry in rounds:
         if not 5 <= entry["round"] <= 10:
             continue
         stat = entry["agreement"]
-        if stat.get("min_wall_method", MIN_WALL_METHOD_LEGACY) != method:
-            continue
         if stat.get("rho") is None or (stat.get("n") or 0) < 3:
             continue
         used.append(entry)
@@ -898,32 +812,6 @@ def _arena_headline_for(rounds: list[dict], method: str) -> dict | None:
             "are different capabilities."
         ),
     }
-
-
-def _arena_page_headline(rounds: list[dict]) -> dict | None:
-    """The decorrelation headline: mean Spearman rho over comparable rounds.
-
-    Matches the published finding (see blog/arena-elo-decorrelation.html): the
-    R5–R10 head-to-head window, keeping only rounds where the agreement rank
-    has at least three comparable entrants (two-entrant rho is degenerate).
-
-    #983 review: only rounds whose agreement is attributed to the legacy minimum count, the
-    estimator every committed round and the published finding used. Rounds scored with another
-    estimator get their own labelled headline (:func:`_arena_estimator_headlines`) and are never
-    averaged into this one; rounds with a withheld agreement count nowhere.
-    """
-    return _arena_headline_for(rounds, MIN_WALL_METHOD_LEGACY)
-
-
-def _arena_estimator_headlines(rounds: list[dict]) -> list[dict]:
-    """One labelled headline per non-legacy min_wall estimator with comparable rounds (#983)."""
-    headlines = []
-    for method in sorted(MIN_WALL_ESTIMATOR_LABELS):
-        headline = _arena_headline_for(rounds, method)
-        if headline is not None:
-            headlines.append({**headline, "min_wall_method": method,
-                              "label": MIN_WALL_ESTIMATOR_LABELS[method]})
-    return headlines
 
 
 def build_arena_page(runs_dir: Path) -> dict | None:
@@ -975,13 +863,6 @@ def build_arena_page(runs_dir: Path) -> dict | None:
         "pending_rounds": [n for n in range(1, horizon + 1) if n not in published],
         "rounds": rounds,
     }
-    estimator_headlines = _arena_estimator_headlines(rounds)
-    if estimator_headlines:
-        # #983 review: absent when empty, so pages built from legacy rounds stay byte-identical.
-        payload["estimator_headlines"] = estimator_headlines
-        if payload["headline"] is not None:
-            payload["headline"]["min_wall_method"] = MIN_WALL_METHOD_LEGACY
-            payload["headline"]["label"] = LEGACY_MIN_WALL_LABEL
     audit_arena_page_public(payload)
     return payload
 
@@ -4793,7 +4674,8 @@ def _prerender_sections(payload: dict, supplemental: dict | None = None) -> dict
         + "</ul></article>" for s in stacks
     ) or '<p class="muted-note">No comparable repeated stack observations published yet.</p>'
     rounds = (supplemental.get("arena") or {}).get("rounds") or []
-    blocks["arena"] = "".join(
+    blocks["arena"] = ('<p class="muted-note arena-historical">' + _esc(ARENA_HISTORICAL_NOTE) + "</p>"
+                       if rounds else "") + "".join(
         f'<article class="arena-card"><h3>Round {_esc(r.get("round", ""))} · '
         f'{_esc(r.get("theme", ""))}</h3>'
         + _static_table(["Entrant", "Objective mesh-gate pass rate", "Trials"], [
@@ -4859,7 +4741,7 @@ def _prerender_sections(payload: dict, supplemental: dict | None = None) -> dict
 
 
 MATCHUP_AXES = frozenset(("instruments", "models", "levels", "context_tiers", "seeds", "backends", "driver_models"))
-MATCHUP_GATES = frozenset(("renders", "watertight", "nonzero_volume", "body_count", "fits_envelope", "min_wall", "topology", "interfaces"))
+MATCHUP_GATES = frozenset(("renders", "watertight", "nonzero_volume", "body_count", "fits_envelope", "topology", "interfaces"))
 MATCHUP_LIVE_BACKENDS = frozenset(("solidworks-live", "fusion-live"))
 
 
@@ -4933,24 +4815,11 @@ def build_matchups_page(results_dir: Path) -> dict:
                     raise ValueError("a failed matchup must record its failed checks")
                 if rate == 1 and failed:
                     raise ValueError("a perfect matchup rate cannot have failed checks")
-                # Replay builders persist primary-gate check names, absent when empty.
-                # The published rate already excludes borderline checks (#1014); keep it intact.
-                borderline_checks = row.get("borderline_checks", [])
-                if not isinstance(borderline_checks, list) or any(
-                    not isinstance(k, str) or k not in MATCHUP_GATES for k in borderline_checks
-                ):
-                    raise ValueError("invalid matchup borderline checks")
-                method = row.get("min_wall_method", MIN_WALL_METHOD_LEGACY)
-                if method not in {MIN_WALL_METHOD_LEGACY, *MIN_WALL_ESTIMATOR_LABELS}:
-                    raise ValueError("invalid matchup min_wall estimator")
-                borderline = len(borderline_checks)
                 rows.append({"entrant": _matchup_label(row.get("entrant")),
                              "backend": _matchup_label(row.get("backend")),
                              "objective_pass_rate": rate, "n_objective_trials": measured,
                              "n_infra_errors": infra, "n_execution_errors": errors,
-                             "n_compile_errors": compile_errors, "failed_checks": failed,
-                             **({"min_wall_method": method} if "min_wall_method" in row else {}),
-                             **({"borderline": borderline} if borderline else {})})
+                             "n_compile_errors": compile_errors, "failed_checks": failed})
             if len(rows) < 2 or len({(r["entrant"], r["backend"]) for r in rows}) != len(rows):
                 raise ValueError("matchup needs at least two distinct entrants")
             if metadata["varied_axis"] == "models" and {r["entrant"] for r in rows} != set(metadata["values"]):
@@ -4977,12 +4846,19 @@ def build_matchups_page(results_dir: Path) -> dict:
                               "source_bundle": "results/" + path.relative_to(results_dir).as_posix(),
                               "verification_status": bundle.get("verification_status")
                               if bundle.get("verification_status") in {"unverified", "public-regrade-verified", "official-heldout-verified"} else "unverified",
+                              **({"recompute": _public_recompute(bundle["recompute"])}
+                                 if isinstance(bundle.get("recompute"), dict) else {}),
                               "entrants": rows})
     page = {"schema": "makerbench-site-matchups-v1", "matchups": published}
     if len({item["id"] for item in published}) != len(published):
         raise ValueError("published matchup identifiers must be unique")
     audit_arena_page_public(page)
     return page
+
+
+def _public_recompute(block: dict) -> dict:
+    """The bundle's recompute provenance, carried verbatim into the published Matchups data."""
+    return dict(block)
 
 
 def _prerender_matchups_html(page: dict | None) -> str:
@@ -4996,52 +4872,27 @@ def _prerender_matchups_html(page: dict | None) -> str:
         varied = ", ".join(metadata["varied_axes"])
         if metadata["factorial"]:
             varied += " (factorial)"
-        # Unmeasured failures do not introduce an estimator into a measured table.
-        methods = {r.get("min_wall_method", MIN_WALL_METHOD_LEGACY)
-                   for r in item["entrants"] if r["n_objective_trials"]}
-        default = next(iter(methods)) if len(methods) == 1 else MIN_WALL_METHOD_LEGACY
-        groups = {}
+        rows = []
         for row in item["entrants"]:
-            method = row.get("min_wall_method", MIN_WALL_METHOD_LEGACY) if row["n_objective_trials"] else default
-            groups.setdefault(method, []).append(row)
-        mixed = len(groups) > 1
-        tables = []
-        for method, group in groups.items():
-            rows = []
-            for row in group:
-                rate = f'{row["objective_pass_rate"] * 100:.2f}%' if row["objective_pass_rate"] is not None else "Unmeasured"
-                if row["objective_pass_rate"] is None and row["n_infra_errors"]:
-                    rate += " (infrastructure)"
-                elif row["objective_pass_rate"] is None and row["n_compile_errors"]:
-                    rate += " (compile failure)"
-                elif row["objective_pass_rate"] is None and row["n_execution_errors"]:
-                    rate += " (execution error)"
-                if row.get("borderline", 0):
-                    rate += f' · {row["borderline"]} borderline (excluded)'
-                failures = ", ".join(f"{k} ({v})" for k, v in sorted(row["failed_checks"].items())) or (
-                    "None observed" if row["n_objective_trials"] else "Not measured")
-                rows.append('<tr>' + ''.join(f'<td>{_esc(str(v))}</td>' for v in (
-                    row["entrant"], row["backend"], rate, row["n_objective_trials"],
-                    failures, f'{row["n_execution_errors"]} total · {row["n_compile_errors"]} compile · {row["n_infra_errors"]} infrastructure')) + '</tr>')
-            label = MIN_WALL_ESTIMATOR_LABELS.get(method, LEGACY_MIN_WALL_LABEL)
-            tables.append((f'<h4>{_esc(label)}</h4>' if mixed else '') +
-                          '<div class="arena-scoreline"><table><thead><tr><th>Entrant</th><th>Backend</th>'
-                          '<th>Measured gate pass rate</th><th>Measured trials</th><th>Failed checks</th>'
-                          '<th>Execution errors</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>')
-            if method == "robust-v1":
-                tables.append(
-                    '<p class="muted-note">Under robust-v1, min_wall is borderline when 0.8–1.2% '
-                    '(inclusive) of wall samples fall below the printable-wall threshold. Borderline '
-                    'checks are excluded from each trial’s pass-rate denominator; measured trials '
-                    'still count. See <a href="https://github.com/tonykoop/makerbench-hwe/blob/main/'
-                    'docs/MIN_WALL_RESCORE.md">the min_wall rescore notes</a>.</p>'
-                )
-        note = ('<p class="muted-note">Estimators differ within this matchup; rows are not comparable across groups.</p>'
-                if mixed else '')
+            rate = f'{row["objective_pass_rate"] * 100:.2f}%' if row["objective_pass_rate"] is not None else "Unmeasured"
+            if row["objective_pass_rate"] is None and row["n_infra_errors"]:
+                rate += " (infrastructure)"
+            elif row["objective_pass_rate"] is None and row["n_compile_errors"]:
+                rate += " (compile failure)"
+            elif row["objective_pass_rate"] is None and row["n_execution_errors"]:
+                rate += " (execution error)"
+            failures = ", ".join(f"{k} ({v})" for k, v in sorted(row["failed_checks"].items())) or (
+                "None observed" if row["n_objective_trials"] else "Not measured")
+            rows.append('<tr>' + ''.join(f'<td>{_esc(str(v))}</td>' for v in (
+                row["entrant"], row["backend"], rate, row["n_objective_trials"],
+                failures, f'{row["n_execution_errors"]} total · {row["n_compile_errors"]} compile · {row["n_infra_errors"]} infrastructure')) + '</tr>')
+        table = ('<div class="arena-scoreline"><table><thead><tr><th>Entrant</th><th>Backend</th>'
+                 '<th>Measured gate pass rate</th><th>Measured trials</th><th>Failed checks</th>'
+                 '<th>Execution errors</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>')
         cards.append(f'<article class="arena-card"><h3>{_esc(item["id"])}</h3>'
                      f'<p>Varied: {_esc(varied)} · Values: {_esc(", ".join(map(str, metadata["values"])))}</p>'
                      f'<p>Held: {_esc(held)}</p><p>Verification: {_esc(item["verification_status"])}</p>'
-                     + note + ''.join(tables) +
+                     + table +
                      f'<p class="muted-note">Source: {_esc(item["source_bundle"])}</p></article>')
     return ''.join(cards)
 

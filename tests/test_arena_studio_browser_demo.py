@@ -59,13 +59,13 @@ def test_all_showcases_are_visible_without_mutating_controls():
                 if run == "post3-models":
                     assert page.get_by_role("heading", name="Claude Opus 5.5", exact=True).count() == 1
                     assert page.get_by_role("heading", name="Claude Sonnet 5.5", exact=True).count() == 1
-                    assert page.get_by_text("Passed all 6 build checks in 3 of 3 runs.", exact=True).count() == 2
+                    assert page.get_by_text("Passed all 5 build checks in 3 of 3 runs.", exact=True).count() == 2
                     assert "What changed: the AI model" in content and "no reference image" in content
                 if run in {"post3-models", "post3-backends"}:
                     for card in page.locator(".matchup-entrant").all():
                         assert card.locator(".demo-render-strip img").count() == 3
                         assert card.locator(".demo-render-strip figcaption").all_text_contents() == ["Run 0", "Run 1", "Run 2"]
-                        assert card.locator(".demo-check[data-state='pass']").count() == 6
+                        assert card.locator(".demo-check[data-state='pass']").count() == 5
                     chip = page.locator(".demo-check").first
                     chip.hover()
                     tooltip = chip.locator("[role='tooltip']")
@@ -92,34 +92,34 @@ def test_all_showcases_are_visible_without_mutating_controls():
                 if run == "strings-gallery":
                     assert page.locator(".demo-gallery .matchup-entrant").count() == 18
                     assert "Build checks were not completed." in page.locator(".matchup-entrant").nth(15).inner_text()
-                    assert "Passed 0 of 6" not in content
-                    assert page.locator(".matchup-entrant").nth(15).locator(".demo-check[data-state='unknown']").count() == 6
+                    assert "Passed 0 of 5" not in content
+                    assert page.locator(".matchup-entrant").nth(15).locator(".demo-check[data-state='unknown']").count() == 5
                 if run == "kora":
                     assert page.locator(".demo-context-arm").count() == 2
                     assert all(arm.locator(".matchup-entrant").count() == 3 for arm in page.locator(".demo-context-arm").all())
                     assert page.locator(".demo-reference img").count() == 1
                     assert "Photo from tonykoop/kora, CC BY 4.0." in page.locator(".demo-reference figcaption").inner_text()
                     assert page.get_by_role("link", name="CC BY 4.0", exact=True).count() == 1
-                    # Regraded with robust-v1 (scripts/regrade_scoreline.py): all six kora runs pass.
-                    assert page.get_by_text("Passed all 6 build checks in 1 of 1 run.", exact=True).count() == 6
+                    # All six kora runs pass the five arena checks.
+                    assert page.get_by_text("Passed all 5 build checks in 1 of 1 run.", exact=True).count() == 6
                     assert page.locator(".demo-check[data-state='fail']").count() == 0
                     # The measured-failure explanation, on the record as first published (photo
-                    # seed 2, legacy min_wall), injected so the chip tooltip stays covered.
+                    # seed 2), injected on a current check so the chip tooltip stays covered.
                     def first_published(route):
                         summary = route.fetch().json()
-                        failure = {"body_id": "body_0", "check": "min_wall", "measured": 0.0702,
+                        failure = {"body_id": "body_0", "check": "fits_envelope", "measured": 0.0702,
                                    "requires": "measured >= threshold - tolerance", "seed": 2,
                                    "threshold": 1.0, "tolerance": 0.05, "unit": "mm",
-                                   "detail": "thinnest ray-cast wall on the largest watertight body"}
+                                   "detail": "an injected failure for the tooltip test"}
                         row = summary["rows"][5]
-                        row["objective_pass_rate"] = row["trials"][0]["objective_pass_rate"] = 0.833333
-                        row["gates"]["min_wall"] = row["trials"][0]["gates"]["min_wall"] = 0
+                        row["objective_pass_rate"] = row["trials"][0]["objective_pass_rate"] = 0.8
+                        row["gates"]["fits_envelope"] = row["trials"][0]["gates"]["fits_envelope"] = 0
                         row["trials"][0]["failed_checks"] = [failure]
                         route.fulfill(json=summary)
                     page.route("**/api/runs/kora/summary", first_published)
                     page.reload()
                     page.get_by_role("heading", name=title, exact=True).wait_for()
-                    assert "Passed 5 of 6 build checks in this run." in page.locator("main").inner_text()
+                    assert "Passed 4 of 5 build checks in this run." in page.locator("main").inner_text()
                     chip = page.locator(".matchup-entrant").nth(5).locator(".demo-check[data-state='fail']")
                     chip.focus()
                     assert chip.locator("[role='tooltip']").is_visible()

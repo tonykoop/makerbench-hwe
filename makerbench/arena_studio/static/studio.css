@@ -2088,16 +2088,6 @@ kbd {
   pointer-events: none;
 }
 
-.measure-hotspot[data-kind="wall"] {
-  width: 0.875rem;
-  min-width: 0;
-  height: 0.875rem;
-  padding: 0;
-  background: #e5484d;
-  border-color: #ffffff;
-  box-shadow: 0 0 0 3px rgb(229 72 77 / 0.35);
-}
-
 .job-status {
   margin-top: var(--space-3);
 }
@@ -2550,13 +2540,6 @@ body[data-demo="true"] .demo-header-links {
 .check-chip[data-state="absent"] {
   color: var(--muted);
   border-style: dashed;
-}
-
-/* #1011: a borderline min_wall is neither a pass nor a fail */
-.check-chip[data-state="borderline"] {
-  color: var(--warning, var(--muted));
-  border-color: var(--warning, var(--muted));
-  border-style: dotted;
 }
 
 @media (max-width: 40rem) {

@@ -59,13 +59,22 @@ test("check rows keep the API's honest states", () => {
   const undeclared = checkRows({ render_ok: true, objective: { declared: false, note: "gates not declared" } });
   assert.equal(undeclared.state, "undeclared");
   assert.equal(undeclared.note, "gates not declared");
-  const scored = checkRows({ render_ok: true, objective: { declared: true, objective_pass_rate: 0.5, checks: { renders: { passed: true }, min_wall: { passed: false, detail: "1.2 mm" }, odd: { passed: null } } } });
+  const scored = checkRows({ render_ok: true, objective: { declared: true, objective_pass_rate: 0.5, checks: { renders: { passed: true }, watertight: { passed: false, detail: "open edge" }, odd: { passed: null } } } });
   assert.equal(scored.state, "scored");
-  assert.deepEqual(scored.rows.map((r) => [r.name, r.result]), [["renders", "pass"], ["min_wall", "fail"], ["odd", "unknown"]]);
-  assert.equal(scored.rows[1].detail, "1.2 mm");
+  assert.deepEqual(scored.rows.map((r) => [r.name, r.result]), [["renders", "pass"], ["watertight", "fail"], ["odd", "unknown"]]);
+  assert.equal(scored.rows[1].detail, "open edge");
   assert.equal(scored.note, "Pass rate 50%");
-  const legacy = checkRows({ render_ok: true, objective: { declared: true, sub_scores: { watertight: 1.0, min_wall: 0.0 } } });
+  const legacy = checkRows({ render_ok: true, objective: { declared: true, sub_scores: { watertight: 1.0, fits_envelope: 0.0 } } });
   assert.deepEqual(legacy.rows.map((r) => r.result), ["pass", "fail"]);
+});
+
+test("a saved revision with the retired wall check shows five checks and the rescored rate", () => {
+  const saved = { render_ok: true, objective: { declared: true, objective_pass_rate: 5 / 6,
+    sub_scores: { renders: 1, watertight: 1, nonzero_volume: 1, fits_envelope: 1, body_count: 1, min_wall: 0 } } };
+  const out = checkRows(saved);
+  assert.deepEqual(out.rows.map((r) => r.name), ["renders", "watertight", "nonzero_volume", "fits_envelope", "body_count"]);
+  assert.ok(out.rows.every((r) => r.result === "pass"));
+  assert.equal(out.note, "Pass rate 100%");
 });
 
 test("line references and offsets", () => {

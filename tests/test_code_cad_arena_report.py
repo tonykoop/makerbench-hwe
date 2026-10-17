@@ -32,10 +32,10 @@ def _run_dir(tmp_path: Path) -> Path:
                     "render_ok": True,
                     "artifacts": {"png_path": png.as_posix()},
                     "objective": {
-                        "objective_pass_rate": 0.83,
+                        "objective_pass_rate": 0.8,
                         "sub_scores": {
                             "renders": 1.0, "watertight": 1.0, "nonzero_volume": 1.0,
-                            "fits_envelope": 1.0, "min_wall": 0.0, "body_count": 1.0,
+                            "fits_envelope": 1.0, "body_count": 0.0,
                         },
                     },
                 },
@@ -82,7 +82,9 @@ class TestArenaReport:
         run_dir = _run_dir(tmp_path)
         log = json.loads((run_dir / "run_log.json").read_text(encoding="utf-8"))
         means = report.gate_means(log)
-        assert means["stub-a"]["min_wall"] == 0.0
+        assert means["stub-a"]["body_count"] == 0.0
+        assert "min_wall" not in means["stub-a"]
+        assert tuple(means["stub-a"]) == report.GATE_COLUMNS
         assert means["stub-a"]["renders"] == 1.0
         assert means["stub-<b>"]["renders"] == 0.0
 

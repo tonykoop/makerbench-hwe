@@ -80,12 +80,7 @@ def test_regrade_absent_vs_present(runs, tmp_path):
     assert result.returncode == 0, result.stderr
     bundle = json.loads(out.read_text())
     assert bundle.pop("regrade") == provenance
-    for matchup in bundle['matchups']:
-        for row in matchup['entrants']:
-            if row['entrant'] == mod.ENTRANT and row['n_objective_trials']:
-                assert row.pop('min_wall_method') == 'robust-v1'
-            else:
-                assert 'min_wall_method' not in row
+    assert all("min_wall_method" not in row for matchup in bundle["matchups"] for row in matchup["entrants"])
     assert bundle == load("expected.json")
     provenance["source_run_log_sha256"]["round1/run_log.json"] = "0" * 64
     with pytest.raises(ValueError, match="does not match consumed logs"):
@@ -141,32 +136,28 @@ def test_rejects_extra_regrade_keys(runs, tmp_path, extra_key):
     assert not out.exists()
 
 
-def test_carries_sorted_primary_borderline_checks(runs, tmp_path):
+def test_retired_wall_check_is_neither_counted_nor_listed(runs, tmp_path):
+    """Wall thickness left scoring (2026-10-16): an older log's min_wall sub-score changes
+    neither the rate nor failed_checks, and no borderline or estimator field is emitted."""
     path = runs / "round1" / "run_log.json"
     log = json.loads(path.read_text())
-    objective = log["trials"][0]["result"]["objective"]
-    objective["sub_scores"].update(z_wall="borderline", a_wall="borderline")
-    # A separate diagnostic must not contribute to the primary check count.
-    log["trials"][0]["result"]["advisory"] = {"sub_scores": {"outside": "borderline"}}
+    log["trials"][0]["result"]["objective"]["sub_scores"].update(min_wall=0.0)
     path.write_text(json.dumps(log))
-    out = tmp_path / "borderline.json"
+    out = tmp_path / "retired.json"
     result = cli(runs, out)
     assert result.returncode == 0, result.stderr
     bundle = json.loads(out.read_text())
-    expected = load("expected.json")
-    expected["matchups"][0]["entrants"][0]["borderline_checks"] = ["a_wall", "z_wall"]
-    assert bundle == expected  # rates, failures, other rows and provenance unchanged
+    assert bundle == load("expected.json")
     row = bundle["matchups"][0]["entrants"][0]
-    assert row["failed_checks"] == {"second": 1}
-    assert row["objective_pass_rate"] == 0.5
-    assert len(row["borderline_checks"]) == 2  # checks, not borderline trials
-    assert all("borderline_checks" not in matchup["entrants"][0]
-               for matchup in bundle["matchups"][1:])
+    assert row["failed_checks"] == {"second": 1} and row["objective_pass_rate"] == 0.5
+    assert all("borderline_checks" not in r and "min_wall_method" not in r
+               for matchup in bundle["matchups"] for r in matchup["entrants"])
 
 
-def test_nonprimary_borderline_is_not_promoted(runs):
+def test_non_numeric_verdicts_are_not_failures(runs):
     path = runs / "round1" / "run_log.json"
     log = json.loads(path.read_text())
+    log["trials"][0]["result"]["objective"]["sub_scores"].update(z_wall="borderline", a_wall="borderline")
     log["trials"][0]["result"]["advisory"] = {"sub_scores": {"min_wall": "borderline"}}
     path.write_text(json.dumps(log))
     bundle = mod.build(runs, load("prior.json"), load("recording.json"))

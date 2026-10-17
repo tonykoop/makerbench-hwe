@@ -1,6 +1,8 @@
 // Pure helpers for the design workbench screen (#788 W4). No DOM, no fetch:
 // everything here is unit-tested under node in tests/js/workbench_lib.test.mjs.
 
+import { objectiveRate, retainedChecks } from "./objectiveChecks.js";
+
 export const JOB_STATUS_TEXT = {
   queued: "Queued",
   running: "Compiling",
@@ -83,15 +85,14 @@ export function checkRows(objective) {
     return { state: "undeclared", rows: [], note: block?.note || "This instrument has no declared gates." };
   }
   if (block.error) return { state: "error", rows: [], note: block.error };
-  const checks = block.checks || block.gates || block.sub_scores || {};
+  const checks = retainedChecks(block.checks || block.gates || block.sub_scores);
   const rows = Object.entries(checks).map(([name, value]) => {
     const passed = value && typeof value === "object" ? value.passed : value;
     const ok = passed === true || passed === 1 || passed === 1.0;
     const bad = passed === false || passed === 0;
-    // #1011: a borderline min_wall is neither a pass nor a fail
-    return { name, result: ok ? "pass" : bad ? "fail" : passed === "borderline" ? "borderline" : "unknown", detail: value && typeof value === "object" ? value.detail || "" : "" };
+    return { name, result: ok ? "pass" : bad ? "fail" : "unknown", detail: value && typeof value === "object" ? value.detail || "" : "" };
   });
-  const rate = typeof block.objective_pass_rate === "number" ? block.objective_pass_rate : null;
+  const rate = objectiveRate(block);
   return { state: "scored", rows, rate, note: rate === null ? "" : `Pass rate ${Math.round(rate * 100)}%` };
 }
 

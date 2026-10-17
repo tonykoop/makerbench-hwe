@@ -190,3 +190,21 @@ def test_pending_trials_are_skipped_and_errors_are_not_graded(tmp_path):
 def test_cli_missing_run_log_returns_error(tmp_path, capsys):
     assert gallery.main([str(tmp_path), "--out", str(tmp_path / "gal")]) == 2
     assert "run_log.json" in capsys.readouterr().err
+
+
+def test_gallery_rescores_a_stored_rate_that_counted_wall_thickness(tmp_path):
+    """Five passing retained checks plus an old failed wall check show 1.0, not the stored 5/6 (#1011)."""
+    run = _make_run(tmp_path, "run-a", ["e1"])
+    log = json.loads((run / "run_log.json").read_text(encoding="utf-8"))
+    for trial in log["trials"]:
+        objective = (trial.get("result") or {}).get("objective") or {}
+        if objective.get("sub_scores"):
+            objective["sub_scores"] = {**{k: 1.0 for k in objective["sub_scores"]}, "min_wall": 0.0}
+            objective["objective_pass_rate"] = 5 / 6
+    (run / "run_log.json").write_text(json.dumps(log), encoding="utf-8")
+    out = tmp_path / "gal"
+    gallery.build_gallery([run], out)
+    data = json.loads((out / "gallery.json").read_text(encoding="utf-8"))
+    scored = [card for card in data["designs"] if card["status"] == "scored"]
+    assert scored and all(card["objective_pass_rate"] == 1.0 for card in scored)
+    assert "0.833" not in (out / "index.html").read_text(encoding="utf-8")

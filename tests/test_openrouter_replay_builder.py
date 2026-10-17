@@ -44,7 +44,7 @@ def _fixture(tmp_path):
             for instrument in instruments:
                 for seed in seeds:
                     trials.append(_trial(instrument, seed, "scored", rate=1.0,
-                                         sub={k: 1.0 for k in ("renders", "watertight", "min_wall")}))
+                                         sub={k: 1.0 for k in ("renders", "watertight", "body_count")}))
                     lines.append({"kind": "settle", "id": f"{entrant}{rnd}{instrument}{seed}", "entrant": entrant,
                                   "instrument": instrument, "seed": seed, "model": "m", "cost_usd": 0.001})
             run = runs / f"r{rnd}-{entrant.split('openrouter-', 1)[1]}"
@@ -57,7 +57,7 @@ def _fixture(tmp_path):
                 trials[0] = _trial(trials[0]["instrument_id"], 0, "error", error="generation error: returned no fenced code block")
                 trials[1] = _trial(trials[1]["instrument_id"], 1, "auto_fail", stage="openscad_render")
                 trials[2] = _trial(trials[2]["instrument_id"], 0, "error", error="Command ['openscad'] timed out after 120 seconds")
-                trials[3] = _trial(trials[3]["instrument_id"], 1, "scored", rate=0.833333, sub={"renders": 1.0, "watertight": 1.0, "min_wall": 0.0})
+                trials[3] = _trial(trials[3]["instrument_id"], 1, "scored", rate=0.666667, sub={"renders": 1.0, "watertight": 1.0, "body_count": 0.0})
             (run / "run_log.json").write_text(json.dumps({"trials": trials}), encoding="utf-8")
     ledger.write_text("\n".join(json.dumps(x) for x in lines) + "\n", encoding="utf-8")
     return runs, ledger
@@ -68,11 +68,11 @@ def _regrade(runs):
     for log in runs.glob("r*/run_log.json"):
         for t in json.loads(log.read_text(encoding="utf-8"))["trials"]:
             if t["status"] == "scored":
-                # the baseline gate is harsher on one cell: min_wall fails
+                # the baseline gate is harsher on one cell: body_count fails
                 bad = log.parent.name == "r1-deepseek-v4-flash" and t["instrument_id"] == "ocarina"
-                sub = {"renders": 1.0, "watertight": 1.0, "min_wall": 0.0 if bad else (t["result"]["objective"]["sub_scores"].get("min_wall"))}
+                sub = {"renders": 1.0, "watertight": 1.0, "body_count": 0.0 if bad else (t["result"]["objective"]["sub_scores"].get("body_count"))}
                 out[f"{log.parent.name}::{t['trial_id']}"] = {"status": "scored", "failure_stage": None,
-                                                              "objective_pass_rate": 0.833333 if bad else t["result"]["objective"]["objective_pass_rate"],
+                                                              "objective_pass_rate": 0.666667 if bad else t["result"]["objective"]["objective_pass_rate"],
                                                               "sub_scores": sub}
     return out
 
@@ -93,12 +93,11 @@ def _bundle(tmp_path, *, regrade_overrides=None, with_provenance=False):
     return replay.build(runs, ledger, rev, repo, (1.0, 2.0), regraded, rev, _provenance(runs) if with_provenance else None), runs
 
 
-def borderline_bundle(tmp_path, *, failed=False):
-    """Real replay build with one primary regrade cell marked borderline."""
+def retired_wall_bundle(tmp_path, *, failed=False):
+    """Real replay build whose regrade replays a cell that still carries the retired wall check."""
     from makerbench.code_cad_arena_runner import objective_rate
 
-    sub_scores = dict.fromkeys(
-        ['renders', 'watertight', 'nonzero_volume', 'fits_envelope', 'min_wall', 'body_count'], 1.0)
+    sub_scores = dict.fromkeys(['renders', 'watertight', 'nonzero_volume', 'fits_envelope', 'body_count'], 1.0)
     sub_scores.update(min_wall='borderline', body_count=0.0 if failed else 1.0)
     return _bundle(tmp_path, with_provenance=True, regrade_overrides={
         'r1-deepseek-v4-pro::kena__seed1__rep0': {
@@ -108,35 +107,28 @@ def borderline_bundle(tmp_path, *, failed=False):
 
 
 @pytest.mark.parametrize('failed, expected_rate', [(False, 1.0), (True, 0.8)])
-def test_borderline_regrade_survives_real_builder_to_page_and_prerender(tmp_path, failed, expected_rate):
-    bundle = borderline_bundle(tmp_path, failed=failed)
+def test_retired_wall_verdict_is_ignored_from_builder_to_page_and_prerender(tmp_path, failed, expected_rate):
+    bundle = retired_wall_bundle(tmp_path, failed=failed)
     rows = [row for item in bundle['matchups'] for row in item['entrants']]
-    borderline_rows = [row for row in rows if 'borderline_checks' in row]
-    assert len(borderline_rows) == 1
-    row = borderline_rows[0]
-    assert row['borderline_checks'] == ['min_wall']
+    assert not any('borderline_checks' in row or 'min_wall_method' in row for row in rows)
+    row = next(r for item in bundle['matchups'] if item['id'] == 'or-r1-kena-seed1-rep0'
+               for r in item['entrants'] if r['entrant'] == 'openrouter-deepseek-v4-pro')
     assert 'sub_scores' not in row
-    assert row['current_gate']['failed_checks'] == {'min_wall': 1}
     assert row['objective_pass_rate'] == expected_rate
     assert row['failed_checks'] == ({'body_count': 1} if failed else {})
     results = tmp_path / 'results'
     results.mkdir()
     (results / 'b.json').write_text(json.dumps(bundle))
     page = site.build_matchups_page(results)
-    actual = next(r for item in page['matchups'] for r in item['entrants'] if r.get('borderline'))
-    assert actual['borderline'] == 1
-    assert actual['objective_pass_rate'] == expected_rate
-    assert actual['n_objective_trials'] == 1
+    actual = next(r for item in page['matchups'] if item['id'] == 'or-r1-kena-seed1-rep0'
+                  for r in item['entrants'] if r['entrant'] == 'openrouter-deepseek-v4-pro')
+    assert actual['objective_pass_rate'] == expected_rate and actual['n_objective_trials'] == 1
     html = site._prerender_matchups_html(page)
-    assert f'{expected_rate * 100:.2f}% · 1 borderline (excluded)' in html
-    assert html.count('1 borderline (excluded)') == 1
-    assert '0 borderline (excluded)' not in html
-    assert '0.8–1.2%' in html
-    assert 'docs/MIN_WALL_RESCORE.md' in html
-    assert 'excluded from each trial’s pass-rate denominator' in html
+    assert 'borderline' not in html.lower() and 'min_wall' not in html and 'robust-v1' not in html
+    assert 'docs/MIN_WALL_RESCORE.md' not in html
 
 
-def test_decided_rows_omit_borderline_key(tmp_path):
+def test_rows_carry_no_borderline_key(tmp_path):
     bundle, _ = _bundle(tmp_path)
     assert all('borderline_checks' not in row for item in bundle['matchups'] for row in item['entrants'])
 
@@ -145,7 +137,7 @@ def test_primary_rows_are_baseline_graded_and_current_gate_is_labelled_secondary
     bundle, _ = _bundle(tmp_path)
     flash = next(m for m in bundle["matchups"] if m["id"] == "or-r1-ocarina-seed0-rep0")
     row = next(e for e in flash["entrants"] if e["entrant"] == "openrouter-deepseek-v4-flash")
-    assert row["objective_pass_rate"] == 0.833333 and row["failed_checks"] == {"min_wall": 1}
+    assert row["objective_pass_rate"] == 0.666667 and row["failed_checks"] == {"body_count": 1}
     assert row["current_gate"] == {"objective_pass_rate": 1.0, "failed_checks": {}}
     assert bundle["openrouter_run"]["grading"]["primary_rows"].startswith("gate replay")
 
@@ -224,26 +216,7 @@ def test_recorded_source_paths_resolve_against_the_execution_root_and_a_missing_
 
 
 
-def test_multiple_borderline_checks_are_sorted_and_count_checks_not_trials(tmp_path):
-    bundle, _ = _bundle(tmp_path, regrade_overrides={
-        'r1-deepseek-v4-pro::kena__seed1__rep0': {
-            'objective_pass_rate': 1.0,
-            'sub_scores': {'watertight': 'borderline', 'min_wall': 'borderline', 'renders': 1.0},
-        },
-    })
-    row = next(row for item in bundle['matchups'] for row in item['entrants'] if row.get('borderline_checks'))
-    assert row['borderline_checks'] == ['min_wall', 'watertight']
-    results = tmp_path/'results'
-    results.mkdir()
-    (results/'b.json').write_text(json.dumps(bundle))
-    page = site.build_matchups_page(results)
-    actual = next(row for item in page['matchups'] for row in item['entrants'] if row.get('borderline'))
-    assert actual['borderline'] == 2
-    assert actual['n_objective_trials'] == 1
-    assert '2 borderline (excluded)' in site._prerender_matchups_html(page)
-
-
-def test_original_gate_borderline_is_primary_only_without_regrade(tmp_path):
+def test_retired_wall_verdicts_in_an_original_run_are_not_counted(tmp_path):
     _, runs = _bundle(tmp_path)
     log = runs/'r1-deepseek-v4-pro'/'run_log.json'
     data = json.loads(log.read_text())
@@ -254,13 +227,9 @@ def test_original_gate_borderline_is_primary_only_without_regrade(tmp_path):
     repo = tmp_path/'repo'
     original = replay.build(runs, tmp_path/'ledger.jsonl', 'HEAD', repo)
     primary = next(item for item in original['matchups'] if item['id'] == 'or-r1-kena-seed1-rep0')
-    assert next(row for row in primary['entrants'] if row['entrant'] == 'openrouter-deepseek-v4-pro')['borderline_checks'] == ['min_wall']
-    regraded = _regrade(runs)
-    regraded['r1-deepseek-v4-pro::kena__seed1__rep0'] = {
-        'objective_pass_rate': 1.0, 'sub_scores': {'renders': 1.0, 'min_wall': 1.0},
-    }
-    decided = replay.build(runs, tmp_path/'ledger.jsonl', 'HEAD', repo, regrade=regraded)
-    assert all('borderline_checks' not in row for item in decided['matchups'] for row in item['entrants'])
+    row = next(r for r in primary['entrants'] if r['entrant'] == 'openrouter-deepseek-v4-pro')
+    assert row['objective_pass_rate'] == 1.0 and row['failed_checks'] == {}
+    assert 'borderline_checks' not in row
 
 
 def _provenance(runs):
@@ -300,12 +269,7 @@ def test_provenance_cli_is_additive_and_absent_by_default(tmp_path):
     assert actual.pop('regrade') == provenance
     assert 'following the regrade block' in actual['openrouter_run']['grading']['primary_rows']
     actual['openrouter_run']['grading']['primary_rows'] = baseline['openrouter_run']['grading']['primary_rows']
-    for matchup in actual['matchups']:
-        for row in matchup['entrants']:
-            if row['n_objective_trials']:
-                assert row.pop('min_wall_method') == 'robust-v1'
-            else:
-                assert 'min_wall_method' not in row
+    assert all('min_wall_method' not in row for matchup in actual['matchups'] for row in matchup['entrants'])
     assert (json.dumps(actual, indent=2, ensure_ascii=False) + '\n').encode() == expected
     provenance['extra'] = 'must not be published'
     path.write_text(json.dumps(provenance))

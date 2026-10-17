@@ -8,6 +8,7 @@ import { formatWhen, UNKNOWN_GRADE_COUNT } from "../lib/format.js";
 import { buildHash } from "../lib/route.js";
 import { toggleSelection } from "../lib/matchupCompare.js";
 import { gateLabel } from "../lib/gateText.js";
+import { objectiveRate, retainedChecks } from "../lib/objectiveChecks.js";
 import { MatchupCompare } from "../components/matchupCompare.js";
 
 function RunsTable({ runs, selected }) {
@@ -148,10 +149,10 @@ function MatchupResults({ metadata, trials }) {
             <dl class="facts">
               <div><dt>Status</dt><dd>${trial.status}</dd></div>
               <div><dt>Wall time</dt><dd>${trial.wall_time_s == null ? "Not recorded" : `${trial.wall_time_s.toFixed(2)} s`}</dd></div>
-              <div><dt>Gate pass rate</dt><dd>${trial.objective_pass_rate == null ? "Not measured" : `${(trial.objective_pass_rate * 100).toFixed(2)}%`}</dd></div>
+              <div><dt>Gate pass rate</dt><dd>${objectiveRate(trial) == null ? "Not measured" : `${(objectiveRate(trial) * 100).toFixed(2)}%`}</dd></div>
             </dl>
             <ul class="matchup-gates">
-              ${Object.entries(trial.gates || {}).map(([name, value]) => html`
+              ${Object.entries(retainedChecks(trial.gates)).map(([name, value]) => html`
                 <li key=${name}><span>${name}</span>: <strong>${gateLabel(value)}</strong></li>
               `)}
             </ul>

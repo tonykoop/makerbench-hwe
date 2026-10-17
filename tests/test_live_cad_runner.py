@@ -73,7 +73,7 @@ def test_assignment_names_connector_export_and_constraints(tmp_path):
     assert "hwe-solidworks" in a
     assert r"C:\out\trumpet\output.stl" in a
     assert "533 x 200 x 180" in a
-    assert "min wall 0.6" in a and ">= 1 distinct bodies" in a
+    assert "min wall" not in a and ">= 1 distinct bodies" in a
     assert "trumpet-sheetmetal" in a
 
 

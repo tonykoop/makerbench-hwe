@@ -13,7 +13,6 @@ import {
   overlayRows,
   pickText,
   toPoint,
-  wallHotspot,
 } from "../../makerbench/arena_studio/static/app/lib/dimensions.js";
 
 const PAYLOAD = {
@@ -58,17 +57,15 @@ test("hotspot positions use model units with model-viewer's unit keyword", () =>
   assert.equal(hotspotPosition(null), null);
 });
 
-test("overlay rows read the gate metrics and say where the wall is", () => {
+test("overlay rows show size and volume, never wall thickness", () => {
   const rows = overlayRows(PAYLOAD);
-  assert.deepEqual(rows.map((row) => row.key), ["bbox", "volume", "wall"]);
+  assert.deepEqual(rows.map((row) => row.key), ["bbox", "volume"]);
   assert.equal(rows[0].text, "20.0 × 20.0 × 20.0 mm");
   assert.equal(rows[1].text, "3.90 cm³");
-  assert.equal(rows[2].text, "2.00 mm");
-  assert.equal(rows[2].note, "marked on the model");
-  assert.deepEqual(wallHotspot(PAYLOAD), { position: "9m 1m 2m", point: { x: 9, y: 1, z: 2 } });
+  assert.ok(!JSON.stringify(rows).toLowerCase().includes("wall"));
 });
 
-test("failures are honest and never invent a marker", () => {
+test("failures are honest and never invent a reading", () => {
   const payload = {
     ok: false,
     measurements: [
@@ -81,11 +78,8 @@ test("failures are honest and never invent a marker", () => {
   const rows = overlayRows(payload);
   assert.equal(rows[1].ok, false);
   assert.equal(rows[1].text, "unavailable: mesh is not watertight");
-  assert.equal(rows[2].note, "");
-  assert.equal(wallHotspot(payload), null);
+  assert.equal(rows.length, 2);
   assert.equal(overlayRows({}).every((row) => row.text === "not measured"), true);
-  const unlocated = { ...PAYLOAD, min_wall_location: null };
-  assert.equal(overlayRows(unlocated)[2].note, "location not recovered");
 });
 
 test("two-point picking: a third pick starts over; bad hits are ignored", () => {

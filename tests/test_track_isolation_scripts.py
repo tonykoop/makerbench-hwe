@@ -14,7 +14,6 @@ import pytest
 
 import test_frontier_vote as fv
 import test_render_gallery as rg
-import test_rescore_min_wall as rm
 import test_studio_repeat_renders as sr
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,24 +48,6 @@ def test_render_gallery_skips_off_track_rows(tmp_path, tag):
     _edit_log(run / "run_log.json", lambda log: tag(log["trials"][1]))
     designs, _ = rg.gallery.load_designs(run)
     assert len(designs) == len(clean) - 1
-
-
-def test_rescore_min_wall_skips_off_track_rows(tmp_path, tag):
-    run_dir = tmp_path / "runs" / "r1"
-    rm._stage_run(run_dir)
-    registry = {"instruments": [{"id": "boxolin", "task_brief": "a box", "min_bodies": 1,
-                                 "envelope_mm": [200, 200, 200], "min_wall_mm": 1.0}]}
-    script = rm._script()
-    jobs, passthrough = script.collect_jobs("demo", run_dir, registry)
-    assert len(jobs) + len(passthrough) == 3
-
-    def plant(log):
-        tag(log["trials"][1])  # the thin-sheet trial would otherwise pull the aggregate down
-
-    _edit_log(run_dir / "run_log.json", plant)
-    jobs, passthrough = script.collect_jobs("demo", run_dir, registry)
-    assert len(jobs) + len(passthrough) == 2
-    assert "boxolin__seed1__rep0__m" not in {j[4]["trial_id"] for j in jobs}
 
 
 def test_regrade_scoreline_queue_and_output_exclude_off_track_rows(tmp_path, tag):

@@ -17,6 +17,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping, Optional
+from .arena_checks import current_objective, trial_objective_rate
 from .run_log_io import trial_rows
 
 
@@ -178,10 +179,7 @@ def instrument_vote_tallies(revealed_jsonl: Path) -> dict[str, dict[str, float]]
 def _scored_trials(run_log: Mapping[str, object]) -> list[dict]:
     trials = []
     for entry in trial_rows(run_log):
-        result = entry.get("result") or {}
-        objective = result.get("objective") or {}
-        rate = objective.get("objective_pass_rate")
-        if isinstance(rate, bool) or not isinstance(rate, (int, float)):
+        if trial_objective_rate(entry) is None:
             continue
         trials.append(dict(entry))
     return trials
@@ -213,10 +211,7 @@ def pick_winners(
 
         def mean_rate(entrant: str) -> float:
             rows = entrants.get(entrant) or []
-            rates = [
-                float((row.get("result") or {}).get("objective", {}).get("objective_pass_rate") or 0.0)
-                for row in rows
-            ]
+            rates = [trial_objective_rate(row) or 0.0 for row in rows]
             return sum(rates) / len(rates) if rates else 0.0
 
         entrant = max(
@@ -226,7 +221,7 @@ def pick_winners(
         trial = max(
             entrants[entrant],
             key=lambda row: (
-                float((row.get("result") or {}).get("objective", {}).get("objective_pass_rate") or 0.0),
+                trial_objective_rate(row) or 0.0,
                 -int(row.get("seed") or 0),
                 -int(row.get("rep") or 0),
             ),
@@ -321,7 +316,7 @@ def export_winners(
             "seed": trial.get("seed"),
             "rep": trial.get("rep"),
             "vote_wins": winner["vote_wins"],
-            "objective": result.get("objective"),
+            "objective": current_objective(result.get("objective")),
             "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "generated": True,
         }

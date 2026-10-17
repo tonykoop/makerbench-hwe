@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from makerbench import code_cad_arena_runner as arena_runner
+from makerbench.arena_checks import current_objective, recorded_objective_rate, retained_checks
 from makerbench.cli_arena import (
     DEFAULT_REGISTRY,
     _elo_payload_for_run,
@@ -485,7 +486,7 @@ class ArenaStudioService:
         for trial in trials:
             result = trial.get("result") or {}
             objective = result.get("objective") or {}
-            gates = objective.get("sub_scores") or {}
+            gates = retained_checks(objective)
             trial_base = f"/api/runs/{quote(run_dir.name, safe='')}"
             trial_part = quote(str(trial.get("trial_id")), safe="")
             has_mesh = self.matchup_mesh_path(run_dir, trial.get("trial_id")) is not None
@@ -494,11 +495,10 @@ class ArenaStudioService:
                 "instrument_id": trial.get("instrument_id"), "seed": trial.get("seed"), "rep": trial.get("rep"),
                 "status": trial.get("status") or "pending", "backend": result.get("backend"),
                 "wall_time_s": observed(trial.get("wall_time_s")),
-                "objective_pass_rate": observed(objective.get("objective_pass_rate"), 1),
-                # #1011: a "borderline" min_wall is passed through as is (neither pass nor fail)
-                "gates": {key: (gates.get(key) if gates.get(key) == "borderline" else observed(gates.get(key), 1))
+                "objective_pass_rate": observed(recorded_objective_rate(objective), 1),
+                "gates": {key: observed(gates.get(key), 1)
                           for key in (
-                    "renders", "watertight", "nonzero_volume", "body_count", "fits_envelope", "min_wall",
+                    "renders", "watertight", "nonzero_volume", "body_count", "fits_envelope",
                     *[key for key in ("topology", "interfaces") if key in gates])},
                 "render_url": f"/api/runs/{quote(run_dir.name, safe='')}/matchup-render/{quote(str(trial.get('trial_id')), safe='')}"
                 if self.matchup_render_path(run_dir, trial.get("trial_id")) else None,
@@ -1319,7 +1319,7 @@ class ArenaStudioService:
 
         def _side(reveal_side: Mapping[str, Any]) -> dict[str, Any]:
             trial = trials_by_id.get(str(reveal_side.get("trial_id"))) or {}
-            objective = (trial.get("result") or {}).get("objective")
+            objective = current_objective((trial.get("result") or {}).get("objective"))
             return {"model_id": reveal_side.get("model_id"), "objective": objective}
 
         judge_record = self._last_jsonl_record_for_pair(run_dir / "votes.judge.jsonl", pair_id)

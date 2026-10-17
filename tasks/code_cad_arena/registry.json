@@ -1,6 +1,6 @@
 {
  "schema": "makerbench-code-cad-arena-registry-v1",
- "notes": "Public prompt-input specs for the Code-CAD Arena (Epic #421). Facts are distilled from the instrument library's public packet surfaces (family-spec.csv, design.md, sheet-music registry). No CAD geometry, master hashes, or measurement-gated values are included; the tongue-drum spec deliberately carries only public registry facts because its build packet withholds tongue geometry as an explicit Non-Claim. min_wall_mm floors are estimator-calibrated printability/degeneracy floors (the wall estimator measures the thinnest feature, which on kena/ocarina is the legitimate embouchure/voicing knife edge - hence sub-millimeter floors there), not design wall specs. repo_path locates each instrument's build repo relative to the instruments/ root for arena export-winners (#603). Round 2 additions (sambuca, lyre, stave-djembe) distill public facts from the instruments/{strings/sambuca,strings/lyre,percussion/djembe} packet surfaces (family-spec.csv, design.md); the stave-djembe brief deliberately carries no tuning/head-tension values - the djembe packet marks those measurement-required. Their min_wall_mm floors are provisional pending first-run calibration. Round 3 additions (handpan, udu, cajon, duduk) carry geometry-only briefs where the packets gate tuning as measurement/tuner-craft (handpan pitch, udu/cajon tuning), and the duduk entry preserves the repo's cultural-provenance framing. min_wall floors provisional pending first-run calibration.",
+ "notes": "Public prompt-input specs for the Code-CAD Arena (Epic #421). Facts are distilled from the instrument library's public packet surfaces (family-spec.csv, design.md, sheet-music registry). No CAD geometry, master hashes, or measurement-gated values are included; the tongue-drum spec deliberately carries only public registry facts because its build packet withholds tongue geometry as an explicit Non-Claim. Wall thickness is not scored (removed from arena scoring 2026-10-16), so specs carry no wall floor. repo_path locates each instrument's build repo relative to the instruments/ root for arena export-winners (#603). Round 2 additions (sambuca, lyre, stave-djembe) distill public facts from the instruments/{strings/sambuca,strings/lyre,percussion/djembe} packet surfaces (family-spec.csv, design.md); the stave-djembe brief deliberately carries no tuning/head-tension values - the djembe packet marks those measurement-required. Round 3 additions (handpan, udu, cajon, duduk) carry geometry-only briefs where the packets gate tuning as measurement/tuner-craft (handpan pitch, udu/cajon tuning), and the duduk entry preserves the repo's cultural-provenance framing.",
  "instruments": [
   {
    "id": "ocarina",
@@ -27,7 +27,6 @@
    ],
    "assembly": false,
    "min_bodies": 1,
-   "min_wall_mm": 0.02,
    "repo_path": "woodwind/ocarina"
   },
   {
@@ -56,7 +55,6 @@
    ],
    "assembly": false,
    "min_bodies": 1,
-   "min_wall_mm": 0.05,
    "repo_path": "woodwind/kena"
   },
   {
@@ -86,7 +84,6 @@
    ],
    "assembly": false,
    "min_bodies": 1,
-   "min_wall_mm": 1.5,
    "repo_path": "idiophones/tongue-drum"
   },
   {
@@ -115,7 +112,6 @@
    ],
    "assembly": true,
    "min_bodies": 4,
-   "min_wall_mm": 1.0,
    "repo_path": "strings/kora"
   },
   {
@@ -150,7 +146,6 @@
    ],
    "assembly": true,
    "min_bodies": 4,
-   "min_wall_mm": 1.0,
    "repo_path": "strings/sambuca"
   },
   {
@@ -184,7 +179,6 @@
    ],
    "assembly": true,
    "min_bodies": 5,
-   "min_wall_mm": 1.0,
    "repo_path": "strings/lyre"
   },
   {
@@ -218,7 +212,6 @@
    ],
    "assembly": true,
    "min_bodies": 4,
-   "min_wall_mm": 2.0,
    "repo_path": "percussion/djembe"
   },
   {
@@ -245,7 +238,6 @@
    ],
    "assembly": true,
    "min_bodies": 2,
-   "min_wall_mm": 0.6,
    "repo_path": "idiophones/handpan"
   },
   {
@@ -269,7 +261,6 @@
    ],
    "assembly": false,
    "min_bodies": 1,
-   "min_wall_mm": 4.0,
    "repo_path": "percussion/udu"
   },
   {
@@ -302,7 +293,6 @@
    ],
    "assembly": true,
    "min_bodies": 4,
-   "min_wall_mm": 2.0,
    "repo_path": "percussion/cajon"
   },
   {
@@ -327,7 +317,6 @@
    ],
    "assembly": true,
    "min_bodies": 2,
-   "min_wall_mm": 1.5,
    "repo_path": "woodwind/duduk"
   },
   {
@@ -351,7 +340,6 @@
    ],
    "assembly": true,
    "min_bodies": 5,
-   "min_wall_mm": 2.5,
    "repo_path": "strings/acoustic-violin"
   },
   {
@@ -373,7 +361,6 @@
    ],
    "assembly": true,
    "min_bodies": 4,
-   "min_wall_mm": 3.0,
    "repo_path": "strings/electric-violin"
   },
   {
@@ -397,7 +384,6 @@
    ],
    "assembly": true,
    "min_bodies": 4,
-   "min_wall_mm": 3.0,
    "repo_path": "strings/erhu"
   },
   {
@@ -420,7 +406,6 @@
    ],
    "assembly": true,
    "min_bodies": 4,
-   "min_wall_mm": 3.0,
    "repo_path": "strings/haegeum"
   },
   {
@@ -448,7 +433,6 @@
    ],
    "assembly": true,
    "min_bodies": 6,
-   "min_wall_mm": 0.8,
    "repo_path": "strings/sympathetic-sarangi-fiddle"
   },
   {
@@ -469,7 +453,6 @@
    ],
    "assembly": true,
    "min_bodies": 4,
-   "min_wall_mm": 3.0,
    "repo_path": "strings/tromba-marina"
   },
   {
@@ -493,7 +476,6 @@
    ],
    "assembly": true,
    "min_bodies": 4,
-   "min_wall_mm": 1.5,
    "repo_path": "strings/aeolian-harp-pillar"
   },
   {
@@ -525,7 +507,6 @@
    ],
    "assembly": true,
    "min_bodies": 5,
-   "min_wall_mm": 3.0,
    "repo_path": "strings/egyptian-harps"
   },
   {
@@ -548,7 +529,6 @@
    ],
    "assembly": true,
    "min_bodies": 4,
-   "min_wall_mm": 3.0,
    "repo_path": "strings/floor-harp"
   },
   {
@@ -570,7 +550,6 @@
    ],
    "assembly": true,
    "min_bodies": 5,
-   "min_wall_mm": 3.0,
    "repo_path": "strings/konghou"
   },
   {
@@ -594,7 +573,6 @@
    ],
    "assembly": true,
    "min_bodies": 5,
-   "min_wall_mm": 3.0,
    "repo_path": "strings/magnetic-chromatic-harp"
   },
   {
@@ -620,7 +598,6 @@
    ],
    "assembly": true,
    "min_bodies": 5,
-   "min_wall_mm": 3.0,
    "repo_path": "strings/zephyr-zither"
   },
   {
@@ -646,7 +623,6 @@
    ],
    "assembly": true,
    "min_bodies": 6,
-   "min_wall_mm": 1.5,
    "repo_path": "strings/clavichord"
   },
   {
@@ -673,7 +649,6 @@
    ],
    "assembly": true,
    "min_bodies": 6,
-   "min_wall_mm": 1.5,
    "repo_path": "strings/harpsichord"
   },
   {
@@ -699,7 +674,6 @@
    ],
    "assembly": true,
    "min_bodies": 6,
-   "min_wall_mm": 1.5,
    "repo_path": "strings/hurdy-gurdy"
   },
   {
@@ -724,7 +698,6 @@
    ],
    "assembly": true,
    "min_bodies": 5,
-   "min_wall_mm": 1.2,
    "repo_path": "strings/pianola"
   },
   {
@@ -749,7 +722,6 @@
    ],
    "assembly": true,
    "min_bodies": 6,
-   "min_wall_mm": 1.5,
    "repo_path": "strings/nyckelharpa"
   },
   {
@@ -775,7 +747,6 @@
    ],
    "assembly": true,
    "min_bodies": 6,
-   "min_wall_mm": 1.5,
    "repo_path": "strings/wheelharp"
   },
   {
@@ -805,7 +776,6 @@
    ],
    "assembly": true,
    "min_bodies": 4,
-   "min_wall_mm": 2.5,
    "repo_path": "strings/autoharp-inspired"
   },
   {
@@ -829,7 +799,6 @@
    ],
    "assembly": true,
    "min_bodies": 4,
-   "min_wall_mm": 3.0,
    "repo_path": "strings/marxophone"
   },
   {
@@ -858,7 +827,6 @@
    ],
    "assembly": true,
    "min_bodies": 5,
-   "min_wall_mm": 1.2,
    "repo_path": "strings/multi-bridge-sheet-zither"
   },
   {
@@ -885,7 +853,6 @@
    ],
    "assembly": true,
    "min_bodies": 4,
-   "min_wall_mm": 1.5,
    "repo_path": "strings/bowed-metal-psaltery"
   },
   {
@@ -917,7 +884,6 @@
    ],
    "assembly": true,
    "min_bodies": 6,
-   "min_wall_mm": 1.0,
    "repo_path": "strings/bowed-sheet-metal-sarod"
   },
   {
@@ -947,7 +913,6 @@
    ],
    "assembly": true,
    "min_bodies": 4,
-   "min_wall_mm": 9.5,
    "repo_path": "strings/ngoni"
   },
   {
@@ -975,7 +940,6 @@
    ],
    "assembly": true,
    "min_bodies": 4,
-   "min_wall_mm": 2.0,
    "repo_path": "strings/cnc-guitar-bodies"
   },
   {
@@ -1001,7 +965,6 @@
    ],
    "assembly": true,
    "min_bodies": 4,
-   "min_wall_mm": 2.0,
    "repo_path": "strings/electric-guitar-bodies"
   },
   {
@@ -1030,7 +993,6 @@
    ],
    "assembly": true,
    "min_bodies": 6,
-   "min_wall_mm": 1.2,
    "repo_path": "strings/folding-travel-resonator-guitar"
   },
   {
@@ -1060,7 +1022,6 @@
    ],
    "assembly": true,
    "min_bodies": 6,
-   "min_wall_mm": 1.0,
    "repo_path": "strings/resophonic-bouzouki"
   },
   {
@@ -1092,7 +1053,6 @@
    ],
    "assembly": true,
    "min_bodies": 6,
-   "min_wall_mm": 2.8,
    "repo_path": "strings/stave-lute-oud"
   },
   {
@@ -1120,7 +1080,6 @@
    ],
    "assembly": true,
    "min_bodies": 7,
-   "min_wall_mm": 1.0,
    "repo_path": "strings/triple-cone-slide-guitar"
   },
   {
@@ -1141,7 +1100,6 @@
    ],
    "assembly": true,
    "min_bodies": 7,
-   "min_wall_mm": 3.0,
    "repo_path": "strings/octobass"
   },
   {
@@ -1165,7 +1123,6 @@
    ],
    "assembly": true,
    "min_bodies": 7,
-   "min_wall_mm": 1.5,
    "repo_path": "strings/spun-aluminum-cello"
   },
   {
@@ -1189,7 +1146,6 @@
    ],
    "assembly": true,
    "min_bodies": 6,
-   "min_wall_mm": 0.8,
    "repo_path": "strings/telescoping-bass-profundo"
   },
   {
@@ -1216,7 +1172,6 @@
    ],
    "assembly": true,
    "min_bodies": 6,
-   "min_wall_mm": 2.0,
    "repo_path": "strings/whamola-bass"
   },
   {
@@ -1237,7 +1192,6 @@
    ],
    "assembly": true,
    "min_bodies": 6,
-   "min_wall_mm": 1.5,
    "repo_path": "strings/ukulele"
   },
   {
@@ -1258,7 +1212,6 @@
    ],
    "assembly": true,
    "min_bodies": 5,
-   "min_wall_mm": 2.0,
    "repo_path": "strings/pipa"
   },
   {
@@ -1282,7 +1235,6 @@
    "envelope_mm": [800, 400, 1000],
    "assembly": true,
    "min_bodies": 3,
-   "min_wall_mm": 2.0,
    "repo_path": "strings/brian-boru-harp-replica"
   },
   {
@@ -1306,7 +1258,6 @@
    "envelope_mm": [1000, 500, 120],
    "assembly": true,
    "min_bodies": 5,
-   "min_wall_mm": 2.0,
    "repo_path": "strings/hammered-dulcimer"
   },
   {
@@ -1328,7 +1279,6 @@
    "envelope_mm": [1700, 400, 200],
    "assembly": true,
    "min_bodies": 2,
-   "min_wall_mm": 2.5,
    "repo_path": "strings/guzheng"
   }
  ]

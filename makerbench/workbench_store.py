@@ -53,6 +53,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from .arena_checks import current_objective
 from .run_log_io import atomic_write_json, file_lock
 
 DESIGN_SCHEMA = "makerbench-workbench-design-v1"
@@ -79,6 +80,14 @@ MAX_SOURCE_BYTES = 256 * 1024
 MAX_TEXT_BYTES = 2 * 1024
 MAX_FEEDBACK_BYTES = 8 * 1024
 DRAFT_TTL_S = 24 * 60 * 60
+
+
+
+def _display_objective(saved):
+    """A saved revision's objective as scored today (the saved file is left as recorded)."""
+    if isinstance(saved, dict) and isinstance(saved.get("objective"), dict):
+        return {**saved, "objective": current_objective(saved["objective"])}
+    return current_objective(saved)
 
 
 class WorkbenchError(ValueError):
@@ -438,7 +447,7 @@ class WorkbenchStore:
         objective = draft_dir / "objective.json"
         if objective.is_file():
             try:
-                payload["objective"] = json.loads(objective.read_text(encoding="utf-8"))
+                payload["objective"] = _display_objective(json.loads(objective.read_text(encoding="utf-8")))
             except (OSError, json.JSONDecodeError):
                 payload["objective"] = None
         payload["artifacts"] = self._artifact_names(draft_dir)
@@ -755,7 +764,7 @@ class WorkbenchStore:
         payload["objective"] = None
         if objective.is_file():
             try:
-                payload["objective"] = json.loads(objective.read_text(encoding="utf-8"))
+                payload["objective"] = _display_objective(json.loads(objective.read_text(encoding="utf-8")))
             except (OSError, json.JSONDecodeError):
                 pass
         payload["artifacts"] = self._artifact_names(rev_dir)
