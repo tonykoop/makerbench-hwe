@@ -687,7 +687,12 @@
   }
 
   // ---- charts -------------------------------------------------------------
-  var PALETTE = ["#d6562b", "#2f6fed", "#2f8f5b", "#9a4fd6", "#c79100", "#0e9aa7", "#c4453a"];
+  // First 12 colors of IBM Carbon's light/dark categorical sequences:
+  // https://v10.carbondesignsystem.com/data-visualization/color-palettes/
+  var PALETTE = ["#6929c4", "#1192e8", "#005d5d", "#9f1853", "#fa4d56", "#570408",
+    "#198038", "#002d9c", "#ee538b", "#b28600", "#009d9a", "#012749"];
+  var DARK_PALETTE = ["#8a3ffc", "#33b1ff", "#007d79", "#ff7eb6", "#fa4d56", "#fff1f1",
+    "#6fdc8c", "#4589ff", "#d12771", "#d2a106", "#08bdba", "#bae6ff"];
 
   function modelColor(idx, model) {
     if (model && model.is_control) return cssVar("--control") || "#6b46c1";
@@ -695,7 +700,8 @@
     var key = String((model && (model.model_family || model.identifier)) || "unknown");
     var hash = 0;
     for (var i = 0; i < key.length; i++) hash = (Math.imul(hash, 31) + key.charCodeAt(i)) >>> 0;
-    return PALETTE[hash % PALETTE.length];
+    var palette = document.documentElement.getAttribute("data-theme") === "dark" ? DARK_PALETTE : PALETTE;
+    return palette[hash % palette.length];
   }
 
   function alphaColor(color, alpha) {
@@ -864,38 +870,62 @@
       return;
     }
 
-    // Keep every model identifiable, including models with no effort line.
-    if (card) {
+    // Carbon's categorical colors retain their identity; low-contrast marks
+    // get a visible outline in either theme instead of changing the family hue.
+    function contrastRatio(foreground, background) {
+      function luminance(hex) {
+        var rgb = hex.slice(1).match(/../g).map(function (channel) {
+          var value = parseInt(channel, 16) / 255;
+          return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+        });
+        return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+      }
+      var a = luminance(foreground), b = luminance(background);
+      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    }
+    function outlineColor(color) {
+      return contrastRatio(color, cssVar("--bg-elev")) < 3.3 ? cssVar("--text-soft") : color;
+    }
+    var groups = effortGroups(points);
+    function drawLegend() {
+      if (!card) return;
+      var old = card.querySelector(".efficiency-model-legend");
+      if (old) old.remove();
       var legend = document.createElement("div");
       legend.className = "efficiency-model-legend";
-      legend.setAttribute("aria-label", "Model colors and effort levels");
-      legend.style.cssText = "display:flex;flex-wrap:wrap;gap:6px 12px;max-height:120px;overflow:auto;font-size:11px;margin-top:12px";
-      legend.tabIndex = 0;
-      var legendModels = new Map();
-      points.forEach(function (p) {
-        var id = p._model.identifier;
-        if (!legendModels.has(id)) legendModels.set(id, { color: p._color, efforts: [] });
-        var label = effortCode(p._model);
-        if (label && legendModels.get(id).efforts.indexOf(label) < 0) legendModels.get(id).efforts.push(label);
-      });
-      legendModels.forEach(function (entry, id) {
+      legend.setAttribute("aria-label", "Effort lines; hover dots for other models");
+      var limit = canvas.clientWidth < 500 ? 4 : 8;
+      groups.slice(0, limit).forEach(function (group) {
+        var m = group[0]._model;
         var item = document.createElement("span");
+        item.className = "efficiency-legend-entry";
         var swatch = document.createElement("span");
-        swatch.textContent = "● ";
-        swatch.style.color = entry.color;
+        swatch.className = "efficiency-legend-swatch";
+        swatch.style.backgroundColor = group[0]._color;
+        swatch.style.borderColor = outlineColor(group[0]._color);
+        swatch.setAttribute("aria-hidden", "true");
         item.appendChild(swatch);
-        var levels = ["L", "M", "H", "X"].filter(function (l) { return entry.efforts.indexOf(l) >= 0; });
-        item.appendChild(document.createTextNode(id + (levels.length ? " · " + levels.join("/") : "")));
+        item.appendChild(document.createTextNode(plainLabel(m.identifier) + " · " +
+          harnessLabel(m.agent_identifier) + " · " + group.map(function (p) {
+            return effortCode(p._model);
+          }).join("/")));
         legend.appendChild(item);
       });
+      if (groups.length > limit) {
+        var more = document.createElement("span");
+        more.className = "efficiency-legend-more";
+        more.textContent = "+" + (groups.length - limit) + " more (hover dots)";
+        legend.appendChild(more);
+      }
       if (note) note.after(legend);
       else card.appendChild(legend);
     }
+    drawLegend();
 
     var higherBetter = Boolean(metricDef.higherBetter);
     var frontier = frontierPoints(points, higherBetter);
     // Connect only disclosed effort levels within the same model and harness.
-    var effortLines = effortGroups(points).map(function (g) {
+    var effortLines = groups.map(function (g) {
       var m = g[0]._model;
       return {
         label: m.identifier + " · " + (m.agent_identifier || "legacy_unknown") + " · " +
@@ -904,7 +934,10 @@
         parsing: false,
         type: "line",
         borderColor: g[0]._color,
-        borderWidth: 1.5,
+        borderWidth: 2.5,
+        order: 1,
+        _effortLine: true,
+        _outlineColor: outlineColor(g[0]._color),
         borderDash: [5, 3],
         pointRadius: 0,
         pointHitRadius: 0,
@@ -912,50 +945,100 @@
         fill: false,
       };
     }).filter(Boolean);
+    var logAxis = ["time", "cost", "tokens"].indexOf(EFFICIENCY_METRIC) >= 0;
+    var xs = points.map(function (p) { return p.x; });
+    var lowest = Math.min.apply(null, xs), highest = Math.max.apply(null, xs);
+    var padding = (highest - lowest || highest) * 0.1;
+    var logPadding = Math.max(1.25, Math.pow(highest / lowest, 0.08));
+    var domainMin = logAxis ? lowest / logPadding : Math.max(0, lowest - padding);
+    var domainMax = logAxis ? highest * logPadding : highest + padding;
+    var tickValues = [];
+    if (EFFICIENCY_METRIC === "time") {
+      tickValues = [0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600,
+        1200, 1800, 3600, 7200, 18000, 36000, 86400];
+    } else if (logAxis) {
+      for (var power = Math.floor(Math.log10(domainMin)); power <= Math.ceil(Math.log10(domainMax)); power++) {
+        [1, 2, 5].forEach(function (multiple) { tickValues.push(multiple * Math.pow(10, power)); });
+      }
+    }
+    var candidates = tickValues;
+    tickValues = candidates.filter(function (value) { return value >= domainMin && value <= domainMax; });
+    // A narrow range (including a single dot) still needs readable axis labels.
+    if (logAxis && tickValues.length < 2) {
+      var below = candidates.filter(function (value) { return value < domainMin; }).pop();
+      var above = candidates.find(function (value) { return value > domainMax; });
+      if (below != null) domainMin = below;
+      if (above != null) domainMax = above;
+      tickValues = candidates.filter(function (value) { return value >= domainMin && value <= domainMax; });
+    }
+    // Extend only the displayed Pareto envelope to the plot boundary. Measured
+    // points and dominance membership keep their original coordinates.
+    var frontierPlot = frontier.map(function (p) { return { x: p.x, y: p.y }; });
+    if (frontierPlot.length) {
+      if (higherBetter) frontierPlot.unshift({ x: domainMin, y: frontierPlot[0].y, _boundary: true });
+      else frontierPlot.push({ x: domainMax, y: frontierPlot[frontierPlot.length - 1].y, _boundary: true });
+    }
     charts["chart-efficiency"] = new Chart(canvas, {
       type: "scatter",
+      plugins: [{
+        id: "efficiency-contrast-outline",
+        beforeDatasetDraw: function (chart, args) {
+          var dataset = chart.data.datasets[args.index];
+          if (!dataset._effortLine || dataset._outlineColor === dataset.borderColor) return;
+          var line = args.meta.dataset;
+          var options = line.options;
+          line.options = Object.assign({}, options, { borderColor: dataset._outlineColor, borderWidth: 5.5 });
+          line.draw(chart.ctx, chart.chartArea);
+          line.options = options;
+        },
+      }],
       data: {
         datasets: effortLines.concat([
           {
             label: "models",
+            order: 0,
             data: points,
             parsing: false,
             pointRadius: points.map(function (p) { return p._model.is_control ? 4 : 5; }),
             pointHoverRadius: 7,
             pointBackgroundColor: points.map(function (p) { return p._color; }),
-            pointBorderColor: cssVar("--bg-elev"),
+            pointBorderColor: points.map(function (p) { return outlineColor(p._color); }),
             pointBorderWidth: 1.5,
             showLine: false,
           },
           {
-            label: "efficient frontier",
-            data: frontier.map(function (p) { return { x: p.x, y: p.y }; }),
+            label: "Pareto frontier",
+            order: 10,
+            data: frontierPlot,
             parsing: false,
             type: "line",
-            borderColor: alphaColor(cssVar("--good"), 0.4),
-            backgroundColor: alphaColor(cssVar("--good"), 0.08),
+            borderColor: cssVar("--good"),
+            backgroundColor: alphaColor(cssVar("--good"), 0.06),
             pointBackgroundColor: cssVar("--good"),
             pointBorderColor: cssVar("--bg-elev"),
             pointRadius: 0,
             pointHoverRadius: 0,
-            borderWidth: 1,
+            borderWidth: 2.5,
             stepped: "after",
             tension: 0,
-            fill: false,
+            fill: "origin",
+            pointHitRadius: 0,
           },
         ]),
       },
       options: commonOpts({
+        onResize: drawLegend,
         plugins: {
           legend: {
             labels: {
               color: cssVar("--text-soft"),
               boxWidth: 12,
               font: { size: 11 },
-              filter: function (item) { return item.text === "efficient frontier"; },
+              filter: function (item) { return item.text === "Pareto frontier"; },
             },
           },
           tooltip: {
+            filter: function (item) { return !item.raw._boundary; },
             callbacks: {
               title: function (items) {
                 var raw = items.length ? items[0].raw : null;
@@ -991,7 +1074,20 @@
         scales: {
           x: {
             reverse: false,
-            type: ["time", "cost", "tokens"].indexOf(EFFICIENCY_METRIC) >= 0 ? "logarithmic" : "linear",
+            type: logAxis ? "logarithmic" : "linear",
+            min: domainMin,
+            max: domainMax,
+            afterBuildTicks: function (scale) {
+              if (!logAxis) return;
+              var limit = scale.chart.width < 500 ? 4 : 8;
+              var values = tickValues;
+              if (values.length > limit) {
+                values = Array.from({ length: limit }, function (_, i) {
+                  return tickValues[Math.round(i * (tickValues.length - 1) / (limit - 1))];
+                });
+              }
+              scale.ticks = values.map(function (value) { return { value: value }; });
+            },
             title: {
               display: true,
               text: metricDef.label + (higherBetter ? " (better: top-right)" : " (better: top-left)"),
@@ -1000,7 +1096,15 @@
             ticks: {
               color: cssVar("--text-soft"),
               font: { size: 11 },
-              callback: function (value) { return metricDef.format(Number(value)); },
+              maxTicksLimit: canvas.clientWidth < 500 ? 4 : 8,
+              maxRotation: 0,
+              minRotation: 0,
+              autoSkip: false,
+              callback: function (value) {
+                value = Number(value);
+                if (EFFICIENCY_METRIC !== "time") return metricDef.format(value);
+                return value < 60 ? value + "s" : value < 3600 ? value / 60 + "m" : value / 3600 + "h";
+              },
             },
             grid: { color: cssVar("--border") },
           },
@@ -1020,7 +1124,7 @@
       note.textContent = points.length + " charted · " + omitted +
         " unavailable for " + metricDef.shortLabel +
         (estimates ? " · " + estimates + " estimate-labeled point(s)" : "") +
-        ". L/M/H/X = low/medium/high/xhigh; unset effort stays unconnected. Zero/nonpositive telemetry is omitted. Frontier excludes zero scores and uses " + (higherBetter ? "higher " : "lower ") + metricDef.shortLabel +
+        ". L/M/H/X = low/medium/high/xhigh; unset effort stays unconnected. Zero/nonpositive telemetry is omitted. Pareto frontier excludes zero scores and uses " + (higherBetter ? "higher " : "lower ") + metricDef.shortLabel +
         " and higher score. Efficiency comparisons keep disclosed harness/adapter rows separate.";
     }
   }
