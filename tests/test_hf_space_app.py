@@ -77,6 +77,12 @@ def test_blocks_app_builds_with_three_rendered_tabs(app) -> None:
 
     demo = app.build_demo()
     assert isinstance(demo, gr.Blocks)
+    assert demo._queue.default_concurrency_limit == 1
+    assert demo._queue.max_size == 8
+    grading_functions = [fn for fn in demo.fns.values() if fn.concurrency_id == "public-grader"]
+    assert len(grading_functions) == 3
+    assert all(fn.concurrency_limit == 1 for fn in grading_functions)
+    assert not any(isinstance(b, gr.File) for b in _walk(demo))
 
     tabs = [b for b in _walk(demo) if isinstance(b, gr.Tab)]
     assert [t.label for t in tabs] == EXPECTED_TABS

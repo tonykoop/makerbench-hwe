@@ -93,11 +93,12 @@ uploads to Hugging Face.
 - [ ] Smoke-test the staged copy locally:
 
   ```bash
+  python -m venv /tmp/makerbench-hf-smoke
+  . /tmp/makerbench-hf-smoke/bin/activate
+  env -u PYTHONPATH python -m pip install -r dist/hf_space/requirements.txt
   cd dist/hf_space
-  python -m venv .venv && . .venv/bin/activate
-  pip install -r requirements.txt
-  python app.py            # http://127.0.0.1:7860
-  deactivate && cd -       # back to the repository root
+  env -u PYTHONPATH python app.py  # http://127.0.0.1:7860
+  deactivate && cd -              # back to the repository root
   ```
 
   Install in a fresh environment outside the repository with `PYTHONPATH` unset.
@@ -120,8 +121,8 @@ uploads to Hugging Face.
 
   Check: three tabs in the order Grade a part, Explore designs, Leaderboard;
   the Leaderboard button opens <https://tonykoop.github.io/makerbench-hwe/>
-  and the embed loads. Delete `.venv` before uploading (or upload from a fresh
-  `python scripts/build_hf_space.py` run).
+  and the embed loads. Restage with `python scripts/build_hf_space.py` after
+  smoke-testing so generated Python/Gradio caches cannot be uploaded.
 
 - [ ] Log in: `hf auth login` (a write token for `tonykoop`).
 
