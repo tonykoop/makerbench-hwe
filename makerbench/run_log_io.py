@@ -71,6 +71,36 @@ def trial_rows(run_log: Mapping[str, object]) -> list:
     return [row for row in run_log.get("trials") or [] if not _off_track(row, config)]
 
 
+def find_trial(
+    run_log: Mapping[str, object], trial_id: str, *, unique: bool = False
+) -> Mapping[str, object] | None:
+    """The row with ``trial_id`` among EVERY stored row (a by-id lookup, not an aggregate).
+
+    Deliberately unfiltered: callers name a specific row (a vote reveal, a resume check) and
+    must find it whatever track it is on. Never iterate rows through this. With ``unique``,
+    a duplicated id (an ambiguous log) returns None instead of the first match.
+    """
+    matches = [row for row in run_log.get("trials") or [] if row.get("trial_id") == trial_id]
+    if unique:
+        return matches[0] if len(matches) == 1 else None
+    return matches[0] if matches else None
+
+
+def has_trial(run_log: Mapping[str, object], trial_id: str) -> bool:
+    """Whether any stored row carries ``trial_id`` (resume/dup checks in writers)."""
+    return find_trial(run_log, trial_id) is not None
+
+
+def trials_by_id(run_log: Mapping[str, object]) -> dict[str, Mapping[str, object]]:
+    """``{trial_id: row}`` over every stored row, for resolving ids named elsewhere (votes)."""
+    return {str(row.get("trial_id")): row for row in run_log.get("trials") or []}
+
+
+def summary_trials(summary: Mapping[str, object]) -> list:
+    """Trial rows of a Studio run summary, which is itself built from :func:`trial_rows`."""
+    return list(summary.get("trials") or [])
+
+
 def lock_path_for(path: Path) -> Path:
     """Return the sidecar lock path for a run log (or any JSON file)."""
 

@@ -19,7 +19,7 @@ from . import code_cad_providers as providers
 from .cadam_adapter import CadamClient, CadamConfig, CadamRecoveryRequiredError
 from .code_cad_orchestrator import OrchestrationConfig, run_orchestration
 from .live_cad_runner import LiveCadConfig, connector_available, make_live_execute_trial
-from .run_log_io import atomic_write_json, file_lock, trial_rows
+from .run_log_io import atomic_write_json, file_lock, find_trial, has_trial, trial_rows
 from .schema import MatchupMetadata, matchup_metadata
 
 
@@ -328,7 +328,7 @@ def _fresh_run_log(run_dir: Path, job: NightlyJob, *,
 def _has_trial(run_log_path: Path, job: NightlyJob, entrant: NightlyEntrant) -> bool:
     payload = json.loads(run_log_path.read_text(encoding="utf-8"))
     expected = f"{job.instrument_id}__seed{job.seed}__rep0__{entrant.entrant_id}"
-    return any(row.get("trial_id") == expected for row in payload.get("trials") or [])
+    return has_trial(payload, expected)
 
 
 def _trial_cost(run_log_path: Path, job: NightlyJob, entrant: NightlyEntrant) -> float:
@@ -336,10 +336,7 @@ def _trial_cost(run_log_path: Path, job: NightlyJob, entrant: NightlyEntrant) ->
 
     payload = json.loads(run_log_path.read_text(encoding="utf-8"))
     expected = f"{job.instrument_id}__seed{job.seed}__rep0__{entrant.entrant_id}"
-    row = next(
-        (item for item in payload.get("trials") or [] if item.get("trial_id") == expected),
-        None,
-    )
+    row = find_trial(payload, expected)
     if not isinstance(row, Mapping):
         return 0.0
     result = row.get("result")
@@ -360,7 +357,7 @@ def _append_error_trial(
     trial_id = f"{job.instrument_id}__seed{job.seed}__rep0__{entrant.entrant_id}"
     with file_lock(run_log_path):
         payload = json.loads(run_log_path.read_text(encoding="utf-8"))
-        if any(row.get("trial_id") == trial_id for row in payload.get("trials") or []):
+        if has_trial(payload, trial_id):
             return
         payload.setdefault("trials", []).append(
             {

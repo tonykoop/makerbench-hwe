@@ -44,6 +44,7 @@ from makerbench.arena_checks import recorded_objective_rate
 from makerbench.code_cad_arena_runner import compiler_for_backend, load_arena_registry, mesh_objective_gate
 from makerbench.code_cad_objective import ObjectiveContext, _artifact_payload, _normalize_gate_result
 from makerbench.entrant_sandbox import SandboxUnavailable
+from makerbench.run_log_io import find_trial
 from makerbench.workbench_store import (
     BACKENDS,
     FINISHED_STATUSES,
@@ -271,7 +272,7 @@ class WorkbenchService:
             log = json.loads((run_dir / "run_log.json").read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             raise NotFound("run has no readable run_log.json") from None
-        trial = next((t for t in log.get("trials", []) if t.get("trial_id") == trial_id), None)
+        trial = find_trial(log, trial_id)
         if trial is None:
             raise NotFound("unknown trial")
         result = trial.get("result") or {}

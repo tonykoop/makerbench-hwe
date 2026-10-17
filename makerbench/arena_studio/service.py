@@ -54,7 +54,7 @@ from makerbench.schema import MatchupMetadata
 from . import analytics
 from . import doe
 from . import gatekeeper
-from ..run_log_io import trial_rows
+from ..run_log_io import find_trial, summary_trials, trial_rows, trials_by_id
 
 #: Matchup meshes larger than this are not converted for the 3D compare (#974).
 MATCHUP_MESH_MAX_BYTES = 64 * 1024 * 1024
@@ -410,10 +410,10 @@ class ArenaStudioService:
         log = _load_run_log(run_dir)
         if not log.get("config", {}).get("matchup"):
             return None
-        matches = [row for row in log.get("trials") or [] if row.get("trial_id") == trial_id]
-        if len(matches) != 1:
+        match = find_trial(log, trial_id, unique=True)
+        if match is None:
             return None
-        result = matches[0].get("result") or {}
+        result = match.get("result") or {}
         raw = (result.get("artifacts") or {}).get(key)
         if not isinstance(raw, str):
             return None
@@ -1312,13 +1312,13 @@ class ArenaStudioService:
         reveal = human_record.get("reveal") or {}
 
         run_log_path = run_dir / "run_log.json"
-        trials_by_id: dict[str, Any] = {}
+        trial_index: dict[str, Any] = {}
         if run_log_path.is_file():
             run_log = json.loads(run_log_path.read_text(encoding="utf-8"))
-            trials_by_id = {str(t.get("trial_id")): t for t in run_log.get("trials") or []}
+            trial_index = trials_by_id(run_log)
 
         def _side(reveal_side: Mapping[str, Any]) -> dict[str, Any]:
-            trial = trials_by_id.get(str(reveal_side.get("trial_id"))) or {}
+            trial = trial_index.get(str(reveal_side.get("trial_id"))) or {}
             objective = current_objective((trial.get("result") or {}).get("objective"))
             return {"model_id": reveal_side.get("model_id"), "objective": objective}
 
@@ -1590,7 +1590,7 @@ class ArenaStudioService:
     def export_winners(self, run_dir: Path) -> dict[str, Any]:
         """Export winning CAD models from a run into the instruments repository (Story #699)."""
         summary = self.get_run_summary(run_dir)
-        trials = summary.get("trials") or []
+        trials = summary_trials(summary)
         leaderboard = self.get_run_leaderboard(run_dir).get("leaderboard") or []
 
         rank_order = {entry["entrant"]: idx for idx, entry in enumerate(leaderboard)}
