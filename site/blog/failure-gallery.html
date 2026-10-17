@@ -25,23 +25,53 @@
       } catch (e) {}
     })();
   </script>
+<!-- site-nav:assets -->
+<link rel="stylesheet" href="../assets/navigation.css?v=1023" />
+<script src="../assets/navigation.js?v=1023" defer></script>
+<!-- /site-nav:assets -->
 </head>
 <body>
   <!-- ================= NAV ================= -->
-  <header class="nav">
-    <div class="nav-inner">
-      <a class="brand" href="../"><span class="dot"></span> MakerBench HWE</a>
-      <nav class="nav-links">
-        <a href="../#leaderboard">Leaderboard</a>
-        <a href="../#charts">Charts</a>
-        <a href="../#tasks">Tasks</a>
-        <a href="../#methodology">Methodology</a>
-        <a href="./">Blog</a>
-        <a href="https://github.com/tonykoop/makerbench" rel="noopener">GitHub</a>
-      </nav>
-      <button class="theme-btn" id="theme-toggle" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
-    </div>
-  </header>
+  <!-- site-nav:header -->
+<header class="site-nav">
+  <div class="site-nav-inner">
+    <a class="site-nav-brand" href="../index.html" aria-label="MakerBench home"><span aria-hidden="true">◆</span> MakerBench</a>
+    <button class="site-menu-button" id="site-menu-button" type="button" aria-expanded="false" aria-controls="site-navigation" hidden>Menu</button>
+    <nav class="site-navigation" id="site-navigation" aria-label="Primary">
+        <a href="../leaderboard.html">Leaderboard</a>
+        <a href="../matchups.html">Matchups</a>
+        <a href="../charts.html">Charts</a>
+        <a href="../tasks.html">Tasks</a>
+        <a href="../arena.html">Arena</a>
+        <a href="../index.html#about">About</a>
+      <details class="site-nav-more">
+        <summary>More</summary>
+        <div class="site-nav-secondary">
+        <a href="../index.html#methodology">Methodology</a>
+        <a href="../index.html#why">Why MakerBench</a>
+        <a href="../index.html#tracks-leagues">Tracks &amp; leagues</a>
+        <a href="../domains.html">Domains</a>
+        <a href="../index.html#covers">What MakerBench covers</a>
+        <a href="../index.html#delta-dossier">Regressions</a>
+        <a href="../landscape.html">Landscape</a>
+        <a href="../index.html#ecosystem">Ecosystem</a>
+        <a href="../opportunity-matrix.html">Opportunity Matrix</a>
+        <a href="../explorer.html">Explorer</a>
+        <a href="../inspect.html">Inspect a Run</a>
+        <a href="../run-library.html">Run library</a>
+        <a href="../index.html#findings">Findings</a>
+        <a href="../blog/">Blog</a>
+        <a href="../index.html#roadmap">Roadmap</a>
+        <a href="../index.html#get-started">Get started</a>
+        <a href="https://github.com/tonykoop/makerbench-hwe" id="repo-link" rel="noopener">GitHub</a>
+        </div>
+      </details>
+    </nav>
+    <button class="site-theme-button" id="theme-toggle" type="button" aria-label="Toggle light / dark" title="Toggle light / dark" hidden>◐</button>
+  </div>
+  <p class="site-data-status" data-site-data-status role="status" hidden></p>
+</header>
+<!-- /site-nav:header -->
 
   <!-- ================= HERO ================= -->
   <div class="hero">
@@ -102,79 +132,6 @@
     </div>
   </footer>
 
-  <script>
-    document.getElementById("theme-toggle").addEventListener("click", function () {
-      var cur = document.documentElement.getAttribute("data-theme");
-      var next = cur === "dark" ? "light" : "dark";
-      document.documentElement.setAttribute("data-theme", next);
-      try { localStorage.setItem("mb-theme", next); } catch (e) {}
-    });
 
-    function esc(s) {
-      return String(s == null ? "" : s)
-        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
-    }
-
-    function levelsHTML(failed) {
-      return (failed || []).map(function (l) {
-        return '<li><strong>L' + esc(l.level) + " " + esc(l.name) +
-          ":</strong> " + esc(l.why) + "</li>";
-      }).join("");
-    }
-
-    function cardHTML(ex) {
-      var img = (ex.artifacts && ex.artifacts[0]) || null;
-      var imgHTML = img
-        ? '<img class="gallery-img" src="../' + esc(img.path) + '" alt="' +
-          esc(img.label) + '" loading="lazy" />'
-        : "";
-      var taskHref = ex.related && ex.related.task_page
-        ? "../" + esc(ex.related.task_page) : "../#tasks";
-      var synthetic = ex.provenance && ex.provenance.synthetic;
-      return '<article class="task gallery-card">' +
-        imgHTML +
-        '<div class="top"><div>' +
-          "<h3>" + esc(ex.title) + "</h3>" +
-          '<span class="domain">' + esc(ex.failure_kind) + "</span>" +
-        "</div>" +
-        '<span class="tier">' + esc(ex.track) + "</span></div>" +
-        "<p>" + esc(ex.explanation) + "</p>" +
-        '<ul class="gallery-levels">' + levelsHTML(ex.failed_levels) + "</ul>" +
-        '<div class="tracks">' +
-          '<a class="chip" href="' + taskHref + '">' + esc(ex.task_family) + " →</a>" +
-          (synthetic ? '<span class="chip">synthetic</span>' : "") +
-        "</div></article>";
-    }
-
-    fetch("../data/failure_gallery.json", { cache: "no-cache" })
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
-        var examples = (data && data.examples) || [];
-        var grid = document.getElementById("gallery-grid");
-        var banner = document.getElementById("gallery-banner");
-        if (!examples.length) {
-          document.getElementById("gallery-empty").hidden = false;
-          banner.hidden = true;
-          return;
-        }
-        var allSynthetic = examples.every(function (e) {
-          return e.provenance && e.provenance.synthetic;
-        });
-        banner.innerHTML = allSynthetic
-          ? "<strong>Launch set — illustrative.</strong> Every example below is a " +
-            "synthetic placeholder drawn to demonstrate a failure mode. They contain " +
-            "no oracle geometry or held-out fixture data. Real captured renders will " +
-            "replace these over time."
-          : "<strong>Curated examples.</strong> Synthetic placeholders are labeled; " +
-            "captured renders come from public candidate artifacts only.";
-        grid.innerHTML = examples.map(cardHTML).join("");
-      })
-      .catch(function () {
-        document.getElementById("gallery-grid").innerHTML =
-          '<p class="lede">Could not load the failure gallery data.</p>';
-        document.getElementById("gallery-banner").hidden = true;
-      });
-  </script>
 </body>
 </html>

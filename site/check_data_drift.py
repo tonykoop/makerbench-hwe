@@ -228,6 +228,27 @@ def compare_prerendered_index(committed_site: Path, generated_site: Path) -> Dri
     return DriftReport(changed=(), missing=(), extra=())
 
 
+REQUIRED_DETAIL_PAGES = ("matchups.html", "landscape.html", "tasks.html", "arena.html", "charts.html", "leaderboard.html")
+
+
+def compare_static_pages(committed_site: Path, generated_site: Path) -> DriftReport:
+    """Check shared headers and detect missing required detail templates."""
+    expected = set(REQUIRED_DETAIL_PAGES)
+    for root in (committed_site, generated_site):
+        expected.update(p.relative_to(root).as_posix() for p in root.glob("*.html"))
+        expected.update(p.relative_to(root).as_posix() for p in (root / "blog").glob("*.html"))
+    expected.discard(PRERENDERED_INDEX)  # Compared separately for compatibility.
+    changed, missing = [], []
+    for name in sorted(expected):
+        committed, generated = committed_site / name, generated_site / name
+        label = f"site/{name}"
+        if not committed.is_file() or not generated.is_file():
+            missing.append(label)
+        elif not filecmp.cmp(committed, generated, shallow=False):
+            changed.append(label)
+    return DriftReport(changed=tuple(changed), missing=tuple(missing))
+
+
 def check_build_data_drift(repo_root: Path = REPO_ROOT) -> DriftReport:
     repo_root = repo_root.resolve()
     with tempfile.TemporaryDirectory(prefix="makerbench-site-data-") as tmp:
@@ -239,17 +260,11 @@ def check_build_data_drift(repo_root: Path = REPO_ROOT) -> DriftReport:
         )
         pages = compare_site_pages(repo_root / "site", generated_site)
         index = compare_prerendered_index(repo_root / "site", generated_site)
-        for name in ("matchups", "landscape", "tasks", "arena", "charts", "leaderboard"):
-            relative = f"site/{name}.html"
-            committed = repo_root / relative
-            if committed.exists():
-                generated = generated_site / committed.name
-                if not generated.exists() or not filecmp.cmp(committed, generated, shallow=False):
-                    index = DriftReport(changed=index.changed + (relative,), missing=index.missing)
+        navigation = compare_static_pages(repo_root / "site", generated_site)
         return DriftReport(
-            changed=tuple(sorted(data.changed + pages.changed + index.changed)),
-            missing=tuple(sorted(data.missing + pages.missing + index.missing)),
-            extra=tuple(sorted(data.extra + pages.extra + index.extra)),
+            changed=tuple(sorted(data.changed + pages.changed + index.changed + navigation.changed)),
+            missing=tuple(sorted(data.missing + pages.missing + index.missing + navigation.missing)),
+            extra=tuple(sorted(data.extra + pages.extra + index.extra + navigation.extra)),
         )
 
 

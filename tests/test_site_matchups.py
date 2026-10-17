@@ -62,7 +62,7 @@ def test_empty_section_does_not_invent_measurements(tmp_path):
 def test_committed_section_is_visible_without_javascript():
     page = (ROOT / 'site/matchups.html').read_text()
     assert '<section id="matchups">' in page
-    assert '<a href="#matchups">Matchups</a>' in page
+    assert '<a href="matchups.html">Matchups</a>' in page
     assert '<!-- prerender:matchups -->' in page
     data = json.loads((ROOT / 'site/data/matchups.json').read_text())
     assert b._prerender_matchups_html(data) in page

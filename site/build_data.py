@@ -30,6 +30,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
+# Load the sibling module without importing the benchmark package (stdlib only).
+_NAV_SPEC = importlib.util.spec_from_file_location("makerbench_site_navigation", Path(__file__).with_name("navigation.py"))
+NAV = importlib.util.module_from_spec(_NAV_SPEC)
+_NAV_SPEC.loader.exec_module(NAV)
+
 # The four sequential failure levels, for the histogram labels.
 LEVELS = (1, 2, 3, 4)
 DEFAULT_SITE_BASE_URL = "https://tonykoop.github.io/makerbench-hwe"
@@ -3525,7 +3530,7 @@ def _detail_document(
     if head_extra:
         head.append(head_extra)
     head_html = "\n".join(head)
-    return f"""<!doctype html>
+    return NAV.decorate_html(f"""<!doctype html>
 <html lang="en" data-theme="light">
 <head>
 {head_html}
@@ -3547,7 +3552,7 @@ def _detail_document(
   </main>
 </body>
 </html>
-"""
+""", Path("models/_/index.html"))
 
 
 def _efficiency_html(efficiency: dict | None) -> str:
@@ -5125,15 +5130,20 @@ def write_prerendered_index(index_src: Path, index_out: Path, payload: dict,
         if source.exists():
             target = index_out.parent / source.name
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(inject_prerendered(
+            target.write_text(NAV.decorate_html(inject_prerendered(
                 source.read_text(encoding="utf-8"), payload, matchups=matchups,
-                supplemental=supplemental, strict=False), encoding="utf-8")
+                supplemental=supplemental, strict=False), Path(source.name)), encoding="utf-8")
     html_text = index_src.read_text(encoding="utf-8")
     index_out.parent.mkdir(parents=True, exist_ok=True)
     index_out.write_text(
-        inject_prerendered(html_text, payload, matchups=matchups, supplemental=supplemental),
+        NAV.decorate_html(inject_prerendered(
+            html_text, payload, matchups=matchups, supplemental=supplemental), Path(index_out.name)),
         encoding="utf-8",
     )
+
+    NAV.write_static_headers(index_src.parent, index_out.parent, skip={
+        index_src.name, "matchups.html", "landscape.html", "tasks.html", "arena.html", "charts.html", "leaderboard.html",
+    })
 
 
 def main() -> None:

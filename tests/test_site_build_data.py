@@ -1869,9 +1869,9 @@ def test_landing_nav_and_footer_expose_required_surfaces():
 
     anchors = {a["text"]: a["href"] for a in parser.anchors}
     required = {
-        "Leaderboard": "#leaderboard",
-        "Charts": "#charts",
-        "Domains & tasks": "#tasks",
+        "Leaderboard": "leaderboard.html",
+        "Charts": "charts.html",
+        "Domains & tasks": "tasks.html",
         "Ecosystem": "https://github.com/tonykoop/makerbench-hwe#readme",
         "Tracks & leagues": "https://github.com/tonykoop/makerbench-hwe/blob/main/docs/WORKFLOW_TRACK.md",
         "Opportunity Matrix": "opportunity-matrix.html",
@@ -3034,7 +3034,7 @@ const noopEl = () => ({
   value: "",
 });
 const sandbox = {
-  window: {},
+  window: { addEventListener() {} },
   document: {
     documentElement: { setAttribute() {}, getAttribute() { return "light"; } },
     getElementById() { return noopEl(); },

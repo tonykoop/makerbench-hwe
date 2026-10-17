@@ -24,7 +24,7 @@ class Links(HTMLParser):
 
 def check_links(site):
     site = site.resolve()
-    pages = {p.resolve(): Links(p.read_text()) for p in site.rglob('*.html')}
+    pages = {p.resolve(): Links(p.read_text(encoding='utf-8')) for p in site.rglob('*.html')}
     errors = []
     for source, parsed in pages.items():
         for href in parsed.links:
