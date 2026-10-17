@@ -196,6 +196,12 @@ FORBIDDEN = re.compile(r"min_wall|borderline|robust-v1|rescore notes|MIN_WALL_RE
 @pytest.mark.parametrize("rel", PAGES)
 def test_generated_arena_pages_carry_no_wall_thickness_or_borderline_text(rel):
     text = (ROOT / rel).read_text(encoding="utf-8")
+    if rel.endswith("matchups.json"):
+        # The recompute provenance is carried verbatim and names the script that did the recompute.
+        page = json.loads(text)
+        for item in page["matchups"]:
+            item.pop("recompute", None)
+        text = json.dumps(page)
     assert not FORBIDDEN.search(text), FORBIDDEN.search(text).group(0)
 
 
@@ -206,3 +212,89 @@ def test_frozen_rounds_keep_their_bytes_and_show_the_historical_note():
     assert NOTE in (ROOT / "site/arena.html").read_text(encoding="utf-8")
     assert NOTE in (ROOT / "site/assets/app.js").read_text(encoding="utf-8")
     assert build_data.ARENA_HISTORICAL_NOTE == NOTE
+
+
+# ------------------------------------------- old stored rates, declared checks, Studio, provenance
+
+def _old_trial(tmp_path):
+    """A recorded trial whose stored rate still counts a failed wall check (5 pass + min_wall 0 = 5/6)."""
+    sub = {k: 1.0 for k in runner.ARENA_GATE_CHECKS}
+    sub["min_wall"] = 0.0
+    return {"trial_id": "t0", "model_id": "m", "instrument_id": "ocarina", "seed": 0, "rep": 0, "status": "scored",
+            "result": {"backend": "openscad", "artifacts": {},
+                       "objective": {"objective_pass_rate": 5 / 6, "sub_scores": sub}}}
+
+
+def test_stored_rates_that_counted_wall_thickness_are_rescored_on_every_read_surface(tmp_path):
+    from makerbench.arena_studio.service import ArenaStudioService  # noqa: F401  (import check only)
+
+    trial = _old_trial(tmp_path)
+    objective = trial["result"]["objective"]
+    assert runner.recorded_objective_rate(objective) == 1.0
+    assert runner.recorded_objective_rate({"objective_pass_rate": 0.5}) == 0.5   # no sub-scores: stored rate kept
+    assert runner.recorded_objective_rate({"objective_pass_rate": True}) is None
+    run_log = {"config": {}, "trials": [trial]}
+    assert runner.collect_objective_scoreline(run_log)[0]["objective_pass_rate"] == 1.0
+    assert report.gallery_cells(run_log, tmp_path)[0]["cards"][0]["pass_rate"] == 1.0
+
+
+def test_studio_summary_rescores_a_stored_rate_that_counted_wall_thickness(tmp_path):
+    from makerbench.arena_studio.service import ArenaStudioService
+    import inspect
+    source = inspect.getsource(ArenaStudioService)
+    assert "recorded_objective_rate" in source and 'observed(objective.get("objective_pass_rate")' not in source
+
+
+def test_demo_app_never_shows_or_scores_the_retired_check():
+    from fastapi.testclient import TestClient
+    from makerbench.arena_studio.demo import create_demo_app
+
+    client = TestClient(create_demo_app(), base_url="http://127.0.0.1")
+    runs = client.get("/api/runs").json()["runs"]
+    assert runs
+    for run in runs:
+        body = client.get(f"/api/runs/{run['run_id']}/summary").text
+        assert "min_wall" not in body
+    case = client.get(f"/api/runs/{runs[0]['run_id']}/summary").json()
+    for row in case["rows"]:
+        for node in (row, *row.get("trials", [])):
+            gates = node.get("gates") or {}
+            if gates:
+                assert node["objective_pass_rate"] == pytest.approx(sum(gates.values()) / len(gates))
+
+
+def test_studio_demo_ui_has_no_wall_thickness_text():
+    studio = ROOT / "makerbench/arena_studio/static/app"
+    text = (studio / "screens/demo.js").read_text(encoding="utf-8")
+    assert "min_wall" not in text and "Wall thickness (historical)" not in text and "Six objective" not in text
+    assert "Five objective build checks" in text
+
+
+def test_declared_checks_add_to_the_five_base_checks_but_never_a_retired_one(tmp_path, monkeypatch):
+    import trimesh
+    from makerbench import topology
+    from makerbench.code_cad_objective import ObjectiveContext, RenderArtifacts
+
+    mesh = trimesh.creation.box(extents=[10, 10, 10])
+    stl = tmp_path / "output.stl"
+    mesh.export(stl.as_posix())
+    png = tmp_path / "preview.png"
+    png.write_bytes(b"\x89PNG\r\n")
+    ctx = ObjectiveContext(trial_id="t", model_id="m", instrument_id="i", seed=0, scad_path=tmp_path / "x.scad",
+                           artifacts=RenderArtifacts(stl_path=stl, png_path=png))
+    spec = {"envelope_mm": [10, 10, 10], "min_bodies": 1}
+    monkeypatch.setattr(topology, "declared_checks", lambda m, s: (
+        {"topology": 0.0, "min_wall": 0.0}, {"topology": {"status": "fail"}}))
+    out = runner.mesh_objective_gate(spec)(ctx)
+    assert tuple(out["sub_scores"]) == (*runner.ARENA_GATE_CHECKS, "topology")   # base five + declared, no wall
+    assert out["objective_pass_rate"] == pytest.approx(5 / 6)
+
+
+def test_published_matchups_carry_the_bundles_recompute_provenance():
+    page = json.loads((ROOT / "site/data/matchups.json").read_text(encoding="utf-8"))
+    bundles = {b: json.loads((ROOT / b).read_text(encoding="utf-8"))["recompute"] for b in BUNDLES}
+    assert page["matchups"]
+    for item in page["matchups"]:
+        block = item["recompute"]
+        assert block["policy"] == "no-min-wall"
+        assert block == bundles[item["source_bundle"]]

@@ -494,7 +494,7 @@ class ArenaStudioService:
                 "instrument_id": trial.get("instrument_id"), "seed": trial.get("seed"), "rep": trial.get("rep"),
                 "status": trial.get("status") or "pending", "backend": result.get("backend"),
                 "wall_time_s": observed(trial.get("wall_time_s")),
-                "objective_pass_rate": observed(objective.get("objective_pass_rate"), 1),
+                "objective_pass_rate": observed(arena_runner.recorded_objective_rate(objective), 1),
                 "gates": {key: observed(gates.get(key), 1)
                           for key in (
                     "renders", "watertight", "nonzero_volume", "body_count", "fits_envelope",

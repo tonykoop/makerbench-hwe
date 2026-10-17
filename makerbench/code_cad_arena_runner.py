@@ -56,8 +56,8 @@ from .code_cad_vote_surface import VoteCandidate, build_blind_pair
 
 SCHEMA = "makerbench-code-cad-arena-run-v1"
 
-# The arena gate's checks, in report order: the ONE definition. The gate builds exactly these
-# sub-scores (plus the topology/interface checks a spec declares), the pass rate is their mean,
+# The arena gate's checks, in report order: the ONE definition. The gate builds these five base
+# sub-scores (plus any topology/interface checks a spec declares, never a retired check), the pass rate is their mean,
 # and the report, the site and the JS gate lists must equal this tuple (a test enforces it).
 ARENA_GATE_CHECKS = ("renders", "watertight", "nonzero_volume", "fits_envelope", "body_count")
 # Checks that older recorded results may still carry but that no longer count.
@@ -303,6 +303,26 @@ def objective_rate(sub_scores: Mapping[str, object]) -> float:
     return sum(scored) / len(scored) if scored else 0.0
 
 
+def recorded_objective_rate(objective: Mapping[str, object] | None) -> float | None:
+    """The pass rate of a recorded objective block, recomputed from its retained sub-scores.
+
+    A stored ``objective_pass_rate`` may predate the removal of wall thickness and still
+    count it, so any block that kept its sub-scores is rescored with ``objective_rate``;
+    only a block without usable (numeric, in 0..1) sub-scores falls back to the stored number (or None).
+    """
+    objective = objective or {}
+    sub_scores = objective.get("sub_scores")
+    numeric = [v for k, v in sub_scores.items()
+               if isinstance(v, (int, float)) and not isinstance(v, bool) and k not in RETIRED_CHECKS
+               ] if isinstance(sub_scores, Mapping) else []
+    if numeric and all(0.0 <= v <= 1.0 for v in numeric):
+        return objective_rate(sub_scores)
+    rate = objective.get("objective_pass_rate")
+    if isinstance(rate, bool) or not isinstance(rate, (int, float)):
+        return None
+    return float(rate)
+
+
 def mesh_objective_gate(
     spec: Mapping[str, object],
     *,
@@ -310,7 +330,7 @@ def mesh_objective_gate(
 ) -> Callable[[ObjectiveContext], dict]:
     """Build the oracle-free objective gate for one instrument spec.
 
-    Sub-scores (0.0/1.0 each, exactly ``ARENA_GATE_CHECKS``) over the candidate's own
+    Sub-scores (0.0/1.0 each: the five ``ARENA_GATE_CHECKS``, plus any declared topology/interface checks) over the candidate's own
     rendered mesh: renders, watertight (every body manifold), nonzero_volume,
     fits_envelope (spec envelope with slack), body_count (>= spec min_bodies — the
     assembly check; for ``assembly: true`` tasks a candidate whose standalone part
@@ -377,7 +397,9 @@ def mesh_objective_gate(
         # #797: topology/interface sub-scores exist only when the spec declares
         # them, so undeclared specs keep their pass rate and scoreline bytes.
         extra_sub_scores, checks = topology.declared_checks(mesh, spec)
-        sub_scores.update(extra_sub_scores)
+        # The five base checks plus whatever the instrument declares; a retired check can
+        # never re-enter through this path.
+        sub_scores.update({k: v for k, v in extra_sub_scores.items() if k not in RETIRED_CHECKS})
         rate = objective_rate(sub_scores)
 
         # #903: explain every failed sub-score with measured value, threshold and body.
@@ -817,8 +839,8 @@ def collect_objective_scoreline(run_log: Mapping[str, object]) -> list[dict]:
             continue
         result = entry.get("result") or {}
         objective = result.get("objective") or {}
-        rate = objective.get("objective_pass_rate")
-        if isinstance(rate, bool) or not isinstance(rate, (int, float)):
+        rate = recorded_objective_rate(objective)
+        if rate is None:
             rate = 0.0
         # #799: rows are per (entrant, backend); a trial records its own
         # backend, else the run config's (older logs: openscad).

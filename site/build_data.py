@@ -4846,12 +4846,19 @@ def build_matchups_page(results_dir: Path) -> dict:
                               "source_bundle": "results/" + path.relative_to(results_dir).as_posix(),
                               "verification_status": bundle.get("verification_status")
                               if bundle.get("verification_status") in {"unverified", "public-regrade-verified", "official-heldout-verified"} else "unverified",
+                              **({"recompute": _public_recompute(bundle["recompute"])}
+                                 if isinstance(bundle.get("recompute"), dict) else {}),
                               "entrants": rows})
     page = {"schema": "makerbench-site-matchups-v1", "matchups": published}
     if len({item["id"] for item in published}) != len(published):
         raise ValueError("published matchup identifiers must be unique")
     audit_arena_page_public(page)
     return page
+
+
+def _public_recompute(block: dict) -> dict:
+    """The bundle's recompute provenance, carried verbatim into the published Matchups data."""
+    return dict(block)
 
 
 def _prerender_matchups_html(page: dict | None) -> str:
