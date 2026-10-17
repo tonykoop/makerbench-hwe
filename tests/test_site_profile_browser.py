@@ -46,7 +46,7 @@ def test_profile_comparison_and_grid(source, width):
                 content_type="application/json", body=json.dumps(payload)))
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
-            page.goto(f"http://127.0.0.1:{server.server_port}/", wait_until="networkidle")
+            page.goto(f"http://127.0.0.1:{server.server_port}/charts.html", wait_until="networkidle")
             page.wait_for_function("typeof Chart !== 'undefined' && Chart.getChart('chart-profile-0')")
             for track in ("blind", "perception"):
                 page.locator(f'#track-toggle button[data-track="{track}"]').click()

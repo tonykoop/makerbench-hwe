@@ -4527,6 +4527,51 @@ def _prerender_leaderboard_html(payload: dict, top_n: int = PRERENDER_TOP_N) -> 
     return "".join(sections) + '<p class="muted-note">Static snapshot · blind track. Enable JavaScript to sort or switch tracks.</p>'
 
 
+def _prerender_leaderboard_teaser_html(payload: dict) -> str:
+    """Top ten autonomous representatives, using the full board's ranking rule."""
+    broad, _, _ = select_leaderboard_entries(
+        payload.get("models", []), "autonomous",
+        payload.get("overall_ranking_min_families", OVERALL_RANKING_MIN_FAMILIES),
+    )
+    total = len(payload.get("task_families", []))
+    rows = []
+    for rank, (model, _) in enumerate(broad[:10], 1):
+        track = model["tracks"]["blind"]
+        rows.append(f'<tr><td>{rank}</td><th scope="row"><a href="{_esc(model.get("model_page") or "leaderboard.html")}">'
+                    f'{_esc(plain_display_model(model))}</a></th>'
+                    f'<td>{_fmt_mean(track.get("overall_mean"))}</td>'
+                    f'<td>{track.get("n_families_scored", 0)} / {total}</td></tr>')
+    if not rows:
+        return '<p>No models meet the overall ranking coverage requirement yet.</p>'
+    return ('<div class="table-scroll"><table class="lb"><thead><tr><th scope="col">Rank</th>'
+            '<th scope="col">Model</th><th scope="col">Overall /4</th><th scope="col">Coverage</th>'
+            '</tr></thead><tbody>' + "".join(rows) + '</tbody></table></div>')
+
+
+def _prerender_headline_chart_html(payload: dict) -> str:
+    """Accessible static score chart; identical with JavaScript on or off."""
+    broad, _, _ = select_leaderboard_entries(
+        payload.get("models", []), "autonomous",
+        payload.get("overall_ranking_min_families", OVERALL_RANKING_MIN_FAMILIES),
+    )
+    bars = []
+    for i, (model, _) in enumerate(broad[:5]):
+        score = model["tracks"]["blind"]["overall_mean"]
+        y = 48 + i * 54
+        bars.append(f'<text x="8" y="{y + 21}">{_esc(plain_display_model(model))}</text>'
+                    f'<rect x="410" y="{y}" width="{score / 4 * 480:.2f}" height="30" '
+                    'rx="3" fill="var(--accent)" />'
+                    f'<text x="920" y="{y + 21}">{score:.2f}</text>')
+    if not bars:
+        return '<p>No eligible measured models yet.</p>'
+    return ('<div class="table-scroll"><svg viewBox="0 0 1000 340" '
+            'style="display:block;width:100%;min-width:680px;fill:var(--text);font-size:19px" '
+            'role="img" aria-labelledby="headline-chart-title">'
+            '<title id="headline-chart-title">Top five eligible autonomous models, blind mean score out of four</title>'
+            '<text x="410" y="25">0</text><text x="890" y="25">4</text>'
+            + "".join(bars) + '</svg></div>')
+
+
 def _prerender_tracks_html(payload: dict) -> str:
     """Mirror renderTrackExplainer() in assets/app.js."""
     tracks = (payload.get("track_explainer") or {}).get("tracks") or []
@@ -4926,6 +4971,8 @@ def prerender_blocks(payload: dict, top_n: int = PRERENDER_TOP_N,
         "headline": _esc(payload.get("headline", "")),
         "hero-stats": _prerender_hero_stats_html(payload),
         "leaderboard": _prerender_leaderboard_html(payload, top_n),
+        "leaderboard-teaser": _prerender_leaderboard_teaser_html(payload),
+        "headline-chart": _prerender_headline_chart_html(payload),
         "tracks": _prerender_tracks_html(payload),
         "track-guardrail": _esc(explainer.get("guardrail", "")),
         "freshness": _prerender_freshness_html(payload),
@@ -4937,7 +4984,7 @@ def prerender_blocks(payload: dict, top_n: int = PRERENDER_TOP_N,
 
 def inject_prerendered(index_html: str, payload: dict, top_n: int = PRERENDER_TOP_N,
                        matchups: dict | None = None,
-                       supplemental: dict | None = None) -> str:
+                       supplemental: dict | None = None, *, strict: bool = True) -> str:
     """Replace every prerender marker pair's body in ``index_html``.
 
     Markers survive the rewrite, so the operation is idempotent — the committed
@@ -4950,7 +4997,9 @@ def inject_prerendered(index_html: str, payload: dict, top_n: int = PRERENDER_TO
             re.DOTALL,
         )
         if not pattern.search(index_html):
-            if name not in {"headline", "hero-stats", "leaderboard", "tracks", "track-guardrail", "freshness"}:
+            if name == "leaderboard" and "<!-- prerender:leaderboard-teaser -->" in index_html:
+                continue
+            if not strict or name not in {"headline", "hero-stats", "leaderboard", "tracks", "track-guardrail", "freshness"}:
                 continue  # Legacy/custom templates predate the extended sections.
             raise ValueError(f"index.html is missing prerender marker pair: {name}")
         index_html = pattern.sub(
@@ -4962,6 +5011,14 @@ def inject_prerendered(index_html: str, payload: dict, top_n: int = PRERENDER_TO
 def write_prerendered_index(index_src: Path, index_out: Path, payload: dict,
                             matchups: dict | None = None,
                             supplemental: dict | None = None) -> None:
+    for name in ("matchups", "landscape", "tasks", "arena", "charts", "leaderboard"):
+        source = index_src.parent / f"{name}.html"
+        if source.exists():
+            target = index_out.parent / source.name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(inject_prerendered(
+                source.read_text(encoding="utf-8"), payload, matchups=matchups,
+                supplemental=supplemental, strict=False), encoding="utf-8")
     html_text = index_src.read_text(encoding="utf-8")
     index_out.parent.mkdir(parents=True, exist_ok=True)
     index_out.write_text(

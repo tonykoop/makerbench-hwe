@@ -239,6 +239,13 @@ def check_build_data_drift(repo_root: Path = REPO_ROOT) -> DriftReport:
         )
         pages = compare_site_pages(repo_root / "site", generated_site)
         index = compare_prerendered_index(repo_root / "site", generated_site)
+        for name in ("matchups", "landscape", "tasks", "arena", "charts", "leaderboard"):
+            relative = f"site/{name}.html"
+            committed = repo_root / relative
+            if committed.exists():
+                generated = generated_site / committed.name
+                if not generated.exists() or not filecmp.cmp(committed, generated, shallow=False):
+                    index = DriftReport(changed=index.changed + (relative,), missing=index.missing)
         return DriftReport(
             changed=tuple(sorted(data.changed + pages.changed + index.changed)),
             missing=tuple(sorted(data.missing + pages.missing + index.missing)),

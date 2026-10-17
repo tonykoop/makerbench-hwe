@@ -484,6 +484,7 @@
     var axes = capabilityAxes().slice(0, 8);
     var minimum = DATA.overall_ranking_min_families || 4;
     var container = document.getElementById("lb-container");
+    if (!container) return;
     var models = DATA.models.filter(function (m) {
       return m.tracks[TRACK] && m.tracks[TRACK].has_data;
     });
@@ -1329,6 +1330,7 @@
   function renderHistChart() {
     destroyChart("chart-hist");
     var sel = document.getElementById("hist-model");
+    if (!sel) return;
     var model = DATA.models.filter(function (m) { return m.row_id === sel.value; })[0];
     var ctx = document.getElementById("chart-hist");
     if (!model || !model.tracks[TRACK]) { return; }
@@ -1393,11 +1395,12 @@
 
   function rerenderCharts() {
     if (!DATA) return;
-    renderEfficiencyChart();
-    renderProfileCharts();
-    renderFamilyChart();
-    renderHistChart();
-    renderDeltaChart();
+    if (typeof Chart === "undefined") return;
+    if (document.getElementById("chart-efficiency")) renderEfficiencyChart();
+    if (document.getElementById("profile-grid")) renderProfileCharts();
+    if (document.getElementById("chart-family")) renderFamilyChart();
+    if (document.getElementById("chart-hist")) renderHistChart();
+    if (document.getElementById("chart-delta")) renderDeltaChart();
     var fallback = document.getElementById("chart-static-data");
     if (fallback) fallback.hidden = true;
   }
@@ -1405,6 +1408,7 @@
   // ---- task cards ---------------------------------------------------------
   function renderTasks() {
     var grid = document.getElementById("task-grid");
+    if (!grid) return;
     grid.innerHTML = DATA.task_families.map(function (f) {
       var tracks = (f.tracks || []).map(function (t) { return '<span class="chip">' + t + "</span>"; }).join("");
       return '<a class="task" href="tasks/' + f.id + '/"><div class="top"><div>' +
@@ -1972,6 +1976,7 @@
   // ---- model picker -------------------------------------------------------
   function fillHistPicker() {
     var sel = document.getElementById("hist-model");
+    if (!sel) return;
     var models = modelsOnTrack(TRACK);
     var prev = sel.value;
     sel.innerHTML = models.map(function (m) {
@@ -2042,7 +2047,8 @@
   // switching versions doesn't bounce the user back to Blind.
   function applyData(data) {
     DATA = data;
-    document.getElementById("headline").textContent = data.headline || "";
+    var headline = document.getElementById("headline");
+    if (headline) headline.textContent = data.headline || "";
     renderHeroStats();
     renderFreshness(data);
     renderTasks();
@@ -2062,7 +2068,8 @@
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
       .then(applyData)
       .catch(function () {
-        document.getElementById("lb-note").textContent = "Could not load " + url + ".";
+        var note = document.getElementById("lb-note");
+        if (note) note.textContent = "Could not load " + url + ".";
       });
   }
 
@@ -2173,7 +2180,8 @@
   function boot(data) {
     // One-time listeners (they read DATA/TRACK dynamically, so they survive a
     // version switch without rebinding).
-    document.getElementById("hist-model").addEventListener("change", renderHistChart);
+    var histogramPicker = document.getElementById("hist-model");
+    if (histogramPicker) histogramPicker.addEventListener("change", renderHistChart);
     Array.prototype.forEach.call(document.querySelectorAll("#track-toggle button"), function (b) {
       b.addEventListener("click", function () { setTrack(b.getAttribute("data-track")); });
     });
@@ -2206,13 +2214,6 @@
     })
     .then(boot)
     .catch(function (err) {
-      document.getElementById("headline").textContent =
-        "Could not load data/leaderboard.json — run `python site/build_data.py` first.";
-      document.getElementById("lb-container").innerHTML =
-        '<div class="empty"><strong>No data loaded.</strong><br>' +
-        "If you opened this file directly (file://), a browser may block the fetch. " +
-        "Serve the folder: <code>python -m http.server</code> from <code>site/</code>, " +
-        "then open <code>http://localhost:8000/</code>.<br><span class=\"muted-note\">(" +
-        String(err) + ")</span></div>";
+      console.warn("Could not load leaderboard data; showing the static snapshot.", err);
     });
 })();

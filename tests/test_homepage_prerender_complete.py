@@ -12,7 +12,7 @@ SPEC.loader.exec_module(builder)
 
 
 def test_all_sections_are_prerendered_from_current_committed_inputs():
-    page = (ROOT / "site/index.html").read_text()
+    page = "".join(p.read_text() for p in [ROOT / "site/index.html", *(ROOT / f"site/{name}.html" for name in ("tasks", "arena", "matchups", "landscape", "charts"))])
     payload = builder.build_payload(ROOT / "results", ROOT / "tasks/registry.json")
     assert "Loading the landscape" not in page
     assert "Loading citation" not in page

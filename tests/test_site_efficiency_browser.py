@@ -23,7 +23,7 @@ def page():
         with playwright.sync_playwright() as runtime:
             browser = runtime.chromium.launch(headless=True)
             tab = browser.new_page()
-            tab.goto(f"http://127.0.0.1:{server.server_port}/", wait_until="networkidle")
+            tab.goto(f"http://127.0.0.1:{server.server_port}/charts.html", wait_until="networkidle")
             tab.wait_for_function("window.MakerBenchEfficiency && Chart.getChart('chart-efficiency')")
             yield tab
             browser.close()

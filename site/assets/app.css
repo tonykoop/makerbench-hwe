@@ -1557,3 +1557,16 @@ tr.lscape-detail td { background: var(--bg-soft); }
   .lscape-detail-grid { grid-template-columns: 1fr; }
   .lscape-search { margin-left: 0; }
 }
+
+/* Homepage supporting material remains available without JavaScript. */
+.home-detail { padding: 16px 0; }
+.home-detail > details > summary { cursor: pointer; font-size: 1.15rem; font-weight: 650; }
+.home-detail > details[open] > summary { margin-bottom: 24px; }
+.summary-card { padding: 24px 0; }
+#leaderboard-teaser .table-scroll { overflow-x: auto; }
+
+#matchups .arena-card { overflow-wrap: anywhere; min-width: 0; }
+#matchups .arena-card table { display: block; overflow-x: auto; max-width: 100%; }
+.lscape-picker { max-width: 100%; min-width: 0; }
+.lscape-picker select { min-width: 0; max-width: 100%; }
+.lscape-search { min-width: 0; max-width: 100%; }
