@@ -308,3 +308,14 @@ def test_cap_and_stop_early_cannot_change_what_run_now_does(repo: Path, monkeypa
     form = {**FORM, "entrants": ["freecad:opus", "freecad:sol"], "turns": 1, "cap_usd": 50.0, "stop_early": False}
     assert client.post("/api/newrun/run-now", json=form, headers=ORIGIN).json() == {"success": True}
     assert set(calls[0]) == {"instruments", "models", "backend", "max_turns", "live"}
+
+
+@pytest.mark.parametrize("live", ["solidworks", "fusion"])
+def test_run_now_refuses_live_cad_backends(repo: Path, monkeypatch, live: str):
+    client = _client(repo, allow_live=True)
+    monkeypatch.setattr(client.app.state.service, "launch_competition", lambda config: pytest.fail("launched"))
+    form = {**FORM, "entrants": [f"{live}:opus", f"{live}:sol"], "turns": 1}
+    assert nr.LIVE_CAD_REFUSAL in client.post("/api/newrun/estimate", json=form, headers=ORIGIN).json()["run_now_gaps"]
+    response = client.post("/api/newrun/run-now", json=form, headers=ORIGIN)
+    assert response.status_code == 400
+    assert "Live CAD runs are scheduled through Add to tonight (one CAD seat, supervised)" in response.text

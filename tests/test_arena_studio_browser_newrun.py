@@ -270,3 +270,26 @@ def test_run_now_is_disabled_for_settings_it_cannot_carry(studio: str):
         assert problems == []
         context.close()
         browser.close()
+
+
+@pytest.mark.parametrize("live", ["solidworks", "fusion"])
+@pytest.mark.parametrize("studio", [{"allow_live": True}], indirect=True)
+def test_run_now_is_disabled_when_a_live_cad_cell_is_ticked(studio: str, live: str):
+    with sync_playwright() as playwright:
+        browser = _launch(playwright)
+        context, page, problems, _ = _open(browser, studio)
+        page.get_by_role("button", name="Overnight matchup").click()
+        for pick in ("cadam:fable", "solidworks:sol", "fusion:sonnet"):
+            _cell(page, pick).click()
+        _cell(page, "freecad:sol").click()
+        page.locator('input[type="range"]').fill("1")
+        page.wait_for_function("() => !document.querySelector('[data-testid=run-now-hint]')")
+        assert page.get_by_role("button", name="Run now").is_enabled()
+        _cell(page, f"{live}:opus").click()
+        hint = page.get_by_test_id("run-now-hint")
+        hint.wait_for()
+        assert "Live CAD runs are scheduled through Add to tonight (one CAD seat, supervised)" in hint.inner_text()
+        assert page.get_by_role("button", name="Run now").is_disabled()
+        assert problems == []
+        context.close()
+        browser.close()

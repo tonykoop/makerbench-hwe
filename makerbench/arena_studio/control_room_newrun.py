@@ -326,6 +326,7 @@ def runner_gaps(form: Mapping[str, Any], card: Optional[Mapping[str, Any]]) -> l
 
 
 RUN_NOW_REFUSAL = "Run now uses the default brief and one variant; use Add to tonight for custom settings."
+LIVE_CAD_REFUSAL = "Live CAD runs are scheduled through Add to tonight (one CAD seat, supervised)"
 
 #: What ``ArenaStudioService.launch_competition`` actually executes, field by field of the
 #: New Run form. Its ``arena run`` command carries the instrument, the models, the backend
@@ -334,7 +335,7 @@ RUN_NOW_REFUSAL = "Run now uses the default brief and one variant; use Add to to
 #: new setting is refused by Run now until the launcher really carries it.
 RUN_NOW_FIELDS: dict[str, str] = {
     "instrument": "carried",
-    "entrants": "carried",            # subscription routes only: Run now refuses CADAM
+    "entrants": "carried",            # subscription, non-live routes only: CADAM and SolidWorks/Fusion refused
     "turns": "one attempt",           # --max-attempts 1
     "brief": "registry brief",        # the arena reads the registry brief
     "variants": "none",               # the instrument as registered
@@ -363,6 +364,10 @@ def run_now_gaps(form: Mapping[str, Any], card: Optional[Mapping[str, Any]]) -> 
             and _TOOLS[str(pick).split(":")[0]].route == "openrouter"]
     if paid:
         gaps.append("paid OpenRouter entrants (Run now has no spending cap)")
+    # arena run passes no --driver-model, so a live backend would drive every model with its default.
+    if any(_TOOLS.get(str(pick).split(":")[0]) is not None and _TOOLS[str(pick).split(":")[0]].kind == "live"
+           for pick in form.get("entrants") or []):
+        gaps.append(LIVE_CAD_REFUSAL)
     return gaps
 
 
