@@ -1180,7 +1180,11 @@
     });
     legend.appendChild(heatmapElement("span", "heatmap-missing-key", "— No data"));
     root.appendChild(legend);
-    root.appendChild(heatmapElement("p", "chart-note", "Rows ordered by coverage. Hover, focus or tap a cell for details. Scroll the grid to see more families and rows."));
+    var guidance = heatmapElement("p", "chart-note heatmap-guidance",
+      "Rows ordered by coverage. Hover, focus or tap a cell for details. ");
+    guidance.appendChild(heatmapElement("span", "heatmap-guidance-wide", "Scroll vertically for more rows, as needed."));
+    guidance.appendChild(heatmapElement("span", "heatmap-guidance-narrow", "Scroll vertically for more rows and sideways for more families, as needed."));
+    root.appendChild(guidance);
     var wrap = heatmapElement("div", "heatmap-scroll");
     wrap.tabIndex = 0;
     wrap.setAttribute("role", "region");
@@ -1247,17 +1251,17 @@
       shown.forEach(function (model) {
         var row = heatmapElement("tr");
         row.dataset.modelRowId = model.row_id;
-        var label = plainLabel(model.identifier) + " · " +
-          (model.reasoning_level == null ? "Unspecified effort" : effortLabel(model.reasoning_level)) + " · " +
+        var label = plainLabel(model.identifier) +
+          (model.reasoning_level == null ? "" : " · " + effortLabel(model.reasoning_level)) + " · " +
           (harnessLabel(model.agent_identifier) || "Unknown harness");
         var th = heatmapElement("th", "heatmap-model-heading");
         th.scope = "row";
         th.title = label + " · " + ranking.coverage(model) + " / " + familyList().length + " families";
         th.setAttribute("aria-label", th.title);
         th.appendChild(heatmapElement("span", "heatmap-model-name", plainLabel(model.identifier)));
-        var shortEffort = effortCode(model) || (model.reasoning_level == null ? "Unspecified" : effortLabel(model.reasoning_level));
+        var shortEffort = effortCode(model) || (model.reasoning_level == null ? "" : effortLabel(model.reasoning_level));
         th.appendChild(heatmapElement("small", "heatmap-coverage",
-          ranking.coverage(model) + "/" + familyList().length + " · " + shortEffort));
+          ranking.coverage(model) + "/" + familyList().length + (shortEffort ? " · " + shortEffort : "")));
         row.appendChild(th);
         families.forEach(function (family) {
           var score = familyScore(model, family);
