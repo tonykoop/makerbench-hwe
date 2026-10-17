@@ -95,3 +95,15 @@ test("variant chips toggle into a sweep", async () => {
   assert.equal(form.preset, null);
   assert.deepEqual(toggleVariant(form, "TD-8").variants, ["TD-10"]);
 });
+
+test("autofill fills once per instrument and never overwrites edits", async () => {
+  const { applyAutofill, payload } = await import("../../makerbench/arena_studio/static/app/lib/newrun.js");
+  const suggestion = { text: "Model the kora.", images: ["hero-render.png"] };
+  let form = { instrument: "kora", brief: "registry", references: [], variants: [], entrants: [], turns: 5, cap_usd: 2 };
+  form = applyAutofill(form, "kora", suggestion);
+  assert.equal(form.brief, "Model the kora.");
+  assert.deepEqual(payload(form).references, [{ repo_image: "hero-render.png" }]);
+  form = { ...form, brief: "Model the kora, but taller." };
+  assert.equal(applyAutofill(form, "kora", suggestion).brief, "Model the kora, but taller.");
+  assert.equal(applyAutofill(form, "lyre", suggestion), form); // a stale response for another instrument
+});
