@@ -79,7 +79,7 @@ export function payload(form) {
     deliverable: form.deliverable,
     entrants: form.entrants,
     brief: form.brief,
-    references: form.references.map((ref) => ({ name: ref.name, data: ref.data })),
+    references: form.references.map((ref) => (ref.repo_image ? { repo_image: ref.repo_image } : { name: ref.name, data: ref.data })),
     turns: form.turns,
     cap_usd: Number(form.cap_usd) || 0,
     stop_early: form.stop_early,
@@ -145,4 +145,15 @@ export function cardDetail(item) {
 export function toggleVariant(form, id) {
   const on = form.variants.includes(id);
   return { ...form, preset: null, variants: on ? form.variants.filter((v) => v !== id) : [...form.variants, id] };
+}
+
+// Brief auto-fill (#1108): fill once per instrument, then the text is Tony's to edit.
+export function applyAutofill(form, instrumentId, suggestion) {
+  if (form.instrument !== instrumentId || form.autofill_for === instrumentId) return form;
+  return {
+    ...form,
+    autofill_for: instrumentId,
+    brief: suggestion.text || form.brief,
+    references: suggestion.images.map((name) => ({ repo_image: name, name })),
+  };
 }

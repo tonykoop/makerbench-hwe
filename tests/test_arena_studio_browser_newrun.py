@@ -371,3 +371,45 @@ def test_variant_chips_come_from_the_instrument_repo(repo: Path, tmp_path: Path,
     finally:
         server.should_exit = True
         thread.join(timeout=10)
+
+
+def test_brief_and_references_fill_from_the_instrument_repo(repo: Path, tmp_path: Path, screenshot_dir: Path):
+    from test_control_room_variants import build_instruments_root
+
+    root = build_instruments_root(tmp_path / "instruments")
+    server, thread, url = _serve(repo, instruments_root=root)
+    try:
+        with sync_playwright() as playwright:
+            browser = _launch(playwright)
+            context, page, problems, _ = _open(browser, url)
+            page.locator('[data-instrument="kora"]').click()
+            page.get_by_test_id("brief-filled").wait_for()
+            brief = page.locator("#newrun-brief")
+            assert brief.input_value().startswith("Calabash harp.")
+            assert "bowl diameter in 20.3" in brief.input_value()
+            refs = page.locator(".newrun-ref", has_text="From the repo")
+            assert refs.count() == 2
+            page.wait_for_function("() => [...document.querySelectorAll('.newrun-ref img')].every(img => img.complete && img.naturalWidth > 0)")
+            provenance = page.get_by_test_id("brief-provenance")
+            provenance.locator("summary").click()
+            assert "capstone-manifest.json › engineering.bowl_diameter_in" in provenance.inner_text()
+            assert "data/string-schedule.csv" in provenance.inner_text()
+            assert "price" not in provenance.inner_text().lower()
+
+            brief.fill("Kora with a deeper bowl.")
+            page.locator(".newrun-variant").first.click()  # a new suggestion arrives for the variant...
+            page.wait_for_timeout(500)
+            assert brief.input_value() == "Kora with a deeper bowl."  # ...but never overwrites an edit
+            page.screenshot(path=str(screenshot_dir / "newrun-brief-1440-light.png"), full_page=True)
+
+            page.get_by_role("button", name="Add to tonight").click()
+            page.locator("dialog.review-dialog", has_text="Saved as a draft").wait_for()
+            plan = json.loads(next((repo / "runs" / "control-room" / "plans").glob("*.json")).read_text())
+            assert plan["brief"] == "Kora with a deeper bowl." and plan["reference_images"] == ["reference-1.png", "reference-2.png"]
+
+            assert problems == []
+            context.close()
+            browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)

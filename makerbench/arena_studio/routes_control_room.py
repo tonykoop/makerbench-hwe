@@ -186,8 +186,25 @@ def register_control_room_routes(
     @app.get("/api/newrun/instrument/{instrument_id}/variants")
     def newrun_variants(instrument_id: str):
         repo = instrument_repo(instrument_id)
-        return {**ir.variants(repo), "repo_found": repo is not None,
-                "instruments_root": service.instruments_root is not None}
+        card = instruments()[instrument_id]
+        return {**ir.variants(repo, flute=ir.is_flute(f"{card.get('slug') or instrument_id} {card.get('name')}")),
+                "repo_found": repo is not None, "instruments_root": service.instruments_root is not None}
+
+    @app.get("/api/newrun/instrument/{instrument_id}/brief")
+    def newrun_brief(instrument_id: str, variant: Optional[str] = None):
+        repo = instrument_repo(instrument_id)
+        card = instruments()[instrument_id]
+        return {**ir.brief(repo, name=str(card.get("name") or instrument_id), slug=str(card.get("slug") or instrument_id),
+                           variant=variant, registry_brief=str(card.get("brief") or "")),
+                "repo_found": repo is not None, "instruments_root": service.instruments_root is not None}
+
+    @app.get("/api/newrun/instrument/{instrument_id}/image/{name}")
+    def newrun_repo_image(instrument_id: str, name: str):
+        repo = instrument_repo(instrument_id)
+        path = ir.repo_file(repo, f"images/{name}") if repo is not None and name in ir.repo_images(repo) else None
+        if path is None:
+            raise HTTPException(status_code=404, detail="Image not found")
+        return FileResponse(str(path), headers=NO_STORE)
 
     @app.post("/api/newrun/estimate")
     def newrun_estimate(payload: NewRunPayload):
@@ -205,8 +222,13 @@ def register_control_room_routes(
     def newrun_tonight(payload: NewRunPayload):
         form = payload.model_dump()
         try:
+            repo = None
+            if any(ref.get("repo_image") for ref in form["references"]) and form["instrument"] in instruments():
+                repo = instrument_repo(form["instrument"])
             built = nr.build_jobs(form, instruments=instruments(), runs_root=runs_root,
-                                  task_reference=service.reference_image_path)
+                                  task_reference=service.reference_image_path,
+                                  repo_image=lambda name: ir.repo_file(repo, f"images/{name}")
+                                  if repo is not None and name in ir.repo_images(repo) else None)
             plans = nr.write_plans(runs_root, built)
             gaps = built[0]["plan"]["runner_cannot_apply"]
             jobs = [item["job"] for item in built]
