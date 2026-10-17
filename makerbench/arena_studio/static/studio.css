@@ -3390,3 +3390,10 @@ body[data-demo="true"] .demo-header-links {
   align-items: baseline;
   gap: var(--space-1);
 }
+
+/* Variant chips from the instrument repo (#1109). */
+.newrun-variants {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
