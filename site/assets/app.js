@@ -1126,7 +1126,49 @@
     var fams = familyList();
     var models = modelsOnTrack(TRACK);
     var ctx = document.getElementById("chart-family");
+    var box = ctx.parentNode;
+    box.classList.add("chart-box-family");
+    var card = ctx.closest(".card");
+    var oldLegend = card.querySelector(".family-model-legend");
+    if (oldLegend) oldLegend.remove();
     if (!models.length) { return; }
+    var legend = document.createElement("div");
+    legend.className = "family-model-legend";
+    legend.setAttribute("aria-label", "Model legend");
+    box.insertAdjacentElement("afterend", legend);
+
+    function drawFamilyLegend(chart) {
+      legend.innerHTML = "";
+      var limit = chart.width < 500 ? 4 : 8;
+      chart.data.datasets.slice(0, limit).forEach(function (dataset, index) {
+        var entry = document.createElement("button");
+        entry.type = "button";
+        entry.className = "family-legend-entry";
+        entry.title = dataset.label;
+        entry.setAttribute("aria-pressed", String(chart.isDatasetVisible(index)));
+        var swatch = document.createElement("span");
+        swatch.className = "family-legend-swatch";
+        swatch.style.backgroundColor = dataset.backgroundColor;
+        swatch.setAttribute("aria-hidden", "true");
+        var label = document.createElement("span");
+        label.className = "family-legend-label";
+        label.textContent = dataset.label;
+        entry.appendChild(swatch);
+        entry.appendChild(label);
+        entry.addEventListener("click", function () {
+          chart.setDatasetVisibility(index, !chart.isDatasetVisible(index));
+          entry.setAttribute("aria-pressed", String(chart.isDatasetVisible(index)));
+          chart.update();
+        });
+        legend.appendChild(entry);
+      });
+      if (chart.data.datasets.length > limit) {
+        var more = document.createElement("span");
+        more.className = "family-legend-more";
+        more.textContent = "+" + (chart.data.datasets.length - limit) + " more (hover bars)";
+        legend.appendChild(more);
+      }
+    }
     var datasets = models.map(function (m, i) {
       var tr = m.tracks[TRACK];
       return {
@@ -1142,8 +1184,16 @@
     charts["chart-family"] = new Chart(ctx, {
       type: "bar",
       data: { labels: fams.map(function (f) { return f.title.replace(/ \(.*\)$/, ""); }), datasets: datasets },
-      options: commonOpts({ scales: { y: { beginAtZero: true, max: 4, ticks: { stepSize: 1, color: cssVar("--text-soft") }, grid: { color: cssVar("--border") } }, x: { ticks: { color: cssVar("--text-soft"), font: { size: 10 } }, grid: { display: false } } } }),
+      options: commonOpts({
+        onResize: drawFamilyLegend,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, max: 4, ticks: { stepSize: 1, color: cssVar("--text-soft") }, grid: { color: cssVar("--border") } },
+          x: { ticks: { color: cssVar("--text-soft"), font: { size: 10 }, maxRotation: 0, autoSkip: true }, grid: { display: false } },
+        },
+      }),
     });
+    drawFamilyLegend(charts["chart-family"]);
   }
 
   function capabilityAxes() {

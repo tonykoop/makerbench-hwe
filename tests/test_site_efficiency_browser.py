@@ -288,3 +288,86 @@ def test_dark_profile_grid_and_family_chart_contrast(page, track):
           };
         }""")
         assert all(result.values()), (track, theme, result)
+
+
+@pytest.mark.parametrize("width, limit", [(1440, 8), (390, 4)])
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("track", ["blind", "perception"])
+def test_family_legend_preserves_plot_height(page, width, limit, theme, track):
+    page.set_viewport_size({"width": width, "height": 1000})
+    if page.locator('html').get_attribute('data-theme') != theme:
+        page.locator('#theme-toggle').click()
+    page.locator(f'#track-toggle button[data-track="{track}"]').click()
+    page.wait_for_timeout(350)
+    result = page.evaluate("""limit => {
+      const chart = Chart.getChart('chart-family');
+      const card = chart.canvas.closest('.card');
+      const entries = Array.from(card.querySelectorAll('.family-legend-entry'));
+      const more = card.querySelector('.family-legend-more');
+      const datasets = chart.data.datasets;
+      return {
+        count: entries.length,
+        expectedCount: Math.min(limit,datasets.length),
+        ratio: chart.chartArea.height/card.getBoundingClientRect().height,
+        canvasLegend: chart.options.plugins.legend.display,
+        overflow: datasets.length <= limit ? !more :
+          more.textContent === `+${datasets.length-limit} more (hover bars)`,
+        labels: entries.every((entry,i) => entry.title === datasets[i].label &&
+          entry.querySelector('.family-legend-label').textContent === datasets[i].label),
+        swatches: entries.every((entry,i) => entry.querySelector('.family-legend-swatch')
+          .style.backgroundColor === (() => {
+            const el = document.createElement('span');
+            el.style.backgroundColor = datasets[i].backgroundColor;
+            return el.style.backgroundColor;
+          })()),
+        tooltips: chart.options.plugins.tooltip.enabled !== false,
+        cardFits: card.getBoundingClientRect().right <= innerWidth &&
+          card.scrollWidth <= card.clientWidth+1,
+        legendFits: entries.every(el => el.scrollWidth <= el.clientWidth+1),
+        allVisible: datasets.every((d,i) => chart.isDatasetVisible(i)),
+      };
+    }""", limit)
+    assert result['count'] == result['expectedCount'], result
+    assert result['ratio'] >= 0.6, result
+    assert result['canvasLegend'] is False, result
+    assert all(result[key] for key in ('overflow', 'labels', 'swatches', 'tooltips',
+                                      'cardFits', 'legendFits', 'allVisible')), result
+    payload = json.loads((ROOT / 'site/data/leaderboard.json').read_text())
+    models = [m for m in payload['models'] if m.get('tracks', {}).get(track, {}).get('has_data')]
+    expected = [[(m['tracks'][track]['families'].get(f['id']) or {}).get('mean_score')
+                 for f in payload['task_families']] for m in models]
+    assert page.evaluate("Chart.getChart('chart-family').data.datasets.map(d => d.data)") == expected
+    # Preserve the original legend's click-to-hide affordance for shown entries.
+    entry = page.locator('.family-legend-entry').first
+    entry.click()
+    assert entry.get_attribute('aria-pressed') == 'false'
+    assert page.evaluate("Chart.getChart('chart-family').isDatasetVisible(0)") is False
+    entry.click()
+    assert entry.get_attribute('aria-pressed') == 'true'
+    assert page.evaluate("Chart.getChart('chart-family').isDatasetVisible(0)") is True
+
+
+def test_family_legend_resizes_without_duplicate_entries(page):
+    page.reload(wait_until='networkidle')
+    for width, limit in ((1440, 8), (390, 4), (1440, 8)):
+        page.set_viewport_size({'width': width, 'height': 1000})
+        page.wait_for_function("""limit => {
+          const chart = Chart.getChart('chart-family');
+          const legends = chart.canvas.closest('.card').querySelectorAll('.family-model-legend');
+          return legends.length === 1 && legends[0].querySelectorAll('.family-legend-entry').length ===
+            Math.min(limit,chart.data.datasets.length);
+        }""", arg=limit)
+    # A short public-data control needs no overflow note and keeps every model.
+    payload = json.loads((ROOT / 'site/data/leaderboard.json').read_text())
+    payload['models'] = [m for m in payload['models'] if m.get('tracks', {}).get('blind', {}).get('has_data')][:3]
+    pattern = '**/data/leaderboard.json'
+    page.route(pattern, lambda route: route.fulfill(content_type='application/json', body=json.dumps(payload)))
+    try:
+        page.reload(wait_until='networkidle')
+        page.locator('#track-toggle button[data-track="blind"]').click()
+        assert page.locator('.family-legend-entry').count() == 3
+        assert page.locator('.family-legend-more').count() == 0
+        assert page.evaluate("Chart.getChart('chart-family').data.datasets.length") == 3
+    finally:
+        page.unroute(pattern)
+        page.reload(wait_until='networkidle')
