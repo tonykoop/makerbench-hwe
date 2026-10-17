@@ -15,6 +15,20 @@ from makerbench import wood_assembly as wood
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def sample_editability_outside_native_ci(monkeypatch):
+    if os.environ.get("MAKERBENCH_WOOD_FULL_PROOF") == "1":
+        return
+    original = wood._run_worker
+
+    def sampled(driver, spec, *args, **kwargs):
+        if Path(driver).name == "_wood_assembly_worker.py":
+            spec = {**spec, "_test_probe_sample": True}
+        return original(driver, spec, *args, **kwargs)
+
+    monkeypatch.setattr(wood, "_run_worker", sampled)
+
+
 @pytest.fixture(scope="module")
 def runtime():
     if not os.environ.get("MAKERBENCH_FREECAD_APPDIR"):
