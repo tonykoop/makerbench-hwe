@@ -84,12 +84,23 @@ def paddle_cutout(body, table, length, width, thickness, variant):
         sketch.renameConstraint(index, label)
         sketch.setExpression(f"Constraints.{label}", expression(text))
 
+    points = {}
+
+    def point_key(x, y):
+        return round(x,8),round(y,8)
+
     def line(a, b):
         geo = sketch.addGeometry(Part.LineSegment(App.Vector(*(value(v) for v in a), 0),
                                                  App.Vector(*(value(v) for v in b), 0)), False)
         for point, pair in [(1,a), (2,b)]:
-            for axis, text in zip(("X", "Y"), pair):
-                datum(f"Distance{axis}", geo, point, text, f"G{geo}P{point}{axis}")
+            key = point_key(*(value(text) for text in pair))
+            if key in points:
+                other,position = points[key]
+                sketch.addConstraint(Sketcher.Constraint("Coincident",geo,point,other,position))
+            else:
+                for axis, text in zip(("X", "Y"), pair):
+                    datum(f"Distance{axis}", geo, point, text, f"G{geo}P{point}{axis}")
+                points[key] = geo,point
 
     pitches = []
     for i in range(1,10):
@@ -109,7 +120,15 @@ def paddle_cutout(body, table, length, width, thickness, variant):
         sketch.renameConstraint(index,f"G{geo}Radius")
         sketch.setExpression(f"Constraints.G{geo}Radius",expression(radius))
         for point,text in enumerate(endpoint_x,1):
-            datum("DistanceX",geo,point,text,f"G{geo}P{point}X")
+            if abs(value(text)-value(cx)) < 1e-9:
+                sketch.addConstraint(Sketcher.Constraint("Vertical",geo,3,geo,point))
+            elif point == 2 and abs(value(text)-value(endpoint_x[0])) < 1e-9:
+                sketch.addConstraint(Sketcher.Constraint("Vertical",geo,1,geo,2))
+            else:
+                datum("DistanceX",geo,point,text,f"G{geo}P{point}X")
+        for point,angle in [(1,start),(2,end)]:
+            points[point_key(value(cx)+value(radius)*math.cos(angle),
+                             value(cy)+value(radius)*math.sin(angle))] = geo,point
 
     def paddle(i):
         prefix = f"Tongue{i+1:02d}"
@@ -139,17 +158,17 @@ def paddle_cutout(body, table, length, width, thickness, variant):
         upper_center = f"({upper})+{fillet}"
         lower_tangent = f"({lower_center})+0.7071067811865476*{fillet}"
         upper_tangent = f"({upper_center})-0.7071067811865476*{fillet}"
-        line((root,lower),(neck_x,lower))
         arc(neck_x,lower_center,fillet,
             (neck_x,tangent_x) if reverse else (tangent_x,neck_x),
             math.pi/2 if reverse else math.pi/4,3*math.pi/4 if reverse else math.pi/2)
-        line((tangent_x,lower_tangent),(head_x,f"({cy})-0.7071067811865476*{radius}"))
         arc(cx,cy,radius,(head_x,head_x),math.pi/4 if reverse else -3*math.pi/4,
             7*math.pi/4 if reverse else 3*math.pi/4)
-        line((head_x,f"({cy})+0.7071067811865476*{radius}"),(tangent_x,upper_tangent))
         arc(neck_x,upper_center,fillet,
             (tangent_x,neck_x) if reverse else (neck_x,tangent_x),
             -3*math.pi/4 if reverse else -math.pi/2,-math.pi/2 if reverse else -math.pi/4)
+        line((root,lower),(neck_x,lower))
+        line((tangent_x,lower_tangent),(head_x,f"({cy})-0.7071067811865476*{radius}"))
+        line((head_x,f"({cy})+0.7071067811865476*{radius}"),(tangent_x,upper_tangent))
         line((neck_x,upper),(root,upper))
         return lower,upper
 
@@ -206,7 +225,8 @@ def main():
             sketch.KerfWidth = 3.2
             for i in range(10):
                 tongue_length = length/2 + [18,32,10,25,40,14,28,6,35,20][i]
-                neck, head = 6+(i%3)*0.2, 20+(i%3)*0.2
+                neck = [5,6,7,5.5,7.5,5.2,6.8,5.8,7,6][i]
+                head = neck+14
                 if variant == "rectangular-tongue" and i == 0:
                     head = neck
                 for suffix,value in [("Length",tongue_length),("NeckWidth",neck),("HeadWidth",head)]:
@@ -269,7 +289,7 @@ def main():
                     if property_name in expression:
                         frozen.setExpression(property_path, None)
         if name == "top" and variant == "recompute-error":
-            doc.getObject("PaddleKerf").setExpression("Constraints.G0P2X", "1 / 0")
+            doc.getObject("PaddleKerf").setExpression("Constraints.G0CenterX", "1 / 0")
         doc.recompute()
         path = out / "parts" / f"{name}.FCStd"
         doc.saveAs(str(path))
