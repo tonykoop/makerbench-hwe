@@ -582,11 +582,9 @@ def test_dimension_overlay_shows_gate_metrics_and_measures_two_picked_points(
         text = {row.get_attribute("data-metric"): row.locator("dd").inner_text() for row in overlay.locator(".measure-row").all()}
         assert text["bbox"] == "10.0 × 10.0 × 10.0 mm"  # boxolin master: cube(10)
         assert text["volume"] == "1.00 cm³"
-        assert text["wall"].startswith(("9.9", "10.0")) and "marked on the model" in text["wall"]
+        assert "wall" not in text, "wall thickness is no longer shown"
         viewer = page.locator(".workbench-preview model-viewer")
-        wall = viewer.locator(".measure-hotspot[data-kind=wall]")
-        assert wall.count() == 1
-        page.wait_for_function("() => document.querySelector('.measure-hotspot[data-kind=wall]').getBoundingClientRect().width > 0")
+        assert viewer.locator(".measure-hotspot[data-kind=wall]").count() == 0
 
         # Pick two points with real clicks; the turntable pauses while picking.
         measure = overlay.get_by_role("button", name="Measure distance")

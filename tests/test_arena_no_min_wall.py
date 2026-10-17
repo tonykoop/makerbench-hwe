@@ -298,3 +298,10 @@ def test_published_matchups_carry_the_bundles_recompute_provenance():
         block = item["recompute"]
         assert block["policy"] == "no-min-wall"
         assert block == bundles[item["source_bundle"]]
+
+
+def test_studio_measurement_overlay_has_no_wall_thickness_row_or_marker():
+    studio = ROOT / "makerbench/arena_studio/static"
+    for rel in ("app/lib/dimensions.js", "app/components/dimensionOverlay.js", "studio.css"):
+        text = (studio / rel).read_text(encoding="utf-8")
+        assert not re.search(r"min_wall|Min wall|wallHotspot|data-kind=\"wall\"|measure-wall", text), rel

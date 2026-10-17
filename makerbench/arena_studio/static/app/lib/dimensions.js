@@ -71,30 +71,14 @@ function cell(item, format) {
   return { ok: true, text: format(item.value) };
 }
 
-// The three gate metrics, in reading order, with honest failure text.
+// The overlay's readouts: size and volume. Wall thickness is not shown (removed 2026-10-16).
 export function overlayRows(payload) {
   const measurements = payload?.measurements;
   const box = row(measurements, "bbox");
-  const wall = row(measurements, "min_wall_thickness");
-  const located = Boolean(wall?.ok && payload?.min_wall_location);
   return [
     { key: "bbox", label: "Size (X × Y × Z)", ...cell(box, formatExtents) },
     { key: "volume", label: "Volume", ...cell(row(measurements, "volume"), formatVolume) },
-    {
-      key: "wall",
-      label: "Min wall",
-      ...cell(wall, formatMm),
-      note: wall?.ok ? (located ? "marked on the model" : "location not recovered") : "",
-    },
   ];
-}
-
-// Where the min-wall marker goes: the middle of the sampled wall.
-export function wallHotspot(payload) {
-  const location = payload?.min_wall_location;
-  if (!location) return null;
-  const centre = midpoint(location.from, location.to);
-  return centre ? { position: hotspotPosition(centre), point: centre } : null;
 }
 
 // Two-point picking: a third pick starts a new measurement.

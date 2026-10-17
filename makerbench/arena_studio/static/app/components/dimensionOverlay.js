@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { html } from "../html.js";
 import { api } from "../lib/api.js";
-import { addPick, distanceMm, formatMm, hotspotPosition, isClick, overlayRows, pickText, wallHotspot } from "../lib/dimensions.js";
+import { addPick, distanceMm, formatMm, hotspotPosition, isClick, pickText } from "../lib/dimensions.js";
 
 // Measure overlay for the workbench 3D preview (#975). Never used on blind
 // vote surfaces: measurements there could bias a vote.
@@ -54,22 +54,17 @@ export function DimensionOverlay({ element, url }) {
     };
   }, [url]);
 
-  // Hotspots: the min-wall marker plus the picked points.
-  const wall = state.status === "ready" ? wallHotspot(state.data) : null;
-  const wallValue = state.status === "ready" ? overlayRows(state.data).find((row) => row.key === "wall") : null;
+  // Hotspots: the picked points.
   useEffect(() => {
     if (!element) return undefined;
     const spots = [];
-    if (wall) {
-      spots.push({ slot: "hotspot-measure-wall", kind: "wall", position: wall.position, text: "", label: `Min wall, ${wallValue?.text}` });
-    }
     points.forEach((point, index) => {
       const name = index === 0 ? "A" : "B";
       spots.push({ slot: `hotspot-measure-${name.toLowerCase()}`, kind: "pick", position: hotspotPosition(point), text: name, label: `Point ${name}` });
     });
     syncHotspots(element, spots);
     return undefined;
-  }, [element, wall?.position, wallValue?.text, points]);
+  }, [element, points]);
 
   useEffect(() => () => element && syncHotspots(element, []), [element]);
 
