@@ -327,13 +327,42 @@ def runner_gaps(form: Mapping[str, Any], card: Optional[Mapping[str, Any]]) -> l
 
 RUN_NOW_REFUSAL = "Run now uses the default brief and one variant; use Add to tonight for custom settings."
 
+#: What ``ArenaStudioService.launch_competition`` actually executes, field by field of the
+#: New Run form. Its ``arena run`` command carries the instrument, the models, the backend
+#: and the task's reference image, and hard-codes ``--max-attempts 1 --reps 1`` with no
+#: budget or schedule argument. Every form field must appear here (a test enforces it), so a
+#: new setting is refused by Run now until the launcher really carries it.
+RUN_NOW_FIELDS: dict[str, str] = {
+    "instrument": "carried",
+    "entrants": "carried",            # subscription routes only: Run now refuses CADAM
+    "turns": "one attempt",           # --max-attempts 1
+    "brief": "registry brief",        # the arena reads the registry brief
+    "variants": "none",               # the instrument as registered
+    "deliverable": "single part",     # no assembly mode in arena run
+    "references": "task reference",   # --image-map uses the task's own image
+    "cap_usd": "no spend",            # no budget argument; safe only because no paid route can run
+    "stop_early": "one attempt",      # nothing to stop early with a single attempt
+}
+
 
 def run_now_gaps(form: Mapping[str, Any], card: Optional[Mapping[str, Any]]) -> list[str]:
-    """Settings Run now cannot carry: it launches the registered instrument with the registry
-    brief and its task reference, passing only the entrants and the turn count."""
-    gaps = [gap for gap in runner_gaps(form, card) if "turns" not in gap and "extra reference" not in gap]
+    """Settings in this form that Run now would not execute (see RUN_NOW_FIELDS)."""
+    gaps = []
+    registry_brief = str((card or {}).get("brief") or (card or {}).get("task_brief") or "").strip()
+    if card is not None and str(form.get("brief") or "").strip() != registry_brief:
+        gaps.append("your edited brief (Run now sends the registry brief)")
+    if form.get("variants"):
+        gaps.append("variants (Run now builds the instrument as registered)")
+    if (form.get("deliverable") or "single") != "single":
+        gaps.append("the wood-assembly mode")
+    if form.get("turns", RUNNER_TURNS) != RUNNER_TURNS:
+        gaps.append(f"{form.get('turns')} turns (Run now gives each entrant one attempt)")
     if form.get("references"):
         gaps.append("reference images you added (Run now uses the task's own)")
+    paid = [pick for pick in form.get("entrants") or [] if _TOOLS.get(str(pick).split(":")[0]) is not None
+            and _TOOLS[str(pick).split(":")[0]].route == "openrouter"]
+    if paid:
+        gaps.append("paid OpenRouter entrants (Run now has no spending cap)")
     return gaps
 
 

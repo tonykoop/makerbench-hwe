@@ -176,10 +176,10 @@ def test_run_now_needs_allow_live_and_one_arena_backend(repo: Path, monkeypatch)
     assert client.post("/api/newrun/run-now", json=FORM, headers=ORIGIN).status_code == 400  # mixed, with CADAM
     calls = []
     monkeypatch.setattr(client.app.state.service, "launch_competition", lambda config: calls.append(config) or {"success": True})
-    form = {**FORM, "entrants": ["freecad:opus", "freecad:sol"]}
+    form = {**FORM, "entrants": ["freecad:opus", "freecad:sol"], "turns": 1}
     assert client.post("/api/newrun/run-now", json=form, headers=ORIGIN).json() == {"success": True}
     assert calls == [{"instruments": ["sambuca"], "models": ["claude-code-opus-5.5", "codex-gpt-6.1-sol"],
-                      "backend": "freecad", "max_turns": 5, "live": True}]
+                      "backend": "freecad", "max_turns": 1, "live": True}]
 
 
 def test_estimate_route_never_launches(repo: Path, monkeypatch):
@@ -274,18 +274,37 @@ def test_run_now_and_estimate_validate_like_tonight(repo: Path, monkeypatch, cha
     ({"variants": ["15", "16"]}, "variants"),
     ({"deliverable": "assembly"}, "wood-assembly"),
     ({"references": [{"name": "a.png", "data": "data:image/png;base64,AAAA"}]}, "reference images"),
+    ({"turns": 6}, "6 turns"),
+    ({"entrants": ["freecad:opus", "cadam:sonnet"]}, "paid OpenRouter entrants"),
 ])
 def test_run_now_refuses_settings_it_cannot_carry(repo: Path, monkeypatch, change, carried):
     client = _client(repo, allow_live=True)
     calls = []
     monkeypatch.setattr(client.app.state.service, "launch_competition", lambda config: calls.append(config) or {"success": True})
-    form = {**FORM, "entrants": ["freecad:opus", "freecad:sol"]}
+    form = {**FORM, "entrants": ["freecad:opus", "freecad:sol"], "turns": 1}
     estimate = client.post("/api/newrun/estimate", json={**form, **change}, headers=ORIGIN).json()
     assert any(carried in gap for gap in estimate["run_now_gaps"])
     response = client.post("/api/newrun/run-now", json={**form, **change}, headers=ORIGIN)
     assert response.status_code == 400
     assert "Run now uses the default brief and one variant; use Add to tonight for custom settings" in response.text
     assert carried in response.text and calls == []
-    # Turns are carried, so the defaults with any turn count still launch.
-    assert client.post("/api/newrun/run-now", json={**form, "turns": 6}, headers=ORIGIN).json() == {"success": True}
-    assert calls[0]["max_turns"] == 6
+    # What Run now does execute still launches: the registry brief, one attempt, subscription entrants.
+    assert client.post("/api/newrun/run-now", json=form, headers=ORIGIN).json() == {"success": True}
+    assert calls[0]["max_turns"] == 1
+
+
+def test_every_form_field_is_accounted_for_by_run_now():
+    """A new New Run setting must be added to RUN_NOW_FIELDS (and refused) before Run now can ship it."""
+    from makerbench.arena_studio.routes_control_room import NewRunPayload
+
+    assert set(NewRunPayload.model_fields) == set(nr.RUN_NOW_FIELDS)
+
+
+def test_cap_and_stop_early_cannot_change_what_run_now_does(repo: Path, monkeypatch):
+    """No paid route can reach Run now, and one attempt has nothing to stop early: these never drop silently."""
+    client = _client(repo, allow_live=True)
+    calls = []
+    monkeypatch.setattr(client.app.state.service, "launch_competition", lambda config: calls.append(config) or {"success": True})
+    form = {**FORM, "entrants": ["freecad:opus", "freecad:sol"], "turns": 1, "cap_usd": 50.0, "stop_early": False}
+    assert client.post("/api/newrun/run-now", json=form, headers=ORIGIN).json() == {"success": True}
+    assert set(calls[0]) == {"instruments", "models", "backend", "max_turns", "live"}

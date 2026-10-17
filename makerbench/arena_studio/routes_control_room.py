@@ -197,7 +197,7 @@ def register_control_room_routes(
             raise HTTPException(status_code=400, detail=f"{nr.RUN_NOW_REFUSAL} It cannot carry: {'; '.join(gaps)}.")
         picks = checked["picks"]
         backends = {nr.entrant_for(tool, model).backend for tool, model in picks}
-        if len(backends) != 1 or any(tool.kind == "cadam" for tool, _ in picks):
+        if len(backends) != 1 or any(tool.kind == "cadam" for tool, _ in picks):  # CADAM is already a gap above
             raise HTTPException(status_code=400, detail="Run now takes entrants on one arena backend (no CADAM); mixed nights go through Add to tonight.")
         return service.launch_competition({
             "instruments": [checked["instrument_id"]],

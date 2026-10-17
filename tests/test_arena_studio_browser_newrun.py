@@ -220,6 +220,7 @@ def test_run_now_shows_a_launch_refusal(studio: str):
         for pick in ("cadam:fable", "solidworks:sol", "fusion:sonnet"):
             _cell(page, pick).click()
         _cell(page, "freecad:sol").click()
+        page.locator('input[type="range"]').fill("1")  # Run now gives each entrant one attempt
         page.get_by_role("button", name="Run now").click()
         # The fixture's reference image is not approved, so the real launcher refuses (no process starts).
         page.locator(".review-toast", has_text="Not started").wait_for()
@@ -254,6 +255,12 @@ def test_run_now_is_disabled_for_settings_it_cannot_carry(studio: str):
             _cell(page, pick).click()
         _cell(page, "freecad:sol").click()
         page.wait_for_function("() => document.querySelector('[data-testid=spend]').textContent.includes('$')")
+        # Five turns (the preset) is itself something Run now cannot carry.
+        page.get_by_test_id("run-now-hint").wait_for()
+        assert "5 turns" in page.get_by_test_id("run-now-hint").inner_text()
+        assert page.get_by_role("button", name="Run now").is_disabled()
+        page.locator('input[type="range"]').fill("1")
+        page.wait_for_function("() => !document.querySelector('[data-testid=run-now-hint]')")
         assert page.get_by_role("button", name="Run now").is_enabled()
         page.locator("#newrun-brief").fill("Boat body, but taller.")
         hint = page.get_by_test_id("run-now-hint")
