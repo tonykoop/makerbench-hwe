@@ -60,6 +60,14 @@ def test_fixture_round_trip(runs, tmp_path):
     assert str(runs) not in out.read_text()
 
 
+def test_standalone_cli_without_pythonpath(runs, tmp_path, monkeypatch):
+    monkeypatch.delenv('PYTHONPATH', raising=False)
+    out = tmp_path / 'standalone.json'
+    result = cli(runs, out)
+    assert result.returncode == 0, result.stderr
+    assert out.read_bytes() == (FIXTURES / 'expected.json').read_bytes()
+
+
 def test_regrade_absent_vs_present(runs, tmp_path):
     log = runs / "round1" / "run_log.json"
     provenance = dict(regraded_by="fixture reviewer", regrade_commit="fixture-commit",
@@ -72,6 +80,12 @@ def test_regrade_absent_vs_present(runs, tmp_path):
     assert result.returncode == 0, result.stderr
     bundle = json.loads(out.read_text())
     assert bundle.pop("regrade") == provenance
+    for matchup in bundle['matchups']:
+        for row in matchup['entrants']:
+            if row['entrant'] == mod.ENTRANT and row['n_objective_trials']:
+                assert row.pop('min_wall_method') == 'robust-v1'
+            else:
+                assert 'min_wall_method' not in row
     assert bundle == load("expected.json")
     provenance["source_run_log_sha256"]["round1/run_log.json"] = "0" * 64
     with pytest.raises(ValueError, match="does not match consumed logs"):

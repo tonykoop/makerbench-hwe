@@ -21,7 +21,13 @@ import argparse
 import copy
 import hashlib
 import json
+import sys
 from pathlib import Path
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.replay_provenance import load_regrade_provenance, validate_regrade_provenance  # noqa: E402
 
 ENTRANT = "antigravity-gemini-3.8-flash-high"
 
@@ -106,6 +112,8 @@ def build(runs: Path, prior_snapshot: dict, recording: dict, regrade: dict | Non
                 if key not in trials:
                     raise ValueError("run log and prior snapshot have different cell matrices")
                 row = _row(trials.pop(key), run_dir, model)
+                if regrade is not None and row["n_objective_trials"]:
+                    row["min_wall_method"] = "robust-v1"
                 matchup["entrants"][index] = row
                 new_rows.append(row)
         if trials or not new_rows:
@@ -138,16 +146,7 @@ def build(runs: Path, prior_snapshot: dict, recording: dict, regrade: dict | Non
     bundle["gemini_rerun"] = copy.deepcopy(recording["gemini_rerun"])
     bundle["state"] = "COMPLETE_UNVERIFIED"
     if regrade is not None:
-        allowed = {"regraded_by", "regrade_commit", "gate_policy", "source_run_log_sha256"}
-        unexpected = set(regrade) - allowed
-        if unexpected:
-            raise ValueError(f"regrade has unsupported keys: {', '.join(sorted(unexpected))}")
-        for key in ("regraded_by", "regrade_commit", "gate_policy"):
-            if not isinstance(regrade.get(key), str) or not regrade[key].strip():
-                raise ValueError(f"regrade requires {key}")
-        if regrade.get("source_run_log_sha256") != hashes:
-            raise ValueError("regrade source_run_log_sha256 does not match consumed logs")
-        bundle["regrade"] = copy.deepcopy(regrade)
+        bundle["regrade"] = validate_regrade_provenance(regrade, hashes)
     return bundle
 
 
@@ -167,7 +166,7 @@ def main() -> int:
     def load(path):
         return json.loads(path.read_text(encoding="utf-8"))
     bundle = build(args.runs, load(args.prior_snapshot), load(args.recording),
-                   load(args.regrade) if args.regrade else None)
+                   load_regrade_provenance(args.regrade) if args.regrade else None)
     args.out.write_text(json.dumps(bundle, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"wrote {args.out}: {bundle['coverage']['completed']} recorded cells")
     return 0

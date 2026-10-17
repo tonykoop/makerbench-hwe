@@ -147,7 +147,22 @@ def test_matchups_borderline_count_and_footnote_without_javascript(tmp_path):
         assert marked.locator('td').nth(2).inner_text() == '80.00% · 1 borderline (excluded)'
         assert rows.filter(has_text='0 borderline (excluded)').count() == 0
         assert '0.8–1.2%' in page.locator('body').inner_text()
-        link = page.get_by_role('link', name='the min_wall rescore notes')
+        card = page.locator('article').filter(has_text='1 borderline (excluded)')
+        assert card.count() == 1
+        link = card.get_by_role('link', name='the min_wall rescore notes')
         assert link.is_visible()
         assert link.get_attribute('href').endswith('/docs/MIN_WALL_RESCORE.md')
+        assert page.get_by_role('link', name='the min_wall rescore notes').count() == 66
+        # A mixed card remains split and labelled with JavaScript disabled.
+        item = sample['matchups'][0]
+        item['entrants'][0].pop('min_wall_method')
+        (results/'sample.json').write_text(json.dumps(sample))
+        page.set_content(builder._prerender_matchups_html(builder.build_matchups_page(results)))
+        mixed = page.locator('article').filter(has_text=item['id'])
+        assert mixed.count() == 1
+        assert mixed.locator('table').count() == 2
+        assert mixed.get_by_role('heading', name=builder.LEGACY_MIN_WALL_LABEL, exact=True).is_visible()
+        assert mixed.get_by_role('heading', name=builder.MIN_WALL_ESTIMATOR_LABELS['robust-v1'], exact=True).is_visible()
+        assert 'Estimators differ within this matchup; rows are not comparable across groups.' in mixed.inner_text()
+        assert mixed.get_by_role('link', name='the min_wall rescore notes').count() == 1
         browser.close()

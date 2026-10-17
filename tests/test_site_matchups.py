@@ -248,3 +248,46 @@ def test_invalid_borderline_metadata_is_rejected(tmp_path, checks):
     (tmp_path/'sample.json').write_text(json.dumps(sample))
     with pytest.raises(ValueError, match='invalid matchup borderline checks'):
         b.build_matchups_page(tmp_path)
+
+
+def test_mixed_estimators_split_labelled_tables_and_scope_borderline_note(tmp_path):
+    sample = bundle()
+    rows = sample['matchups'][0]['entrants']
+    rows[1].update(objective_pass_rate=1.0, n_objective_trials=1, n_infra_errors=0,
+                   min_wall_method='robust-v1')
+    (tmp_path/'sample.json').write_text(json.dumps(sample))
+    page = b.build_matchups_page(tmp_path)
+    assert page['matchups'][0]['entrants'][1]['min_wall_method'] == 'robust-v1'
+    html = b._prerender_matchups_html(page)
+    assert html.count('<table>') == 2
+    assert b.LEGACY_MIN_WALL_LABEL in html
+    assert b.MIN_WALL_ESTIMATOR_LABELS['robust-v1'] in html
+    assert 'Estimators differ within this matchup; rows are not comparable across groups.' in html
+    legacy, robust = html.split('<h4>' + b.MIN_WALL_ESTIMATOR_LABELS['robust-v1'])
+    legacy = legacy.split('<tbody>')[1]
+    assert 'stub-a' in legacy and 'stub-b' not in legacy
+    assert 'Under robust-v1' not in legacy
+    assert 'stub-b' in robust and 'stub-a' not in robust
+    assert robust.count('Under robust-v1') == 1
+
+
+def test_single_estimator_preserves_table_and_unmeasured_failure_placement(tmp_path):
+    sample = bundle()
+    (tmp_path/'sample.json').write_text(json.dumps(sample))
+    legacy = b._prerender_matchups_html(b.build_matchups_page(tmp_path))
+    sample['matchups'][0]['entrants'][0]['min_wall_method'] = 'robust-v1'
+    (tmp_path/'sample.json').write_text(json.dumps(sample))
+    robust = b._prerender_matchups_html(b.build_matchups_page(tmp_path))
+    # The measured table, including the infrastructure failure, is byte-identical.
+    assert legacy.split('<table>')[1].split('</table>')[0] == robust.split('<table>')[1].split('</table>')[0]
+    assert robust.count('<table>') == 1
+    assert '<h4>' not in robust and 'Estimators differ' not in robust
+    assert 'Under robust-v1' in robust and 'Under robust-v1' not in legacy
+
+
+def test_unknown_matchup_estimator_is_rejected(tmp_path):
+    sample = bundle()
+    sample['matchups'][0]['entrants'][0]['min_wall_method'] = 'unknown'
+    (tmp_path/'sample.json').write_text(json.dumps(sample))
+    with pytest.raises(ValueError, match='estimator'):
+        b.build_matchups_page(tmp_path)
