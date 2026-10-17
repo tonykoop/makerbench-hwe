@@ -1,4 +1,4 @@
-"""Control Room routes: Morning Review (#1105).
+"""Control Room routes: Morning Review (#1105) and New Run (#1114).
 
 Included from ``app.py`` with a one-line call, like the delta and workbench lanes.
 Nights are discovered under ``<repo>/runs`` only and addressed by folder name,
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from html import escape
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException
@@ -17,9 +17,22 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from . import control_room as cr
+from . import control_room_newrun as nr
 from .service import MATCHUP_MESH_MAX_BYTES, ArenaStudioService, _matchup_glb
 
 NO_STORE = {"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"}
+
+
+class NewRunPayload(BaseModel):
+    instrument: str = ""
+    variants: list[str] = Field(default_factory=list)
+    deliverable: str = "single"
+    entrants: list[str] = Field(default_factory=list)
+    brief: str = ""
+    references: list[dict[str, Any]] = Field(default_factory=list)
+    turns: int = 5
+    cap_usd: float = 2.0
+    stop_early: bool = True
 
 
 class ReviewPayload(BaseModel):
@@ -120,6 +133,79 @@ def register_control_room_routes(
         except Exception as error:  # noqa: BLE001 - shown to the reviewer, never fatal
             raise HTTPException(status_code=409, detail=f"Could not open {path.name}: {error}")
         return {"opened": path.name, "app": cr.NATIVE_APPS.get(path.suffix.lower(), "its app")}
+
+    # New Run (#1114). Nothing here launches a model except run-now, which needs --allow-live.
+    nightly_queue = runs_root / "nightly-cad-queue.json"
+    telemetry_store = str(service.repo_root / "data" / "sessions.jsonl")
+
+    def instruments() -> dict[str, dict]:
+        return {str(item.get("id")): item for item in service.get_registry_tasks() if item.get("id")}
+
+    @app.get("/api/newrun/catalog")
+    def newrun_catalog():
+        return {
+            **nr.catalog(list(instruments().values())),
+            "lights": nr.ready_lights(queue_writes=queue_writes, queue_path=nightly_queue),
+            "queue_writes": queue_writes,
+            "allow_live": service.allow_live,
+        }
+
+    @app.post("/api/newrun/estimate")
+    def newrun_estimate(payload: NewRunPayload):
+        form = payload.model_dump()
+        cards = instruments()
+        try:
+            nr.validate_form(form, cards, for_estimate=True)
+            result = nr.estimate(form, telemetry_store=telemetry_store)
+        except (nr.NewRunError, ValueError) as error:
+            raise HTTPException(status_code=400, detail=str(error))
+        card = cards.get(form["instrument"])
+        return {**result, "runner_gaps": nr.runner_gaps(form, card), "run_now_gaps": nr.run_now_gaps(form, card)}
+
+    @app.post("/api/newrun/tonight")
+    def newrun_tonight(payload: NewRunPayload):
+        form = payload.model_dump()
+        try:
+            built = nr.build_jobs(form, instruments=instruments(), runs_root=runs_root,
+                                  task_reference=service.reference_image_path)
+            plans = nr.write_plans(runs_root, built)
+            gaps = built[0]["plan"]["runner_cannot_apply"]
+            jobs = [item["job"] for item in built]
+            if queue_writes and not gaps:
+                return {"queued": True, "added": nr.append_jobs(runs_root, built), "plans": plans, "jobs": jobs}
+            # Queue writes off, or the runner would drop settings: staged, never silently queued.
+            draft = nr.write_draft(runs_root, built, staged_because=gaps if queue_writes else ())
+            return {"queued": False, "staged_because": gaps if queue_writes else [], "draft": draft,
+                    "plans": plans, "jobs": jobs}
+        except nr.UnsafePath as error:
+            raise HTTPException(status_code=409, detail=str(error))
+        except (nr.NewRunError, ValueError) as error:
+            raise HTTPException(status_code=400, detail=str(error))
+
+    @app.post("/api/newrun/run-now")
+    def newrun_run_now(payload: NewRunPayload):
+        if not service.allow_live:
+            raise HTTPException(status_code=403, detail="Run now needs a Studio started with --allow-live. Add it to tonight instead.")
+        form = payload.model_dump()
+        cards = instruments()
+        try:
+            checked = nr.validate_form(form, cards)
+        except nr.NewRunError as error:
+            raise HTTPException(status_code=400, detail=str(error))
+        gaps = nr.run_now_gaps(form, cards.get(checked["instrument_id"]))
+        if gaps:  # never launch while silently dropping what Tony set
+            raise HTTPException(status_code=400, detail=f"{nr.RUN_NOW_REFUSAL} It cannot carry: {'; '.join(gaps)}.")
+        picks = checked["picks"]
+        backends = {nr.entrant_for(tool, model).backend for tool, model in picks}
+        if len(backends) != 1 or any(tool.kind == "cadam" for tool, _ in picks):  # CADAM is already a gap above
+            raise HTTPException(status_code=400, detail="Run now takes entrants on one arena backend (no CADAM); mixed nights go through Add to tonight.")
+        return service.launch_competition({
+            "instruments": [checked["instrument_id"]],
+            "models": [nr.entrant_for(tool, model).model_id for tool, model in picks],
+            "backend": backends.pop(),
+            "max_turns": checked["turns"],
+            "live": True,
+        })
 
     # No-JS fallback: plain server-rendered lists with links.
     def page(title: str, body: str) -> HTMLResponse:

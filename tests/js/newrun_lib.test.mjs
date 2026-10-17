@@ -1,0 +1,74 @@
+// Unit tests for the Control Room New Run form rules (#1114).
+// Run: node --test tests/js/
+
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import {
+  blockers,
+  cellReason,
+  chooseInstrument,
+  clampTurns,
+  duration,
+  freshForm,
+  parseVariants,
+  payload,
+  togglePick,
+  warnings,
+} from "../../makerbench/arena_studio/static/app/lib/newrun.js";
+
+const CATALOG = {
+  instruments: [
+    { id: "sambuca", name: "Sambuca", assembly: false, brief: "Boat body." },
+    { id: "tongue_drum_wood_assembly", name: "Tongue drum", assembly: true, brief: "Six panels." },
+  ],
+  tools: [
+    { id: "cadam", seat: false, cells: { fable: null, opus: null, sonnet: null, sol: null } },
+    { id: "freecad", seat: false, cells: { fable: "only OpenRouter", opus: null, sonnet: null, sol: null } },
+    { id: "solidworks", seat: true, cells: { fable: "only OpenRouter", opus: null, sonnet: null, sol: null } },
+    { id: "fusion", seat: true, cells: { fable: "only OpenRouter", opus: null, sonnet: null, sol: null } },
+  ],
+};
+
+test("presets pick runnable cells and a fitting instrument", () => {
+  const matchup = freshForm(CATALOG, "matchup");
+  assert.equal(matchup.instrument, "sambuca");
+  assert.deepEqual(matchup.entrants, ["cadam:fable", "freecad:opus", "solidworks:sol", "fusion:sonnet"]);
+  assert.equal(freshForm(CATALOG, "assembly").instrument, "tongue_drum_wood_assembly");
+  assert.equal(cellReason(CATALOG, "freecad:fable"), "only OpenRouter");
+  assert.equal(cellReason(CATALOG, "nope:x"), "Unknown entrant");
+});
+
+test("choosing an instrument resets its brief and references, and leaves the preset", () => {
+  const form = { ...freshForm(CATALOG), references: [{ name: "a", data: "x" }] };
+  const next = chooseInstrument(form, CATALOG, "tongue_drum_wood_assembly");
+  assert.equal(next.brief, "Six panels.");
+  assert.equal(next.deliverable, "assembly");
+  assert.deepEqual(next.references, []);
+  assert.equal(next.preset, null);
+  assert.equal(chooseInstrument(form, CATALOG, "sambuca"), form);
+});
+
+test("picks toggle and the payload is what the server validates", () => {
+  let form = freshForm(CATALOG, "sweep");
+  form = togglePick(form, "cadam:sonnet");
+  assert.deepEqual(form.entrants, ["freecad:opus"]);
+  assert.match(blockers(form, null)[0], /at least two entrants/);
+  form = togglePick(form, "fusion:opus");
+  assert.deepEqual(blockers(form, null), []);
+  assert.deepEqual(Object.keys(payload(form)).sort(), [
+    "brief", "cap_usd", "deliverable", "entrants", "instrument", "references", "stop_early", "turns", "variants",
+  ]);
+});
+
+test("small rules read plainly", () => {
+  assert.deepEqual(parseVariants(" D4, A4 ,D4,, "), ["D4", "A4"]);
+  assert.equal(clampTurns("12"), 8);
+  assert.equal(clampTurns("0"), 1);
+  assert.equal(duration(3900), "1 h 5 min");
+  assert.equal(duration(null), "unknown");
+  const assembly = { ...freshForm(CATALOG, "assembly"), entrants: ["cadam:opus", "solidworks:sol", "fusion:opus"] };
+  const notes = warnings(assembly, CATALOG, { openrouter_complete: false, unknown_cost: ["cadam:opus"] });
+  assert.equal(notes.length, 4);
+  assert.match(blockers(assembly, { over_cap: true })[0], /over your \$2\.00 cap/);
+});

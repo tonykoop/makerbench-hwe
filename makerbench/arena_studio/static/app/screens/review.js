@@ -28,6 +28,7 @@ import {
 import { useResource } from "../hooks/useResource.js";
 import { Empty, ErrorState, Loading } from "../components/states.js";
 import { ModelViewer } from "../components/modelViewer.js";
+import { ControlRoomTabs } from "../components/controlRoomTabs.js";
 
 const EXTRA_TURNS = 3;
 
@@ -374,8 +375,9 @@ export function ReviewScreen({ route, voter }) {
           </p>
           <h1 tabindex="-1">${view.status === "ready" ? view.data.title : current?.title || "Morning Review"}</h1>
         </div>
-        ${list.length > 0 && html`<${NightPicker} nights=${list} runId=${runId} />`}
+        <${ControlRoomTabs} current="review" />
       </header>
+      ${list.length > 0 && html`<${NightPicker} nights=${list} runId=${runId} />`}
       ${body}
     </div>
   `;
