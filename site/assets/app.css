@@ -1577,8 +1577,8 @@ tr.lscape-detail td { background: var(--bg-soft); }
 .efficiency-legend-swatch { width: 10px; height: 10px; flex: 0 0 10px; border: 1.5px solid; border-radius: 50%; }
 .efficiency-legend-more { color: var(--text-soft); }
 
-/* Keep the family plot independent of the number of model legend entries. */
-.chart-box-family { height: 440px; }
+/* Reserve space for full rotated category labels and the bounded model legend. */
+.chart-box-family { height: 1100px; }
 .family-model-legend { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px 12px; margin-top: 10px; }
 .family-legend-entry { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 2px 0; border: 0; background: none; color: var(--text-soft); font: inherit; font-size: 0.75rem; text-align: left; cursor: pointer; }
 .family-legend-entry[aria-pressed="false"] .family-legend-label { text-decoration: line-through; }
@@ -1586,6 +1586,5 @@ tr.lscape-detail td { background: var(--bg-soft); }
 .family-legend-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .family-legend-more { grid-column: 1 / -1; color: var(--text-soft); font-size: 0.75rem; }
 @media (max-width: 600px) {
-  .chart-box-family { height: 480px; }
   .family-model-legend { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

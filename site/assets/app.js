@@ -1140,6 +1140,7 @@
     function drawFamilyLegend(chart) {
       legend.innerHTML = "";
       var limit = chart.width < 500 ? 4 : 8;
+      chart.options.scales.x.ticks.autoSkip = chart.width < 500;
       chart.data.datasets.slice(0, limit).forEach(function (dataset, index) {
         var entry = document.createElement("button");
         entry.type = "button";
@@ -1189,7 +1190,8 @@
         plugins: { legend: { display: false } },
         scales: {
           y: { beginAtZero: true, max: 4, ticks: { stepSize: 1, color: cssVar("--text-soft") }, grid: { color: cssVar("--border") } },
-          x: { ticks: { color: cssVar("--text-soft"), font: { size: 10 }, maxRotation: 0, autoSkip: true }, grid: { display: false } },
+          x: { ticks: { color: cssVar("--text-soft"), font: { size: 10 },
+            minRotation: 60, maxRotation: 60, autoSkip: box.clientWidth < 500 }, grid: { display: false } },
         },
       }),
     });

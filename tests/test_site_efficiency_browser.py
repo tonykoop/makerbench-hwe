@@ -325,11 +325,23 @@ def test_family_legend_preserves_plot_height(page, width, limit, theme, track):
           card.scrollWidth <= card.clientWidth+1,
         legendFits: entries.every(el => el.scrollWidth <= el.clientWidth+1),
         allVisible: datasets.every((d,i) => chart.isDatasetVisible(i)),
+        categoryCount: chart.data.labels.length,
+        visibleCategories: chart.scales.x.ticks.filter(t => t.label != null && t.label !== '').length,
+        categoryRotation: chart.scales.x.labelRotation,
+        categorySpacing: chart.scales.x.ticks.slice(1).every((tick,i) =>
+          (chart.scales.x.getPixelForValue(tick.value) -
+           chart.scales.x.getPixelForValue(chart.scales.x.ticks[i].value)) *
+            Math.sin(chart.scales.x.labelRotation*Math.PI/180) >= 12),
       };
     }""", limit)
     assert result['count'] == result['expectedCount'], result
     assert result['ratio'] >= 0.6, result
     assert result['canvasLegend'] is False, result
+    if width == 1440:
+        assert result['visibleCategories'] == result['categoryCount'], result
+    else:
+        assert result['visibleCategories'] >= min(7, result['categoryCount']), result
+    assert result['categoryRotation'] == 60 and result['categorySpacing'], result
     assert all(result[key] for key in ('overflow', 'labels', 'swatches', 'tooltips',
                                       'cardFits', 'legendFits', 'allVisible')), result
     payload = json.loads((ROOT / 'site/data/leaderboard.json').read_text())
@@ -355,7 +367,9 @@ def test_family_legend_resizes_without_duplicate_entries(page):
           const chart = Chart.getChart('chart-family');
           const legends = chart.canvas.closest('.card').querySelectorAll('.family-model-legend');
           return legends.length === 1 && legends[0].querySelectorAll('.family-legend-entry').length ===
-            Math.min(limit,chart.data.datasets.length);
+            Math.min(limit,chart.data.datasets.length) &&
+            (limit === 8 ? chart.scales.x.ticks.length === chart.data.labels.length :
+              chart.scales.x.ticks.length >= Math.min(7,chart.data.labels.length));
         }""", arg=limit)
     # A short public-data control needs no overflow note and keeps every model.
     payload = json.loads((ROOT / 'site/data/leaderboard.json').read_text())
