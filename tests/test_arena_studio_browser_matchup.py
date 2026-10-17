@@ -64,8 +64,8 @@ def test_matchup_side_by_side_renders_gates_and_recorded_time(matchup_url, tmp_p
         assert cards.count() == 2
         assert cards.locator('h4').all_text_contents() == ['stub-a', 'stub-b']
         assert '2.50 s' in cards.nth(0).inner_text()
-        assert 'min_wall: Fail' in cards.nth(0).inner_text()
-        assert '83.33%' in cards.nth(0).inner_text()
+        assert 'fits_envelope: Fail' in cards.nth(0).inner_text()
+        assert '80.00%' in cards.nth(0).inner_text()
         assert 'Not recorded' in cards.nth(1).inner_text()
         page.wait_for_function("Array.from(document.querySelectorAll('.matchup-render')).every(i => i.complete && i.naturalWidth > 0)")
         assert section.locator('.matchup-render').count() == 2

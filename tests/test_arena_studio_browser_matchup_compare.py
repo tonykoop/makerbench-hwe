@@ -95,9 +95,9 @@ def _assert_aligned_chips(compare):
     table = compare.locator("table.compare-checks")
     assert table.locator("thead th").all_inner_texts() == ["Check", "stub-a", "stub-b"]
     rows = {row.get_attribute("data-check"): row for row in table.locator("tbody tr").all()}
-    assert list(rows) == ["renders", "watertight", "nonzero_volume", "body_count", "fits_envelope", "min_wall"]
-    assert rows["min_wall"].locator(".check-chip").all_inner_texts() == ["Fail", "Pass"]
-    assert rows["min_wall"].get_attribute("data-differs") == "true"
+    assert list(rows) == ["renders", "watertight", "nonzero_volume", "body_count", "fits_envelope"]
+    assert rows["fits_envelope"].locator(".check-chip").all_inner_texts() == ["Fail", "Pass"]
+    assert rows["fits_envelope"].get_attribute("data-differs") == "true"
     assert rows["renders"].locator(".check-chip").all_inner_texts() == ["Pass", "Pass"]
     # One row per check: each entrant's chip for a check shares the row's top.
     for row in rows.values():

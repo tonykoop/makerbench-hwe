@@ -26,7 +26,7 @@ def make_matchup_repo(root):
         trials.append({'trial_id': f'fixture-{n}', 'model_id': model, 'instrument_id': 'ocarina', 'seed': 0, 'rep': 0,
                        'status': 'scored', **({'wall_time_s': 2.5} if n == 0 else {}),
                        'result': {'backend': 'openscad', 'artifacts': {'png_path': str(image)},
-                                  'objective': {'objective_pass_rate': sum(gates.values())/6, 'sub_scores': gates}}})
+                                  'objective': {'objective_pass_rate': sum(gates.values())/5, 'sub_scores': gates}}})
     (directory / 'run_log.json').write_text(json.dumps({'config': {'model_ids': ['stub-a', 'stub-b'],
         'instrument_ids': ['ocarina'], 'matchup': metadata}, 'trials': trials}))
     (root / 'registry.json').write_text(json.dumps({'instruments': []}))

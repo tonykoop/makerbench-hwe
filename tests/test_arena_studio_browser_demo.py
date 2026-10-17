@@ -92,8 +92,8 @@ def test_all_showcases_are_visible_without_mutating_controls():
                 if run == "strings-gallery":
                     assert page.locator(".demo-gallery .matchup-entrant").count() == 18
                     assert "Build checks were not completed." in page.locator(".matchup-entrant").nth(15).inner_text()
-                    assert "Passed 0 of 6" not in content
-                    assert page.locator(".matchup-entrant").nth(15).locator(".demo-check[data-state='unknown']").count() == 6
+                    assert "Passed 0 of 5" not in content
+                    assert page.locator(".matchup-entrant").nth(15).locator(".demo-check[data-state='unknown']").count() == 5
                 if run == "kora":
                     assert page.locator(".demo-context-arm").count() == 2
                     assert all(arm.locator(".matchup-entrant").count() == 3 for arm in page.locator(".demo-context-arm").all())
