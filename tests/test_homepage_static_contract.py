@@ -88,7 +88,8 @@ def test_homepage_carries_prerendered_static_fallback():
     for name in (
         "headline",
         "hero-stats",
-        "leaderboard",
+        "leaderboard-teaser",
+        "headline-chart",
         "tracks",
         "track-guardrail",
         "freshness",
@@ -101,7 +102,8 @@ def test_homepage_carries_prerendered_static_fallback():
     )
     if payload.get("models"):
         assert "Loading current results…" not in html
-        assert 'class="model-name"' in html  # static top-N leaderboard rows
+        assert 'id="leaderboard-teaser"' in html
+        assert 'href="models/' in html  # static top-N links to full model details
         assert 'class="stat-val"' in html  # hero stat strip values
         assert 'class="track-card"' in html  # track explainer cards
 
@@ -130,7 +132,7 @@ def test_homepage_stats_are_rendered_from_leaderboard_payload():
 
     assert "function renderHeroStats()" in app_js
     assert "var hs = DATA.hero_stats;" in app_js
-    assert 'document.getElementById("headline").textContent = data.headline || "";' in app_js
+    assert 'if (headline) headline.textContent = data.headline || "";' in app_js
     assert "el.hidden = false;" in app_js
 
 

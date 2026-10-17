@@ -36,12 +36,14 @@ def test_homepage_without_javascript_exposes_committed_section_data():
             data = json.loads((ROOT / "site/data/leaderboard.json").read_text())
             assert f"results as of {data['data_updated'][:10]}" in page.locator("#freshness").inner_text()
             assert page.locator("#pack-grid .pack-card").count() == len(data["roadmap"]["packs"])
-            assert page.locator("#chart-static-data tbody tr").count() > 0
+            assert page.locator("#headline-results svg rect").count() == 5
             assert page.locator("#findings").is_visible()
             assert page.locator("#ecosystem-grid .eco-node").count() == len(data["ecosystem"]["nodes"])
             page.locator("#about > details > summary").click()
             assert page.locator("#cite-bibtex").inner_text() == data["citation"]["bibtex"]
             for name, selector, count in (
+                ("charts", "#chart-static-data tbody tr", sum(
+                    not m.get("is_control") and not m.get("is_human_baseline") for m in data["models"])),
                 ("tasks", "#task-grid .task", len(data["task_families"])),
                 ("arena", "#arena-runs tbody tr", None),
                 ("landscape", "#lscape-container tbody tr", len(json.loads(

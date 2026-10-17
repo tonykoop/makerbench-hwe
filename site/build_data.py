@@ -4548,6 +4548,30 @@ def _prerender_leaderboard_teaser_html(payload: dict) -> str:
             '</tr></thead><tbody>' + "".join(rows) + '</tbody></table></div>')
 
 
+def _prerender_headline_chart_html(payload: dict) -> str:
+    """Accessible static score chart; identical with JavaScript on or off."""
+    broad, _, _ = select_leaderboard_entries(
+        payload.get("models", []), "autonomous",
+        payload.get("overall_ranking_min_families", OVERALL_RANKING_MIN_FAMILIES),
+    )
+    bars = []
+    for i, (model, _) in enumerate(broad[:5]):
+        score = model["tracks"]["blind"]["overall_mean"]
+        y = 48 + i * 54
+        bars.append(f'<text x="8" y="{y + 21}">{_esc(plain_display_model(model))}</text>'
+                    f'<rect x="410" y="{y}" width="{score / 4 * 480:.2f}" height="30" '
+                    'rx="3" fill="var(--accent)" />'
+                    f'<text x="920" y="{y + 21}">{score:.2f}</text>')
+    if not bars:
+        return '<p>No eligible measured models yet.</p>'
+    return ('<div class="table-scroll"><svg viewBox="0 0 1000 340" '
+            'style="display:block;width:100%;min-width:680px;fill:var(--text);font-size:19px" '
+            'role="img" aria-labelledby="headline-chart-title">'
+            '<title id="headline-chart-title">Top five eligible autonomous models, blind mean score out of four</title>'
+            '<text x="410" y="25">0</text><text x="890" y="25">4</text>'
+            + "".join(bars) + '</svg></div>')
+
+
 def _prerender_tracks_html(payload: dict) -> str:
     """Mirror renderTrackExplainer() in assets/app.js."""
     tracks = (payload.get("track_explainer") or {}).get("tracks") or []
@@ -4948,6 +4972,7 @@ def prerender_blocks(payload: dict, top_n: int = PRERENDER_TOP_N,
         "hero-stats": _prerender_hero_stats_html(payload),
         "leaderboard": _prerender_leaderboard_html(payload, top_n),
         "leaderboard-teaser": _prerender_leaderboard_teaser_html(payload),
+        "headline-chart": _prerender_headline_chart_html(payload),
         "tracks": _prerender_tracks_html(payload),
         "track-guardrail": _esc(explainer.get("guardrail", "")),
         "freshness": _prerender_freshness_html(payload),
