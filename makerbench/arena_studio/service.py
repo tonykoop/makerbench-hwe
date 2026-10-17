@@ -53,6 +53,7 @@ from makerbench.schema import MatchupMetadata
 from . import analytics
 from . import doe
 from . import gatekeeper
+from ..run_log_io import trial_rows
 
 #: Matchup meshes larger than this are not converted for the 3D compare (#974).
 MATCHUP_MESH_MAX_BYTES = 64 * 1024 * 1024
@@ -354,7 +355,7 @@ class ArenaStudioService:
                 cfg = data.get("config") or {}
                 models = cfg.get("model_ids") or []
                 instruments = cfg.get("instruments") or cfg.get("instrument_ids") or []
-                trials_count = len(data.get("trials") or [])
+                trials_count = len(trial_rows(data))
             except Exception:
                 pass
 
@@ -384,7 +385,7 @@ class ArenaStudioService:
         """Detailed run statistics."""
         run_log = _load_run_log(run_dir)
         cfg = run_log.get("config") or {}
-        trials = run_log.get("trials") or []
+        trials = trial_rows(run_log)
 
         # Count passes
         compiled = sum(1 for t in trials if _trial_compiled(t))

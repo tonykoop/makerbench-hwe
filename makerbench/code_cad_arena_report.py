@@ -22,6 +22,7 @@ from . import code_cad_arena_runner as runner
 from .geometry import MIN_WALL_BORDERLINE
 from .code_cad_agreement import build_agreement_summary
 from .code_cad_arena import build_elo_leaderboard
+from .run_log_io import trial_rows
 
 
 SCHEMA = "makerbench-code-cad-arena-report-v1"
@@ -68,7 +69,7 @@ def gate_means(run_log: Mapping[str, object]) -> dict[str, dict[str, float | Non
 
     sums: dict[str, dict[str, float]] = {}
     counts: dict[str, dict[str, int]] = {}
-    for entry in run_log.get("trials") or []:
+    for entry in trial_rows(run_log):
         model_id = str(entry.get("model_id") or "")
         status = str(entry.get("status") or "pending")
         if not model_id or status == "pending":
@@ -94,7 +95,7 @@ def gallery_cells(run_log: Mapping[str, object], run_dir: Path) -> list[dict]:
     """Per-(instrument, seed, rep) candidate cards, including failed entrants."""
 
     cells: dict[tuple, list[dict]] = {}
-    for entry in run_log.get("trials") or []:
+    for entry in trial_rows(run_log):
         status = str(entry.get("status") or "pending")
         if status == "pending":
             continue
@@ -165,10 +166,10 @@ def _stat_tiles(payloads: Mapping[str, object]) -> str:
     # Count trial rows directly: the orchestrator only writes summary.counts at
     # the end of a pass, so a mid-run report would otherwise show all zeros.
     counts: dict[str, int] = {}
-    for entry in log.get("trials") or []:
+    for entry in trial_rows(log):
         status = str(entry.get("status") or "pending")
         counts[status] = counts.get(status, 0) + 1
-    total = len(log.get("trials") or [])
+    total = len(trial_rows(log))
     done = sum(v for k, v in counts.items() if k in ("scored", "auto_fail", "error"))
     elo = payloads["elo"]
     rho = (payloads["agreement"].get("agreement") or {}).get("rho")

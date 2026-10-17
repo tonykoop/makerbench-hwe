@@ -6,7 +6,7 @@ Run with ``python -m makerbench.external_step metadata.json source.step out``.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -24,6 +24,13 @@ from .render import CompileError
 from .run_log_io import atomic_write_json
 
 TRACK = "external_step"
+# Clock-skew allowance for provenance timestamps: an exporter's clock may run
+# slightly ahead of ours, but a submission stamped later than this is rejected.
+MAX_CLOCK_SKEW = timedelta(minutes=5)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class ExternalStepSubmission(BaseModel):
@@ -53,6 +60,10 @@ class ExternalStepSubmission(BaseModel):
                 raise ValueError("timestamps must include a UTC offset")
         if self.exported_at < self.started_at:
             raise ValueError("exported_at must not precede started_at")
+        latest = _utcnow() + MAX_CLOCK_SKEW
+        if self.started_at > latest or self.exported_at > latest:
+            raise ValueError(
+                f"timestamps must not be in the future (allowed clock skew {MAX_CLOCK_SKEW})")
         path = PurePosixPath(self.source_path)
         if (path.is_absolute() or ".." in path.parts or "\\" in self.source_path
                 or len(path.parts) != 4 or path.parts[0] != "results"
@@ -68,7 +79,10 @@ def intake_step(submission: ExternalStepSubmission, source: Path, out_dir: Path,
     Parser failures are candidate auto-fails. Missing confinement/kernel raises
     RuntimeError and produces no score. This report is separate from blind runs.
     """
-    spec = instrument_spec_from_registry(registry, submission.task_id)
+    try:
+        spec = instrument_spec_from_registry(registry, submission.task_id)
+    except KeyError:
+        raise ValueError(f"unknown task id {submission.task_id!r}: not in the registry") from None
     source = Path(source)
     with source.open("rb") as stream:
         content = stream.read(step_mesh.MAX_INPUT_BYTES + 1)

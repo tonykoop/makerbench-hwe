@@ -43,6 +43,44 @@ def test_invalid_provenance_rejected(field, value):
         intake.ExternalStepSubmission(**{**metadata(), field: value})
 
 
+def test_future_timestamps_rejected_with_small_skew(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime(2026, 10, 16, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(intake, "_utcnow", lambda: now)
+
+    def stamp(delta):
+        return (now + delta).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    base = {**metadata(), "started_at": stamp(timedelta(minutes=-10))}
+    # within the skew: accepted; just past it: rejected, on either timestamp
+    intake.ExternalStepSubmission(**{**base, "exported_at": stamp(intake.MAX_CLOCK_SKEW)})
+    for delta in (intake.MAX_CLOCK_SKEW + timedelta(seconds=1), timedelta(days=1)):
+        with pytest.raises(ValidationError, match="future"):
+            intake.ExternalStepSubmission(**{**base, "exported_at": stamp(delta)})
+        with pytest.raises(ValidationError, match="future"):
+            intake.ExternalStepSubmission(
+                **{**base, "started_at": stamp(delta), "exported_at": stamp(delta)})
+
+
+def test_unknown_task_id_is_a_clean_cli_error(tmp_path, capsys):
+    source = tmp_path / "source.step"
+    source.write_bytes(b"synthetic")
+    meta = tmp_path / "submission.json"
+    meta.write_text(json.dumps({**metadata(), "task_id": "no_such_task"}))
+    registry = tmp_path / "registry.json"
+    registry.write_text(json.dumps(REGISTRY))
+    argv = [str(meta), str(source), str(tmp_path / "out"), "--registry", str(registry)]
+    with pytest.raises(ValueError, match="unknown task id 'no_such_task'"):
+        intake.intake_step(intake.ExternalStepSubmission(**{**metadata(), "task_id": "no_such_task"}),
+                           source, tmp_path / "out2", registry=REGISTRY)
+    proc = subprocess.run([sys.executable, "-m", "makerbench.external_step", *argv],
+                          capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 1
+    assert "external STEP: unknown task id 'no_such_task'" in proc.stderr
+    assert "Traceback" not in proc.stderr and "KeyError" not in proc.stderr
+
+
 def test_hash_mismatch_never_calls_converter(tmp_path, monkeypatch):
     source = tmp_path / "source.step"
     source.write_bytes(b"tampered")
