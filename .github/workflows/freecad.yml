@@ -42,4 +42,4 @@ jobs:
       - name: Install or validate cached extraction (no FUSE)
         run: python scripts/install_freecad.py .freecad
       - name: Test headless exports and determinism (runtime required)
-        run: python -m pytest tests/test_freecad_integration.py tests/test_wood_assembly.py -q
+        run: python -m pytest tests/test_freecad_integration.py tests/test_wood_assembly.py tests/test_wood_assembly_harness.py -q

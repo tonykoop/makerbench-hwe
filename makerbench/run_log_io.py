@@ -41,7 +41,7 @@ EXTERNAL_STEP = "external_step"
 
 def _off_track(entry: Mapping[str, object], config: Mapping[str, object]) -> bool:
     """Not a blind code-CAD trial: external STEP export, or a Blender (mesh) trial."""
-    return is_external_step(entry) or is_blender_row(entry, config)
+    return is_external_step(entry) or is_blender_row(entry, config) or is_wood_assembly(entry, config)
 
 
 def is_external_step(entry: Mapping[str, object]) -> bool:
@@ -50,6 +50,15 @@ def is_external_step(entry: Mapping[str, object]) -> bool:
         isinstance(part, Mapping) and part.get(key) == EXTERNAL_STEP
         for part in (entry, entry.get("result"), entry.get("meta"))
         for key in ("entrant_type", "modality", "track")
+    )
+
+
+def is_wood_assembly(entry: Mapping[str, object], config: Mapping[str, object] | None = None) -> bool:
+    """Native assembly diagnostics do not enter the mesh Arena scorelines."""
+    return any(
+        isinstance(part, Mapping)
+        and (part.get("track") == "wood_assembly" or part.get("backend") == "freecad_assembly")
+        for part in (entry, entry.get("result"), entry.get("meta"), config)
     )
 
 
@@ -66,7 +75,7 @@ def trial_rows(run_log: Mapping[str, object]) -> list:
     ``trial_id`` lookups keep the raw list (explicit allowlist in that test).
     """
     config = run_log.get("config") or {}
-    if is_external_step(config) or is_blender_row({}, config):
+    if is_external_step(config) or is_blender_row({}, config) or is_wood_assembly({}, config):
         return []
     return [row for row in run_log.get("trials") or [] if not _off_track(row, config)]
 
