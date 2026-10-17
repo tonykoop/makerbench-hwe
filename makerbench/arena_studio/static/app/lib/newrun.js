@@ -157,3 +157,25 @@ export function applyAutofill(form, instrumentId, suggestion) {
     references: suggestion.images.map((name) => ({ repo_image: name, name })),
   };
 }
+
+// Fill the gaps (#1110): instruments without CAD, one per night, in Tony's order.
+export function gapCandidates(catalog, family = "all") {
+  const without = new Set(catalog.gaps?.without_cad || []);
+  return catalog.instruments.filter((item) => without.has(item.id) && (family === "all" || item.family === family)).map((item) => item.id);
+}
+
+export function moveNight(order, id, delta) {
+  const from = order.indexOf(id);
+  const to = from + delta;
+  if (from < 0 || to < 0 || to >= order.length) return order;
+  const next = [...order];
+  [next[from], next[to]] = [next[to], next[from]];
+  return next;
+}
+
+export function nightDate(start, index) {
+  const date = new Date(`${start}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return "";
+  date.setUTCDate(date.getUTCDate() + index);
+  return date.toISOString().slice(0, 10);
+}
