@@ -20,6 +20,7 @@ from rich.console import Console
 from rich.table import Table
 
 from . import advisory_report
+from .arena_checks import trial_objective_rate
 from . import blender_backend
 from . import build123d_backend
 from . import cadquery_backend
@@ -1329,10 +1330,9 @@ def arena_ingest_candidate(
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1)
-    objective = (entry.get("result") or {}).get("objective") or {}
     console.print(
         f"ingested {entry['trial_id']}: status={entry['status']} "
-        f"pass_rate={objective.get('objective_pass_rate')}"
+        f"pass_rate={trial_objective_rate(entry)}"
     )
     if stl and not png:
         console.print("[yellow]no --png given — candidate is scored but will not enter blind voting[/yellow]")

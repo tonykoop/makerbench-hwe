@@ -753,14 +753,14 @@ class TestRevisions:
     def test_compare_diff_and_objective_delta(self, store):
         design = _design(store)
         did = design["design_id"]
-        obj_a = {"objective": {"pass_rate": 0.5, "checks": {"min_wall": {"passed": False}, "manifold": {"passed": True}}}}
-        obj_b = {"objective": {"pass_rate": 1.0, "checks": {"min_wall": {"passed": True}, "manifold": {"passed": True}}}}
+        obj_a = {"objective": {"pass_rate": 0.5, "checks": {"fits_envelope": {"passed": False}, "manifold": {"passed": True}}}}
+        obj_b = {"objective": {"pass_rate": 1.0, "checks": {"fits_envelope": {"passed": True}, "manifold": {"passed": True}}}}
         ra = store.save_revision(did, draft_id=_finished_draft(store, did, source="a = 1;\ncube(a);\n", objective=obj_a)["draft_id"])
         rb = store.save_revision(did, draft_id=_finished_draft(store, did, parent=ra["rev_id"], source="a = 2;\ncube(a);\n", objective=obj_b)["draft_id"])
         cmp = store.compare(did, ra["rev_id"], rb["rev_id"])
         ops = [(r["op"], r["text"]) for r in cmp["diff"]]
         assert ("-", "a = 1;") in ops and ("+", "a = 2;") in ops and (" ", "cube(a);") in ops
-        assert cmp["objective_delta"] == {"pass_rate": [0.5, 1.0], "flipped": {"min_wall": [False, True]}}
+        assert cmp["objective_delta"] == {"pass_rate": [0.5, 1.0], "flipped": {"fits_envelope": [False, True]}}
 
     def test_source_diff_rows_are_plain_text(self):
         rows = source_diff("x\n<b>y</b>\n", "x\n<i>z</i>\n")

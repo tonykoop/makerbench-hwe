@@ -1,9 +1,10 @@
 import { html } from "../html.js";
+import { objectiveRate } from "../lib/objectiveChecks.js";
 import { WINNER_TEXT } from "../lib/voteKeys.js";
 
 function objectiveText(objective) {
   if (!objective) return "No mesh-gate result recorded";
-  const rate = Number(objective.objective_pass_rate);
+  const rate = objectiveRate(objective);
   const pass = Number.isFinite(rate) ? `${Math.round(rate * 100)}% objective pass` : "Objective result recorded";
   return objective.passed === false ? `${pass}, mesh gate failed` : pass;
 }

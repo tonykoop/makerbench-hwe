@@ -27,17 +27,18 @@ test("current runs record five checks", () => {
   assert.equal(resultText({ objective_pass_rate: null }), "Build checks were not completed.");
 });
 
-test("older recorded runs keep their six checks", () => {
+test("older recorded runs: the retired wall check is ignored and the rate rescored", () => {
   const six = { ...FIVE, min_wall: 1 };
   assert.equal(resultText({ objective_pass_rate: 1, n_objective_trials: 2, gates: six, trials: [{ gates: six }] }),
-    "Passed all 6 build checks in 2 of 2 runs.");
-  const failing = { ...FIVE, min_wall: 0 };
+    "Passed all 5 build checks in 2 of 2 runs.");
+  const failing = { ...FIVE, min_wall: 0 };   // stored 5/6 counted the old wall failure
   assert.equal(resultText({ objective_pass_rate: 5 / 6, n_objective_trials: 1, gates: failing, trials: [{ gates: failing }] }),
-    "Passed 5 of 6 build checks in this run.");
+    "Passed all 5 build checks in 1 of 1 run.");
 });
 
 test("several runs: average with the run count", () => {
-  const row = { objective_pass_rate: 0.9, n_objective_trials: 2, gates: FIVE,
+  const mean = { renders: 1, watertight: 1, nonzero_volume: 1, fits_envelope: 1, body_count: 0.5 };
+  const row = { objective_pass_rate: 0.9, n_objective_trials: 2, gates: mean,
     trials: [{ gates: FIVE }, { gates: { ...FIVE, body_count: 0 } }] };
   assert.equal(resultText(row), "Build-check average: 90.00% across 2 runs.");
 });

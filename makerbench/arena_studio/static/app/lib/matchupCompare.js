@@ -1,3 +1,5 @@
+import { retainedChecks } from "./objectiveChecks.js";
+
 // Side-by-side matchup compare (#974). Pure helpers: no DOM, no fetch;
 // unit-tested under node in tests/js/matchup_compare_lib.test.mjs.
 
@@ -25,7 +27,7 @@ export function checkState(gates, name) {
 // so a chip for "watertight" always sits beside the other entrant's "watertight".
 export function checkGrid(trials) {
   const list = trials || [];
-  const seen = new Set(list.flatMap((trial) => Object.keys(trial?.gates || {})));
+  const seen = new Set(list.flatMap((trial) => Object.keys(retainedChecks(trial?.gates))));
   const extras = [...seen].filter((name) => !CHECK_ORDER.includes(name)).sort();
   const names = [...CHECK_ORDER.filter((name) => seen.has(name)), ...extras];
   return names.map((check) => {

@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from makerbench import __version__
-from makerbench.code_cad_arena_runner import RETIRED_CHECKS, recorded_objective_rate
+from makerbench.arena_checks import RETIRED_CHECKS, recorded_objective_rate
 
 PACKAGE = Path(__file__).resolve().parent
 
