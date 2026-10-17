@@ -267,6 +267,49 @@ def test_run_now_is_disabled_for_settings_it_cannot_carry(studio: str):
         hint.wait_for()
         assert "use Add to tonight for custom settings" in hint.inner_text() and "edited brief" in hint.inner_text()
         assert page.get_by_role("button", name="Run now").is_disabled()
+
+LIBRARY_PAGE = (Path(__file__).parent / "fixtures" / "control_room" / "library.html").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("studio", [{"library_fetch": lambda: LIBRARY_PAGE}], indirect=True)
+def test_library_picker_refreshes_filters_and_searches(studio: str, screenshot_dir: Path):
+    with sync_playwright() as playwright:
+        browser = _launch(playwright)
+        context, page, problems, _ = _open(browser, studio)
+        assert "No library snapshot yet" in page.get_by_test_id("library-status").inner_text()
+        page.get_by_role("button", name="Refresh from the library").click()
+        page.locator("[data-testid=library-status]", has_text="From the instrument library, refreshed").wait_for()
+        cards = page.locator(".newrun-instrument")
+        assert cards.count() == 5
+        assert "Strings · harp-lute · 3 variants" in page.locator('[data-instrument="kora"]').inner_text()
+        assert "Arena task" in page.locator('[data-instrument="kora"]').inner_text()
+        assert "No arena task" in page.locator('[data-instrument="bansuri"]').inner_text()
+        assert "Glass Harp <Starter>" in page.locator('[data-instrument="glass-harp"]').inner_text()
+
+        page.get_by_label("CAD", exact=True).select_option("none")
+        page.wait_for_function("() => document.querySelectorAll('.newrun-instrument').length === 4")
+        assert page.locator('[data-instrument="handpan"]').count() == 0
+        page.get_by_label("Search").fill("flute")
+        page.wait_for_function("() => document.querySelectorAll('.newrun-instrument').length === 1")
+        page.locator('[data-instrument="bansuri"]').click()
+        assert page.locator('[data-instrument="bansuri"]').get_attribute("aria-pressed") == "true"
+        assert page.evaluate("() => document.documentElement.scrollWidth <= window.innerWidth")
+        page.screenshot(path=str(screenshot_dir / "newrun-library-1440-light.png"), full_page=True)
+        assert problems == []
+        context.close()
+        browser.close()
+
+
+@pytest.mark.parametrize("color_scheme", ["light", "dark"])
+@pytest.mark.parametrize("studio", [{"library_fetch": lambda: LIBRARY_PAGE}], indirect=True)
+def test_library_picker_phone(studio: str, screenshot_dir: Path, color_scheme: str):
+    with sync_playwright() as playwright:
+        browser = _launch(playwright)
+        context, page, problems, _ = _open(browser, studio, viewport={"width": 390, "height": 1100}, color_scheme=color_scheme)
+        page.get_by_role("button", name="Refresh from the library").click()
+        page.locator("[data-testid=library-status]", has_text="refreshed").wait_for()
+        assert page.evaluate("() => document.documentElement.scrollWidth <= window.innerWidth")
+        page.screenshot(path=str(screenshot_dir / f"newrun-library-390-{color_scheme}.png"), full_page=True)
         assert problems == []
         context.close()
         browser.close()

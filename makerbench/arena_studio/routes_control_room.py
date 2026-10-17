@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from html import escape
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException
@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from . import control_room as cr
 from . import control_room_newrun as nr
+from . import library_manifest as lm
 from .service import MATCHUP_MESH_MAX_BYTES, ArenaStudioService, _matchup_glb
 
 NO_STORE = {"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"}
@@ -49,6 +50,8 @@ def register_control_room_routes(
     *,
     queue_writes: bool = False,
     opener: Optional[cr.Opener] = None,
+    library_fetch: Optional[Callable[[], str]] = None,
+    library_manifest: Optional[Path] = None,
 ) -> None:
     runs_root = service.repo_root / "runs"
     open_file: cr.Opener = opener or cr.windows_opener
@@ -138,17 +141,39 @@ def register_control_room_routes(
     nightly_queue = runs_root / "nightly-cad-queue.json"
     telemetry_store = str(service.repo_root / "data" / "sessions.jsonl")
 
+
+    def cards() -> tuple[list[dict], Optional[dict]]:
+        registry = service.get_registry_tasks()
+        snapshot = lm.load_snapshot(runs_root)
+        if snapshot is None:
+            return nr.registry_instruments(registry), None
+        return nr.library_instruments(snapshot["entries"], registry), snapshot
+
     def instruments() -> dict[str, dict]:
-        return {str(item.get("id")): item for item in service.get_registry_tasks() if item.get("id")}
+        return {card["id"]: card for card in cards()[0]}
 
     @app.get("/api/newrun/catalog")
     def newrun_catalog():
+        items, snapshot = cards()
         return {
-            **nr.catalog(list(instruments().values())),
+            **nr.catalog(items),
+            "library": None if snapshot is None else {
+                "source": snapshot.get("source"), "fetched_utc": snapshot.get("fetched_utc"), "count": len(items),
+                "filters": {key: sorted(set(lm.KNOWN_FILTERS[key]) | set(values))
+                            for key, values in lm.filter_options(snapshot["entries"]).items()},
+            },
             "lights": nr.ready_lights(queue_writes=queue_writes, queue_path=nightly_queue),
             "queue_writes": queue_writes,
             "allow_live": service.allow_live,
         }
+
+    @app.post("/api/newrun/library/refresh")
+    def newrun_library_refresh():
+        try:
+            snapshot = lm.refresh(runs_root, manifest_path=library_manifest, fetch=library_fetch or lm.fetch_page)
+        except (lm.LibraryError, OSError, ValueError) as error:
+            raise HTTPException(status_code=502, detail=f"Could not refresh the library: {error}")
+        return {"count": len(snapshot["entries"]), "fetched_utc": snapshot["fetched_utc"], "source": snapshot["source"]}
 
     @app.post("/api/newrun/estimate")
     def newrun_estimate(payload: NewRunPayload):
