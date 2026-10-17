@@ -23,6 +23,9 @@ import {
   parseVariants,
   payload,
   applyAutofill,
+  gapCandidates,
+  moveNight,
+  nightDate,
   togglePick,
   toggleVariant,
   usd,
@@ -405,6 +408,75 @@ function Rail({ catalog, form, estimate, onTonight, onRunNow, busy }) {
   `;
 }
 
+const DEFAULT_GAP_NIGHTS = 7;
+
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function FillGaps({ catalog, onQueued, onToast }) {
+  const [family, setFamily] = useState("all");
+  const [order, setOrder] = useState(() => gapCandidates(catalog).slice(0, DEFAULT_GAP_NIGHTS));
+  const [start, setStart] = useState(todayIso);
+  const [busy, setBusy] = useState(false);
+  const byId = useMemo(() => Object.fromEntries(catalog.instruments.map((item) => [item.id, item])), [catalog]);
+  const families = catalog.library?.filters?.family || [];
+  const gaps = catalog.gaps;
+  const pickFamily = (value) => {
+    setFamily(value);
+    setOrder(gapCandidates(catalog, value).slice(0, DEFAULT_GAP_NIGHTS));
+  };
+  const remaining = gapCandidates(catalog, family).filter((id) => !order.includes(id));
+  const queue = async () => {
+    setBusy(true);
+    try {
+      onQueued(await api("/api/newrun/fill-gaps", { method: "POST", body: { instruments: order, start_date: start } }));
+    } catch (error) {
+      onToast(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return html`
+    <section class="newrun-step newrun-gaps" aria-labelledby="gaps-title">
+      <h2 id="gaps-title">Fill the gaps <span class="newrun-sub">one instrument per night, overnight matchup each</span></h2>
+      <p class="hint" data-testid="gaps-progress">
+        Explorers complete <b>${gaps.explorers_complete}</b> of ${gaps.total}. ${gaps.without_cad.length} instruments have no CAD yet.
+      </p>
+      <div class="newrun-filters">
+        <label class="field"><span class="field-label">Family</span>
+          <select aria-label="Gap family" value=${family} onChange=${(event) => pickFamily(event.currentTarget.value)}>
+            <option value="all">All</option>
+            ${families.map((value) => html`<option key=${value} value=${value}>${value}</option>`)}
+          </select>
+        </label>
+        <label class="field"><span class="field-label">First night</span>
+          <input type="date" value=${start} onInput=${(event) => setStart(event.currentTarget.value)} />
+        </label>
+      </div>
+      <ol class="newrun-nights" aria-label="Nights, in order">
+        ${order.map(
+          (id, index) => html`<li key=${id} data-night=${id}>
+            <span class="newrun-night-date">${nightDate(start, index)}</span>
+            <span class="newrun-night-name">${byId[id]?.name || id}${byId[id]?.arena_task ? "" : html` <span class="check-chip" data-state="unknown">needs a repo hero image</span>`}</span>
+            <span class="newrun-night-actions">
+              <button type="button" aria-label=${`Move ${byId[id]?.name || id} earlier`} disabled=${index === 0} onClick=${() => setOrder((o) => moveNight(o, id, -1))}>▲</button>
+              <button type="button" aria-label=${`Move ${byId[id]?.name || id} later`} disabled=${index === order.length - 1} onClick=${() => setOrder((o) => moveNight(o, id, 1))}>▼</button>
+              <button type="button" aria-label=${`Remove ${byId[id]?.name || id}`} onClick=${() => setOrder((o) => o.filter((x) => x !== id))}>✕</button>
+            </span>
+          </li>`,
+        )}
+      </ol>
+      ${remaining.length > 0 && html`<p class="hint">
+        <button type="button" class="button-link" onClick=${() => setOrder((o) => [...o, remaining[0]])}>Add a night</button>
+        (${remaining.length} more without CAD${family === "all" ? "" : ` in ${family}`})</p>`}
+      <div class="actions">
+        <button type="button" class="button" disabled=${busy || order.length === 0} onClick=${queue}>Queue ${plural(order.length, "night")}</button>
+      </div>
+    </section>
+  `;
+}
+
 function Form({ catalog, onRefresh, refreshing }) {
   const [form, setForm] = useState(() => {
     const draft = loadDraft();
@@ -413,6 +485,7 @@ function Form({ catalog, onRefresh, refreshing }) {
   const [toast, setToast] = useState(null);
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [gapsOpen, setGapsOpen] = useState(false);
   const dialog = useRef(null);
   const estimate = useEstimate(form);
 
@@ -451,8 +524,12 @@ function Form({ catalog, onRefresh, refreshing }) {
         ([id, preset]) => html`<button key=${id} type="button" class="review-night newrun-pill" aria-pressed=${form.preset === id ? "true" : "false"}
           onClick=${() => { setForm(freshForm(catalog, id)); setToast("Preset loaded. Change anything you like."); }}>${preset.label}</button>`,
       )}
+      <button type="button" class="review-night newrun-pill" aria-pressed=${gapsOpen ? "true" : "false"} disabled=${!catalog.library}
+        title=${catalog.library ? "Schedule CAD for instruments that have none" : "Refresh from the library first"}
+        onClick=${() => setGapsOpen((open) => !open)}>Fill the gaps</button>
       <button type="button" class="review-night newrun-pill" disabled title="Start this from a design card in Morning Review">Revise my favourite</button>
     </div>
+    ${gapsOpen && html`<${FillGaps} catalog=${catalog} onToast=${setToast} onQueued=${(data) => setResult({ path: "/api/newrun/fill-gaps", data })} />`}
     <div class="newrun-layout">
       <div class="newrun-steps">
         <${InstrumentStep} catalog=${catalog} form=${form} setForm=${setForm} onRefresh=${onRefresh} refreshing=${refreshing} />
@@ -467,7 +544,9 @@ function Form({ catalog, onRefresh, refreshing }) {
     <p class="review-toast" role="status" aria-live="polite" hidden=${!toast}>${toast || ""}</p>
     <dialog class="review-dialog" ref=${dialog} onClose=${() => setResult(null)}>
       ${result && html`
-        <h2>${result.path.endsWith("run-now") ? "Run started" : queued ? "Added to tonight" : result.data.staged_because?.length ? "Staged, not queued" : "Saved as a draft"}</h2>
+        <h2>${result.path.endsWith("run-now") ? "Run started" : queued ? (result.path.endsWith("fill-gaps") ? "Nights queued" : "Added to tonight") : result.data.staged_because?.length ? "Staged, not queued" : "Saved as a draft"}</h2>
+        ${result.data.skipped?.length > 0 && html`<p class="review-fail-note">Skipped: ${result.data.skipped.map((s) => `${s.instrument} (${s.reason})`).join("; ")}</p>`}
+        ${result.data.nights && html`<p>Nights ${result.data.nights[0]} to ${result.data.nights[result.data.nights.length - 1]}. Reorder or remove them in Tonight's Queue once it exists; until then the plan files hold the order.</p>`}
         <p>
           ${result.path.endsWith("run-now")
             ? "The arena run is starting on this PC."

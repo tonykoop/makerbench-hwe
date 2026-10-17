@@ -530,3 +530,38 @@ def ready_lights(*, queue_writes: bool, queue_path: Path, environ: Mapping[str, 
         {"state": "warn", "text": "Nightly runs need your GO (#664); this screen never switches them on"},
     ]
     return lights
+
+
+# --- Fill the gaps (#1110) -------------------------------------------------------
+
+#: Library CAD states that count as "no CAD yet".
+GAP_CAD = frozenset({"none", "pending", ""})
+MAX_GAP_NIGHTS = 30
+MATCHUP_ENTRANTS = ("cadam:fable", "freecad:opus", "solidworks:sol", "fusion:sonnet")
+
+
+def gap_summary(cards: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """The library's 'Explorers complete N/M' plus how many instruments have no CAD."""
+    return {
+        "explorers_complete": sum(1 for card in cards if card.get("completeness") == "complete"),
+        "total": len(cards),
+        "without_cad": [card["id"] for card in cards if str(card.get("cad") or "") in GAP_CAD],
+    }
+
+
+def fill_gap_forms(order: Sequence[str], cards: Mapping[str, Mapping[str, Any]], *,
+                   brief_for: Callable[[Mapping[str, Any]], str],
+                   hero_for: Callable[[Mapping[str, Any]], Optional[str]]) -> list[dict[str, Any]]:
+    """One overnight-matchup form per instrument, in Tony's order (duplicates and CAD-ful ones dropped)."""
+    forms = []
+    for instrument_id in list(dict.fromkeys(order))[:MAX_GAP_NIGHTS]:
+        card = cards.get(instrument_id)
+        if card is None or str(card.get("cad") or "") not in GAP_CAD:
+            continue
+        hero = hero_for(card)
+        forms.append({
+            "instrument": instrument_id, "variants": [], "deliverable": "assembly" if card.get("assembly") else "single",
+            "entrants": list(MATCHUP_ENTRANTS), "brief": brief_for(card) or f"Model the {card.get('name') or instrument_id}.",
+            "references": [{"repo_image": hero}] if hero else [], "turns": RUNNER_TURNS, "cap_usd": 2.0, "stop_early": True,
+        })
+    return forms

@@ -415,6 +415,46 @@ def test_brief_and_references_fill_from_the_instrument_repo(repo: Path, tmp_path
         thread.join(timeout=10)
 
 
+@pytest.mark.parametrize("width", [1440, 390])
+def test_fill_the_gaps_orders_nights_and_queues_a_draft(repo: Path, tmp_path: Path, screenshot_dir: Path, width: int):
+    from test_control_room_variants import build_instruments_root
+
+    root = build_instruments_root(tmp_path / "instruments")
+    server, thread, url = _serve(repo, instruments_root=root, library_fetch=lambda: LIBRARY_PAGE)
+    try:
+        with sync_playwright() as playwright:
+            browser = _launch(playwright)
+            context, page, problems, _ = _open(browser, url, viewport={"width": width, "height": 1100})
+            assert page.get_by_role("button", name="Fill the gaps").is_disabled()  # needs the library
+            page.get_by_role("button", name="Refresh from the library").click()
+            page.locator("[data-testid=library-status]", has_text="refreshed").wait_for()
+            page.get_by_role("button", name="Fill the gaps").click()
+            assert "Explorers complete 0 of 5" in page.get_by_test_id("gaps-progress").inner_text()
+            nights = page.locator(".newrun-nights li")
+            assert nights.evaluate_all("rows => rows.map(r => r.dataset.night)") == ["kora", "cajon", "bansuri", "glass-harp"]
+            page.get_by_role("button", name="Move Cajon Box Drum earlier").click()
+            page.get_by_role("button", name="Remove Glass Harp <Starter>").click()
+            page.wait_for_function("() => document.querySelectorAll('.newrun-nights li').length === 3")
+            assert nights.evaluate_all("rows => rows.map(r => r.dataset.night)") == ["cajon", "kora", "bansuri"]
+            page.get_by_label("Gap family").select_option("string")
+            page.wait_for_function("() => document.querySelectorAll('.newrun-nights li').length === 1")
+            page.get_by_label("Gap family").select_option("all")
+            page.get_by_label("First night").fill("2026-10-20")
+            assert page.evaluate("() => document.documentElement.scrollWidth <= window.innerWidth")
+            page.screenshot(path=str(screenshot_dir / f"newrun-gaps-{width}-light.png"), full_page=True)
+
+            page.get_by_role("button", name="Queue 4 nights").click()
+            dialog = page.locator("dialog.review-dialog")
+            dialog.locator("h2", has_text="Saved as a draft").wait_for()
+            assert "Skipped:" in dialog.inner_text() and "Nights 2026-10-20 to 2026-10-20" in dialog.inner_text()
+            assert problems == []
+            context.close()
+            browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+
+
 def test_a_slow_brief_suggestion_never_overwrites_what_was_typed(repo: Path, tmp_path: Path):
     from test_control_room_variants import build_instruments_root
 
