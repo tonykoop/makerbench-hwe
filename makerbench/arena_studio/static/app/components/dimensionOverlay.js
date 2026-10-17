@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { html } from "../html.js";
 import { api } from "../lib/api.js";
-import { addPick, distanceMm, formatMm, hotspotPosition, isClick, pickText } from "../lib/dimensions.js";
+import { addPick, distanceMm, formatMm, hotspotPosition, isClick, overlayRows, pickText } from "../lib/dimensions.js";
 
 // Measure overlay for the workbench 3D preview (#975). Never used on blind
 // vote surfaces: measurements there could bias a vote.
