@@ -112,8 +112,12 @@ def read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     return columns, rows
 
 
-def variants(repo: Optional[Path]) -> dict[str, Any]:
-    """``{"source": file name or None, "variants": [{id, label, detail}]}``."""
+def variants(repo: Optional[Path], *, flute: bool = False) -> dict[str, Any]:
+    """``{"source": file name or None, "variants": [{id, label, detail}]}``.
+
+    A flute family lists ids and labels only: its dimensions come from the
+    manager-cleaned design-table CSVs, not from repo files (#1108 privacy rule).
+    """
     if repo is None:
         return {"source": None, "variants": []}
     for name in VARIANT_FILES:
@@ -137,7 +141,7 @@ def variants(repo: Optional[Path]) -> dict[str, Any]:
                 "id": row[id_col][:80],
                 "label": (row.get(label_col) or "")[:120] if label_col else "",
                 "status": row.get("status", "")[:60],
-                "detail": " · ".join(f"{c.replace('_', ' ')} {row[c]}" for c in detail_cols if row.get(c))[:240],
+                "detail": "" if flute else " · ".join(f"{c.replace('_', ' ')} {row[c]}" for c in detail_cols if row.get(c))[:240],
             })
         if out:
             return {"source": name, "variants": out}
@@ -149,3 +153,139 @@ def registry_repo_path(registry: Iterable[Mapping[str, Any]], task_id: Optional[
         if task.get("id") == task_id:
             return str(task.get("repo_path") or "") or None
     return None
+
+
+# --- brief auto-fill (#1108) ---------------------------------------------------
+
+import json  # noqa: E402 - kept with the section that uses it
+
+SPEC_KEYS = re.compile(
+    r"(length|width|height|depth|diameter|thickness|envelope|scale|tuning|key|root|range|"
+    r"strings?_?count|string_count|holes?|tongues?|bore|bars?|keys_count|notes?)", re.I)
+TABLE_NAMES = re.compile(r"(hole|tongue|tuning|scale|string|fret|pitch|bar|note)[^/]*\.csv$", re.I)
+NEVER_FILES = re.compile(r"(bom|sourcing|price|cost|supplier|rfq|order|invoice|customer|sales|quote)", re.I)
+FLUTE_WORDS = re.compile(r"flute|kena|quena|xiao|dizi|shakuhachi|fujara|bansuri|ocarina|whistle|recorder|kaval|siku|gemshorn|pistalka", re.I)
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
+MAX_SPEC = 14
+MAX_TABLE_ROWS = 24
+MAX_IMAGES = 6
+TABLE_DIRS = ("", "data", "docs")
+
+
+def _scalars(node: Any, path: str = "", depth: int = 0):
+    if depth > 4:
+        return
+    if isinstance(node, Mapping):
+        for key, value in node.items():
+            yield from _scalars(value, f"{path}.{key}" if path else str(key), depth + 1)
+    elif isinstance(node, (str, int, float)) and not isinstance(node, bool) and path:
+        yield path, node
+
+
+def _manifest_fields(repo: Path) -> tuple[Optional[str], list[dict[str, str]]]:
+    path = repo_file(repo, "capstone-manifest.json")
+    if path is None or path.stat().st_size > MAX_FILE_BYTES:
+        return None, []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, []
+    title = None
+    for key in ("instrument", "title", "name"):
+        value = data.get(key) if isinstance(data, Mapping) else None
+        if isinstance(value, str):
+            title = value
+            break
+        if isinstance(value, Mapping) and isinstance(value.get("name"), str):
+            title = value["name"]
+            break
+    fields = []
+    for key_path, value in _scalars(data):
+        leaf = key_path.rsplit(".", 1)[-1]
+        if not public_column(leaf) or not SPEC_KEYS.search(leaf) or len(str(value)) > 80:
+            continue
+        if isinstance(value, str) and value.startswith(("http", "/", ".")):
+            continue
+        fields.append({"label": leaf.replace("_", " "), "value": str(value), "source": f"capstone-manifest.json › {key_path}"})
+        if len(fields) >= MAX_SPEC:
+            break
+    return title, fields
+
+
+def _family_row(repo: Path, variant: Optional[str]) -> list[dict[str, str]]:
+    for name in VARIANT_FILES:
+        path = repo_file(repo, name)
+        if path is None:
+            continue
+        try:
+            columns, rows = read_csv(path)
+        except RepoFileError:
+            continue  # an unreadable table contributes nothing to the brief
+        id_col = next((c for c in ID_COLUMNS if c in columns), None)
+        if not rows or id_col is None:
+            continue
+        row = next((r for r in rows if variant and r.get(id_col) == variant), rows[0])
+        return [
+            {"label": c.replace("_", " "), "value": row[c], "source": f"{name} › {row[id_col]}"}
+            for c in columns
+            if c != id_col and row.get(c) and not re.search(r"status|release|notes|role|packet|path", c) and len(row[c]) <= 80
+        ][:MAX_SPEC]
+    return []
+
+
+def _tables(repo: Path) -> list[dict[str, Any]]:
+    out = []
+    for folder_name in TABLE_DIRS:
+        folder = _walk(repo, Path(folder_name).parts) if folder_name else repo
+        if folder is None:
+            continue
+        for path in sorted(folder.glob("*.csv")):
+            if path.is_symlink() or NEVER_FILES.search(path.name) or not TABLE_NAMES.search(path.name):
+                continue
+            try:
+                columns, rows = read_csv(path)
+            except RepoFileError:
+                continue
+            if columns and rows:
+                relative = path.relative_to(repo.resolve()).as_posix()
+                out.append({"source": relative, "columns": columns, "rows": rows[:MAX_TABLE_ROWS]})
+    return out[:4]
+
+
+def repo_images(repo: Path) -> list[str]:
+    folder = _walk(repo, ("images",))
+    if folder is None:
+        return []
+    names = sorted(p.name for p in folder.iterdir()
+                   if p.is_file() and not p.is_symlink() and p.suffix.lower() in IMAGE_SUFFIXES and _SAFE.match(p.name))
+    names.sort(key=lambda n: (n != "hero-render.png", "family" not in n, n))
+    return names[:MAX_IMAGES]
+
+
+def is_flute(name: str) -> bool:
+    return bool(FLUTE_WORDS.search(name or ""))
+
+
+def brief(repo: Optional[Path], *, name: str, slug: str, variant: Optional[str] = None,
+          registry_brief: str = "") -> dict[str, Any]:
+    """Suggested brief fields, each with the file it came from. Tony edits; nothing is final."""
+    out: dict[str, Any] = {"fields": [], "tables": [], "images": [], "text": "", "sources": [], "notes": []}
+    title = None
+    if repo is not None:
+        title, manifest_fields = _manifest_fields(repo)
+        if is_flute(f"{slug} {name}"):
+            # Flute dimensions come only from the manager-cleaned design-table CSVs (never the workbook).
+            out["notes"].append("Flute dimensions and tables come only from the manager-cleaned design-table CSVs, so none are read from the repo here.")
+        else:
+            out["fields"] = (_family_row(repo, variant) + manifest_fields)[:MAX_SPEC]
+            out["tables"] = _tables(repo)
+        out["images"] = repo_images(repo)
+    lines = [registry_brief.strip()] if registry_brief.strip() else [f"Model the {title or name}" + (f", variant {variant}" if variant else "") + "."]
+    if out["fields"]:
+        lines.append("Key dimensions and tuning: " + "; ".join(f"{f['label']} {f['value']}" for f in out["fields"][:8]) + ".")
+    for table in out["tables"][:2]:
+        lines.append(f"Follow the table in {table['source']} ({len(table['rows'])} rows).")
+    out["text"] = "\n\n".join(lines)
+    out["sources"] = sorted({f["source"].split(" › ")[0] for f in out["fields"]} | {t["source"] for t in out["tables"]}
+                            | ({"arena registry"} if registry_brief.strip() else set()))
+    return out

@@ -17,6 +17,12 @@ from makerbench.arena_studio import create_studio_app  # noqa: E402
 from makerbench.arena_studio import instrument_repo as ir  # noqa: E402
 
 
+def _png() -> bytes:
+    from test_control_room_newrun import PNG
+
+    return PNG
+
+
 def build_instruments_root(root: Path) -> Path:
     """Synthetic instrument repos: a family-spec.csv, a variants.csv, a private tree and a symlink."""
     kora = root / "strings" / "kora"
@@ -34,6 +40,21 @@ def build_instruments_root(root: Path) -> Path:
         "variant_id,tuning,root_note,tongues,material\nTD-8,D minor,D3,8,padauk\nTD-10,akebono,F3,10,walnut\nTD-12,C major,C3,12,maple\n",
         encoding="utf-8",
     )
+    (kora / "capstone-manifest.json").write_text(
+        '{"instrument": "Kora-inspired 21-string prototype", "engineering": {"bowl_diameter_in": 20.3, '
+        '"neck_length_in": 51.2, "supplier_price_usd": 120, "cloud_url": "https://x"}}', encoding="utf-8")
+    (kora / "images").mkdir()
+    (kora / "images" / "hero-render.png").write_bytes(_png())
+    (kora / "images" / "family-group.png").write_bytes(_png())
+    (kora / "images" / "notes.txt").write_text("not an image", encoding="utf-8")
+    (kora / "data").mkdir()
+    (kora / "data" / "string-schedule.csv").write_text("string,note,length_in\n1,F2,31.1\n2,C3,29.0\n", encoding="utf-8")
+    (kora / "bom.csv").write_text("part,unit_price_usd\ncalabash,80\n", encoding="utf-8")
+    (kora / "tuning-price-list.csv").write_text("note,price\nF2,10\n", encoding="utf-8")
+    flute = root / "woodwind" / "bansuri"
+    (flute / "data").mkdir(parents=True)
+    (flute / "family-spec.csv").write_text("member_id,role,bore_mm\nBANSURI-A,root,22\n", encoding="utf-8")
+    (flute / "data" / "hole-table.csv").write_text("hole,position_mm\n1,210\n", encoding="utf-8")
     secret = root / "private" / "sambuca"
     secret.mkdir(parents=True)
     (secret / "variants.csv").write_text("variant_id\nSECRET\n", encoding="utf-8")
@@ -145,3 +166,46 @@ def test_variants_never_open_spreadsheets(tmp_path: Path, monkeypatch, csv_prese
         assert "variants.csv" in opened  # the spy does see the reader's opens
     else:
         assert out == {"source": None, "variants": []}
+
+def test_brief_fields_name_their_source_and_skip_private_files(tmp_path: Path):
+    root = build_instruments_root(tmp_path / "instruments")
+    out = ir.brief(ir.find_repo(root, "kora"), name="Kora", slug="kora", variant="KORA-13-STUDY")
+    sources = {f["label"]: f["source"] for f in out["fields"]}
+    assert sources["string count"] == "family-spec.csv › KORA-13-STUDY"
+    assert sources["bowl diameter in"] == "capstone-manifest.json › engineering.bowl_diameter_in"
+    assert [t["source"] for t in out["tables"]] == ["data/string-schedule.csv"]
+    assert out["images"] == ["hero-render.png", "family-group.png"]
+    flat = repr(out)
+    assert "price" not in flat and "calabash" not in flat and "https://x" not in flat and "Jane Doe" not in flat
+    assert out["text"].startswith("Model the Kora-inspired 21-string prototype, variant KORA-13-STUDY.")
+    assert out["sources"] == ["capstone-manifest.json", "data/string-schedule.csv", "family-spec.csv"]
+
+
+def test_flute_repos_read_no_dimensions_or_tables(tmp_path: Path):
+    root = build_instruments_root(tmp_path / "instruments")
+    repo = ir.find_repo(root, "bansuri")
+    out = ir.brief(repo, name="Bansuri", slug="bansuri")
+    assert out["fields"] == [] and out["tables"] == [] and "manager-cleaned" in out["notes"][0]
+    assert ir.variants(repo, flute=True)["variants"] == [{"id": "BANSURI-A", "label": "root", "status": "", "detail": ""}]
+
+
+def test_brief_and_image_routes_and_repo_references(tmp_path: Path):
+    (tmp_path / "repo").mkdir()
+    repo = build_newrun_repo(tmp_path / "repo")
+    root = build_instruments_root(tmp_path / "instruments")
+    client = TestClient(create_studio_app(registry_path=repo / "registry.json", repo_root=repo, instruments_root=root),
+                        base_url="http://127.0.0.1")
+    data = client.get("/api/newrun/instrument/kora/brief").json()
+    assert data["repo_found"] and data["images"] == ["hero-render.png", "family-group.png"]
+    assert data["text"].startswith("Calabash harp.")  # the registry brief leads; repo facts follow
+    assert client.get("/api/newrun/instrument/kora/image/hero-render.png").content == _png()
+    for name in ("notes.txt", "..%2Fbom.csv", "missing.png"):
+        assert client.get(f"/api/newrun/instrument/kora/image/{name}").status_code == 404
+    form = {"instrument": "kora", "entrants": ["cadam:fable", "freecad:opus"], "brief": "Kora.", "turns": 4,
+            "cap_usd": 1.0, "references": [{"repo_image": "family-group.png"}]}
+    result = client.post("/api/newrun/tonight", json=form, headers={"Origin": "http://127.0.0.1"}).json()
+    reference = repo / result["jobs"][0]["reference_image"]  # the API publishes repo-relative paths
+    assert reference.read_bytes() == _png() and reference.resolve().is_relative_to((repo / "runs" / "control-room" / "plans").resolve())
+    bad = client.post("/api/newrun/tonight", json={**form, "references": [{"repo_image": "notes.txt"}]},
+                      headers={"Origin": "http://127.0.0.1"})
+    assert bad.status_code == 400 and "not in the instrument repo" in bad.text
