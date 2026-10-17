@@ -325,6 +325,18 @@ def runner_gaps(form: Mapping[str, Any], card: Optional[Mapping[str, Any]]) -> l
     return gaps
 
 
+RUN_NOW_REFUSAL = "Run now uses the default brief and one variant; use Add to tonight for custom settings."
+
+
+def run_now_gaps(form: Mapping[str, Any], card: Optional[Mapping[str, Any]]) -> list[str]:
+    """Settings Run now cannot carry: it launches the registered instrument with the registry
+    brief and its task reference, passing only the entrants and the turn count."""
+    gaps = [gap for gap in runner_gaps(form, card) if "turns" not in gap and "extra reference" not in gap]
+    if form.get("references"):
+        gaps.append("reference images you added (Run now uses the task's own)")
+    return gaps
+
+
 def build_jobs(form: Mapping[str, Any], *, instruments: Mapping[str, Mapping[str, Any]], runs_root: Path,
                task_reference: Callable[[str], Optional[Path]], now: Optional[datetime] = None) -> list[dict[str, Any]]:
     """Validate the form and return ``[{"job": NightlyJob dict, "plan": plan}]``, one per variant.

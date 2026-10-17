@@ -242,3 +242,24 @@ def test_layout_screens(studio: str, screenshot_dir: Path, color_scheme: str, wi
         assert problems == []
         context.close()
         browser.close()
+
+
+@pytest.mark.parametrize("studio", [{"allow_live": True}], indirect=True)
+def test_run_now_is_disabled_for_settings_it_cannot_carry(studio: str):
+    with sync_playwright() as playwright:
+        browser = _launch(playwright)
+        context, page, problems, _ = _open(browser, studio)
+        page.get_by_role("button", name="Overnight matchup").click()
+        for pick in ("cadam:fable", "solidworks:sol", "fusion:sonnet"):
+            _cell(page, pick).click()
+        _cell(page, "freecad:sol").click()
+        page.wait_for_function("() => document.querySelector('[data-testid=spend]').textContent.includes('$')")
+        assert page.get_by_role("button", name="Run now").is_enabled()
+        page.locator("#newrun-brief").fill("Boat body, but taller.")
+        hint = page.get_by_test_id("run-now-hint")
+        hint.wait_for()
+        assert "use Add to tonight for custom settings" in hint.inner_text() and "edited brief" in hint.inner_text()
+        assert page.get_by_role("button", name="Run now").is_disabled()
+        assert problems == []
+        context.close()
+        browser.close()

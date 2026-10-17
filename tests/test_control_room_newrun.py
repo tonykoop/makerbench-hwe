@@ -267,3 +267,25 @@ def test_run_now_and_estimate_validate_like_tonight(repo: Path, monkeypatch, cha
     if "brief" not in change:  # an estimate does not need a brief yet
         estimate = client.post("/api/newrun/estimate", json=form, headers=ORIGIN)
         assert estimate.status_code == 400 and message in estimate.text
+
+
+@pytest.mark.parametrize("change, carried", [
+    ({"brief": "Boat body, but taller."}, "edited brief"),
+    ({"variants": ["15", "16"]}, "variants"),
+    ({"deliverable": "assembly"}, "wood-assembly"),
+    ({"references": [{"name": "a.png", "data": "data:image/png;base64,AAAA"}]}, "reference images"),
+])
+def test_run_now_refuses_settings_it_cannot_carry(repo: Path, monkeypatch, change, carried):
+    client = _client(repo, allow_live=True)
+    calls = []
+    monkeypatch.setattr(client.app.state.service, "launch_competition", lambda config: calls.append(config) or {"success": True})
+    form = {**FORM, "entrants": ["freecad:opus", "freecad:sol"]}
+    estimate = client.post("/api/newrun/estimate", json={**form, **change}, headers=ORIGIN).json()
+    assert any(carried in gap for gap in estimate["run_now_gaps"])
+    response = client.post("/api/newrun/run-now", json={**form, **change}, headers=ORIGIN)
+    assert response.status_code == 400
+    assert "Run now uses the default brief and one variant; use Add to tonight for custom settings" in response.text
+    assert carried in response.text and calls == []
+    # Turns are carried, so the defaults with any turn count still launch.
+    assert client.post("/api/newrun/run-now", json={**form, "turns": 6}, headers=ORIGIN).json() == {"success": True}
+    assert calls[0]["max_turns"] == 6

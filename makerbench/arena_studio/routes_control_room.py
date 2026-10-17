@@ -159,7 +159,8 @@ def register_control_room_routes(
             result = nr.estimate(form, telemetry_store=telemetry_store)
         except (nr.NewRunError, ValueError) as error:
             raise HTTPException(status_code=400, detail=str(error))
-        return {**result, "runner_gaps": nr.runner_gaps(form, cards.get(form["instrument"]))}
+        card = cards.get(form["instrument"])
+        return {**result, "runner_gaps": nr.runner_gaps(form, card), "run_now_gaps": nr.run_now_gaps(form, card)}
 
     @app.post("/api/newrun/tonight")
     def newrun_tonight(payload: NewRunPayload):
@@ -186,10 +187,14 @@ def register_control_room_routes(
         if not service.allow_live:
             raise HTTPException(status_code=403, detail="Run now needs a Studio started with --allow-live. Add it to tonight instead.")
         form = payload.model_dump()
+        cards = instruments()
         try:
-            checked = nr.validate_form(form, instruments())
+            checked = nr.validate_form(form, cards)
         except nr.NewRunError as error:
             raise HTTPException(status_code=400, detail=str(error))
+        gaps = nr.run_now_gaps(form, cards.get(checked["instrument_id"]))
+        if gaps:  # never launch while silently dropping what Tony set
+            raise HTTPException(status_code=400, detail=f"{nr.RUN_NOW_REFUSAL} It cannot carry: {'; '.join(gaps)}.")
         picks = checked["picks"]
         backends = {nr.entrant_for(tool, model).backend for tool, model in picks}
         if len(backends) != 1 or any(tool.kind == "cadam" for tool, _ in picks):

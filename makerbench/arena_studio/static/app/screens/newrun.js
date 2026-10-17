@@ -281,9 +281,11 @@ function Rail({ catalog, form, estimate, onTonight, onRunNow, busy }) {
       </div>
       <div class="newrun-go">
         <button type="button" class="button" disabled=${busy || block.length > 0} onClick=${onTonight}>Add to tonight</button>
-        <button type="button" class="button button-quiet" disabled=${busy || !catalog.allow_live || block.length > 0} onClick=${onRunNow}
+        <button type="button" class="button button-quiet" disabled=${busy || !catalog.allow_live || block.length > 0 || e?.run_now_gaps?.length > 0} onClick=${onRunNow}
           title=${catalog.allow_live ? "Starts now on this PC" : "Run now needs a Studio started with --allow-live"}>Run now</button>
         ${!catalog.allow_live && html`<p class="hint">Run now needs a Studio started with <code>--allow-live</code>.</p>`}
+        ${catalog.allow_live && e?.run_now_gaps?.length > 0 && html`<p class="hint" data-testid="run-now-hint">
+          Run now uses the default brief and one variant; use Add to tonight for custom settings (${e.run_now_gaps.join("; ")}).</p>`}
       </div>
     </aside>
   `;
