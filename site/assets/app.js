@@ -687,10 +687,12 @@
   }
 
   // ---- charts -------------------------------------------------------------
-  // First 12 colors of IBM Carbon's categorical sequence:
+  // First 12 colors of IBM Carbon's light/dark categorical sequences:
   // https://v10.carbondesignsystem.com/data-visualization/color-palettes/
   var PALETTE = ["#6929c4", "#1192e8", "#005d5d", "#9f1853", "#fa4d56", "#570408",
     "#198038", "#002d9c", "#ee538b", "#b28600", "#009d9a", "#012749"];
+  var DARK_PALETTE = ["#8a3ffc", "#33b1ff", "#007d79", "#ff7eb6", "#fa4d56", "#fff1f1",
+    "#6fdc8c", "#4589ff", "#d12771", "#d2a106", "#08bdba", "#bae6ff"];
 
   function modelColor(idx, model) {
     if (model && model.is_control) return cssVar("--control") || "#6b46c1";
@@ -698,7 +700,8 @@
     var key = String((model && (model.model_family || model.identifier)) || "unknown");
     var hash = 0;
     for (var i = 0; i < key.length; i++) hash = (Math.imul(hash, 31) + key.charCodeAt(i)) >>> 0;
-    return PALETTE[hash % PALETTE.length];
+    var palette = document.documentElement.getAttribute("data-theme") === "dark" ? DARK_PALETTE : PALETTE;
+    return palette[hash % palette.length];
   }
 
   function alphaColor(color, alpha) {

@@ -238,3 +238,53 @@ def test_single_dot_keeps_ticks_and_a_visible_frontier(page):
     finally:
         page.unroute(pattern)
         page.reload(wait_until="networkidle")
+
+
+@pytest.mark.parametrize("track", ["blind", "perception"])
+def test_dark_profile_grid_and_family_chart_contrast(page, track):
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    page.locator(f'#track-toggle button[data-track="{track}"]').click()
+    # Exercise live theme changes too: each switch rebuilds the chart datasets.
+    for theme in ("dark", "light", "dark"):
+        if page.locator("html").get_attribute("data-theme") != theme:
+            page.locator('#theme-toggle').click()
+        page.locator('.profile-show-all input').check()
+        result = page.evaluate("""() => {
+          const color = MakerBenchEfficiency.modelColor;
+          const css = key => getComputedStyle(document.documentElement).getPropertyValue(key).trim();
+          const luminance = hex => {
+            const rgb = hex.slice(1).match(/../g).map(v => parseInt(v,16)/255)
+              .map(v => v <= .04045 ? v/12.92 : ((v+.055)/1.055)**2.4);
+            return .2126*rgb[0]+.7152*rgb[1]+.0722*rgb[2];
+          };
+          const contrast = foreground => {
+            const a = luminance(foreground), b = luminance(css('--bg-elev'));
+            return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
+          };
+          const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+          const palette = dark
+            ? ['#8a3ffc','#33b1ff','#007d79','#ff7eb6','#fa4d56','#fff1f1',
+               '#6fdc8c','#4589ff','#d12771','#d2a106','#08bdba','#bae6ff']
+            : ['#6929c4','#1192e8','#005d5d','#9f1853','#fa4d56','#570408',
+               '#198038','#002d9c','#ee538b','#b28600','#009d9a','#012749'];
+          const profiles = Array.from(document.querySelectorAll('.profile-plots canvas'))
+            .flatMap(canvas => Chart.getChart(canvas).data.datasets);
+          const bars = Chart.getChart('chart-family').data.datasets;
+          const colors = Array.from({length:100}, (_,i) => color(i,{model_family:'family-'+i}));
+          return {
+            profileGrid: profiles.length > 3 && profiles.every(d =>
+              d.borderColor === color(99,d._model) && d.pointBackgroundColor === d.borderColor &&
+              (!dark || contrast(d.borderColor) >= 3)),
+            familyBars: bars.length > 3 && bars.every(d => !dark || contrast(d.backgroundColor) >= 3),
+            allSlots: new Set(colors).size === 12 && colors.every(c => !dark || contrast(c) >= 3),
+            sameHashSlot: colors.every((c,i) => {
+              let hash = 0;
+              for (const ch of 'family-'+i) hash = (Math.imul(hash,31)+ch.charCodeAt(0)) >>> 0;
+              return c === palette[hash % palette.length] &&
+                c === color(99,{model_family:'family-'+i});
+            }),
+            control: color(0,{is_control:true}) === css('--control'),
+            human: color(0,{is_human_baseline:true}) === css('--human'),
+          };
+        }""")
+        assert all(result.values()), (track, theme, result)
