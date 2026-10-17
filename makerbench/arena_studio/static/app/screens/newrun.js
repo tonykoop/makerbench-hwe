@@ -164,6 +164,8 @@ function VariantStep({ form, setForm }) {
                 ? "Reading the instrument repo…"
                 : table.status === "error"
                   ? `Couldn't read the instrument repo: ${table.error.message}`
+                  : table.status === "ready" && table.data.error
+                  ? `${table.data.error} Type variants here instead.`
                   : table.status === "ready" && !table.data.instruments_root
                   ? "Start the Studio with --instruments-root to read variants from the instrument repos. Each variant is its own night job."
                   : table.status === "ready" && !table.data.repo_found
