@@ -68,13 +68,16 @@ uploads to Hugging Face.
   python scripts/build_hf_space.py
   ```
 
-  This copies `spaces/makerbench_hwe/` into `dist/hf_space/` (git-ignored)
+  This writes `spaces/makerbench_hwe/` **as committed at `HEAD`** (read from
+  the git object database, so untracked, symlinked or hard-linked files can
+  never be staged; commit your changes first) into `dist/hf_space/` (git-ignored)
   and fails closed unless the staged tree passes the integrity checks: no
   path naming private storage, oracles, submissions, held-out seeds or
   results; no reference to the private oracle or submission locations; the
   `scripts/audit_public_artifacts.py` path rules and the
   `scripts/check_public_terms.py` fingerprints pass on every staged file;
-  the card carries the canary; the gradio pin equals the card's
+  every file is a `.py`, `.md` or `.txt` that is strict UTF-8 with no NUL or
+  control bytes except tab/LF/CR; the card carries the canary; the gradio pin equals the card's
   `sdk_version`. `--out` overrides the staging directory; `--space-id` only
   changes the printed upload command. The same checks run in CI
   (`tests/test_build_hf_space.py`, `tests/test_hf_space_app.py`).

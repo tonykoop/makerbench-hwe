@@ -10,6 +10,7 @@ public-artifact audit and public-term checks pass on it.
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -189,17 +190,8 @@ def test_verify_rejects_symlink_in_staged_tree(staged: Path, tmp_path: Path) -> 
     assert "tabs/ok.txt: symlinks are not allowed in the Space tree" in problems
 
 
-@pytest.mark.parametrize("encoding", ["utf-16", "utf-16-le", "utf-16-be", "utf-32"])
-def test_verify_rejects_private_reference_in_utf16_utf32_text(staged: Path, encoding: str) -> None:
-    (staged / "tabs" / "ref.txt").write_bytes(
-        "'../../private/oracles/synthetic.txt'\n".encode(encoding)
-    )
-    problems = build_hf_space.verify_staged(staged)
-    assert "tabs/ref.txt: refers to a private location" in problems
-
-
-def test_verify_rejects_unlisted_binary(staged: Path) -> None:
-    (staged / "tabs" / "blob.dat").write_bytes(b"\x00\x01\xff\xfe\x00\x80" * 8)
+def test_verify_rejects_unlisted_file_type(staged: Path) -> None:
+    (staged / "tabs" / "blob.dat").write_bytes(b"plain text\n")
     problems = build_hf_space.verify_staged(staged)
     assert any(p.startswith("tabs/blob.dat: file type .dat is not allowed") for p in problems), problems
 
@@ -248,121 +240,107 @@ def test_main_prints_upload_command_for_the_one_space(tmp_path, monkeypatch, cap
     assert (out / "app.py").is_file()
 
 
-def _tiny_png() -> bytes:
-    import struct
-    import zlib
-
-    def chunk(kind: bytes, body: bytes) -> bytes:
-        return (struct.pack(">I", len(body)) + kind + body
-                + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF))
-
-    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
-    idat = zlib.compress(b"\x00\xff\x00\x00")
-    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
-
-
-def _tiny_png() -> bytes:
-    import struct
-    import zlib
-
-    def chunk(kind: bytes, body: bytes) -> bytes:
-        return (struct.pack(">I", len(body)) + kind + body
-                + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF))
-
-    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
-    idat = zlib.compress(b"\x00\xff\x00\x00")
-    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
-
-
 PRIVATE_PATH = "../../private/oracles/x"
-ENCODINGS = ["utf-8", "utf-16", "utf-16-le", "utf-16-be", "utf-32", "utf-32-le", "utf-32-be"]
-
-
-def test_allowlist_equals_extensions_present_in_the_space_source() -> None:
-    present = {
-        p.suffix.lower()
-        for p in SPACE_SRC.rglob("*")
-        if p.is_file() and "__pycache__" not in p.parts and p.suffix not in {".pyc", ".pyo"}
-    }
-    assert present == build_hf_space.ALLOWED_SUFFIXES, (
-        "a new file type in the Space needs a deliberate allowlist review"
-    )
-    assert not any(p.is_file() and p.suffix == "" for p in SPACE_SRC.rglob("*")
-                   if "__pycache__" not in p.parts)
-
-
-def test_real_space_tree_passes(staged: Path) -> None:
-    assert build_hf_space.verify_staged(staged) == []
-
-
-@pytest.mark.parametrize("encoding", ["utf-16-le", "utf-16-be", "utf-32-le", "utf-32-be"])
-@pytest.mark.parametrize(
-    "suffix", [".svgz", ".gz", ".zip", ".woff", ".woff2", ".ico", ".png", ".svg", ".json"]
-)
-def test_unlisted_extensions_are_rejected_even_with_padded_encoded_text(
-    staged: Path, encoding: str, suffix: str
-) -> None:
-    (staged / "tabs" / f"probe{suffix}").write_bytes(
-        (PRIVATE_PATH + "\n" + "\f" * 12).encode(encoding)
-    )
-    problems = build_hf_space.verify_staged(staged)
-    rel = f"tabs/probe{suffix}"
-    assert any(p.startswith(f"{rel}: file type {suffix} is not allowed") for p in problems)
-    assert f"{rel}: refers to a private location" in problems  # still scanned too
-
-
-def test_reviewer_svgz_utf16_gzip_case_fails(staged: Path) -> None:
-    import gzip
-
-    xml = f'<svg xmlns="http://www.w3.org/2000/svg"><!-- {PRIVATE_PATH} --></svg>'
-    (staged / "icon.svgz").write_bytes(gzip.compress(xml.encode("utf-16")))
-    assert any(
-        p.startswith("icon.svgz: file type .svgz is not allowed")
-        for p in build_hf_space.verify_staged(staged)
-    )
+INVENTED = "zzreview synthetic sapphire term"
+WIDE = ["utf-16", "utf-16-le", "utf-16-be", "utf-32", "utf-32-le", "utf-32-be"]
 
 
 @pytest.fixture()
-def allow_png_svg(monkeypatch):
-    """Model a deliberate future review that allows an image and SVG."""
-    monkeypatch.setattr(build_hf_space, "BINARY_ALLOWED_SUFFIXES", {".png"})
-    monkeypatch.setattr(build_hf_space, "TEXT_ALLOWED_SUFFIXES", {".py", ".md", ".txt", ".svg"})
-    monkeypatch.setattr(build_hf_space, "ALLOWED_SUFFIXES", {".py", ".md", ".txt", ".svg", ".png"})
-
-
-@pytest.mark.parametrize("encoding", ENCODINGS)
-def test_svg_path_and_fingerprint_payloads_fail_in_every_encoding(
-    staged: Path, allow_png_svg, monkeypatch, encoding: str
-) -> None:
-    invented = "zz synthetic invented term"
+def invented_fingerprint(monkeypatch):
+    """Add only an invented phrase's hash to the loaded denylist, in memory."""
     real_load = build_hf_space._load_script
 
     def load(name):
         module = real_load(name)
         if name == "check_public_terms":
             base = module.load_hashes
-            module.load_hashes = lambda path: frozenset(base(path)) | {module.fingerprint(invented)}
+            module.load_hashes = lambda path: frozenset(base(path)) | {module.fingerprint(INVENTED)}
         return module
 
     monkeypatch.setattr(build_hf_space, "_load_script", load)
-    svg = '<svg xmlns="http://www.w3.org/2000/svg"><!-- {} --></svg>'
-    (staged / "a.svg").write_bytes(svg.format(PRIVATE_PATH).encode(encoding))
-    (staged / "b.svg").write_bytes(svg.format(invented).encode(encoding))
-    problems = build_hf_space.verify_staged(staged)
-    assert "a.svg: refers to a private location" in problems, problems
-    assert any(p.startswith("b.svg:") and "fingerprint" in p for p in problems), problems
 
 
-def test_real_png_passes_and_wrong_magic_fails_when_png_is_allowed(
-    staged: Path, allow_png_svg
+def test_allowlist_equals_extensions_present_in_the_space_source() -> None:
+    files = [p for p in SPACE_SRC.rglob("*")
+             if p.is_file() and "__pycache__" not in p.parts and p.suffix not in {".pyc", ".pyo"}]
+    assert {p.suffix.lower() for p in files} == build_hf_space.ALLOWED_SUFFIXES, (
+        "a new file type in the Space needs a deliberate allowlist review"
+    )
+    assert all(p.suffix for p in files)
+
+
+def test_real_space_stages_from_the_committed_tree(tmp_path: Path) -> None:
+    n = build_hf_space.stage(tmp_path / "out")
+    assert n == len(build_hf_space.committed_space_files()) == 7
+    assert build_hf_space.verify_staged(tmp_path / "out") == []
+
+
+@pytest.mark.parametrize("encoding", WIDE)
+@pytest.mark.parametrize("offset", [b"", b"X", b"XY", b"XYZ"])
+@pytest.mark.parametrize("payload", [PRIVATE_PATH, INVENTED])
+def test_wide_encoded_payloads_fail_at_any_byte_offset(
+    staged: Path, invented_fingerprint, encoding: str, offset: bytes, payload: str
 ) -> None:
-    (staged / "logo.png").write_bytes(_tiny_png())
-    ok = '<svg xmlns="http://www.w3.org/2000/svg"/>'
-    (staged / "icon.svg").write_text(ok, encoding="utf-8")
-    assert build_hf_space.verify_staged(staged) == []
-    (staged / "fake.png").write_bytes(b"GIF89a" + b"\x00" * 10)
-    (staged / "tabs" / "padded.png").write_bytes((PRIVATE_PATH + "\f" * 12).encode("utf-16-le"))
+    (staged / "tabs" / "probe.txt").write_bytes(offset + payload.encode(encoding) + b"Y")
     problems = build_hf_space.verify_staged(staged)
-    assert "fake.png: contents do not match the .png file signature" in problems
-    assert "tabs/padded.png: contents do not match the .png file signature" in problems
-    assert "tabs/padded.png: refers to a private location" in problems
+    assert any(p.startswith("tabs/probe.txt: ") for p in problems), problems
+
+
+@pytest.mark.parametrize("data", [b"ok\x00text\n", b"bell\x07\n", b"esc\x1b[0m\n", b"del\x7f\n",
+                                  b"\xff\xfe bad utf8\n", b"\xc3\x28\n"])
+def test_nul_control_and_non_utf8_bytes_fail(staged: Path, data: bytes) -> None:
+    (staged / "tabs" / "bad.txt").write_bytes(data)
+    assert any(p.startswith("tabs/bad.txt: ") for p in build_hf_space.verify_staged(staged))
+
+
+def test_tab_lf_cr_and_utf8_text_are_allowed(staged: Path) -> None:
+    (staged / "tabs" / "ok.txt").write_bytes("a\tb\r\nc – é\n".encode("utf-8"))
+    assert build_hf_space.verify_staged(staged) == []
+
+
+@pytest.mark.parametrize("payload", [PRIVATE_PATH, INVENTED])
+def test_utf8_path_and_fingerprint_still_fail(staged: Path, invented_fingerprint, payload: str) -> None:
+    (staged / "tabs" / "u.txt").write_text(f"see {payload}\n", encoding="utf-8")
+    assert any(p.startswith("tabs/u.txt:") for p in build_hf_space.verify_staged(staged))
+
+
+@pytest.mark.parametrize("suffix", [".svgz", ".gz", ".zip", ".woff", ".woff2", ".ico", ".png", ".svg", ".json"])
+def test_unlisted_extensions_are_rejected(staged: Path, suffix: str) -> None:
+    (staged / "tabs" / f"probe{suffix}").write_bytes(b"harmless\n")
+    assert any(p.startswith(f"tabs/probe{suffix}: file type {suffix} is not allowed")
+               for p in build_hf_space.verify_staged(staged))
+
+
+@pytest.mark.parametrize("relative", [False, True])
+def test_stage_refuses_symlinked_source_root(tmp_path: Path, monkeypatch, relative: bool) -> None:
+    real = _copy_src(tmp_path)
+    link = tmp_path / "linked_space"
+    if relative:
+        monkeypatch.chdir(tmp_path)
+        link.symlink_to("src", target_is_directory=True)
+        src = Path("linked_space")
+    else:
+        link.symlink_to(real, target_is_directory=True)
+        src = link
+    with pytest.raises(SystemExit, match="root is a symlink"):
+        build_hf_space.stage(tmp_path / "out", src=src)
+
+
+def test_stage_refuses_hardlinked_file(tmp_path: Path) -> None:
+    outside = tmp_path / "outside.txt"
+    outside.write_text("synthetic\n", encoding="utf-8")
+    src = _copy_src(tmp_path)
+    os.link(outside, src / "tabs" / "note.txt")
+    with pytest.raises(SystemExit, match="hard-linked"):
+        build_hf_space.stage(tmp_path / "out", src=src)
+
+
+def test_committed_tree_staging_ignores_untracked_and_aliased_working_files() -> None:
+    before = build_hf_space.committed_space_files()
+    extra = SPACE_SRC / "tabs" / "untracked_probe.txt"
+    extra.write_text("untracked\n", encoding="utf-8")
+    try:
+        after = build_hf_space.committed_space_files()
+    finally:
+        extra.unlink()
+    assert before == after and "tabs/untracked_probe.txt" not in after
