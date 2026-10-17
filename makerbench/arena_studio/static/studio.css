@@ -3404,3 +3404,64 @@ body[data-demo="true"] .demo-header-links {
   font-size: var(--step--1);
   color: var(--muted);
 }
+
+/* Fill the gaps (#1110). */
+.newrun-nights {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.newrun-nights li {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--ground);
+}
+
+.newrun-night-date {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: var(--step--1);
+}
+
+.newrun-night-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.newrun-night-actions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.newrun-night-actions button {
+  width: 2rem;
+  height: 1.75rem;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.newrun-night-actions button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+@media (max-width: 480px) {
+  .newrun-nights li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .newrun-night-date {
+    grid-column: 1 / -1;
+  }
+}
