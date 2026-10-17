@@ -29,6 +29,7 @@ RAW_TRIAL_ALLOWLIST: dict[tuple[str, str], str] = {
     ("makerbench/code_cad_orchestrator.py", "_load_log"): _WRITER,
     ("makerbench/code_cad_orchestrator.py", "_merge_and_write"): _WRITER,
     ("makerbench/nightly_cad.py", "_append_error_trial"): _WRITER,
+    ("makerbench/arena_studio/demo.py", "_without_retired"): _OTHER_DATA,
     ("scripts/regrade_scoreline.py", "regrade"): _WRITER + " (writes the already-filtered copy)",
     ("scripts/build_studio_demo_data.py", "validate_aggregate_seeds"): _OTHER_DATA,
     ("scripts/build_studio_demo_data.py", "build"): _OTHER_DATA,
@@ -43,7 +44,9 @@ RUN_LOG_LOADER_ALLOWLIST: dict[str, str] = {
     "scripts/replay_provenance.py": "hashes run_log.json files; never reads rows",
     "site/build_data.py": "reads config and scoreline files; trial rows never touched",
 }
-OTHER_DATA_FILES = ("scripts/build_studio_demo_data.py", "scripts/build_studio_demo_space.py")
+OTHER_DATA_FILES = (
+    "makerbench/arena_studio/demo.py",
+    "scripts/build_studio_demo_data.py", "scripts/build_studio_demo_space.py")
 
 _SCAN = scan_tree(ROOT)
 

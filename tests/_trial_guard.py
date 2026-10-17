@@ -24,7 +24,7 @@ import ast
 from dataclasses import dataclass
 from pathlib import Path
 
-TARGET = "trials"
+TARGETS = frozenset({"trials"})
 ACCESSORS = {"get", "setdefault", "pop", "__getitem__", "__setitem__", "__delitem__"}
 KEY_FUNCS = {"getattr", "itemgetter", "attrgetter", "getitem", "setitem", "delitem"}
 STR_METHODS = {"lower", "upper", "strip", "casefold"}
@@ -124,8 +124,10 @@ def _literal_strings(node: ast.AST, env: _Env, imported: dict[str, set[str]]) ->
     return out
 
 
-def _is_target(node: ast.AST | None, env: _Env, imported: dict[str, set[str]]) -> bool:
-    return node is not None and TARGET in _values(node, env, imported)
+def _is_target(
+    node: ast.AST | None, env: _Env, imported: dict[str, set[str]], targets: frozenset[str]
+) -> bool:
+    return node is not None and bool(targets & _values(node, env, imported))
 
 
 def _accessor_of(node: ast.AST, env: _Env, imported: dict[str, set[str]]) -> str | None:
@@ -147,7 +149,11 @@ def _accessor_of(node: ast.AST, env: _Env, imported: dict[str, set[str]]) -> str
 
 
 class _Visitor(ast.NodeVisitor):
-    def __init__(self, rel: str, imported: dict[str, set[str]]):
+    def __init__(
+        self, rel: str, imported: dict[str, set[str]], targets: frozenset[str], attributes: bool
+    ):
+        self.targets = targets
+        self.attributes = attributes
         self.rel = rel
         self.imported = imported
         self.findings: list[Finding] = []
@@ -224,21 +230,26 @@ class _Visitor(ast.NodeVisitor):
 
     # ----- the checks ------------------------------------------------------
     def visit_Subscript(self, node: ast.Subscript) -> None:
-        if _is_target(node.slice, self.env, self.imported):
+        if _is_target(node.slice, self.env, self.imported, self.targets):
             self._flag(node, "subscript")
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if self.attributes and node.attr in self.targets:
+            self._flag(node, "attribute read")
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
         func = node.func
         accessor = _accessor_of(func, self.env, self.imported)
-        if accessor and node.args and _is_target(node.args[0], self.env, self.imported):
+        if accessor and node.args and _is_target(node.args[0], self.env, self.imported, self.targets):
             self._flag(node, f"call to {accessor}")
         elif (
             isinstance(func, ast.Name)
             and func.id in KEY_FUNCS
             or (isinstance(func, ast.Attribute) and func.attr in KEY_FUNCS)
         ):
-            if any(_is_target(a, self.env, self.imported) for a in node.args):
+            if any(_is_target(a, self.env, self.imported, self.targets) for a in node.args):
                 self._flag(node, "key function")
         elif isinstance(func, (ast.Name, ast.Attribute)) and (
             getattr(func, "id", None) == "partial" or getattr(func, "attr", None) == "partial"
@@ -246,7 +257,7 @@ class _Visitor(ast.NodeVisitor):
             if (
                 len(node.args) >= 2
                 and _accessor_of(node.args[0], self.env, self.imported)
-                and _is_target(node.args[1], self.env, self.imported)
+                and _is_target(node.args[1], self.env, self.imported, self.targets)
             ):
                 self._flag(node, "partial accessor")
         self.generic_visit(node)
@@ -266,9 +277,16 @@ def _module_constants(tree: ast.Module) -> dict[str, set[str]]:
 
 
 def analyze_source(
-    source: str, rel: str, project_constants: dict[str, dict[str, set[str]]] | None = None
+    source: str,
+    rel: str,
+    project_constants: dict[str, dict[str, set[str]]] | None = None,
+    targets: frozenset[str] = TARGETS,
+    attributes: bool = False,
 ) -> list[Finding]:
-    """Findings for one module. ``project_constants`` maps module basename -> exported constants."""
+    """Findings for one module. ``project_constants`` maps module basename -> exported constants.
+
+    ``targets`` are the key names to hunt for; ``attributes`` also flags ``x.<target>`` reads
+    (for objective keys that dataclasses expose as attributes)."""
     tree = ast.parse(source, filename=rel)
     imported: dict[str, set[str]] = {}
     for node in ast.walk(tree):
@@ -277,7 +295,7 @@ def analyze_source(
             for alias in node.names:
                 if alias.name in exports:
                     imported[alias.asname or alias.name] = exports[alias.name]
-    visitor = _Visitor(rel, imported)
+    visitor = _Visitor(rel, imported, targets, attributes)
     visitor._bind_body(tree)  # module-level bindings
     visitor.visit(tree)
     return visitor.findings
