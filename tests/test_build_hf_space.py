@@ -117,12 +117,16 @@ def test_staged_tree_contains_no_private_or_oracle_paths(staged: Path) -> None:
     assert build_hf_space.verify_staged(staged) == []
 
 
-def test_space_source_reads_nothing_outside_its_directory() -> None:
-    """The app must not reach into the repo (results/, private/, site/ data)."""
+def test_space_source_uses_installed_package_without_repo_data_paths() -> None:
+    """Only the installed package may supply allowlisted public task modules."""
     for path in SPACE_SRC.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         assert "parents[" not in text, path
-        assert ".parent.parent" not in text, path
+        if path.name == "grade.py":
+            assert text.count(".parent.parent") == 1
+            assert 'Path(makerbench.__file__).resolve().parent.parent / "tasks" / family' in text
+        else:
+            assert ".parent.parent" not in text, path
         assert "open(" not in text, path
         assert "read_text" not in text, path
 

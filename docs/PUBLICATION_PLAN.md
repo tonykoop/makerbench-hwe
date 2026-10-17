@@ -6,7 +6,7 @@ Plan"): publishing the MakerBench Hugging Face Space and submitting a
 short arXiv technical report. Everything here is a manual maintainer action;
 nothing in this repo publishes anything automatically.
 
-**State as of 2026-06-14:**
+**Baseline 2026-06-14; Space status updated 2026-10-16:**
 
 - Live: GitHub Pages leaderboard (<https://tonykoop.github.io/makerbench-hwe/>),
   regenerated from `results/` by `.github/workflows/pages.yml`.
