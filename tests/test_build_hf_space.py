@@ -10,7 +10,6 @@ public-artifact audit and public-term checks pass on it.
 from __future__ import annotations
 
 import importlib.util
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -35,6 +34,34 @@ def staged(tmp_path: Path) -> Path:
     return out
 
 
+def make_repo(tmp_path: Path, extra: dict[str, bytes] | None = None, *, symlinks=(), gitlinks=()) -> Path:
+    """A temporary git repo whose HEAD holds the real Space plus ``extra`` files
+    (paths relative to spaces/makerbench_hwe/), committed symlinks and gitlinks."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+                       cwd=repo, check=True, capture_output=True)
+
+    git("init", "-q")
+    files = dict(build_hf_space.committed_space_files())
+    files.update(extra or {})
+    for rel, data in files.items():
+        target = repo / "spaces" / "makerbench_hwe" / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    for rel, link_target in symlinks:
+        link = repo / "spaces" / "makerbench_hwe" / rel
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(link_target)
+    git("add", "-A")
+    for rel in gitlinks:
+        git("update-index", "--add", "--cacheinfo", f"160000,{'a' * 40},spaces/makerbench_hwe/{rel}")
+    git("commit", "-q", "-m", "space")
+    return repo
+
+
 def test_stage_copies_exactly_the_space_source(staged: Path) -> None:
     expected = sorted(
         p.relative_to(SPACE_SRC).as_posix()
@@ -55,15 +82,9 @@ def test_stage_copies_exactly_the_space_source(staged: Path) -> None:
 
 
 def test_stage_drops_caches(tmp_path: Path) -> None:
-    src = tmp_path / "src"
-    import shutil
-
-    shutil.copytree(SPACE_SRC, src)
-    (src / "__pycache__").mkdir(exist_ok=True)
-    (src / "__pycache__" / "app.cpython-311.pyc").write_bytes(b"0")
-    (src / "tabs" / "stray.pyc").write_bytes(b"0")
+    repo = make_repo(tmp_path, {"__pycache__/app.cpython-311.pyc": b"0", "tabs/stray.pyc": b"0"})
     out = tmp_path / "out"
-    build_hf_space.stage(out, src=src)
+    build_hf_space.stage(out, repo=repo)
     assert not (out / "__pycache__").exists()
     assert not (out / "tabs" / "stray.pyc").exists()
 
@@ -144,42 +165,23 @@ def test_verify_rejects_pin_drift_and_missing_canary(staged: Path) -> None:
 
 
 def test_stage_fails_closed_on_integrity_problem(tmp_path: Path) -> None:
-    import shutil
-
-    src = tmp_path / "src"
-    shutil.copytree(SPACE_SRC, src)
-    (src / "private").mkdir()
-    (src / "private" / "x.txt").write_text("x\n", encoding="utf-8")
+    repo = make_repo(tmp_path, {"private/x.txt": b"x\n"})
     with pytest.raises(SystemExit, match="integrity"):
-        build_hf_space.stage(tmp_path / "out", src=src)
+        build_hf_space.stage(tmp_path / "out", repo=repo)
 
 
-def _copy_src(tmp_path: Path) -> Path:
-    import shutil
-
-    src = tmp_path / "src"
-    shutil.copytree(SPACE_SRC, src)
-    return src
-
-
-def test_stage_refuses_file_symlink_to_external_private_data(tmp_path: Path) -> None:
-    outside = tmp_path / "outside-space" / "private" / "oracles"
-    outside.mkdir(parents=True)
-    (outside / "synthetic.txt").write_text("synthetic\n", encoding="utf-8")
-    src = _copy_src(tmp_path)
-    (src / "tabs" / "public_note.txt").symlink_to(outside / "synthetic.txt")
-    with pytest.raises(SystemExit, match="symlink"):
-        build_hf_space.stage(tmp_path / "out", src=src)
+def test_stage_refuses_committed_symlink_blob(tmp_path: Path) -> None:
+    outside = tmp_path / "outside.txt"
+    outside.write_text("synthetic\n", encoding="utf-8")
+    repo = make_repo(tmp_path, symlinks=[("tabs/public_note.txt", str(outside))])
+    with pytest.raises(SystemExit, match=r"(?s)symlinks or submodules.*120000"):
+        build_hf_space.stage(tmp_path / "out", repo=repo)
 
 
-def test_stage_refuses_directory_symlink(tmp_path: Path) -> None:
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    (outside / "a.txt").write_text("a\n", encoding="utf-8")
-    src = _copy_src(tmp_path)
-    (src / "tabs" / "linked").symlink_to(outside, target_is_directory=True)
-    with pytest.raises(SystemExit, match="symlink"):
-        build_hf_space.stage(tmp_path / "out", src=src)
+def test_stage_refuses_committed_gitlink(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path, gitlinks=["tabs/sub"])
+    with pytest.raises(SystemExit, match=r"(?s)symlinks or submodules.*160000"):
+        build_hf_space.stage(tmp_path / "out", repo=repo)
 
 
 def test_verify_rejects_symlink_in_staged_tree(staged: Path, tmp_path: Path) -> None:
@@ -311,28 +313,49 @@ def test_unlisted_extensions_are_rejected(staged: Path, suffix: str) -> None:
                for p in build_hf_space.verify_staged(staged))
 
 
-@pytest.mark.parametrize("relative", [False, True])
-def test_stage_refuses_symlinked_source_root(tmp_path: Path, monkeypatch, relative: bool) -> None:
-    real = _copy_src(tmp_path)
-    link = tmp_path / "linked_space"
-    if relative:
-        monkeypatch.chdir(tmp_path)
-        link.symlink_to("src", target_is_directory=True)
-        src = Path("linked_space")
-    else:
-        link.symlink_to(real, target_is_directory=True)
-        src = link
-    with pytest.raises(SystemExit, match="root is a symlink"):
-        build_hf_space.stage(tmp_path / "out", src=src)
+def test_stage_has_no_filesystem_source_override() -> None:
+    import inspect
+
+    assert "src" not in inspect.signature(build_hf_space.stage).parameters
+    assert not hasattr(build_hf_space, "find_hardlinks")
 
 
-def test_stage_refuses_hardlinked_file(tmp_path: Path) -> None:
-    outside = tmp_path / "outside.txt"
-    outside.write_text("synthetic\n", encoding="utf-8")
-    src = _copy_src(tmp_path)
-    os.link(outside, src / "tabs" / "note.txt")
-    with pytest.raises(SystemExit, match="hard-linked"):
-        build_hf_space.stage(tmp_path / "out", src=src)
+def test_committed_filename_matching_a_fingerprint_phrase_fails(
+    tmp_path: Path, invented_fingerprint
+) -> None:
+    repo = make_repo(tmp_path, {f"tabs/{INVENTED}.txt": b"neutral text\n"})
+    with pytest.raises(SystemExit, match="path matches a forbidden term"):
+        build_hf_space.stage(tmp_path / "out", repo=repo)
+
+
+def test_committed_directory_named_like_a_fingerprint_phrase_fails(
+    tmp_path: Path, invented_fingerprint
+) -> None:
+    repo = make_repo(tmp_path, {f"{INVENTED}/ok.txt": b"neutral text\n"})
+    with pytest.raises(SystemExit, match="path matches a forbidden term"):
+        build_hf_space.stage(tmp_path / "out", repo=repo)
+
+
+def test_working_tree_ancestor_symlink_is_irrelevant_to_committed_staging(tmp_path: Path) -> None:
+    import shutil
+
+    repo = make_repo(tmp_path)
+    expected = build_hf_space.committed_space_files(repo)
+    external = tmp_path / "external"
+    shutil.copytree(repo / "spaces", external / "spaces")
+    (external / "spaces" / "makerbench_hwe" / "tabs" / "note.txt").write_text("evil\n")
+    shutil.rmtree(repo / "spaces")
+    (repo / "spaces").symlink_to(external / "spaces", target_is_directory=True)
+    assert build_hf_space.committed_space_files(repo) == expected
+    out = tmp_path / "out"
+    build_hf_space.stage(out, repo=repo)
+    assert not (out / "tabs" / "note.txt").exists()
+
+
+def test_filename_with_private_location_marker_fails(staged: Path) -> None:
+    (staged / "tabs" / "makerbench-oracles-notes.txt").write_text("x\n", encoding="utf-8")
+    assert any(p.startswith("tabs/makerbench-oracles-notes.txt: path matches")
+               for p in build_hf_space.verify_staged(staged))
 
 
 def test_committed_tree_staging_ignores_untracked_and_aliased_working_files() -> None:
