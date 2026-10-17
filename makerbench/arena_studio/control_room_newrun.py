@@ -218,63 +218,139 @@ def _slug(value: str) -> str:
     return _SLUG.sub("-", value.lower()).strip("-")[:40] or "run"
 
 
-def _save_references(images: Sequence[Mapping[str, Any]], target: Path) -> list[Path]:
+MAX_VARIANTS = 12
+#: What the nightly runner executes today (nightly_cad): the registry brief, one attempt per
+#: entrant, one reference image, the instrument as registered. Anything else is staged.
+RUNNER_TURNS = 1
+
+
+class UnsafePath(NewRunError):
+    """A Control Room write destination that is a symlink or leaves runs/."""
+
+
+def confined(runs_root: Path, *parts: str) -> Path:
+    """``runs_root/<parts>``, refusing a symlink on any component (``runs/`` included) and any escape.
+
+    Checked before anything is created; parents are created only after the check.
+    """
+    root = Path(runs_root)
+    path = root
+    for part in ("", *parts):
+        path = path / part if part else path
+        if path.is_symlink():
+            raise UnsafePath(f"Refusing to write through a symlink ({path.name or 'runs'}).")
+    resolved_root = root.resolve()
+    if path.parent.exists() and not path.parent.resolve().is_relative_to(resolved_root):
+        raise UnsafePath("A Control Room write destination resolves outside runs/.")
+    return path
+
+
+def _save_references(images: Sequence[Mapping[str, Any]], runs_root: Path, base_id: str) -> list[Path]:
     saved = []
     for index, image in enumerate(images[:MAX_REFERENCES]):
         data_url = str(image.get("data") or "")
         head, _, body = data_url.partition(",")
         if not head.startswith("data:image/") or ";base64" not in head:
             raise NewRunError("Reference images must be PNG, JPEG or WebP files.")
-        raw = base64.b64decode(body, validate=True)
+        try:
+            raw = base64.b64decode(body, validate=True)
+        except ValueError:
+            raise NewRunError("Reference images must be PNG, JPEG or WebP files.") from None
         if len(raw) > MAX_REFERENCE_BYTES:
             raise NewRunError("A reference image is limited to 10 MB.")
         suffix = next((ext for magic, ext in IMAGE_MAGIC.items() if raw.startswith(magic)), None)
         if suffix is None:
             raise NewRunError("Reference images must be PNG, JPEG or WebP files.")
-        target.mkdir(parents=True, exist_ok=True)
-        path = target / f"reference-{index + 1}{suffix}"
+        name = f"reference-{index + 1}{suffix}"
+        path = confined(runs_root, str(CONTROL_ROOM_DIR), "plans", base_id, "references", name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        confined(runs_root, str(CONTROL_ROOM_DIR), "plans", base_id, "references", name)
         path.write_bytes(raw)
         saved.append(path)
     return saved
 
 
-def build_jobs(form: Mapping[str, Any], *, instruments: Mapping[str, Mapping[str, Any]], runs_root: Path,
-               task_reference: Callable[[str], Optional[Path]], now: Optional[datetime] = None) -> list[dict[str, Any]]:
-    """Validate the form and return ``[{"job": NightlyJob dict, "plan": plan}]``, one per variant.
+def validate_form(form: Mapping[str, Any], instruments: Mapping[str, Mapping[str, Any]], *,
+                  for_estimate: bool = False) -> dict[str, Any]:
+    """The one validator for estimate, Add to tonight and Run now; never touches disk.
 
-    Uploaded reference images are written under the plan folder (needed for the job's
-    ``reference_image``); nothing touches the queue here.
+    An estimate needs only valid entrants, turns, cap and variants; the other routes
+    also need a known instrument, two entrants and a brief.
     """
-    instrument_id = str(form.get("instrument") or "")
-    if instrument_id not in instruments:
-        raise NewRunError("Choose an instrument.")
-    deliverable = form.get("deliverable") or "single"
-    if deliverable not in DELIVERABLES:
-        raise NewRunError("Deliverable must be a single part or a wood assembly.")
     picks = parse_entrants(form)
-    if len(picks) < 2:
-        raise NewRunError("The nightly runner needs at least two entrants per night.")
     turns = form.get("turns")
     if not isinstance(turns, int) or isinstance(turns, bool) or not 1 <= turns <= MAX_TURNS:
         raise NewRunError(f"Turns must be a whole number from 1 to {MAX_TURNS}.")
     cap = form.get("cap_usd", 0)
     if not isinstance(cap, (int, float)) or isinstance(cap, bool) or not 0 <= float(cap) <= 100:
         raise NewRunError("The OpenRouter cap must be between $0 and $100.")
+    variants = form.get("variants") or []
+    if not isinstance(variants, list) or len(variants) > MAX_VARIANTS or any(
+            not isinstance(v, str) or not v.strip() or len(v) > 80 for v in variants):
+        raise NewRunError(f"Variants must be up to {MAX_VARIANTS} short names.")
+    deliverable = form.get("deliverable") or "single"
+    if deliverable not in DELIVERABLES:
+        raise NewRunError("Deliverable must be a single part or a wood assembly.")
+    instrument_id = str(form.get("instrument") or "")
     brief = str(form.get("brief") or "").strip()
-    if not brief:
-        raise NewRunError("Write a brief for the entrants.")
-    if len(brief) > 8000:
-        raise NewRunError("The brief is limited to 8000 characters.")
-    variants = [str(v) for v in form.get("variants") or []] or [""]
-    stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
-    base_id = f"cr-{stamp}-{_slug(instrument_id)}"
-    plans_root = runs_root / CONTROL_ROOM_DIR / "plans"
-    uploads = _save_references(form.get("references") or [], plans_root / base_id / "references")
+    if not for_estimate:
+        if instrument_id not in instruments:
+            raise NewRunError("Choose an instrument.")
+        if len(picks) < 2:
+            raise NewRunError("The nightly runner needs at least two entrants per night.")
+        if not brief:
+            raise NewRunError("Write a brief for the entrants.")
+        if len(brief) > 8000:
+            raise NewRunError("The brief is limited to 8000 characters.")
+    elif instrument_id and instrument_id not in instruments:
+        raise NewRunError("Choose an instrument.")
+    return {"picks": picks, "turns": turns, "cap": float(cap), "variants": [v.strip() for v in variants],
+            "deliverable": deliverable, "instrument_id": instrument_id, "brief": brief}
+
+
+def runner_gaps(form: Mapping[str, Any], card: Optional[Mapping[str, Any]]) -> list[str]:
+    """Settings in this form the nightly runner would silently drop today (it reads no plans)."""
+    gaps = []
+    registry_brief = str((card or {}).get("brief") or (card or {}).get("task_brief") or "").strip()
+    if card is not None and str(form.get("brief") or "").strip() != registry_brief:
+        gaps.append("your edited brief (the runner sends the registry brief)")
+    if form.get("variants"):
+        gaps.append("variants (the runner builds the instrument as registered)")
+    if (form.get("deliverable") or "single") == "assembly":
+        gaps.append("the wood-assembly mode")
+    if isinstance(form.get("turns"), int) and form["turns"] != RUNNER_TURNS:
+        gaps.append(f"{form['turns']} turns (the runner gives each entrant one attempt)")
+    if len(form.get("references") or []) > 1:
+        gaps.append("extra reference images (the runner uses the first)")
+    return gaps
+
+
+def build_jobs(form: Mapping[str, Any], *, instruments: Mapping[str, Mapping[str, Any]], runs_root: Path,
+               task_reference: Callable[[str], Optional[Path]], now: Optional[datetime] = None) -> list[dict[str, Any]]:
+    """Validate the form and return ``[{"job": NightlyJob dict, "plan": plan}]``, one per variant.
+
+    The cap bounds the whole sweep: each variant's job gets an equal share, split again
+    across its paid entrants. Uploaded reference images are written (confined) under
+    the plan folder; nothing touches the queue here.
+    """
+    checked = validate_form(form, instruments)
+    picks, cap, instrument_id = checked["picks"], checked["cap"], checked["instrument_id"]
+    variants = checked["variants"] or [""]
+    when = now or datetime.now(timezone.utc)
+    base_id = f"cr-{when.strftime('%Y%m%dT%H%M%SZ')}-{_slug(instrument_id)}"
+    plans_dir = confined(runs_root, str(CONTROL_ROOM_DIR), "plans")
+    suffix = 2
+    while (plans_dir / base_id).exists() or any((plans_dir / f"{base_id}{('-' + _slug(v)) if v else ''}.json").exists() for v in variants):
+        base_id = f"cr-{when.strftime('%Y%m%dT%H%M%SZ')}-{_slug(instrument_id)}-{suffix}"  # same second, same instrument
+        suffix += 1
+    uploads = _save_references(form.get("references") or [], runs_root, base_id)
     reference = uploads[0] if uploads else task_reference(instrument_id)
     if reference is None:
         raise NewRunError("Add a reference image: this instrument has none on disk.")
+    per_job = round(cap / len(variants), 4)
     paid = [tool for tool, _ in picks if tool.route == "openrouter"]
-    per_paid = round(float(cap) / len(paid), 4) if paid else 0.0
+    per_paid = round(per_job / len(paid), 4) if paid else 0.0
+    gaps = runner_gaps(form, instruments.get(instrument_id))
     out = []
     for variant in variants:
         job_id = base_id + (f"-{_slug(variant)}" if variant else "")
@@ -284,46 +360,56 @@ def build_jobs(form: Mapping[str, Any], *, instruments: Mapping[str, Mapping[str
             for tool, model in picks
         ]
         job = nightly_cad.NightlyJob(job_id=job_id, instrument_id=instrument_id, reference_image=str(reference),
-                                     entrants=entrants, budget_usd=float(cap))
+                                     entrants=entrants, budget_usd=per_job)
         job.validate()
         plan = {
             "schema": PLAN_SCHEMA,
             "job_id": job_id,
             "instrument_id": instrument_id,
             "variant": variant or None,
-            "deliverable": deliverable,
-            "brief": brief,
-            "max_turns": turns,
+            "deliverable": checked["deliverable"],
+            "brief": checked["brief"],
+            "max_turns": checked["turns"],
             "stop_when_all_checks_pass": bool(form.get("stop_early", True)),
             "reference_images": [path.name for path in uploads] or [Path(str(reference)).name],
             "entrants": [f"{tool.id}:{model.id}" for tool, model in picks],
-            "openrouter_cap_usd": float(cap),
-            "created_utc": (now or datetime.now(timezone.utc)).replace(microsecond=0).isoformat(),
+            "openrouter_cap_usd": cap,
+            "job_budget_usd": per_job,
+            "runner_cannot_apply": gaps,
+            "created_utc": when.replace(microsecond=0).isoformat(),
         }
         out.append({"job": job.as_dict(), "plan": plan})
     return out
 
 
 def write_plans(runs_root: Path, built: Sequence[Mapping[str, Any]]) -> list[str]:
-    plans = runs_root / CONTROL_ROOM_DIR / "plans"
     names = []
     for item in built:
-        path = plans / f"{item['plan']['job_id']}.json"
-        atomic_write_json(path, item["plan"])
+        path = confined(runs_root, str(CONTROL_ROOM_DIR), "plans", f"{item['plan']['job_id']}.json")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(confined(runs_root, str(CONTROL_ROOM_DIR), "plans", path.name), item["plan"])
         names.append(path.relative_to(runs_root).as_posix())
     return names
 
 
-def write_draft(runs_root: Path, built: Sequence[Mapping[str, Any]]) -> str:
-    """Queue writes are off: keep what would have been queued, for the manager to see."""
-    path = runs_root / CONTROL_ROOM_DIR / "drafts" / f"{built[0]['plan']['job_id']}.json"
-    atomic_write_json(path, {"schema": DRAFT_SCHEMA, "queue_schema": nightly_cad.SCHEMA,
-                             "jobs": [item["job"] for item in built]})
+def write_draft(runs_root: Path, built: Sequence[Mapping[str, Any]], *, staged_because: Sequence[str] = ()) -> str:
+    """Not queued (queue writes off, or settings the runner cannot apply): keep what would have been."""
+    name = f"{built[0]['plan']['job_id']}.json"
+    path = confined(runs_root, str(CONTROL_ROOM_DIR), "drafts", name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(confined(runs_root, str(CONTROL_ROOM_DIR), "drafts", name),
+                      {"schema": DRAFT_SCHEMA, "queue_schema": nightly_cad.SCHEMA,
+                       "staged_because": list(staged_because), "jobs": [item["job"] for item in built]})
     return path.relative_to(runs_root).as_posix()
 
 
-def append_jobs(queue_path: Path, built: Sequence[Mapping[str, Any]]) -> int:
-    """Append jobs to the nightly queue under its lock, through the runner's own load/save."""
+def append_jobs(runs_root: Path, built: Sequence[Mapping[str, Any]]) -> int:
+    """Append jobs to the nightly queue under its lock, through the runner's own load/save.
+
+    The queue file and its lock are confined to runs/ (no symlinked ``runs`` or file).
+    """
+    queue_path = confined(runs_root, "nightly-cad-queue.json")
+    confined(runs_root, "nightly-cad-queue.json.lock")
     with file_lock(queue_path):
         if queue_path.is_file():
             payload, jobs = nightly_cad.load_queue(queue_path)

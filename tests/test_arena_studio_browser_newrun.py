@@ -180,18 +180,50 @@ def test_add_to_tonight_with_queue_writes_off_saves_a_draft(studio: str, repo: P
 
 
 @pytest.mark.parametrize("studio", [{"control_room_queue_writes": True}], indirect=True)
-def test_add_to_tonight_with_queue_writes_on_appends_one_job(studio: str, repo: Path):
+def test_queue_writes_on_stage_what_the_runner_cannot_apply_and_queue_the_rest(studio: str, repo: Path):
+    queue = repo / "runs" / "nightly-cad-queue.json"
+    before = queue.read_bytes()
     with sync_playwright() as playwright:
         browser = _launch(playwright)
         context, page, problems, _ = _open(browser, studio)
         page.get_by_role("button", name="Assembly build").click()
-        assert page.get_by_role("button", name="Wood-shop assembly").get_attribute("aria-pressed") == "true"
+        gaps = page.get_by_test_id("runner-gaps")
+        gaps.wait_for()
+        assert "wood-assembly mode" in gaps.inner_text() and "6 turns" in gaps.inner_text()
+        assert "staged, not queued" in gaps.inner_text()
         page.get_by_role("button", name="Add to tonight").click()
-        page.locator("dialog.review-dialog", has_text="Added to tonight").wait_for()
-        _payload, jobs = nightly_cad.load_queue(repo / "runs" / "nightly-cad-queue.json")
-        assert [job.instrument_id for job in jobs] == ["kora", "tongue_drum_wood_assembly"]
-        plan = json.loads(next((repo / "runs" / "control-room" / "plans").glob("*.json")).read_text())
-        assert plan["deliverable"] == "assembly" and plan["max_turns"] == 6
+        dialog = page.locator("dialog.review-dialog")
+        dialog.locator("h2", has_text="Staged, not queued").wait_for()
+        assert "was not queued" in dialog.inner_text()
+        assert queue.read_bytes() == before
+        dialog.get_by_role("button", name="Done").click()
+
+        # The same night with only what the runner applies: one turn, the registry brief, single part.
+        page.get_by_role("button", name="Overnight matchup").click()
+        page.locator('input[type="range"]').fill("1")
+        page.wait_for_function("() => !document.querySelector('[data-testid=runner-gaps]')")
+        page.get_by_role("button", name="Add to tonight").click()
+        dialog.locator("h2", has_text="Added to tonight").wait_for()
+        _payload, jobs = nightly_cad.load_queue(queue)
+        assert [job.instrument_id for job in jobs] == ["kora", "sambuca"]
+        assert problems == []
+        context.close()
+        browser.close()
+
+
+@pytest.mark.parametrize("studio", [{"allow_live": True}], indirect=True)
+def test_run_now_shows_a_launch_refusal(studio: str):
+    with sync_playwright() as playwright:
+        browser = _launch(playwright)
+        context, page, problems, _ = _open(browser, studio)
+        page.get_by_role("button", name="Overnight matchup").click()
+        for pick in ("cadam:fable", "solidworks:sol", "fusion:sonnet"):
+            _cell(page, pick).click()
+        _cell(page, "freecad:sol").click()
+        page.get_by_role("button", name="Run now").click()
+        # The fixture's reference image is not approved, so the real launcher refuses (no process starts).
+        page.locator(".review-toast", has_text="Not started").wait_for()
+        assert page.locator("dialog.review-dialog[open]").count() == 0
         assert problems == []
         context.close()
         browser.close()

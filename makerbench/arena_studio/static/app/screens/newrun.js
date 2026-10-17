@@ -269,6 +269,9 @@ function Rail({ catalog, form, estimate, onTonight, onRunNow, busy }) {
           <ul>${e.entrants.map((row) => html`<li key=${row.entrant}>${row.tool} · ${row.model}: ${row.route === "subscription" ? "subscription" : usd(row.cost_usd)}, ${duration(row.duration_s)}</li>`)}</ul>
         </details>`}
         ${[...block, ...notes].map((text) => html`<p class="newrun-warn" key=${text}>${text}</p>`)}
+        ${e?.runner_gaps?.length > 0 && html`<p class="newrun-warn" data-testid="runner-gaps">
+          The nightly runner can't apply yet: ${e.runner_gaps.join("; ")}. ${catalog.queue_writes ? "This run is staged, not queued." : ""}
+        </p>`}
       </div>
       <div class="newrun-box">
         <h2>Ready check</h2>
@@ -310,7 +313,13 @@ function Form({ catalog }) {
   const submit = async (path) => {
     setBusy(true);
     try {
-      setResult({ path, data: await api(path, { method: "POST", body: payload(form) }) });
+      const data = await api(path, { method: "POST", body: payload(form) });
+      if (data && data.success === false) {
+        // The launcher refused (e.g. the reference image is not approved): never "Run started".
+        setToast(`Not started: ${data.error || data.message || "the launcher refused this run."}`);
+        return;
+      }
+      setResult({ path, data });
     } catch (error) {
       setToast(error.message);
     } finally {
@@ -342,13 +351,15 @@ function Form({ catalog }) {
     <p class="review-toast" role="status" aria-live="polite" hidden=${!toast}>${toast || ""}</p>
     <dialog class="review-dialog" ref=${dialog} onClose=${() => setResult(null)}>
       ${result && html`
-        <h2>${result.path.endsWith("run-now") ? "Run started" : queued ? "Added to tonight" : "Saved as a draft"}</h2>
+        <h2>${result.path.endsWith("run-now") ? "Run started" : queued ? "Added to tonight" : result.data.staged_because?.length ? "Staged, not queued" : "Saved as a draft"}</h2>
         <p>
           ${result.path.endsWith("run-now")
             ? "The arena run is starting on this PC."
             : queued
               ? `${plural(result.data.added, "job")} added to the nightly queue. Nightly runs still wait for your GO (#664).`
-              : `Queue writes are off, so the nightly queue was not changed. What would have been queued is saved at runs/${result.data.draft}.`}
+              : result.data.staged_because?.length
+                ? `The nightly runner can't apply ${result.data.staged_because.join("; ")}, so this run was not queued. It is saved at runs/${result.data.draft} with its plan.`
+                : `Queue writes are off, so the nightly queue was not changed. What would have been queued is saved at runs/${result.data.draft}.`}
         </p>
         <pre class="review-json">${JSON.stringify(result.data.jobs || result.data, null, 2)}</pre>
         <div class="actions"><button type="button" class="button" onClick=${() => dialog.current?.close()}>Done</button></div>

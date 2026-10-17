@@ -103,8 +103,10 @@ def test_jobs_are_valid_nightly_jobs_with_a_plan_per_variant(repo: Path):
     assert [b["job"]["job_id"] for b in built] == ["cr-20261018T220000Z-sambuca-15", "cr-20261018T220000Z-sambuca-16"]
     job = nightly_cad.NightlyJob.from_dict(built[0]["job"])
     job.validate()
+    # The $2 cap bounds the whole two-variant sweep: $1 per job, all of it for the one paid entrant.
+    assert job.budget_usd == 1.0
     assert [(e.entrant_id, e.kind, e.model_id, e.backend, e.max_cost_usd) for e in job.entrants] == [
-        ("cadam-fable", "cadam", "anthropic/claude-fable-5.1", "openscad", 2.0),
+        ("cadam-fable", "cadam", "anthropic/claude-fable-5.1", "openscad", 1.0),
         ("freecad-opus", "arena", "claude-code-opus-5.5", "freecad", 0.0),
         ("solidworks-sol", "live", "codex-gpt-6.1-sol", "solidworks-live", 0.0),
     ]
@@ -144,8 +146,10 @@ def test_add_to_tonight_with_queue_writes_off_leaves_the_queue_alone(repo: Path)
 def test_add_to_tonight_with_queue_writes_on_appends_through_the_runner_format(repo: Path):
     queue = repo / "runs" / "nightly-cad-queue.json"
     upload = "data:image/png;base64," + base64.b64encode(PNG).decode()
+    # Only settings the runner applies: the registry brief, one turn, one reference.
     result = _client(repo, control_room_queue_writes=True).post(
-        "/api/newrun/tonight", json={**FORM, "instrument": "kora", "references": [{"name": "kora.png", "data": upload}]}, headers=ORIGIN
+        "/api/newrun/tonight", json={**FORM, "instrument": "kora", "brief": "Calabash harp.", "turns": 1,
+                                     "references": [{"name": "kora.png", "data": upload}]}, headers=ORIGIN
     ).json()
     assert result["queued"] is True and result["added"] == 1
     payload, jobs = nightly_cad.load_queue(queue)
@@ -183,3 +187,83 @@ def test_estimate_route_never_launches(repo: Path, monkeypatch):
     monkeypatch.setattr(client.app.state.service, "launch_competition", lambda config: pytest.fail("estimate launched a run"))
     data = client.post("/api/newrun/estimate", json=FORM, headers=ORIGIN).json()
     assert data["designs"] == 3 and data["subscription_designs"] == {"claude": 1, "codex": 1}
+
+
+RUNNABLE = {**FORM, "turns": 1}  # the sambuca registry brief, one attempt, no variants: nothing the runner drops
+
+
+def test_settings_the_runner_cannot_apply_are_staged_not_queued(repo: Path):
+    queue = repo / "runs" / "nightly-cad-queue.json"
+    before = queue.read_bytes()
+    client = _client(repo, control_room_queue_writes=True)
+    form = {**FORM, "brief": "Boat body, but taller.", "variants": ["15"], "deliverable": "assembly", "turns": 5}
+    gaps = client.post("/api/newrun/estimate", json=form, headers=ORIGIN).json()["runner_gaps"]
+    assert len(gaps) == 4 and "edited brief" in gaps[0]
+    result = client.post("/api/newrun/tonight", json=form, headers=ORIGIN).json()
+    assert result["queued"] is False and result["staged_because"] == gaps
+    assert queue.read_bytes() == before
+    draft = json.loads((repo / "runs" / result["draft"]).read_text())
+    assert draft["staged_because"] == gaps
+    plan = json.loads((repo / "runs" / result["plans"][0]).read_text())
+    assert plan["runner_cannot_apply"] == gaps and plan["brief"] == "Boat body, but taller."
+    queued = client.post("/api/newrun/tonight", json=RUNNABLE, headers=ORIGIN).json()
+    assert queued["queued"] is True and queued["added"] == 1
+
+
+def test_the_cap_bounds_the_whole_sweep(repo: Path):
+    built = nr.build_jobs({**FORM, "entrants": ["cadam:fable", "cadam:opus", "freecad:opus"], "variants": ["A4", "D4", "G4"],
+                           "cap_usd": 3.0}, instruments={i["id"]: i for i in INSTRUMENTS}, runs_root=repo / "runs",
+                          task_reference=lambda t: repo / "tasks" / t / "reference.png")
+    budgets = [job["job"]["budget_usd"] for job in built]
+    allowances = [e["max_cost_usd"] for job in built for e in job["job"]["entrants"]]
+    assert budgets == [1.0, 1.0, 1.0] and sum(budgets) <= 3.0
+    assert sum(allowances) <= 3.0 and sorted(set(allowances)) == [0.0, 0.5]
+
+
+def test_same_second_runs_get_distinct_job_ids(repo: Path):
+    now = datetime(2026, 10, 18, 22, 0, tzinfo=timezone.utc)
+    ids = []
+    for _ in range(2):
+        built = nr.build_jobs(FORM, instruments={i["id"]: i for i in INSTRUMENTS}, runs_root=repo / "runs",
+                              task_reference=lambda t: repo / "tasks" / t / "reference.png", now=now)
+        nr.write_plans(repo / "runs", built)
+        ids.append(built[0]["job"]["job_id"])
+    assert ids == ["cr-20261018T220000Z-sambuca", "cr-20261018T220000Z-sambuca-2"]
+
+
+@pytest.mark.parametrize("link", ["runs", "control-room"])
+def test_symlinked_write_destinations_are_refused(tmp_path: Path, link: str):
+    (tmp_path / "repo").mkdir()
+    repo = build_newrun_repo(tmp_path / "repo")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    if link == "runs":
+        (outside / "nightly-cad-queue.json").write_bytes((repo / "runs" / "nightly-cad-queue.json").read_bytes())
+        import shutil
+        shutil.rmtree(repo / "runs")
+        (repo / "runs").symlink_to(outside, target_is_directory=True)
+    else:
+        (repo / "runs" / "control-room").symlink_to(outside, target_is_directory=True)
+    before = sorted(p.name for p in outside.rglob("*"))
+    for flag in (False, True):
+        response = _client(repo, control_room_queue_writes=flag).post("/api/newrun/tonight", json=RUNNABLE, headers=ORIGIN)
+        assert response.status_code == 409 and "symlink" in response.text
+    assert sorted(p.name for p in outside.rglob("*")) == before  # nothing written outside
+
+
+@pytest.mark.parametrize("change, message", [
+    ({"instrument": "nope"}, "Choose an instrument"),
+    ({"turns": -99}, "Turns must be"),
+    ({"cap_usd": -5}, "cap must be"),
+    ({"brief": ""}, "Write a brief"),
+    ({"variants": ["x"] * 13}, "Variants must be"),
+])
+def test_run_now_and_estimate_validate_like_tonight(repo: Path, monkeypatch, change, message):
+    client = _client(repo, allow_live=True)
+    monkeypatch.setattr(client.app.state.service, "launch_competition", lambda config: pytest.fail("launched"))
+    form = {**FORM, "entrants": ["freecad:opus", "freecad:sol"], **change}
+    response = client.post("/api/newrun/run-now", json=form, headers=ORIGIN)
+    assert response.status_code == 400 and message in response.text
+    if "brief" not in change:  # an estimate does not need a brief yet
+        estimate = client.post("/api/newrun/estimate", json=form, headers=ORIGIN)
+        assert estimate.status_code == 400 and message in estimate.text

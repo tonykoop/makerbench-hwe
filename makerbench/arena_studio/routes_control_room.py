@@ -152,24 +152,34 @@ def register_control_room_routes(
 
     @app.post("/api/newrun/estimate")
     def newrun_estimate(payload: NewRunPayload):
+        form = payload.model_dump()
+        cards = instruments()
         try:
-            return nr.estimate(payload.model_dump(), telemetry_store=telemetry_store)
+            nr.validate_form(form, cards, for_estimate=True)
+            result = nr.estimate(form, telemetry_store=telemetry_store)
         except (nr.NewRunError, ValueError) as error:
             raise HTTPException(status_code=400, detail=str(error))
+        return {**result, "runner_gaps": nr.runner_gaps(form, cards.get(form["instrument"]))}
 
     @app.post("/api/newrun/tonight")
     def newrun_tonight(payload: NewRunPayload):
+        form = payload.model_dump()
         try:
-            built = nr.build_jobs(payload.model_dump(), instruments=instruments(), runs_root=runs_root,
+            built = nr.build_jobs(form, instruments=instruments(), runs_root=runs_root,
                                   task_reference=service.reference_image_path)
+            plans = nr.write_plans(runs_root, built)
+            gaps = built[0]["plan"]["runner_cannot_apply"]
+            jobs = [item["job"] for item in built]
+            if queue_writes and not gaps:
+                return {"queued": True, "added": nr.append_jobs(runs_root, built), "plans": plans, "jobs": jobs}
+            # Queue writes off, or the runner would drop settings: staged, never silently queued.
+            draft = nr.write_draft(runs_root, built, staged_because=gaps if queue_writes else ())
+            return {"queued": False, "staged_because": gaps if queue_writes else [], "draft": draft,
+                    "plans": plans, "jobs": jobs}
+        except nr.UnsafePath as error:
+            raise HTTPException(status_code=409, detail=str(error))
         except (nr.NewRunError, ValueError) as error:
             raise HTTPException(status_code=400, detail=str(error))
-        plans = nr.write_plans(runs_root, built)
-        if queue_writes:
-            added = nr.append_jobs(nightly_queue, built)
-            return {"queued": True, "added": added, "plans": plans, "jobs": [item["job"] for item in built]}
-        draft = nr.write_draft(runs_root, built)
-        return {"queued": False, "draft": draft, "plans": plans, "jobs": [item["job"] for item in built]}
 
     @app.post("/api/newrun/run-now")
     def newrun_run_now(payload: NewRunPayload):
@@ -177,17 +187,18 @@ def register_control_room_routes(
             raise HTTPException(status_code=403, detail="Run now needs a Studio started with --allow-live. Add it to tonight instead.")
         form = payload.model_dump()
         try:
-            picks = nr.parse_entrants(form)
+            checked = nr.validate_form(form, instruments())
         except nr.NewRunError as error:
             raise HTTPException(status_code=400, detail=str(error))
+        picks = checked["picks"]
         backends = {nr.entrant_for(tool, model).backend for tool, model in picks}
         if len(backends) != 1 or any(tool.kind == "cadam" for tool, _ in picks):
             raise HTTPException(status_code=400, detail="Run now takes entrants on one arena backend (no CADAM); mixed nights go through Add to tonight.")
         return service.launch_competition({
-            "instruments": [form["instrument"]],
+            "instruments": [checked["instrument_id"]],
             "models": [nr.entrant_for(tool, model).model_id for tool, model in picks],
             "backend": backends.pop(),
-            "max_turns": form["turns"],
+            "max_turns": checked["turns"],
             "live": True,
         })
 
