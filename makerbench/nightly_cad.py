@@ -512,6 +512,9 @@ class NightlyExecutor:
             user_id=os.environ.get("CADAM_USER_ID", ""),
             access_token=os.environ.get("CADAM_ACCESS_TOKEN", ""),
             service_role_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY", ""),
+            bot_email=os.environ.get("CADAM_BOT_EMAIL", ""),
+            bot_password=os.environ.get("CADAM_BOT_PASSWORD", ""),
+            anon_key=os.environ.get("VITE_SUPABASE_ANON_KEY", ""),
             model=entrant.model_id,
             timeout_s=entrant.timeout_s or 900,
         )

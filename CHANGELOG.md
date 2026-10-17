@@ -4,6 +4,8 @@ All notable changes to MakerBench should be recorded here.
 
 ## Unreleased
 
+- **CADAM self-hosted sign-in (#660):** the CADAM adapter signs in with a bot account (`CADAM_BOT_EMAIL` / `CADAM_BOT_PASSWORD` / `VITE_SUPABASE_ANON_KEY`, password grant) at the start of each dispatch and falls back to the static `CADAM_ACCESS_TOKEN` only when no bot credentials are set; the reference image is now optional; secrets are `repr=False` and sign-in errors carry only a fixed message/HTTP status. `arena preflight` checks the local CADAM app at `CADAM_BASE_URL` and that sign-in succeeds when bot credentials are configured.
+
 - **Wall thickness removed from arena scoring (2026-10-16, maintainer decision; Refs #1011):** the
   Code-CAD Arena gate scores five base checks (`ARENA_GATE_CHECKS`: renders, watertight,
   nonzero_volume, fits_envelope, body_count) plus any instrument-declared topology/interface checks; `min_wall` is no longer measured, no longer part of the
