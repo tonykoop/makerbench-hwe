@@ -1570,3 +1570,9 @@ tr.lscape-detail td { background: var(--bg-soft); }
 .lscape-picker { max-width: 100%; min-width: 0; }
 .lscape-picker select { min-width: 0; max-width: 100%; }
 .lscape-search { min-width: 0; max-width: 100%; }
+
+/* Efficiency legends name effort lines; individual dots disclose identity on hover. */
+.efficiency-model-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 0.75rem; margin-top: 12px; }
+.efficiency-legend-entry { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; overflow-wrap: anywhere; }
+.efficiency-legend-swatch { width: 10px; height: 10px; flex: 0 0 10px; border: 1.5px solid; border-radius: 50%; }
+.efficiency-legend-more { color: var(--text-soft); }
