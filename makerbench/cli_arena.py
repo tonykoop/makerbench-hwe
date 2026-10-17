@@ -1490,6 +1490,11 @@ def arena_studio(
             False,
             "--control-room-queue-writes",
             help="Let Control Room write queues: Morning Review revisions go to runs/control-room/revision-queue.json. Off: a review only writes morning-review.json.",
+        ),
+        library_manifest: Optional[str] = typer.Option(
+            None,
+            "--library-manifest",
+            help="A library-manifest.json for New Run's Refresh (#1107). Without it, Refresh reads the published library page.",
         )):
     """Launch the MakerBench Arena Studio web interface (Issue #696)."""
 
@@ -1524,6 +1529,7 @@ def arena_studio(
         allowed_hosts=LOOPBACK_HOSTS if is_loopback else ("*",),
         instruments_root=Path(instruments_root) if instruments_root else None,
         control_room_queue_writes=control_room_queue_writes,
+        library_manifest=Path(library_manifest) if library_manifest else None,
     )
     console.print(f"[bold green]MakerBench Arena Studio running at http://{host}:{port}/[/bold green]")
     uvicorn.run(app, host=host, port=port)

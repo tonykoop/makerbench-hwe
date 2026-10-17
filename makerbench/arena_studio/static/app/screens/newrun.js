@@ -10,11 +10,14 @@ import { plural } from "../lib/format.js";
 import {
   MAX_REFERENCE_BYTES,
   PRESETS,
+  FILTER_LABELS,
   blockers,
+  cardDetail,
   cellReason,
   chooseInstrument,
   clampTurns,
   duration,
+  filterInstruments,
   freshForm,
   parseVariants,
   payload,
@@ -54,21 +57,66 @@ function Step({ n, title, sub, children }) {
   `;
 }
 
-function InstrumentStep({ catalog, form, setForm }) {
+function Hero({ item }) {
+  const [failed, setFailed] = useState(false);
+  if (!item.hero || failed) return html`<span class="newrun-hero newrun-hero-empty" aria-hidden="true">${(item.name || "?").slice(0, 1)}</span>`;
+  return html`<img class="newrun-hero" src=${item.hero} alt="" loading="lazy" onError=${() => setFailed(true)} />`;
+}
+
+function LibraryStatus({ library, onRefresh, refreshing }) {
+  const when = library?.fetched_utc ? new Date(library.fetched_utc) : null;
   return html`
-    <${Step} n="1" title="Instrument" sub=${`${catalog.instruments.length} in the arena registry`}>
+    <p class="hint newrun-library" data-testid="library-status">
+      ${library
+        ? html`From the instrument library, refreshed ${when && !Number.isNaN(when.getTime()) ? when.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "at an unknown time"}.`
+        : "No library snapshot yet: showing the arena registry."}
+      ${" "}<button type="button" class="button-link" disabled=${refreshing} onClick=${onRefresh}>${refreshing ? "Refreshing…" : "Refresh from the library"}</button>
+    </p>
+  `;
+}
+
+function InstrumentStep({ catalog, form, setForm, onRefresh, refreshing }) {
+  const [filters, setFilters] = useState({});
+  const [query, setQuery] = useState("");
+  const shown = useMemo(() => filterInstruments(catalog.instruments, filters, query), [catalog, filters, query]);
+  const options = catalog.library?.filters || {};
+  return html`
+    <${Step} n="1" title="Instrument" sub=${`${shown.length} of ${catalog.instruments.length}`}>
+      <${LibraryStatus} library=${catalog.library} onRefresh=${onRefresh} refreshing=${refreshing} />
+      <div class="newrun-filters">
+        <label class="field">
+          <span class="field-label">Search</span>
+          <input type="search" value=${query} placeholder="Name, family or type" onInput=${(event) => setQuery(event.currentTarget.value)} />
+        </label>
+        ${Object.entries(FILTER_LABELS).filter(([key]) => options[key]?.length).map(
+          ([key, label]) => html`<label class="field" key=${key}>
+            <span class="field-label">${label}</span>
+            <select aria-label=${label} value=${filters[key] || "all"} onChange=${(event) => { const v = event.currentTarget.value; setFilters((f) => ({ ...f, [key]: v })); }}>
+              <option value="all">All</option>
+              ${options[key].map((value) => html`<option key=${value} value=${value}>${value}</option>`)}
+            </select>
+          </label>`,
+        )}
+      </div>
       <div class="newrun-instruments" role="group" aria-label="Instrument">
-        ${catalog.instruments.map(
+        ${shown.length === 0 && html`<p class="hint">No instrument matches these filters.</p>`}
+        ${shown.map(
           (item) => html`
             <button
               key=${item.id}
               type="button"
               class="newrun-instrument"
+              data-instrument=${item.id}
               aria-pressed=${form.instrument === item.id ? "true" : "false"}
               onClick=${() => setForm((f) => chooseInstrument(f, catalog, item.id))}
             >
+              <${Hero} item=${item} />
               <b>${item.name}</b>
-              <span>${[item.family, item.assembly ? "assembly" : "single part"].filter(Boolean).join(" · ")}</span>
+              <span>${cardDetail(item) || (item.assembly ? "assembly" : "single part")}</span>
+              <span class="newrun-badges">
+                ${item.cad && html`<span class="check-chip" data-state=${item.cad === "none" ? "absent" : "pass"}>CAD · ${item.cad}</span>`}
+                ${catalog.library && html`<span class="check-chip" data-state=${item.arena_task ? "pass" : "unknown"}>${item.arena_task ? "Arena task" : "No arena task"}</span>`}
+              </span>
             </button>
           `,
         )}
@@ -258,7 +306,7 @@ function Rail({ catalog, form, estimate, onTonight, onRunNow, busy }) {
           <dt>Entrants</dt><dd>${form.entrants.length}</dd>
           <dt>Turns each</dt><dd>${form.turns}</dd>
           <dt>OpenRouter spend</dt>
-          <dd data-testid="spend">${e ? `${e.openrouter_complete ? "about" : "at least"} ${usd(e.openrouter_usd)} of ${usd(Number(form.cap_usd))}` : "pick entrants"}</dd>
+          <dd data-testid="spend">${e ? `${e.openrouter_complete ? "about" : "at least"} ${usd(e.openrouter_usd)} of ${usd(Number(form.cap_usd))}` : form.entrants.length ? "estimating…" : "pick entrants"}</dd>
           <dt>Subscription designs</dt>
           <dd>${e ? `Claude ${e.subscription_designs.claude} · Codex ${e.subscription_designs.codex}` : "none"}</dd>
           <dt>Run time</dt><dd>${e ? duration(e.wall_time_s) : "unknown"}</dd>
@@ -291,7 +339,7 @@ function Rail({ catalog, form, estimate, onTonight, onRunNow, busy }) {
   `;
 }
 
-function Form({ catalog }) {
+function Form({ catalog, onRefresh, refreshing }) {
   const [form, setForm] = useState(() => {
     const draft = loadDraft();
     return draft && catalog.instruments.some((item) => item.id === draft.instrument) ? draft : freshForm(catalog);
@@ -341,7 +389,7 @@ function Form({ catalog }) {
     </div>
     <div class="newrun-layout">
       <div class="newrun-steps">
-        <${InstrumentStep} catalog=${catalog} form=${form} setForm=${setForm} />
+        <${InstrumentStep} catalog=${catalog} form=${form} setForm=${setForm} onRefresh=${onRefresh} refreshing=${refreshing} />
         <${VariantStep} form=${form} setForm=${setForm} />
         <${EntrantStep} catalog=${catalog} form=${form} setForm=${setForm} />
         <${ReferenceStep} form=${form} setForm=${setForm} onToast=${setToast} />
@@ -372,10 +420,26 @@ function Form({ catalog }) {
 
 export function NewRunScreen() {
   const catalog = useResource("/api/newrun/catalog");
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState(null);
+  const refresh = async () => {
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      await api("/api/newrun/library/refresh", { method: "POST" });
+      catalog.reload();
+    } catch (error) {
+      setRefreshError(error.message);
+    } finally {
+      setRefreshing(false);
+    }
+  };
   let body;
   if (catalog.status === "error") body = html`<${ErrorState} error=${catalog.error} onRetry=${catalog.reload} />`;
   else if (catalog.status !== "ready") body = html`<${Loading} label="Reading the instrument list…" />`;
-  else body = html`<${Form} catalog=${catalog.data} />`;
+  else body = html`
+    ${refreshError && html`<p class="panel-status is-error" role="alert">${refreshError} Showing the last snapshot.</p>`}
+    <${Form} catalog=${catalog.data} onRefresh=${refresh} refreshing=${refreshing} />`;
   return html`
     <div class="screen screen-newrun">
       <header class="review-top">
