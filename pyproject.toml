@@ -49,6 +49,9 @@ Homepage = "https://github.com/tonykoop/makerbench-hwe"
 Leaderboard = "https://github.com/tonykoop/makerbench-hwe#leaderboard"
 
 [tool.pytest.ini_options]
+markers = [
+    "blender: needs the pinned Blender (scripts/fetch_blender.py); run by the blender-runner CI job",
+]
 filterwarnings = [
     "error::DeprecationWarning:shapely",
 ]
