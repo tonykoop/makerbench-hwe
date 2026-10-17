@@ -31,6 +31,10 @@ Known limits (not reasonable to close statically, and documented rather than ski
   assembled by ``chr``/``bytes`` arithmetic) cannot be resolved;
 * data flowing into a callee's *differently named* parameter is not followed across calls (the
   callee is scanned on its own: it must use ``trial_rows`` or hit the key rules);
+* deliberate obfuscation is out of scope: this guard is a regression net against *accidental* raw
+  reads, not an adversarial sandbox. In particular, JavaScript keys split across string constants
+  and chained through variables, and sensitive keys smuggled through containers or dict-key tricks
+  (``KEYS = {"rows": "tri" + "als"}``-style indirection beyond the literal rules) are not chased;
 * a run log loaded in a scope that never mentions ``run_log`` (e.g. a path held in a variable
   named otherwise) is not tracked as a log.
 """
@@ -392,11 +396,16 @@ def loaded_log_findings(source: str, rel: str) -> list[Finding]:
         )
         for _ in range(4):
             for node in own:
-                if isinstance(node, ast.Assign) and (
-                    (names_run_log and _is_json_load(node.value))
-                    or (isinstance(node.value, ast.Name) and node.value.id in tainted)
+                if isinstance(node, ast.Assign):
+                    targets, value = node.targets, node.value
+                elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and node.value is not None:
+                    targets, value = [node.target], node.value  # ``log: dict = json.loads(...)``
+                else:
+                    continue
+                if (names_run_log and _is_json_load(value)) or (
+                    isinstance(value, ast.Name) and value.id in tainted
                 ):
-                    for target in node.targets:
+                    for target in targets:
                         if isinstance(target, ast.Name):
                             tainted.add(target.id)
         if not tainted:

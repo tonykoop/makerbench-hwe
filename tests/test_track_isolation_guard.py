@@ -248,6 +248,7 @@ ESCAPES = {
     "return it": "return log",
     "star-star": "return {**log}",
     "alias then values": "alias = log\n    return list(alias.values())",
+    "annotated alias": "alias: dict = log\n    return list(alias.values())",
     "run_log parameter": None,
 }
 
@@ -261,6 +262,16 @@ def test_loaded_run_log_escape_forms_are_caught(name):
         f"    {ESCAPES[name]}\n"
     )
     assert loaded_log_findings(source, "x.py"), name
+
+
+def test_annotated_json_load_escape_is_caught():
+    source = (
+        "import json\n"
+        "def rows(run_dir):\n"
+        '    log: dict = json.loads((run_dir / "run_log.json").read_text())\n'
+        "    return list(log.values())\n"
+    )
+    assert loaded_log_findings(source, "x.py")
 
 
 def test_run_log_parameter_escape_is_caught():
