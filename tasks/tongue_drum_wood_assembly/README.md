@@ -155,6 +155,12 @@ gap and the inclusive 0.05 mm boundary pass the joint distance check; 0.06 mm fa
 
 ## Opening the parts in FreeCAD
 
+The fixture adds a minimal `GuiDocument.xml` after each headless save, marking
+every Link, Body and Body Tip visible. This edits the ZIP restore metadata only;
+it does not perform a GUI save or add tessellation members. `HasExpansion="1"`,
+`Expand` and `Camera` records are included for FreeCAD 1.1.4's restore parser.
+The seven files remain within the existing 256-member intake cap.
+
 1. Keep `assembly.FCStd`, `parts/`, `cut-list.csv` and `joints.json` together.
    Open **assembly.FCStd** in FreeCAD 1.1.x; it loads the six part documents by
    relative links. Use **View → Standard views → Axonometric**, then **Fit all**.
