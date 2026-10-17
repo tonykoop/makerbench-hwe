@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -209,3 +210,55 @@ def test_brief_and_image_routes_and_repo_references(tmp_path: Path):
     bad = client.post("/api/newrun/tonight", json={**form, "references": [{"repo_image": "notes.txt"}]},
                       headers={"Origin": "http://127.0.0.1"})
     assert bad.status_code == 400 and "not in the instrument repo" in bad.text
+
+
+def test_private_manifest_sections_are_dropped_whole(tmp_path: Path):
+    root = build_instruments_root(tmp_path / "instruments")
+    kora = root / "strings" / "kora"
+    (kora / "capstone-manifest.json").write_text(json.dumps({
+        "instrument": "Kora", "string_count": 21,
+        "customer": {"key": "SYNTHETIC_CUSTOMER_KEY", "length_in": 99.1},
+        "price": {"range": 1234},
+        "engineering": {"bowl_diameter_in": 20.3, "sourcing": {"length_in": 77.7}, "quote": {"key": "SYNTHETIC_QUOTE"}},
+        "notes": {"scale": "SYNTHETIC_NOTE_SCALE"},
+    }), encoding="utf-8")
+    out = ir.brief(ir.find_repo(root, "kora"), name="Kora", slug="kora")
+    flat = repr(out)
+    for leaked in ("SYNTHETIC_CUSTOMER_KEY", "99.1", "1234", "77.7", "SYNTHETIC_QUOTE", "SYNTHETIC_NOTE_SCALE"):
+        assert leaked not in flat, leaked
+    sources = {f["source"] for f in out["fields"]}
+    assert "capstone-manifest.json › engineering.bowl_diameter_in" in sources  # the control: public fields survive
+    assert "capstone-manifest.json › string_count" in sources
+
+
+def test_oversized_repo_reads_are_refused_before_allocation(tmp_path: Path, monkeypatch):
+    root = build_instruments_root(tmp_path / "instruments")
+    kora = root / "strings" / "kora"
+    (kora / "capstone-manifest.json").write_bytes(b'{"string_count": 21, "x": "' + b"y" * ir.MAX_FILE_BYTES + b'"}')
+    assert ir.brief(ir.find_repo(root, "kora"), name="Kora", slug="kora")["text"].startswith("Model the Kora")
+    with pytest.raises(ir.RepoFileError):
+        ir.read_bounded(kora / "capstone-manifest.json", ir.MAX_FILE_BYTES)
+    for name in ("hole", "tongue", "tuning", "scale", "string", "fret", "pitch"):
+        (kora / f"{name}-table.csv").write_text("note,length_in\nF2,31.1\n", encoding="utf-8")
+    reads = []
+    real = ir.read_csv
+    monkeypatch.setattr(ir, "read_csv", lambda path: reads.append(path.name) or real(path))
+    assert len(ir._tables(ir.find_repo(root, "kora"))) == ir.MAX_TABLES
+    assert len(reads) == ir.MAX_TABLES  # stops reading once the budget is spent
+
+
+def test_an_oversized_repo_image_is_refused_without_reading_it(tmp_path: Path, monkeypatch):
+    from makerbench.arena_studio import control_room_newrun as nr
+
+    (tmp_path / "repo").mkdir()
+    repo = build_newrun_repo(tmp_path / "repo")
+    root = build_instruments_root(tmp_path / "instruments")
+    big = root / "strings" / "kora" / "images" / "hero-render.png"
+    big.write_bytes(_png() + b"\0" * (nr.MAX_REFERENCE_BYTES + 8))
+    monkeypatch.setattr(Path, "read_bytes", lambda self: pytest.fail(f"read_bytes({self.name})"))
+    client = TestClient(create_studio_app(registry_path=repo / "registry.json", repo_root=repo, instruments_root=root),
+                        base_url="http://127.0.0.1")
+    form = {"instrument": "kora", "entrants": ["cadam:fable", "freecad:opus"], "brief": "Kora.", "turns": 4,
+            "cap_usd": 1.0, "references": [{"repo_image": "hero-render.png"}]}
+    response = client.post("/api/newrun/tonight", json=form, headers={"Origin": "http://127.0.0.1"})
+    assert response.status_code == 400 and "under 10 MB" in response.text

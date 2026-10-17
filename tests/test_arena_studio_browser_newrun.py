@@ -413,3 +413,32 @@ def test_brief_and_references_fill_from_the_instrument_repo(repo: Path, tmp_path
     finally:
         server.should_exit = True
         thread.join(timeout=10)
+
+
+def test_a_slow_brief_suggestion_never_overwrites_what_was_typed(repo: Path, tmp_path: Path):
+    from test_control_room_variants import build_instruments_root
+
+    root = build_instruments_root(tmp_path / "instruments")
+    server, thread, url = _serve(repo, instruments_root=root)
+    try:
+        with sync_playwright() as playwright:
+            browser = _launch(playwright)
+            context, page, problems, _ = _open(browser, url)
+            held = []
+            page.route("**/api/newrun/instrument/kora/brief*", lambda route: held.append(route))
+            page.locator('[data-instrument="kora"]').click()
+            page.wait_for_function("() => true")
+            brief = page.locator("#newrun-brief")
+            brief.fill("Kora typed while the suggestion loaded.")
+            page.wait_for_timeout(200)
+            assert held, "the brief request was not held"
+            held[0].continue_()
+            page.get_by_test_id("brief-filled").wait_for()
+            assert brief.input_value() == "Kora typed while the suggestion loaded."
+            assert page.locator(".newrun-ref", has_text="From the repo").count() == 2  # the images still arrive
+            assert problems == []
+            context.close()
+            browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)

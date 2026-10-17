@@ -15,6 +15,7 @@ never opened.
 from __future__ import annotations
 
 import csv
+import io
 import re
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
@@ -46,6 +47,19 @@ def public_column(name: str) -> bool:
 
 class RepoFileError(ValueError):
     """A repo table that cannot be read safely (too large, malformed, or not text)."""
+
+
+def read_bounded(path: Path, limit: int) -> bytes:
+    """At most ``limit`` bytes of a regular file, refused before and during the read if larger."""
+    if path.stat().st_size > limit:
+        raise RepoFileError(f"{path.name} is larger than {limit // 1024} KB.")
+    with path.open("rb") as handle:
+        raw = handle.read(limit + 1)
+    if len(raw) > limit:  # the file grew after the size check
+        raise RepoFileError(f"{path.name} is larger than {limit // 1024} KB.")
+    return raw
+
+
 MAX_ROWS = 64
 MAX_FILE_BYTES = 512 * 1024
 _SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -96,17 +110,15 @@ def repo_file(repo: Path, relative: str) -> Optional[Path]:
 
 def read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     """Allowlisted columns and up to MAX_ROWS rows; RepoFileError for an unreadable table."""
-    if path.stat().st_size > MAX_FILE_BYTES:
-        raise RepoFileError(f"{path.name} is larger than {MAX_FILE_BYTES // 1024} KB.")
+    raw = read_bounded(path, MAX_FILE_BYTES)
     try:
-        with path.open(newline="", encoding="utf-8-sig") as handle:
-            reader = csv.DictReader(handle)
-            columns = [c for c in (reader.fieldnames or []) if c and public_column(c)]
-            rows = []
-            for index, row in enumerate(reader):
-                if index >= MAX_ROWS:
-                    break
-                rows.append({c: (row.get(c) or "").strip() for c in columns})
+        reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig"), newline=""))
+        columns = [c for c in (reader.fieldnames or []) if c and public_column(c)]
+        rows = []
+        for index, row in enumerate(reader):
+            if index >= MAX_ROWS:
+                break
+            rows.append({c: (row.get(c) or "").strip() for c in columns})
     except (csv.Error, UnicodeDecodeError) as error:
         raise RepoFileError(f"{path.name} could not be read as a table: {str(error)[:120]}") from None
     return columns, rows
@@ -169,6 +181,12 @@ IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
 MAX_SPEC = 14
 MAX_TABLE_ROWS = 24
 MAX_IMAGES = 6
+MAX_TABLES = 4
+#: Manifest sections a nested spec field may come from. Every other ancestor key must also be
+#: public design-intent vocabulary, so a ``customer``, ``price`` or ``sourcing`` section is
+#: dropped whole, whatever its leaf keys are called.
+MANIFEST_SECTIONS = frozenset({"engineering", "dimensions", "geometry", "spec", "specs", "specification",
+                               "design", "acoustics", "tuning", "build"})
 TABLE_DIRS = ("", "data", "docs")
 
 
@@ -182,13 +200,20 @@ def _scalars(node: Any, path: str = "", depth: int = 0):
         yield path, node
 
 
+def _public_key_path(key_path: str) -> bool:
+    *ancestors, leaf = key_path.split(".")
+    if ancestors and ancestors[0].lower() not in MANIFEST_SECTIONS:
+        return False
+    return all(public_column(part) for part in [*ancestors[1:], leaf])
+
+
 def _manifest_fields(repo: Path) -> tuple[Optional[str], list[dict[str, str]]]:
     path = repo_file(repo, "capstone-manifest.json")
-    if path is None or path.stat().st_size > MAX_FILE_BYTES:
+    if path is None:
         return None, []
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        data = json.loads(read_bounded(path, MAX_FILE_BYTES).decode("utf-8"))
+    except (OSError, ValueError):  # RepoFileError and UnicodeDecodeError are ValueErrors
         return None, []
     title = None
     for key in ("instrument", "title", "name"):
@@ -202,7 +227,7 @@ def _manifest_fields(repo: Path) -> tuple[Optional[str], list[dict[str, str]]]:
     fields = []
     for key_path, value in _scalars(data):
         leaf = key_path.rsplit(".", 1)[-1]
-        if not public_column(leaf) or not SPEC_KEYS.search(leaf) or len(str(value)) > 80:
+        if not _public_key_path(key_path) or not SPEC_KEYS.search(leaf) or len(str(value)) > 80:
             continue
         if isinstance(value, str) and value.startswith(("http", "/", ".")):
             continue
@@ -249,7 +274,9 @@ def _tables(repo: Path) -> list[dict[str, Any]]:
             if columns and rows:
                 relative = path.relative_to(repo.resolve()).as_posix()
                 out.append({"source": relative, "columns": columns, "rows": rows[:MAX_TABLE_ROWS]})
-    return out[:4]
+                if len(out) >= MAX_TABLES:
+                    return out  # stop reading once the table budget is spent
+    return out
 
 
 def repo_images(repo: Path) -> list[str]:

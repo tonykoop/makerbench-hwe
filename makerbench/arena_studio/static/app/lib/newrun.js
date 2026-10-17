@@ -58,7 +58,9 @@ export function chooseInstrument(form, catalog, id) {
     variants: [],
     deliverable: instrument?.assembly ? "assembly" : form.deliverable,
     brief: instrument?.brief || "",
+    brief_edited: false,
     references: [],
+    autofill_for: null,
   };
 }
 
@@ -147,13 +149,22 @@ export function toggleVariant(form, id) {
   return { ...form, preset: null, variants: on ? form.variants.filter((v) => v !== id) : [...form.variants, id] };
 }
 
-// Brief auto-fill (#1108): fill once per instrument, then the text is Tony's to edit.
+// Brief auto-fill (#1108): fill once per instrument, then the text is Tony's to edit. A brief
+// typed or an image added while the suggestion was loading is kept; repo images are added after.
 export function applyAutofill(form, instrumentId, suggestion) {
   if (form.instrument !== instrumentId || form.autofill_for === instrumentId) return form;
+  const have = new Set(form.references.filter((ref) => ref.repo_image).map((ref) => ref.repo_image));
   return {
     ...form,
     autofill_for: instrumentId,
-    brief: suggestion.text || form.brief,
-    references: suggestion.images.map((name) => ({ repo_image: name, name })),
+    brief: form.brief_edited ? form.brief : suggestion.text || form.brief,
+    references: [
+      ...form.references,
+      ...suggestion.images.filter((name) => !have.has(name)).map((name) => ({ repo_image: name, name })),
+    ],
   };
+}
+
+export function editBrief(form, brief) {
+  return { ...form, brief, brief_edited: true };
 }

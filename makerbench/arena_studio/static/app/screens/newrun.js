@@ -15,6 +15,7 @@ import {
   cardDetail,
   cellReason,
   chooseInstrument,
+  editBrief,
   clampTurns,
   duration,
   filterInstruments,
@@ -302,7 +303,7 @@ function ReferenceStep({ form, setForm, onToast }) {
       ${form.autofill_for === form.instrument && html`<p class="hint" data-testid="brief-filled">Filled in from the instrument repo; edit anything.</p>`}
       <textarea id="newrun-brief" class="review-note newrun-brief" value=${form.brief} onInput=${(event) => {
         const value = event.currentTarget.value;
-        setForm((f) => ({ ...f, brief: value }));
+        setForm((f) => editBrief(f, value));
       }}></textarea>
       <${Provenance} suggestion=${suggestion.status === "ready" ? suggestion.data : null} />
     <//>

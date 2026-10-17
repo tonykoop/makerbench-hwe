@@ -26,6 +26,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 from .. import nightly_cad
 from ..run_log_io import atomic_write_json, file_lock
 from . import doe
+from .instrument_repo import RepoFileError, read_bounded
 
 PLAN_SCHEMA = "makerbench-control-room-run-plan-v1"
 DRAFT_SCHEMA = "makerbench-control-room-tonight-draft-v1"
@@ -282,9 +283,12 @@ def _save_references(images: Sequence[Mapping[str, Any]], runs_root: Path, base_
             source = repo_image(str(image["repo_image"])) if repo_image else None
             if source is None:
                 raise NewRunError(f"Reference image {image['repo_image']} is not in the instrument repo.")
-            raw = source.read_bytes()
+            try:
+                raw = read_bounded(source, MAX_REFERENCE_BYTES)  # refused before it is read into memory
+            except (OSError, RepoFileError):
+                raw = b""
             suffix = next((ext for magic, ext in IMAGE_MAGIC.items() if raw.startswith(magic)), None)
-            if suffix is None or len(raw) > MAX_REFERENCE_BYTES:
+            if suffix is None:
                 raise NewRunError(f"Reference image {image['repo_image']} is not a PNG, JPEG or WebP under 10 MB.")
             name = f"reference-{index + 1}{suffix}"
             path = confined(runs_root, str(CONTROL_ROOM_DIR), "plans", base_id, "references", name)
