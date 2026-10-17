@@ -7,8 +7,8 @@ symlink anywhere on the path.
 
 Variants follow the family model in #1097: ``variants.csv`` (design intent, one row
 per product) when the repo has one, else the older ``family-spec.csv`` (one row per
-family member, which is what the library's "N variants" counts). Columns that could
-carry customer or price data are never read into a response, and spreadsheets are
+family member, which is what the library's "N variants" counts). Only columns named
+from a public design-intent vocabulary are read (an allowlist), and spreadsheets are
 never opened.
 """
 
@@ -22,8 +22,30 @@ from typing import Any, Iterable, Mapping, Optional
 VARIANT_FILES = ("variants.csv", "family-spec.csv")
 ID_COLUMNS = ("variant_id", "member_id", "id", "variant")
 LABEL_COLUMNS = ("label", "name", "role", "tuning", "key", "root_note")
-#: Column-name fragments that are never read, whatever the file (#1097 privacy rule).
-PRIVATE_COLUMNS = re.compile(r"price|cost|customer|buyer|client|email|phone|address|order|invoice|serial|sale", re.I)
+#: The public design-intent vocabulary (#1097). A column is read only when EVERY word of its
+#: name is in this list or is a number: an allowlist, so customer, contact, price, retail or
+#: any other unexpected column can never reach a response, however it is spelled.
+PUBLIC_COLUMN_WORDS = frozenset("""
+    id variant variants member family packet instrument label name role status
+    tuning tuned temperament key root note notes_count scale mode system pitch hz frequency midi octave
+    string strings course courses tongue tongues hole holes bar bars key_count fret frets
+    count number total overall min max nominal target predicted range
+    length width height depth diameter radius thickness gauge size envelope volume
+    bore chamber cavity port gu mouth window wall
+    bowl neck body head shell top bottom side sides back front soundboard bridge nut
+    node position spacing tension kerf
+    material materials stock wood species grain direction steel brass
+    in inch mm cm m kg g lbf n deg cm3 l
+""".split())
+
+
+def public_column(name: str) -> bool:
+    words = [w for w in re.split(r"[^a-z0-9]+", str(name).lower()) if w]
+    return bool(words) and all(w in PUBLIC_COLUMN_WORDS or w.isdigit() for w in words)
+
+
+class RepoFileError(ValueError):
+    """A repo table that cannot be read safely (too large, malformed, or not text)."""
 MAX_ROWS = 64
 MAX_FILE_BYTES = 512 * 1024
 _SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -73,16 +95,20 @@ def repo_file(repo: Path, relative: str) -> Optional[Path]:
 
 
 def read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
+    """Allowlisted columns and up to MAX_ROWS rows; RepoFileError for an unreadable table."""
     if path.stat().st_size > MAX_FILE_BYTES:
-        return [], []
-    with path.open(newline="", encoding="utf-8-sig", errors="replace") as handle:
-        reader = csv.DictReader(handle)
-        columns = [c for c in (reader.fieldnames or []) if c and not PRIVATE_COLUMNS.search(c)]
-        rows = []
-        for index, row in enumerate(reader):
-            if index >= MAX_ROWS:
-                break
-            rows.append({c: (row.get(c) or "").strip() for c in columns})
+        raise RepoFileError(f"{path.name} is larger than {MAX_FILE_BYTES // 1024} KB.")
+    try:
+        with path.open(newline="", encoding="utf-8-sig") as handle:
+            reader = csv.DictReader(handle)
+            columns = [c for c in (reader.fieldnames or []) if c and public_column(c)]
+            rows = []
+            for index, row in enumerate(reader):
+                if index >= MAX_ROWS:
+                    break
+                rows.append({c: (row.get(c) or "").strip() for c in columns})
+    except (csv.Error, UnicodeDecodeError) as error:
+        raise RepoFileError(f"{path.name} could not be read as a table: {str(error)[:120]}") from None
     return columns, rows
 
 
@@ -94,7 +120,10 @@ def variants(repo: Optional[Path]) -> dict[str, Any]:
         path = repo_file(repo, name)
         if path is None:
             continue
-        columns, rows = read_csv(path)
+        try:
+            columns, rows = read_csv(path)
+        except RepoFileError as error:
+            return {"source": name, "variants": [], "error": str(error)}
         id_col = next((c for c in ID_COLUMNS if c in columns), None)
         if id_col is None:
             continue

@@ -85,3 +85,36 @@ def test_variants_route(tmp_path: Path):
     assert client.get("/api/newrun/instrument/nope/variants").status_code == 404
     bare = TestClient(create_studio_app(registry_path=repo / "registry.json", repo_root=repo), base_url="http://127.0.0.1")
     assert bare.get("/api/newrun/instrument/kora/variants").json()["instruments_root"] is False
+
+
+def test_only_allowlisted_columns_reach_a_response(tmp_path: Path):
+    """Codex #1121 probe: contact and retail columns must never become chip details."""
+    root = tmp_path / "instruments"
+    repo = root / "strings" / "kora"
+    repo.mkdir(parents=True)
+    (repo / "variants.csv").write_text(
+        "variant_id,label,contact,retail_usd,Customer Name,unit_price_usd,shipping_address,string_count\n"
+        "KORA-1,Study,SYNTHETIC_CUSTOMER,123.45,Jane Doe,900,1 Main St,21\n",
+        encoding="utf-8",
+    )
+    out = ir.variants(ir.find_repo(root, "kora"))
+    assert out["variants"] == [{"id": "KORA-1", "label": "Study", "status": "", "detail": "string count 21"}]
+    flat = repr(out)
+    for leaked in ("SYNTHETIC_CUSTOMER", "123.45", "Jane Doe", "900", "Main St", "contact", "retail"):
+        assert leaked not in flat, leaked
+    assert ir.public_column("bowl_diameter_in") and not ir.public_column("retail_usd")
+
+
+def test_an_oversized_csv_field_is_a_clean_refusal(tmp_path: Path):
+    (tmp_path / "repo").mkdir()
+    repo = build_newrun_repo(tmp_path / "repo")
+    root = tmp_path / "instruments"
+    kora = root / "strings" / "kora"
+    kora.mkdir(parents=True)
+    (kora / "variants.csv").write_text("variant_id,label\nKORA-1," + "x" * 140_000 + "\n", encoding="utf-8")
+    client = TestClient(create_studio_app(registry_path=repo / "registry.json", repo_root=repo, instruments_root=root),
+                        base_url="http://127.0.0.1")
+    response = client.get("/api/newrun/instrument/kora/variants")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["variants"] == [] and data["source"] == "variants.csv" and "could not be read" in data["error"]
