@@ -212,6 +212,33 @@ TRACK_EXPLAINER: list[dict] = [
         ],
     },
     {
+        "id": "blender-freeform",
+        "label": "Blender freeform",
+        "league_id": None,
+        "status": "upcoming",
+        "tagline": "Mesh-first organic design — vessels and instrument bodies.",
+        "variable": "Freeform shape fidelity of a Blender (bpy) mesh, in a confined headless run.",
+        "detail": "Blender is not dimension-driven, so it has its own track: organic and "
+        "freeform families only (vessels, instrument bodies), graded on bounding box, "
+        "volume and wall thickness with bands set above the mesh faceting error. Tight-"
+        "tolerance mechanical families are excluded. Scores are never blended into the "
+        "blind code-CAD numbers and never ranked against them.",
+        "highlights": [
+            "Own track: never blended with the blind code-CAD series.",
+            "Organic/freeform families only; mechanical parts excluded.",
+            "Entrant bpy code runs in a no-network, read-only sandbox.",
+        ],
+        "board": {
+            "label": "Blender track policy",
+            "href": _DOCS + "BLENDER_TRACK.md",
+            "kind": "roadmap-board",
+        },
+        "docs": [
+            {"label": "Track policy", "href": _DOCS + "BLENDER_TRACK.md"},
+            {"label": "Blender epic (#1043)", "href": _ISSUE + "1043"},
+        ],
+    },
+    {
         "id": "physical_verification",
         "label": "Physical Verification",
         "league_id": None,
@@ -1201,6 +1228,9 @@ def scan_results(results_dir: Path) -> dict:
     # ingested (non-excluded) rows. Data-derived, so it is deterministic for a
     # fixed results tree — a wall-clock build date would break the drift guard.
     latest_row_stamp: datetime | None = None
+    # Blender (mesh) rows never enter the existing series (see track_isolation);
+    # they are only counted so the Tracks explainer can report their own track.
+    blender_row_count = 0
 
     for path in sorted(results_dir.rglob("*.json")):
         try:
@@ -1267,6 +1297,9 @@ def scan_results(results_dir: Path) -> dict:
             mtime_ns = 0
 
         for row_index, row in enumerate(run.get("results", [])):
+            if _ISOLATION.is_blender_row(row, run):
+                blender_row_count += 1
+                continue
             grade = row.get("grade") or {}
             task_id = row.get("task_id") or grade.get("task_id")
             track = row.get("track") or grade.get("track")
@@ -1372,6 +1405,7 @@ def scan_results(results_dir: Path) -> dict:
     return {
         "cells": cells,
         "model_meta": model_meta,
+        "blender_rows": blender_row_count,
         "benchmark_version": benchmark_version,
         "data_updated": (
             latest_row_stamp.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1846,6 +1880,8 @@ def build_extended_families(results_dir: Path, registry_path: Path) -> list[dict
         if _run_excluded(path, doc.get("model_identifier")):
             continue
         for row in (doc.get("results") or []):
+            if _ISOLATION.is_blender_row(row, doc):
+                continue
             fid = row.get("task_id")
             if not fid or fid in core:
                 continue
@@ -2367,7 +2403,7 @@ def build_payload(
     headline = make_headline(models_out, families)
     hero_stats = build_hero_stats(models_out, families)
     saturation = build_saturation_profile(models_out, families, cells)
-    track_explainer = build_track_explainer(models_out)
+    track_explainer = build_track_explainer(models_out, blender_rows=scan.get("blender_rows", 0))
     delta_dossier = build_delta_dossier(results_dir)
     roadmap = build_roadmap(registry_path)
     citation = build_citation(
@@ -2414,7 +2450,7 @@ def build_payload(
     return payload
 
 
-def build_track_explainer(models: list[dict]) -> dict:
+def build_track_explainer(models: list[dict], blender_rows: int = 0) -> dict:
     """Landing-page tracks/leagues narrative payload (mb#171, epic #176).
 
     For a track that maps onto a data league, the live/upcoming status and row
@@ -2438,6 +2474,10 @@ def build_track_explainer(models: list[dict]) -> dict:
             count = league_counts.get(league_id, 0)
             entry["row_count"] = count
             entry["status"] = "live" if count > 0 else "upcoming"
+        elif spec["id"] == _ISOLATION.BLENDER_TRACK:
+            # Own count: Blender rows are excluded from every league tally above.
+            entry["row_count"] = blender_rows
+            entry["status"] = "live" if blender_rows > 0 else "upcoming"
         else:
             entry["row_count"] = 0
             entry["status"] = spec.get("status", "upcoming")
