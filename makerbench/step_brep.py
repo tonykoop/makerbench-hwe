@@ -9,7 +9,7 @@ from .step_mesh import _run_step_worker
 
 # `external_step` is the separate external-entrant track (#1069); its reports keep that
 # track label and are never merged into blind/perception.
-TRACKS = frozenset({"blind", "perception", "external_step"})
+TRACKS = frozenset({"blind", "perception", "external_step", "wood_assembly"})
 
 
 def check_brep_submission(source: Path, out_dir: Path, spec, *, track: str) -> dict:

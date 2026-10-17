@@ -24,8 +24,13 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
-      - name: Install test dependencies
-        run: python -m pip install pytest
+      - name: Install confinement
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Install locked test and overlap dependencies
+        run: python -m pip install -r requirements.lock -r requirements-step.lock
       - name: Read pinned distribution checksum
         id: pin
         run: |
@@ -37,4 +42,4 @@ jobs:
       - name: Install or validate cached extraction (no FUSE)
         run: python scripts/install_freecad.py .freecad
       - name: Test headless exports and determinism (runtime required)
-        run: python -m pytest tests/test_freecad_integration.py -q
+        run: python -m pytest tests/test_freecad_integration.py tests/test_wood_assembly.py -q
