@@ -154,3 +154,25 @@ def test_fetch_failure_is_visible_without_destroying_static_results(base, browse
     assert page.locator(selector).count() > 0
     assert page.locator(selector).first.is_visible()
     page.close()
+
+
+def test_phone_menu_does_not_wait_for_chart_library_loading(base, browser):
+    page = browser.new_page(viewport={'width': 390, 'height': 1000})
+    pending = []
+    page.route('**/chart.umd.min.js', lambda route: pending.append(route))
+    try:
+        page.goto(base + 'landscape.html', wait_until='commit')
+        page.locator('script[src*="chart.umd.min.js"]').wait_for(state='attached', timeout=5000)
+        menu = page.get_by_role('button', name='Menu', exact=True)
+        menu.wait_for(state='visible', timeout=3000)
+        assert pending, 'Chart.js must still be blocked for this regression control'
+        assert page.evaluate('document.readyState') == 'loading'
+        menu.click()
+        assert menu.get_attribute('aria-expanded') == 'true'
+        page.keyboard.press('Escape')
+        assert menu.get_attribute('aria-expanded') == 'false'
+        assert menu.evaluate('node => node === document.activeElement')
+    finally:
+        for route in pending:
+            route.abort()
+        page.close()

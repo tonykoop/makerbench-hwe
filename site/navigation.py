@@ -62,6 +62,7 @@ def render_header(page: Path) -> str:
   </div>
   <p class="site-data-status" data-site-data-status role="status" hidden></p>
 </header>
+<script src="{prefix}assets/navigation.js?v=1023"></script>
 <!-- /site-nav:header -->'''
 
 
@@ -91,7 +92,6 @@ def decorate_html(source: str, page: Path) -> str:
     source = re.sub(r"<footer\b.*?</footer>", footer_links, source, flags=re.S)
     assets = (f'<!-- site-nav:assets -->\n'
               f'<link rel="stylesheet" href="{prefix}assets/navigation.css?v=1023" />\n'
-              f'<script src="{prefix}assets/navigation.js?v=1023" defer></script>\n'
               '<!-- /site-nav:assets -->')
     pattern = re.compile(r'<!-- site-nav:assets -->.*?<!-- /site-nav:assets -->', re.S)
     if pattern.search(source):
