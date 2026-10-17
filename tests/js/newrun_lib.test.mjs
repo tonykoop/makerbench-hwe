@@ -85,3 +85,13 @@ test("library filters and search narrow the instrument list", async () => {
   assert.deepEqual(filterInstruments(list, {}, "HARP").map((i) => i.id), ["kora"]);
   assert.equal(cardDetail({ family_label: "Strings", subtype: "harp-lute", variants: 3 }), "Strings · harp-lute · 3 variants");
 });
+
+test("variant chips toggle into a sweep", async () => {
+  const { toggleVariant } = await import("../../makerbench/arena_studio/static/app/lib/newrun.js");
+  let form = { variants: [], preset: "matchup" };
+  form = toggleVariant(form, "TD-8");
+  form = toggleVariant(form, "TD-10");
+  assert.deepEqual(form.variants, ["TD-8", "TD-10"]);
+  assert.equal(form.preset, null);
+  assert.deepEqual(toggleVariant(form, "TD-8").variants, ["TD-10"]);
+});
