@@ -12,10 +12,27 @@ the constant key ``"trials"`` is used to read, write or fetch something, however
   from another scanned module), concatenation, f-strings, ``"".join`` and ``.lower()/.upper()/.strip()``
   of constants.
 
-Not flagged: dict-literal keys that construct data, keyword names, and docstrings/comments.
-``.values()``/``.items()``-style indirect reads of a loaded run log cannot be seen by a key search;
-``run_log_module_findings`` closes that gap by requiring a module that loads ``run_log.json`` JSON
-to use ``trial_rows`` (or to be listed in the allowlist).
+Bindings (constants and accessor aliases) are resolved to a fixed point per scope, so chains in
+any order (``first = log.get; second = first; second("trials")``), tuple unpacking, ``+=`` and
+walrus keys are followed. Beyond that, ``key_findings`` adds a conservative literal rule: *any*
+string constant equal to a target (and any ``.target`` attribute) outside a dict-literal key or
+docstring is a finding, so keys held in containers (``KEYS = {"rows": "trials"}``) or returned by
+helpers are caught at the line that spells them. Allowlists are by (file, function, exact line).
+
+``loaded_log_findings`` covers the case with no key at all: in a scope that names ``run_log``, a
+json-loaded log (or a ``run_log`` parameter, or an alias of it) may only be passed as a call
+argument or read with a constant key; ``.values()``, iteration, ``**log``, returning it etc. are
+findings. ``run_log_module_findings`` requires such a module to *call* ``trial_rows``.
+
+Not flagged: dict-literal keys that construct data, keyword names, docstrings/comments.
+
+Known limits (not reasonable to close statically, and documented rather than skipped):
+* a key whose characters exist only at runtime (read from input, the network, the environment, or
+  assembled by ``chr``/``bytes`` arithmetic) cannot be resolved;
+* data flowing into a callee's *differently named* parameter is not followed across calls (the
+  callee is scanned on its own: it must use ``trial_rows`` or hit the key rules);
+* a run log loaded in a scope that never mentions ``run_log`` (e.g. a path held in a variable
+  named otherwise) is not tracked as a log.
 """
 
 from __future__ import annotations
@@ -191,31 +208,59 @@ class _Visitor(ast.NodeVisitor):
 
     # ----- bindings (pre-pass over the scope's own statements) --------------
     def _bind_body(self, scope: ast.AST) -> None:
-        for node in self._own_nodes(scope):
-            if isinstance(node, ast.Assign):
-                values = _values(node.value, self.env, self.imported)
-                accessor = _accessor_of(node.value, self.env, self.imported)
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        if values:
-                            self.env.consts.setdefault(target.id, set()).update(values)
-                        if accessor:
-                            self.env.aliases[target.id] = accessor
-            elif (
-                isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value
-            ):
-                values = _values(node.value, self.env, self.imported)
+        """Bind constants and accessor aliases of this scope's statements, to a fixed point.
+
+        One pass is not enough: ``first = log.get; second = first`` or ``a = "tri"; b = a + "als"``
+        resolve only once the earlier binding exists, whatever order the traversal visits them in.
+        """
+        nodes = list(self._own_nodes(scope))
+        self._converge(nodes)
+        augmented = [n for n in nodes if isinstance(n, ast.AugAssign)]
+        if augmented:  # ``key += "als"`` extends a value once; applying it every pass would never settle
+            for node in augmented:
+                self._bind_node(node)
+            self._converge(nodes)
+
+    def _converge(self, nodes: list[ast.AST]) -> None:
+        for _ in range(12):
+            before = ({k: set(v) for k, v in self.env.consts.items()}, dict(self.env.aliases))
+            for node in nodes:
+                if not isinstance(node, ast.AugAssign):
+                    self._bind_node(node)
+            if before == (self.env.consts, self.env.aliases):
+                break
+
+    def _bind(self, target: ast.AST, value: ast.AST | None, *, add: bool = False) -> None:
+        if isinstance(target, ast.Name) and value is not None:
+            values = _values(value, self.env, self.imported)
+            if add:
+                prior = self.env.const(target.id)
+                values = {a + b for a in prior for b in values} if prior and values else set()
+            if values:
+                self.env.consts.setdefault(target.id, set()).update(values)
+            accessor = None if add else _accessor_of(value, self.env, self.imported)
+            if accessor:
+                self.env.aliases[target.id] = accessor
+        elif isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, (ast.Tuple, ast.List)):
+            if len(target.elts) == len(value.elts):
+                for sub_target, sub_value in zip(target.elts, value.elts):
+                    self._bind(sub_target, sub_value)
+
+    def _bind_node(self, node: ast.AST) -> None:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                self._bind(target, node.value)
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            self._bind(node.target, node.value)
+        elif isinstance(node, ast.AugAssign) and isinstance(node.op, ast.Add):
+            self._bind(node.target, node.value, add=True)
+        elif isinstance(node, ast.NamedExpr):
+            self._bind(node.target, node.value)
+        elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+            if isinstance(node.target, ast.Name):
+                values = _literal_strings(node.iter, self.env, self.imported)
                 if values:
                     self.env.consts.setdefault(node.target.id, set()).update(values)
-                accessor = _accessor_of(node.value, self.env, self.imported)
-                if accessor:
-                    self.env.aliases[node.target.id] = accessor
-            elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
-                target = node.target
-                if isinstance(target, ast.Name):
-                    values = _literal_strings(node.iter, self.env, self.imported)
-                    if values:
-                        self.env.consts.setdefault(target.id, set()).update(values)
 
     @staticmethod
     def _own_nodes(scope: ast.AST):
@@ -264,16 +309,10 @@ class _Visitor(ast.NodeVisitor):
 
 
 def _module_constants(tree: ast.Module) -> dict[str, set[str]]:
-    out: dict[str, set[str]] = {}
-    env = _Env()
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            values = _values(node.value, env, {})
-            for target in node.targets:
-                if isinstance(target, ast.Name) and values:
-                    out.setdefault(target.id, set()).update(values)
-                    env.consts.setdefault(target.id, set()).update(values)
-    return out
+    """Module-level string constants (resolved to a fixed point, so ``B = A + "x"`` works)."""
+    visitor = _Visitor("", {}, frozenset(), False)
+    visitor._bind_body(tree)
+    return {name: set(values) for name, values in visitor.env.consts.items()}
 
 
 def analyze_source(
@@ -301,6 +340,149 @@ def analyze_source(
     return visitor.findings
 
 
+LOG_PARAMS = {"run_log"}
+
+
+def _is_json_load(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"load", "loads"}
+        and _unparse(node.func.value) in {"json", "_json"}
+    )
+
+
+def loaded_log_findings(source: str, rel: str) -> list[Finding]:
+    """Uses of a json-loaded run log (or a ``run_log`` parameter) that bypass the helpers.
+
+    A name bound to ``json.load(s)(...)`` in a scope that names ``run_log`` (or a parameter named
+    ``run_log``) may be passed as a call argument (the callee is scanned on its own) or read with a
+    constant key (which the key rules then judge). Anything else (``.values()``, ``.items()``,
+    iteration, ``**log``, returning it, comprehension over it) is reported, so an aggregate cannot
+    reach the rows without a literal key. Flow into a callee's differently named parameter is not
+    followed.
+    """
+    tree = ast.parse(source, filename=rel)
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    findings: list[Finding] = []
+
+    def scope_name(node: ast.AST) -> str:
+        names = []
+        while node in parents:
+            node = parents[node]
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.append(node.name)
+        return ".".join(reversed(names)) or "<module>"
+
+    scopes: list[ast.AST] = [tree] + [
+        n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    for scope in scopes:
+        tainted: set[str] = set()
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = scope.args
+            for arg in args.posonlyargs + args.args + args.kwonlyargs:
+                if arg.arg in LOG_PARAMS:
+                    tainted.add(arg.arg)
+        own = list(_Visitor._own_nodes(scope))
+        names_run_log = any(
+            (isinstance(n, ast.Constant) and isinstance(n.value, str) and "run_log" in n.value)
+            or (isinstance(n, ast.Name) and "run_log" in n.id)
+            for n in own
+        )
+        for _ in range(4):
+            for node in own:
+                if isinstance(node, ast.Assign) and (
+                    (names_run_log and _is_json_load(node.value))
+                    or (isinstance(node.value, ast.Name) and node.value.id in tainted)
+                ):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            tainted.add(target.id)
+        if not tainted:
+            continue
+        for node in own:
+            if not (isinstance(node, ast.Name) and node.id in tainted and isinstance(node.ctx, ast.Load)):
+                continue
+            parent = parents.get(node)
+            if isinstance(parent, ast.Call) and node in parent.args:
+                continue  # handed to another scanned function; its own body is judged there
+            if isinstance(parent, ast.Subscript) and parent.value is node and isinstance(
+                parent.slice, ast.Constant
+            ):
+                continue
+            if (
+                isinstance(parent, ast.Attribute)
+                and parent.value is node
+                and parent.attr in ACCESSORS
+                and isinstance(parents.get(parent), ast.Call)
+                and parents[parent].args
+                and isinstance(parents[parent].args[0], ast.Constant)
+            ):
+                continue
+            findings.append(
+                Finding(rel, scope_name(node), node.lineno, "loaded run log escapes the helpers", _unparse(parent or node)[:120])
+            )
+    return sorted(set(findings), key=lambda f: (f.line, f.function))
+
+
+def literal_findings(source: str, rel: str, targets: frozenset[str], attributes: bool) -> list[Finding]:
+    """Every string constant equal to a target (and ``.target`` reads), except dict-literal keys
+    and bare-expression strings (docstrings). ``text`` is the stripped source line."""
+    lines = source.splitlines()
+    tree = ast.parse(source)
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+
+    def scope(node: ast.AST) -> str:
+        names = []
+        while node in parents:
+            node = parents[node]
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.append(node.name)
+        return ".".join(reversed(names)) or "<module>"
+
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in targets:
+            parent = parents.get(node)
+            if (isinstance(parent, ast.Dict) and node in parent.keys) or isinstance(parent, ast.Expr):
+                continue
+            found.append(Finding(rel, scope(node), node.lineno, "key literal", lines[node.lineno - 1].strip()))
+        elif attributes and isinstance(node, ast.Attribute) and node.attr in targets:
+            found.append(Finding(rel, scope(node), node.lineno, "attribute read", lines[node.lineno - 1].strip()))
+    return found
+
+
+def key_findings(
+    source: str,
+    rel: str,
+    targets: frozenset[str],
+    project_constants: dict[str, dict[str, set[str]]] | None = None,
+    attributes: bool = True,
+) -> list[Finding]:
+    """The conservative literal rule plus the engine's resolved reads (aliases, alias chains,
+    built, imported and variable keys), one finding per (function, source line).
+    ``text`` is always the stripped source line so allowlists are by exact line."""
+    lines = source.splitlines()
+    unique: dict[tuple[str, str], Finding] = {}
+    for f in literal_findings(source, rel, targets, attributes):
+        unique.setdefault((f.function, f.text), f)
+    for f in analyze_source(source, rel, project_constants, targets, attributes):
+        function = f.function.replace(".<lambda>", "")
+        text = lines[f.line - 1].strip()
+        unique.setdefault((function, text), Finding(rel, function, f.line, f.kind, text))
+    return sorted(unique.values(), key=lambda f: (f.line, f.function))
+
+
+def hits(
+    source: str,
+    targets: frozenset[str],
+    project_constants: dict[str, dict[str, set[str]]] | None = None,
+    attributes: bool = True,
+) -> set[tuple[str, str]]:
+    return {(f.function, f.text) for f in key_findings(source, "<mem>", targets, project_constants, attributes)}
+
+
 def run_log_module_findings(source: str, rel: str) -> list[Finding]:
     """A module that json-loads a run log must route its rows through ``trial_rows``."""
     tree = ast.parse(source, filename=rel)
@@ -318,10 +500,10 @@ def run_log_module_findings(source: str, rel: str) -> list[Finding]:
             and "run_log" in node.value
         ):
             mentions_run_log = True
-        if isinstance(node, ast.Name) and node.id == "trial_rows":
-            uses_helper = True
-        if isinstance(node, ast.alias) and node.name == "trial_rows":
-            uses_helper = True
+        if isinstance(node, ast.Call):  # imported-but-never-called does not count
+            callee = node.func
+            if getattr(callee, "id", None) == "trial_rows" or getattr(callee, "attr", None) == "trial_rows":
+                uses_helper = True
     if loads_json and mentions_run_log and not uses_helper:
         return [
             Finding(
@@ -336,9 +518,12 @@ def run_log_module_findings(source: str, rel: str) -> list[Finding]:
 
 
 def scan_tree(
-    root: Path, source_dirs=("makerbench", "scripts", "site")
+    root: Path,
+    source_dirs=("makerbench", "scripts", "site"),
+    targets: frozenset[str] = TARGETS,
+    attributes: bool = True,
 ) -> tuple[list[Finding], list[Finding]]:
-    """(key-access findings, loader-without-helper findings) over every ``.py`` under the dirs."""
+    """(key-access findings, loaded-run-log escapes) over every ``.py`` under the dirs."""
     files = [p for d in source_dirs for p in sorted((root / d).rglob("*.py"))]
     sources = {p: p.read_text(encoding="utf-8") for p in files}
     constants: dict[str, dict[str, set[str]]] = {}
@@ -351,6 +536,6 @@ def scan_tree(
     loaders: list[Finding] = []
     for path, source in sources.items():
         rel = path.relative_to(root).as_posix()
-        access += analyze_source(source, rel, constants)
-        loaders += run_log_module_findings(source, rel)
+        access += key_findings(source, rel, targets, constants, attributes)
+        loaders += loaded_log_findings(source, rel)
     return access, loaders
