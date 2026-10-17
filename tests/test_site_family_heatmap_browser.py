@@ -69,6 +69,12 @@ def test_real_heatmap_values_selection_structure_and_contrast(heatmap_page, widt
     assert len(all_rows) == len(models)
     assert all_rows[:12] == selected
     assert {r['id'] for r in all_rows} == set(model_by_id)
+    disclosures = page.locator('.family-heatmap-table tbody th').evaluate_all(
+        'nodes => nodes.map(n => ({text:n.innerText, title:n.title}))')
+    for row, disclosure in zip(all_rows, disclosures):
+        if model_by_id[row['id']]['reasoning_level'] is None:
+            assert 'Unspecified' not in disclosure['text']
+            assert 'Unspecified' not in disclosure['title']
     for row in all_rows:
         values = model_by_id[row['id']]['tracks'][track]['families']
         assert row['cells'] == [dict(family=f, score=(values.get(f) or {}).get('mean_score')) for f in active]
@@ -126,6 +132,15 @@ def test_real_heatmap_values_selection_structure_and_contrast(heatmap_page, widt
     assert tooltip.is_visible()
     assert tooltip.evaluate('el => {const r=el.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight;}')
     page.locator('.heatmap-show-all input').uncheck()
+
+
+def test_scroll_caption_follows_breakpoint_without_rerendering(heatmap_page):
+    page = heatmap_page
+    for width, sideways in ((1440, False), (390, True), (1440, False)):
+        page.set_viewport_size({'width': width, 'height': 1000})
+        text = page.locator('.heatmap-guidance').inner_text()
+        assert 'vertically' in text
+        assert ('sideways' in text) is sideways
 
 
 def _synthetic_payload():

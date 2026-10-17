@@ -1584,6 +1584,7 @@ tr.lscape-detail td { background: var(--bg-soft); }
 .heatmap-controls { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; }
 .heatmap-show-all { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; }
 .heatmap-summary { margin: 0; }
+.heatmap-guidance-narrow { display: none; }
 .heatmap-scale { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; color: var(--text-soft); font-size: 0.8rem; }
 .heatmap-scale-score { padding: 4px 12px; border-radius: 4px; font-variant-numeric: tabular-nums; }
 .heatmap-missing-key { margin-left: 8px; }
@@ -1604,6 +1605,8 @@ tr.lscape-detail td { background: var(--bg-soft); }
 .heatmap-tooltip[hidden] { display: none; }
 .heatmap-caption { text-align: left; padding: 8px; color: var(--text-soft); }
 @media (max-width: 600px) {
+  .heatmap-guidance-wide { display: none; }
+  .heatmap-guidance-narrow { display: inline; }
   .heatmap-scroll { max-height: 70vh; }
   .family-heatmap-table .heatmap-model-heading { width: 140px; min-width: 140px; max-width: 140px; }
   .family-heatmap-table .heatmap-family-heading { width: 96px; min-width: 96px; max-width: 96px; height: auto; text-align: left; }
