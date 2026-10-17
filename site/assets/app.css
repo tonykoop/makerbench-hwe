@@ -1567,3 +1567,6 @@ tr.lscape-detail td { background: var(--bg-soft); }
 
 #matchups .arena-card { overflow-wrap: anywhere; min-width: 0; }
 #matchups .arena-card table { display: block; overflow-x: auto; max-width: 100%; }
+.lscape-picker { max-width: 100%; min-width: 0; }
+.lscape-picker select { min-width: 0; max-width: 100%; }
+.lscape-search { min-width: 0; max-width: 100%; }
