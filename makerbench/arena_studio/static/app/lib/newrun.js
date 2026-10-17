@@ -169,7 +169,10 @@ export function editBrief(form, brief) {
   return { ...form, brief, brief_edited: true };
 }
 
-// Fill the gaps (#1110): instruments without CAD, one per night, in Tony's order.
+// Fill the gaps (#1110): instruments without CAD, one per night, in Tony's order. The server
+// refuses more than this many rather than dropping any.
+export const MAX_GAP_NIGHTS = 30;
+
 export function gapCandidates(catalog, family = "all") {
   const without = new Set(catalog.gaps?.without_cad || []);
   return catalog.instruments.filter((item) => without.has(item.id) && (family === "all" || item.family === family)).map((item) => item.id);

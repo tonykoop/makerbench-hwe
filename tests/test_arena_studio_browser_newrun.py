@@ -17,6 +17,7 @@ import os
 import socket
 import threading
 import time
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -439,14 +440,18 @@ def test_fill_the_gaps_orders_nights_and_queues_a_draft(repo: Path, tmp_path: Pa
             page.get_by_label("Gap family").select_option("string")
             page.wait_for_function("() => document.querySelectorAll('.newrun-nights li').length === 1")
             page.get_by_label("Gap family").select_option("all")
-            page.get_by_label("First night").fill("2026-10-20")
+            later = (date.today() + timedelta(days=3)).isoformat()
+            page.get_by_label("First night").fill(later)
+            page.get_by_test_id("gaps-start-note").wait_for()  # the runner has no start date: staged, not queued
+            assert f"#1 · {later}" in nights.first.inner_text()
             assert page.evaluate("() => document.documentElement.scrollWidth <= window.innerWidth")
             page.screenshot(path=str(screenshot_dir / f"newrun-gaps-{width}-light.png"), full_page=True)
 
             page.get_by_role("button", name="Queue 4 nights").click()
             dialog = page.locator("dialog.review-dialog")
             dialog.locator("h2", has_text="Saved as a draft").wait_for()
-            assert "Skipped:" in dialog.inner_text() and "Nights 2026-10-20 to 2026-10-20" in dialog.inner_text()
+            assert "Skipped:" in dialog.inner_text() and "Planned order: kora." in dialog.inner_text()
+            assert "no night is booked to a date" in dialog.inner_text()
             assert problems == []
             context.close()
             browser.close()

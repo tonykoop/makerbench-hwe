@@ -24,6 +24,7 @@ import {
   payload,
   applyAutofill,
   gapCandidates,
+  MAX_GAP_NIGHTS,
   moveNight,
   nightDate,
   togglePick,
@@ -411,7 +412,8 @@ function Rail({ catalog, form, estimate, onTonight, onRunNow, busy }) {
 const DEFAULT_GAP_NIGHTS = 7;
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  const now = new Date(); // the Studio's local date, which is what "tonight" means to the server
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
 function FillGaps({ catalog, onQueued, onToast }) {
@@ -451,13 +453,16 @@ function FillGaps({ catalog, onQueued, onToast }) {
           </select>
         </label>
         <label class="field"><span class="field-label">First night</span>
-          <input type="date" value=${start} onInput=${(event) => setStart(event.currentTarget.value)} />
+          <input type="date" value=${start} min=${todayIso()} onInput=${(event) => setStart(event.currentTarget.value)} />
         </label>
       </div>
+      ${start > todayIso() && html`<p class="review-fail-note" data-testid="gaps-start-note">
+        The nightly runner has no start date: it takes the next queued job each night it runs. A first night after tonight is staged with its plans, not queued.</p>`}
+      <p class="hint">The runner keeps this order; dates are the earliest each could run${catalog.queue_writes ? ", after any jobs already queued" : ""}.</p>
       <ol class="newrun-nights" aria-label="Nights, in order">
         ${order.map(
           (id, index) => html`<li key=${id} data-night=${id}>
-            <span class="newrun-night-date">${nightDate(start, index)}</span>
+            <span class="newrun-night-date" title="Earliest night">#${index + 1} · ${nightDate(start, index)}</span>
             <span class="newrun-night-name">${byId[id]?.name || id}${byId[id]?.arena_task ? "" : html` <span class="check-chip" data-state="unknown">needs a repo hero image</span>`}</span>
             <span class="newrun-night-actions">
               <button type="button" aria-label=${`Move ${byId[id]?.name || id} earlier`} disabled=${index === 0} onClick=${() => setOrder((o) => moveNight(o, id, -1))}>▲</button>
@@ -467,11 +472,13 @@ function FillGaps({ catalog, onQueued, onToast }) {
           </li>`,
         )}
       </ol>
-      ${remaining.length > 0 && html`<p class="hint">
-        <button type="button" class="button-link" onClick=${() => setOrder((o) => [...o, remaining[0]])}>Add a night</button>
+      ${remaining.length > 0 && html`<p class="hint" data-testid="gaps-more">
+        ${order.length < MAX_GAP_NIGHTS
+          ? html`<button type="button" class="button-link" onClick=${() => setOrder((o) => [...o, remaining[0]])}>Add a night</button>${" "}`
+          : `${MAX_GAP_NIGHTS} nights at most at a time; queue these, then come back for the rest. `}
         (${remaining.length} more without CAD${family === "all" ? "" : ` in ${family}`})</p>`}
       <div class="actions">
-        <button type="button" class="button" disabled=${busy || order.length === 0} onClick=${queue}>Queue ${plural(order.length, "night")}</button>
+        <button type="button" class="button" disabled=${busy || order.length === 0 || order.length > MAX_GAP_NIGHTS} onClick=${queue}>Queue ${plural(order.length, "night")}</button>
       </div>
     </section>
   `;
@@ -546,7 +553,9 @@ function Form({ catalog, onRefresh, refreshing }) {
       ${result && html`
         <h2>${result.path.endsWith("run-now") ? "Run started" : queued ? (result.path.endsWith("fill-gaps") ? "Nights queued" : "Added to tonight") : result.data.staged_because?.length ? "Staged, not queued" : "Saved as a draft"}</h2>
         ${result.data.skipped?.length > 0 && html`<p class="review-fail-note">Skipped: ${result.data.skipped.map((s) => `${s.instrument} (${s.reason})`).join("; ")}</p>`}
-        ${result.data.nights && html`<p>Nights ${result.data.nights[0]} to ${result.data.nights[result.data.nights.length - 1]}. Reorder or remove them in Tonight's Queue once it exists; until then the plan files hold the order.</p>`}
+        ${result.data.order && html`<p data-testid="gaps-order">${queued ? "Queued in this order" : "Planned order"}: ${result.data.order.join(", ")}.
+          ${queued && result.data.ahead > 0 ? ` ${plural(result.data.ahead, "job")} already in the queue run first.` : ""}
+          The runner takes the next queued job each night it runs, so no night is booked to a date. Reorder or remove them in Tonight's Queue once it exists; until then the plan files hold the order.</p>`}
         <p>
           ${result.path.endsWith("run-now")
             ? "The arena run is starting on this PC."

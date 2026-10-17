@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from makerbench import nightly_cad  # noqa: E402
 from makerbench.arena_studio import create_studio_app  # noqa: E402
 
 ORIGIN = {"Origin": "http://127.0.0.1"}
+LATER = (date.today() + timedelta(days=3)).isoformat()
 
 
 def _client(tmp_path: Path, refresh: bool = True, **kwargs) -> tuple[TestClient, Path]:
@@ -50,25 +52,56 @@ def test_one_instrument_per_night_in_order_with_skips_reported(tmp_path: Path):
     client, repo = _client(tmp_path)
     queue = repo / "runs" / "nightly-cad-queue.json"
     before = queue.read_bytes()
-    body = {"instruments": ["cajon", "kora", "handpan", "kora"], "start_date": "2026-10-20"}
+    body = {"instruments": ["cajon", "kora", "handpan", "kora", "nope"]}
     result = client.post("/api/newrun/fill-gaps", json=body, headers=ORIGIN).json()
     assert result["queued"] is False and queue.read_bytes() == before
-    assert result["nights"] == ["2026-10-20"]  # kora, the only one that can be queued
-    assert [s["instrument"] for s in result["skipped"]] == ["cajon"]  # no repo, no reference image
+    assert result["order"] == ["kora"] and result["first_night"] == date.today().isoformat()
+    # Every instrument left out says why: CAD already, not in the library, no reference image.
+    assert {s["instrument"]: s["reason"] for s in result["skipped"]}.keys() == {"cajon", "handpan", "nope"}
+    assert {s["instrument"]: s["reason"] for s in result["skipped"]}["handpan"] == "already has CAD"
     job = result["jobs"][0]
     assert job["instrument_id"] == "kora"
     assert [e["entrant_id"] for e in job["entrants"]] == ["cadam-fable", "freecad-opus", "solidworks-sol", "fusion-sonnet"]
     plan = json.loads((repo / "runs" / result["plans"][0]).read_text())
-    assert plan["preset"] == "fill-gaps" and plan["night"] == "2026-10-20"
+    assert plan["preset"] == "fill-gaps" and plan["order"] == 1 and plan["first_night"] == date.today().isoformat()
     assert plan["brief"].startswith("Calabash harp.")  # registry brief plus repo facts
-    # handpan already has CAD and is never queued; duplicates collapse.
+    # duplicates collapse.
     assert len(result["jobs"]) == 1
 
 
 def test_fill_gaps_with_queue_writes_appends_in_order(tmp_path: Path):
     client, repo = _client(tmp_path, control_room_queue_writes=True)
-    result = client.post("/api/newrun/fill-gaps", json={"instruments": ["kora"], "start_date": "2026-10-20"}, headers=ORIGIN).json()
-    assert result["queued"] is True and result["added"] == 1
+    result = client.post("/api/newrun/fill-gaps", json={"instruments": ["kora"]}, headers=ORIGIN).json()
+    assert result["queued"] is True and result["added"] == 1 and result["ahead"] == 1  # the fixture's job runs first
     _payload, jobs = nightly_cad.load_queue(repo / "runs" / "nightly-cad-queue.json")
     assert [job.instrument_id for job in jobs] == ["kora", "kora"]  # the fixture's existing job, then the new night
     assert client.post("/api/newrun/fill-gaps", json={"instruments": ["cajon"]}, headers=ORIGIN).status_code == 400
+
+
+def test_a_later_first_night_is_staged_never_queued(tmp_path: Path):
+    client, repo = _client(tmp_path, control_room_queue_writes=True)
+    queue = repo / "runs" / "nightly-cad-queue.json"
+    before = queue.read_bytes()
+    result = client.post("/api/newrun/fill-gaps", json={"instruments": ["kora"], "start_date": LATER}, headers=ORIGIN).json()
+    assert result["queued"] is False and queue.read_bytes() == before  # the runner would take it tonight
+    assert any("no start date" in gap for gap in result["staged_because"]) and result["draft"]
+    plan = json.loads((repo / "runs" / result["plans"][0]).read_text())
+    assert plan["first_night"] == LATER and any("no start date" in gap for gap in plan["runner_cannot_apply"])
+    past = (date.today() - timedelta(days=1)).isoformat()
+    response = client.post("/api/newrun/fill-gaps", json={"instruments": ["kora"], "start_date": past}, headers=ORIGIN)
+    assert response.status_code == 400 and "past" in response.text
+
+
+def test_more_than_thirty_nights_is_refused_not_truncated(tmp_path: Path):
+    from makerbench.arena_studio import control_room_newrun as nr
+
+    client, repo = _client(tmp_path, control_room_queue_writes=True)
+    queue = repo / "runs" / "nightly-cad-queue.json"
+    before = queue.read_bytes()
+    picked = ["kora", *[f"gap-{i}" for i in range(nr.MAX_GAP_NIGHTS)]]
+    response = client.post("/api/newrun/fill-gaps", json={"instruments": picked}, headers=ORIGIN)
+    assert response.status_code == 400 and "at most 30 nights" in response.text and "31 were picked" in response.text
+    assert queue.read_bytes() == before and not (repo / "runs" / "control-room" / "plans").exists()
+    forms, skipped = nr.fill_gap_forms(picked[:nr.MAX_GAP_NIGHTS], {"kora": {"id": "kora", "cad": "none"}},
+                                       brief_for=lambda card: "", hero_for=lambda card: None)
+    assert len(forms) + len(skipped) == nr.MAX_GAP_NIGHTS  # every picked instrument is accounted for

@@ -289,14 +289,18 @@ def register_control_room_routes(
     @app.post("/api/newrun/fill-gaps")
     def newrun_fill_gaps(payload: FillGapsPayload):
         """#1110: one instrument per night, each with the default overnight matchup."""
-        from datetime import date, timedelta
+        from datetime import date
 
         if lm.load_snapshot(runs_root) is None:
             raise HTTPException(status_code=400, detail="Refresh from the library first: CAD status comes from it.")
+        today = date.today()
         try:
-            start = date.fromisoformat(payload.start_date) if payload.start_date else date.today()
+            start = date.fromisoformat(payload.start_date) if payload.start_date else today
         except ValueError:
             raise HTTPException(status_code=400, detail="start_date must be YYYY-MM-DD")
+        if start < today:
+            raise HTTPException(status_code=400, detail="The first night is in the past.")
+        start_gap = nr.future_start_gap(start, today)
         cards = instruments()
         registry = service.get_registry_tasks()
         repos: dict[str, Optional[Path]] = {}
@@ -319,8 +323,11 @@ def register_control_room_routes(
             repo = repo_for(card)
             return "hero-render.png" if repo is not None and "hero-render.png" in ir.repo_images(repo) else None
 
-        forms = nr.fill_gap_forms(payload.instruments, cards, brief_for=brief_for, hero_for=hero_for)
-        built, skipped = [], []
+        try:
+            forms, skipped = nr.fill_gap_forms(payload.instruments, cards, brief_for=brief_for, hero_for=hero_for)
+        except nr.NewRunError as error:
+            raise HTTPException(status_code=400, detail=str(error))
+        built = []
         for form in forms:
             repo = repo_for(cards[form["instrument"]])
             try:
@@ -332,21 +339,25 @@ def register_control_room_routes(
             except (nr.NewRunError, ValueError) as error:
                 skipped.append({"instrument": form["instrument"], "reason": str(error)})
                 continue
-            for item in items:  # nights stay consecutive over the instruments that could be queued
-                item["plan"].update({"preset": "fill-gaps", "night": (start + timedelta(days=len(built))).isoformat()})
+            for item in items:
+                # The runner keeps queue order but has no dates: a later first night is a gap (staged).
+                item["plan"].update({"preset": "fill-gaps", "order": len(built) + 1, "first_night": start.isoformat()})
+                if start_gap:
+                    item["plan"]["runner_cannot_apply"] = [*item["plan"]["runner_cannot_apply"], start_gap]
                 built.append(item)
         if not built:
             raise HTTPException(status_code=400, detail="None of these instruments can be queued: "
                                 + "; ".join(f"{s['instrument']}: {s['reason']}" for s in skipped))
         try:
             plans = nr.write_plans(runs_root, built)
-            response = {"plans": plans, "skipped": skipped, "nights": [item["plan"]["night"] for item in built],
-                        "jobs": [item["job"] for item in built]}
+            response = {"plans": plans, "skipped": skipped, "first_night": start.isoformat(),
+                        "order": [item["plan"]["instrument_id"] for item in built], "jobs": [item["job"] for item in built]}
             # A night the runner would run differently from its plan is staged, never queued.
             runnable = [item for item in built if not item["plan"]["runner_cannot_apply"]]
             staged = [item for item in built if item["plan"]["runner_cannot_apply"]]
             staged_because = sorted({gap for item in staged for gap in item["plan"]["runner_cannot_apply"]})
             if queue_writes and runnable:
+                response["ahead"] = nr.queued_ahead(nightly_queue)
                 added = nr.append_jobs(runs_root, runnable)
                 draft = nr.write_draft(runs_root, staged, staged_because=staged_because) if staged else None
                 return {**response, "queued": True, "added": added, "draft": draft,
