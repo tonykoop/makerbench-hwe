@@ -703,7 +703,7 @@ code {
 .reference-image {
   display: block;
   width: 100%;
-  max-height: 22rem;
+  max-height: 34rem;
   object-fit: contain;
   background: var(--stage);
   border: 1px solid var(--stage-line);
@@ -3070,7 +3070,7 @@ body[data-demo="true"] .demo-header-links {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
   gap: var(--space-2);
-  max-height: 22rem;
+  max-height: 34rem;
   overflow-y: auto;
   padding: 2px;
 }
@@ -3340,4 +3340,53 @@ body[data-demo="true"] .demo-header-links {
   .newrun-rail {
     position: static;
   }
+}
+
+/* New Run instrument picker from the library (#1107). */
+.newrun-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  align-items: end;
+}
+
+.newrun-filters input[type="search"] {
+  min-width: 12rem;
+}
+
+.newrun-instrument {
+  align-content: start;
+}
+
+.newrun-hero {
+  display: block;
+  width: 100%;
+  height: 6rem;
+  margin-bottom: var(--space-1);
+  object-fit: cover;
+  object-position: center 30%;
+  border-radius: 2px;
+  background: var(--stage);
+}
+
+.newrun-hero-empty {
+  display: grid;
+  place-items: center;
+  color: var(--stage-ink);
+  font-size: var(--step-2);
+  font-weight: 600;
+}
+
+.newrun-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+
+.newrun-library {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1);
 }

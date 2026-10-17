@@ -72,3 +72,16 @@ test("small rules read plainly", () => {
   assert.equal(notes.length, 4);
   assert.match(blockers(assembly, { over_cap: true })[0], /over your \$2\.00 cap/);
 });
+
+test("library filters and search narrow the instrument list", async () => {
+  const { filterInstruments, cardDetail } = await import("../../makerbench/arena_studio/static/app/lib/newrun.js");
+  const list = [
+    { id: "kora", slug: "kora", name: "Kora", family: "string", cad: "none", subtype: "harp-lute", variants: 3 },
+    { id: "handpan", slug: "handpan", name: "Handpan", family: "idiophone", cad: "inline-glb", variants: 1 },
+    { id: "erhu-packet", slug: "erhu-packet", name: "Erhu Starter", family: "string", cad: "none", variants: 1 },
+  ];
+  assert.deepEqual(filterInstruments(list, { cad: "none" }).map((i) => i.id), ["kora", "erhu-packet"]);
+  assert.deepEqual(filterInstruments(list, { cad: "all", family: "string" }, "erhu").map((i) => i.id), ["erhu-packet"]);
+  assert.deepEqual(filterInstruments(list, {}, "HARP").map((i) => i.id), ["kora"]);
+  assert.equal(cardDetail({ family_label: "Strings", subtype: "harp-lute", variants: 3 }), "Strings · harp-lute · 3 variants");
+});

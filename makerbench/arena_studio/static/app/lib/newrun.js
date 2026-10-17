@@ -120,3 +120,23 @@ export function duration(seconds) {
   const minutes = Math.max(1, Math.round(seconds / 60));
   return minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min` : `${minutes} min`;
 }
+
+// Library filters (#1107): the same keys as the library page, plus free-text search.
+export const FILTER_LABELS = { family: "Family", completeness: "Completeness", cad: "CAD", wolfram: "Wolfram" };
+
+export function filterInstruments(instruments, filters = {}, query = "") {
+  const words = String(query).toLowerCase().split(/\s+/).filter(Boolean);
+  return instruments.filter((item) => {
+    for (const [key, value] of Object.entries(filters)) {
+      if (value && value !== "all" && String(item[key] ?? "") !== value) return false;
+    }
+    const text = [item.name, item.slug, item.id, item.family, item.family_label, item.subtype].join(" ").toLowerCase();
+    return words.every((word) => text.includes(word));
+  });
+}
+
+export function cardDetail(item) {
+  const parts = [item.family_label || item.family, item.subtype].filter(Boolean);
+  if (item.variants > 1) parts.push(`${item.variants} variants`);
+  return parts.join(" · ");
+}
