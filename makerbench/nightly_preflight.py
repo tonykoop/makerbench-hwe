@@ -2,7 +2,12 @@
 
 Audits activation state without ever printing secret values:
 
-- Secrets: each required key is PRESENT / MISSING / PLACEHOLDER.
+- Secrets: each required key is PRESENT / MISSING / PLACEHOLDER. With bot sign-in
+  credentials (``CADAM_BOT_EMAIL`` / ``CADAM_BOT_PASSWORD`` / ``VITE_SUPABASE_ANON_KEY``) the static
+  ``CADAM_ACCESS_TOKEN`` is no longer required.
+- CADAM (#660): the local app at ``CADAM_BASE_URL`` answers (any HTTP reply below 500; a 5xx or no
+  answer is NO-GO), in both authentication modes. With bot credentials a real password sign-in must
+  also succeed. Only the outcome is reported, never a token or a reply body.
 - Lock: ``runs/.nightly-cad.lock`` — absent, held by a live PID, or stale.
 - Queue: per-job status summary (job ids + statuses, blocked jobs called out).
 - Paths: runner script, repo root, queue, output root, instruments root.
@@ -16,9 +21,22 @@ from __future__ import annotations
 
 import os
 import re
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping, Optional, Sequence
+
+from .cadam_adapter import CadamAuthError, HttpTransport, sign_in
+
+BOT_SECRET_KEYS: tuple[str, ...] = (
+    "CADAM_BOT_EMAIL",
+    "CADAM_BOT_PASSWORD",
+    "VITE_SUPABASE_ANON_KEY",
+)
+DEFAULT_CADAM_BASE_URL = "http://127.0.0.1:3000"
+DEFAULT_SUPABASE_URL = "http://127.0.0.1:54321"
+CADAM_START_HINT = "start it: cd _meta/CADAM && npm install && npm run dev"
 
 REQUIRED_SECRET_KEYS: tuple[str, ...] = (
     "CADAM_USER_ID",
@@ -82,11 +100,24 @@ class PathStatus:
 
 
 @dataclass(frozen=True)
+class CadamStatus:
+    base_url: str
+    server_ok: bool
+    signin_ok: bool
+    message: str  # fixed text only: never a token, password, or response body
+
+    @property
+    def ok(self) -> bool:
+        return self.server_ok and self.signin_ok
+
+
+@dataclass(frozen=True)
 class PreflightReport:
     secrets: tuple[SecretStatus, ...]
     lock: LockStatus
     queue: QueueStatus
     paths: tuple[PathStatus, ...] = field(default_factory=tuple)
+    cadam: Optional[CadamStatus] = None
 
     @property
     def secrets_ok(self) -> bool:
@@ -98,7 +129,8 @@ class PreflightReport:
 
     @property
     def ok(self) -> bool:
-        return self.secrets_ok and self.lock.ok and self.queue.ok and self.paths_ok
+        cadam_ok = self.cadam is None or self.cadam.ok
+        return self.secrets_ok and self.lock.ok and self.queue.ok and self.paths_ok and cadam_ok
 
 
 def classify_secret_value(value: Optional[str]) -> str:
@@ -133,13 +165,26 @@ def parse_secrets_file(path: Path) -> dict[str, str]:
     return entries
 
 
+def _bot_mode(entries: Mapping[str, str]) -> bool:
+    """Bot sign-in is in use as soon as either bot credential has a value in the file."""
+
+    return any(entries.get(key, "").strip() for key in ("CADAM_BOT_EMAIL", "CADAM_BOT_PASSWORD"))
+
+
+def required_keys_for(entries: Mapping[str, str]) -> tuple[str, ...]:
+    if _bot_mode(entries):
+        return tuple(k for k in REQUIRED_SECRET_KEYS if k != "CADAM_ACCESS_TOKEN") + BOT_SECRET_KEYS
+    return REQUIRED_SECRET_KEYS
+
+
 def audit_secrets(
     secrets_path: Path,
-    required_keys: Sequence[str] = REQUIRED_SECRET_KEYS,
+    required_keys: Optional[Sequence[str]] = None,
 ) -> tuple[SecretStatus, ...]:
     if not secrets_path.exists():
-        return tuple(SecretStatus(key, SECRET_MISSING) for key in required_keys)
+        return tuple(SecretStatus(key, SECRET_MISSING) for key in required_keys or REQUIRED_SECRET_KEYS)
     entries = parse_secrets_file(secrets_path)
+    required_keys = required_keys or required_keys_for(entries)
     return tuple(
         SecretStatus(key, classify_secret_value(entries.get(key)))
         for key in required_keys
@@ -203,20 +248,79 @@ def audit_paths(named_paths: Mapping[str, Path]) -> tuple[PathStatus, ...]:
     )
 
 
+def _probe_transport(method: str, url: str, headers: Mapping[str, str], body: Optional[bytes]) -> bytes:
+    """Short-timeout transport so a hung app cannot stall the doctor."""
+
+    request = urllib.request.Request(url, data=body, headers=dict(headers), method=method)
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return response.read()
+
+
+def audit_cadam(
+    entries: Mapping[str, str],
+    *,
+    transport: Optional[HttpTransport] = None,
+    environ: Optional[Mapping[str, str]] = None,
+) -> CadamStatus:
+    """The local CADAM app answers at ``CADAM_BASE_URL`` and the bot can sign in.
+
+    URLs come from the secrets file, then the environment, then the local defaults. Failures are
+    reduced to fixed messages; the sign-in token is discarded on receipt.
+    """
+
+    env = os.environ if environ is None else environ
+    transport = transport or _probe_transport
+
+    def setting(key: str, default: str) -> str:
+        return (entries.get(key) or env.get(key) or default).strip()
+
+    base_url = setting("CADAM_BASE_URL", DEFAULT_CADAM_BASE_URL)
+    supabase_url = setting("VITE_SUPABASE_URL", DEFAULT_SUPABASE_URL)
+    try:
+        transport("GET", base_url, {}, None)
+    except urllib.error.HTTPError as exc:
+        if exc.code >= 500:
+            return CadamStatus(
+                base_url, False, False, f"CADAM server at {base_url} answered HTTP {exc.code} ({CADAM_START_HINT})"
+            )
+        # 4xx (e.g. 404 on the root route) still proves the app is listening
+    except (OSError, ValueError):
+        return CadamStatus(base_url, False, False, f"CADAM server not reachable at {base_url} ({CADAM_START_HINT})")
+    if not _bot_mode(entries):
+        return CadamStatus(base_url, True, True, f"CADAM server up at {base_url} (static-token mode; no sign-in)")
+    try:
+        sign_in(
+            supabase_url,
+            entries.get("VITE_SUPABASE_ANON_KEY", ""),
+            entries.get("CADAM_BOT_EMAIL", ""),
+            entries.get("CADAM_BOT_PASSWORD", ""),
+            transport,
+        )
+    except CadamAuthError as exc:
+        return CadamStatus(
+            base_url, True, False, f"{exc} against {supabase_url}: check the bot credentials and that Supabase is up"
+        )
+    return CadamStatus(base_url, True, True, f"CADAM server up at {base_url}; bot sign-in succeeded")
+
+
 def build_report(
     *,
     secrets_path: Path,
     lock_path: Path,
     queue_path: Path,
     named_paths: Mapping[str, Path],
-    required_keys: Sequence[str] = REQUIRED_SECRET_KEYS,
+    required_keys: Optional[Sequence[str]] = None,
     pid_alive: Callable[[int], bool] = _pid_alive,
+    cadam_transport: Optional[HttpTransport] = None,
+    environ: Optional[Mapping[str, str]] = None,
 ) -> PreflightReport:
+    entries = parse_secrets_file(secrets_path) if secrets_path.exists() else {}
     return PreflightReport(
         secrets=audit_secrets(secrets_path, required_keys),
         lock=audit_lock(lock_path, pid_alive=pid_alive),
         queue=audit_queue(queue_path),
         paths=audit_paths(named_paths),
+        cadam=audit_cadam(entries, transport=cadam_transport, environ=environ),
     )
 
 
@@ -227,6 +331,9 @@ def render_report_lines(report: PreflightReport) -> list[str]:
     lines.append(f"[{'PASS' if report.secrets_ok else 'FAIL'}] secrets")
     for item in report.secrets:
         lines.append(f"  {item.key}: {item.status}")
+    if report.cadam is not None:
+        lines.append(f"[{'PASS' if report.cadam.ok else 'FAIL'}] cadam")
+        lines.append(f"  {report.cadam.message}")
     lock = report.lock
     lock_detail = f" pid={lock.pid}" if lock.pid is not None else ""
     lines.append(f"[{'PASS' if lock.ok else 'FAIL'}] lock: {lock.status}{lock_detail}")

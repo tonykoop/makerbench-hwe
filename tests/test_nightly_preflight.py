@@ -4,6 +4,7 @@ All secrets in this file are fakes written to temp files — the real external
 secrets file is never read by any test.
 """
 
+import pytest
 import json
 import subprocess
 import sys
@@ -150,6 +151,15 @@ def test_report_go_when_everything_green(tmp_path):
     assert "preflight: GO" in render_report_lines(report)[-1]
 
 
+@pytest.fixture(autouse=True)
+def _healthy_cadam_server(monkeypatch):
+    """CLI/report tests must not touch the network: the doctor's probe transport is stubbed."""
+
+    from makerbench import nightly_preflight
+
+    monkeypatch.setattr(nightly_preflight, "_probe_transport", lambda *_a: b"ok")
+
+
 def _cli_args(tmp_path, secrets, queue):
     return [
         "arena",
@@ -244,3 +254,163 @@ def test_cli_preflight_reports_stale_lock(tmp_path):
     assert str(dead) in result.output
     # Read-only guarantee: the stale lock is reported, never removed.
     assert lock.exists()
+
+
+# ---- #660: CADAM server + bot sign-in ------------------------------------------------------
+
+import json as _json  # noqa: E402
+import urllib.error as _urlerror  # noqa: E402
+
+BOT_ENV = (
+    "CADAM_USER_ID=user-uuid-123\n"
+    "SUPABASE_SERVICE_ROLE_KEY=service-role-secret-value\n"
+    "CADAM_BOT_EMAIL=bot-secret@example.test\n"
+    "CADAM_BOT_PASSWORD=bot-password-secret-value\n"
+    "VITE_SUPABASE_ANON_KEY=anon-secret-value\n"
+)
+BOT_SECRETS = ("service-role-secret-value", "bot-password-secret-value", "anon-secret-value", "bot-secret@example.test")
+
+
+def _bot_report(tmp_path, transport, extra=""):
+    secrets = _secrets_file(tmp_path, BOT_ENV + extra)
+    queue = _queue_file(tmp_path, [{"job_id": "job-1", "status": "queued"}])
+    return build_report(
+        secrets_path=secrets,
+        lock_path=tmp_path / ".nightly-cad.lock",
+        queue_path=queue,
+        named_paths={"repo_root": tmp_path},
+        cadam_transport=transport,
+        environ={},
+    )
+
+
+def _healthy(method, url, headers, body):
+    if "/auth/v1/token" in url:
+        return _json.dumps({"access_token": "jwt-secret-value"}).encode()
+    return b"<html></html>"
+
+
+def test_bot_credentials_replace_the_static_token_requirement_and_go(tmp_path):
+    report = _bot_report(tmp_path, _healthy)
+    assert report.ok
+    assert "CADAM_ACCESS_TOKEN" not in {s.key for s in report.secrets}
+    assert {"CADAM_BOT_EMAIL", "CADAM_BOT_PASSWORD", "VITE_SUPABASE_ANON_KEY"} <= {s.key for s in report.secrets}
+    lines = render_report_lines(report)
+    assert "[PASS] cadam" in lines
+    assert any("bot sign-in succeeded" in line for line in lines)
+    assert lines[-1] == "preflight: GO"
+
+
+def test_server_down_names_the_start_command(tmp_path):
+    def down(*_args):
+        raise _urlerror.URLError("connection refused")
+
+    report = _bot_report(tmp_path, down)
+    assert not report.ok and not report.cadam.server_ok
+    text = "\n".join(render_report_lines(report))
+    assert "[FAIL] cadam" in text
+    assert "not reachable at http://127.0.0.1:3000" in text
+    assert "npm run dev" in text
+    assert text.splitlines()[-1] == "preflight: NO-GO"
+
+
+def test_a_404_still_counts_as_the_server_being_up(tmp_path):
+    def not_found_root(method, url, headers, body):
+        if "/auth/v1/token" in url:
+            return _healthy(method, url, headers, body)
+        raise _urlerror.HTTPError(url, 404, "nope", {}, None)
+
+    assert _bot_report(tmp_path, not_found_root).ok
+
+
+def test_sign_in_failure_is_a_clear_redacted_no_go(tmp_path):
+    def rejects(method, url, headers, body):
+        if "/auth/v1/token" in url:
+            raise _urlerror.HTTPError(url, 400, "invalid login bot-password-secret-value", {}, None)
+        return b"ok"
+
+    report = _bot_report(tmp_path, rejects)
+    assert report.cadam.server_ok and not report.cadam.signin_ok
+    text = "\n".join(render_report_lines(report))
+    assert "sign-in rejected (HTTP 400)" in text
+    assert "NO-GO" in text
+    for secret in BOT_SECRETS:
+        assert secret not in text
+
+
+def test_preflight_output_never_contains_a_secret_or_token(tmp_path):
+    text = "\n".join(render_report_lines(_bot_report(tmp_path, _healthy)))
+    for secret in BOT_SECRETS + ("jwt-secret-value",):
+        assert secret not in text
+
+
+def test_urls_come_from_the_secrets_file_and_reach_the_probes(tmp_path):
+    seen = []
+
+    def spy(method, url, headers, body):
+        seen.append(url)
+        return _healthy(method, url, headers, body)
+
+    _bot_report(tmp_path, spy, extra="CADAM_BASE_URL=http://cadam.local:4000\nVITE_SUPABASE_URL=http://sb.local:9\n")
+    assert seen[0] == "http://cadam.local:4000"
+    assert seen[1].startswith("http://sb.local:9/auth/v1/token")
+
+
+def test_static_token_mode_still_probes_the_server_but_never_signs_in(tmp_path):
+    secrets = _secrets_file(
+        tmp_path,
+        f"CADAM_USER_ID={FAKE_VALUE}\nCADAM_ACCESS_TOKEN={FAKE_TOKEN}\nSUPABASE_SERVICE_ROLE_KEY={FAKE_TOKEN}\n",
+    )
+    queue = _queue_file(tmp_path, [{"job_id": "job-1", "status": "queued"}])
+
+    seen = []
+
+    def server_only(method, url, headers, body):
+        seen.append(url)
+        if "/auth/v1/token" in url:
+            raise AssertionError("static-token mode must not sign in")
+        return b"ok"
+
+    report = build_report(
+        secrets_path=secrets,
+        lock_path=tmp_path / ".nightly-cad.lock",
+        queue_path=queue,
+        named_paths={"repo_root": tmp_path},
+        cadam_transport=server_only,
+        environ={},
+    )
+    assert seen == ["http://127.0.0.1:3000"]
+    assert report.ok and report.cadam.signin_ok
+
+
+def test_stopped_app_is_no_go_in_static_token_mode_too(tmp_path):
+    secrets = _secrets_file(
+        tmp_path,
+        f"CADAM_USER_ID={FAKE_VALUE}\nCADAM_ACCESS_TOKEN={FAKE_TOKEN}\nSUPABASE_SERVICE_ROLE_KEY={FAKE_TOKEN}\n",
+    )
+    queue = _queue_file(tmp_path, [{"job_id": "job-1", "status": "queued"}])
+
+    def down(*_args):
+        raise _urlerror.URLError("refused")
+
+    report = build_report(
+        secrets_path=secrets,
+        lock_path=tmp_path / ".nightly-cad.lock",
+        queue_path=queue,
+        named_paths={"repo_root": tmp_path},
+        cadam_transport=down,
+        environ={},
+    )
+    assert not report.ok
+    assert "npm run dev" in "\n".join(render_report_lines(report))
+
+
+def test_a_5xx_from_the_app_is_no_go_even_when_sign_in_would_succeed(tmp_path):
+    def broken_app(method, url, headers, body):
+        if "/auth/v1/token" in url:
+            return _healthy(method, url, headers, body)
+        raise _urlerror.HTTPError(url, 503, "unavailable", {}, None)
+
+    report = _bot_report(tmp_path, broken_app)
+    assert not report.ok and not report.cadam.server_ok
+    assert "HTTP 503" in "\n".join(render_report_lines(report))

@@ -13,10 +13,11 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping, Optional
 
@@ -30,29 +31,83 @@ class CadamRecoveryRequiredError(RuntimeError):
     """A persisted paid dispatch is unresolved and must never be auto-reposted."""
 
 
+class CadamAuthError(RuntimeError):
+    """Sign-in to the self-hosted CADAM Supabase failed. Never carries a token or password."""
+
+
+class CadamTransportError(RuntimeError):
+    """A CADAM/Supabase call failed. Fixed text only: never a header, token, key or response body."""
+
+
 @dataclass(frozen=True)
 class CadamConfig:
+    """Secrets are ``repr=False`` so a stray ``print(config)`` or traceback cannot leak them."""
+
     base_url: str
     supabase_url: str
     user_id: str
-    access_token: str
-    service_role_key: str
+    service_role_key: str = field(repr=False)
+    access_token: str = field(default="", repr=False)
     model: str = "anthropic/claude-fable-5"
     timeout_s: int = 900
     max_image_bytes: int = 4_000_000
     max_image_dimension: int = 1400
+    bot_email: str = field(default="", repr=False)
+    bot_password: str = field(default="", repr=False)
+    anon_key: str = field(default="", repr=False)
+
+    @property
+    def has_bot_credentials(self) -> bool:
+        return bool(self.bot_email.strip() and self.bot_password.strip())
+
+    @property
+    def has_partial_bot_credentials(self) -> bool:
+        return bool(self.bot_email.strip() or self.bot_password.strip()) and not self.has_bot_credentials
 
     def validate(self) -> None:
-        for name in (
-            "base_url",
-            "supabase_url",
-            "user_id",
-            "access_token",
-            "service_role_key",
-            "model",
-        ):
+        for name in ("base_url", "supabase_url", "user_id", "service_role_key", "model"):
             if not str(getattr(self, name)).strip():
                 raise ValueError(f"CADAM {name} is required")
+        if self.has_partial_bot_credentials:  # never fall back to the static token behind a half-set bot login
+            raise ValueError("CADAM bot_email and bot_password must be set together")
+        if self.has_bot_credentials:
+            if not self.anon_key.strip():
+                raise ValueError("CADAM anon_key is required with bot_email/bot_password")
+        elif not self.access_token.strip():
+            raise ValueError("CADAM access_token (or bot_email/bot_password) is required")
+
+
+def sign_in(
+    supabase_url: str,
+    anon_key: str,
+    email: str,
+    password: str,
+    transport: "HttpTransport",
+) -> str:
+    """Password grant against Supabase auth; returns the access token.
+
+    Every failure is re-raised as ``CadamAuthError`` with a fixed message (HTTP status at most):
+    the response body, the request body and the token never reach an exception or a log.
+    """
+
+    url = f"{supabase_url.rstrip('/')}/auth/v1/token?grant_type=password"
+    headers = {"apikey": anon_key, "Content-Type": "application/json"}
+    token: object = None
+    failure = ""
+    try:
+        raw = transport("POST", url, headers, _json_body({"email": email, "password": password}))
+        token = json.loads(raw.decode("utf-8")).get("access_token")
+    except urllib.error.HTTPError as exc:
+        failure = f"CADAM sign-in rejected (HTTP {exc.code})"
+    except (OSError, ValueError, AttributeError):
+        failure = "CADAM sign-in failed (auth endpoint unreachable or malformed reply)"
+    # raised outside the ``except`` so the original error (whose text could echo a credential)
+    # is not chained as ``__context__``
+    if failure:
+        raise CadamAuthError(failure)
+    if not isinstance(token, str) or not token:
+        raise CadamAuthError("CADAM sign-in reply carried no access token")
+    return token
 
 
 @dataclass(frozen=True)
@@ -60,7 +115,7 @@ class CadamResult:
     conversation_id: str
     scad_path: Path
     stream_path: Path
-    prepared_image_path: Path
+    prepared_image_path: Optional[Path]
     image_sha256: str
     cost_usd: float
     model: str
@@ -163,13 +218,38 @@ class CadamClient:
             "Authorization": f"Bearer {self.config.service_role_key}",
         }
 
+    def _send(self, method: str, url: str, headers: Mapping[str, str], body: Optional[bytes]) -> bytes:
+        """``transport`` with failures reduced to fixed text (headers may carry a live bearer token
+        or service key, and servers/proxies echo them in reasons). Raised outside the ``except`` so
+        the original error is not chained as ``__context__``."""
+
+        failure = ""
+        try:
+            return self.transport(method, url, headers, body)
+        except urllib.error.HTTPError as exc:
+            failure = f"HTTP {exc.code}"
+        except Exception as exc:  # noqa: BLE001 - any transport failure is redacted the same way
+            failure = type(exc).__name__
+        path = urllib.parse.urlsplit(url).path
+        raise CadamTransportError(f"CADAM {method} {path} failed ({failure})")
+
+    def _access_token(self) -> str:
+        """Fresh bot sign-in when bot credentials are set; the static token only otherwise."""
+
+        config = self.config
+        if config.has_bot_credentials:
+            return sign_in(
+                config.supabase_url, config.anon_key, config.bot_email, config.bot_password, self.transport
+            )
+        return config.access_token
+
     def _rest_insert(self, table: str, payload: object) -> None:
         headers = {
             **self._service_headers,
             "Content-Type": "application/json",
             "Prefer": "return=minimal",
         }
-        self.transport(
+        self._send(
             "POST",
             f"{self.config.supabase_url.rstrip('/')}/rest/v1/{table}",
             headers,
@@ -184,7 +264,7 @@ class CadamClient:
             "x-upsert": "false",
         }
         quoted = urllib.parse.quote(storage_path, safe="/")
-        self.transport(
+        self._send(
             "POST",
             f"{self.config.supabase_url.rstrip('/')}/storage/v1/object/images/{quoted}",
             headers,
@@ -201,7 +281,7 @@ class CadamClient:
                 "limit": "8",
             }
         )
-        raw = self.transport(
+        raw = self._send(
             "GET",
             f"{self.config.supabase_url.rstrip('/')}/rest/v1/messages?{query}",
             self._service_headers,
@@ -214,19 +294,22 @@ class CadamClient:
         self,
         *,
         prompt: str,
-        reference_image: Path,
+        reference_image: Optional[Path] = None,
         output_dir: Path,
         conversation_id: Optional[str] = None,
         resume_only: bool = False,
     ) -> CadamResult:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        image_path, image_sha = prepare_reference_image(
-            reference_image,
-            output_dir / "reference-image.jpg",
-            max_dimension=self.config.max_image_dimension,
-            max_bytes=self.config.max_image_bytes,
-        )
+        image_path: Optional[Path] = None
+        image_sha = ""
+        if reference_image is not None:
+            image_path, image_sha = prepare_reference_image(
+                reference_image,
+                output_dir / "reference-image.jpg",
+                max_dimension=self.config.max_image_dimension,
+                max_bytes=self.config.max_image_bytes,
+            )
         conversation_id = conversation_id or str(uuid.uuid4())
         message_id = str(uuid.uuid5(uuid.UUID(conversation_id), "user-message"))
         image_id = str(uuid.uuid5(uuid.UUID(conversation_id), "reference-image"))
@@ -235,6 +318,7 @@ class CadamClient:
         rows = self._assistant_rows(conversation_id)
         code = _extract_build_code(rows)
         if not code and not resume_only:
+            access_token = self._access_token()  # sign in before any row is written or paid call made
             self._rest_insert(
                 "conversations",
                 {
@@ -245,34 +329,36 @@ class CadamClient:
                     "settings": {"model": self.config.model},
                 },
             )
-            self._upload_image(conversation_id, image_id, image_path)
+            parts: list[dict] = [{"type": "text", "text": prompt}]
+            if image_path is not None:
+                self._upload_image(conversation_id, image_id, image_path)
+                parts.append(
+                    {
+                        "type": "file",
+                        "mediaType": "image/jpeg",
+                        "filename": f"{image_id}.jpg",
+                        "url": (
+                            "/storage/v1/object/public/images/"
+                            f"{self.config.user_id}/{conversation_id}/{image_id}"
+                        ),
+                    }
+                )
             self._rest_insert(
                 "messages",
                 {
                     "id": message_id,
                     "conversation_id": conversation_id,
                     "role": "user",
-                    "parts": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "file",
-                            "mediaType": "image/jpeg",
-                            "filename": f"{image_id}.jpg",
-                            "url": (
-                                "/storage/v1/object/public/images/"
-                                f"{self.config.user_id}/{conversation_id}/{image_id}"
-                            ),
-                        },
-                    ],
+                    "parts": parts,
                     "metadata": {"model": self.config.model},
                     "parent_message_id": None,
                 },
             )
-            stream = self.transport(
+            stream = self._send(
                 "POST",
                 f"{self.config.base_url.rstrip('/')}/api/parametric-chat",
                 {
-                    "Authorization": f"Bearer {self.config.access_token}",
+                    "Authorization": f"Bearer {access_token}",
                     "Content-Type": "application/json",
                 },
                 _json_body(
