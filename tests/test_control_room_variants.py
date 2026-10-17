@@ -118,3 +118,30 @@ def test_an_oversized_csv_field_is_a_clean_refusal(tmp_path: Path):
     assert response.status_code == 200
     data = response.json()
     assert data["variants"] == [] and data["source"] == "variants.csv" and "could not be read" in data["error"]
+
+
+@pytest.mark.parametrize("csv_present", [True, False])
+def test_variants_never_open_spreadsheets(tmp_path: Path, monkeypatch, csv_present: bool):
+    """#1121 ruling: a workbook beside the CSV (or instead of it) is never opened."""
+    root = tmp_path / "instruments"
+    repo = root / "woodwind" / "flutes"
+    repo.mkdir(parents=True)
+    for name in ("Flutes.xlsx", "variants.xlsx", "family-spec.xls", "design-table.xlsx"):
+        (repo / name).write_bytes(b"PK\x03\x04 synthetic workbook")
+    if csv_present:
+        (repo / "variants.csv").write_text("variant_id,root_note\nNAF-A4,A4\n", encoding="utf-8")
+    opened: list[str] = []
+    real_open = Path.open
+
+    def spy(self, *args, **kwargs):
+        opened.append(self.name)
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", spy)
+    out = ir.variants(ir.find_repo(root, "flutes"))
+    assert not [name for name in opened if name.lower().endswith((".xlsx", ".xls"))]
+    if csv_present:
+        assert out["source"] == "variants.csv" and [v["id"] for v in out["variants"]] == ["NAF-A4"]
+        assert "variants.csv" in opened  # the spy does see the reader's opens
+    else:
+        assert out == {"source": None, "variants": []}
