@@ -198,12 +198,10 @@ def test_verify_rejects_private_reference_in_utf16_utf32_text(staged: Path, enco
     assert "tabs/ref.txt: refers to a private location" in problems
 
 
-def test_verify_rejects_unlisted_binary_but_allows_image(staged: Path) -> None:
+def test_verify_rejects_unlisted_binary(staged: Path) -> None:
     (staged / "tabs" / "blob.dat").write_bytes(b"\x00\x01\xff\xfe\x00\x80" * 8)
-    (staged / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\xff\x00")
     problems = build_hf_space.verify_staged(staged)
-    assert any(p.startswith("tabs/blob.dat: binary file type") for p in problems), problems
-    assert not any(p.startswith("logo.png") for p in problems), problems
+    assert any(p.startswith("tabs/blob.dat: file type .dat is not allowed") for p in problems), problems
 
 
 def test_public_term_and_artifact_scripts_pass_on_staged_tree(staged: Path) -> None:
@@ -263,43 +261,108 @@ def _tiny_png() -> bytes:
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
 
 
+def _tiny_png() -> bytes:
+    import struct
+    import zlib
+
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return (struct.pack(">I", len(body)) + kind + body
+                + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF))
+
+    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    idat = zlib.compress(b"\x00\xff\x00\x00")
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
+
+
+PRIVATE_PATH = "../../private/oracles/x"
+ENCODINGS = ["utf-8", "utf-16", "utf-16-le", "utf-16-be", "utf-32", "utf-32-le", "utf-32-be"]
+
+
+def test_allowlist_equals_extensions_present_in_the_space_source() -> None:
+    present = {
+        p.suffix.lower()
+        for p in SPACE_SRC.rglob("*")
+        if p.is_file() and "__pycache__" not in p.parts and p.suffix not in {".pyc", ".pyo"}
+    }
+    assert present == build_hf_space.ALLOWED_SUFFIXES, (
+        "a new file type in the Space needs a deliberate allowlist review"
+    )
+    assert not any(p.is_file() and p.suffix == "" for p in SPACE_SRC.rglob("*")
+                   if "__pycache__" not in p.parts)
+
+
+def test_real_space_tree_passes(staged: Path) -> None:
+    assert build_hf_space.verify_staged(staged) == []
+
+
 @pytest.mark.parametrize("encoding", ["utf-16-le", "utf-16-be", "utf-32-le", "utf-32-be"])
-@pytest.mark.parametrize("suffix", [".png", ".jpg", ".woff2", ".svgz"])
-def test_verify_rejects_padded_encoded_text_under_binary_extension(
+@pytest.mark.parametrize(
+    "suffix", [".svgz", ".gz", ".zip", ".woff", ".woff2", ".ico", ".png", ".svg", ".json"]
+)
+def test_unlisted_extensions_are_rejected_even_with_padded_encoded_text(
     staged: Path, encoding: str, suffix: str
 ) -> None:
-    payload = ("../../private/oracles/x\n" + "\f" * 12).encode(encoding)
-    (staged / "tabs" / f"probe{suffix}").write_bytes(payload)
+    (staged / "tabs" / f"probe{suffix}").write_bytes(
+        (PRIVATE_PATH + "\n" + "\f" * 12).encode(encoding)
+    )
     problems = build_hf_space.verify_staged(staged)
     rel = f"tabs/probe{suffix}"
-    assert f"{rel}: refers to a private location" in problems, problems
-    assert any(p.startswith(f"{rel}: ") and ("signature" in p or "gzip" in p) for p in problems)
+    assert any(p.startswith(f"{rel}: file type {suffix} is not allowed") for p in problems)
+    assert f"{rel}: refers to a private location" in problems  # still scanned too
 
 
-def test_verify_scans_decoded_text_even_when_unreadable(staged: Path) -> None:
-    payload = ("../../private/oracles/x" + "\x01" * 200).encode("utf-16-le")
-    (staged / "tabs" / "pad.txt").write_bytes(payload)
-    assert "tabs/pad.txt: refers to a private location" in build_hf_space.verify_staged(staged)
-
-
-def test_verify_accepts_real_png_and_rejects_wrong_magic(staged: Path) -> None:
-    (staged / "logo.png").write_bytes(_tiny_png())
-    assert build_hf_space.verify_staged(staged) == []
-    (staged / "fake.png").write_bytes(b"GIF89a" + b"\x00" * 10)
-    problems = build_hf_space.verify_staged(staged)
-    assert "fake.png: contents do not match the .png file signature" in problems
-
-
-def test_verify_rejects_private_path_in_svg_and_svgz(staged: Path) -> None:
+def test_reviewer_svgz_utf16_gzip_case_fails(staged: Path) -> None:
     import gzip
 
-    svg = '<svg xmlns="http://www.w3.org/2000/svg"><!-- ../../private/oracles/x --></svg>'
-    (staged / "icon.svg").write_text(svg, encoding="utf-8")
-    (staged / "icon2.svgz").write_bytes(gzip.compress(svg.encode()))
+    xml = f'<svg xmlns="http://www.w3.org/2000/svg"><!-- {PRIVATE_PATH} --></svg>'
+    (staged / "icon.svgz").write_bytes(gzip.compress(xml.encode("utf-16")))
+    assert any(
+        p.startswith("icon.svgz: file type .svgz is not allowed")
+        for p in build_hf_space.verify_staged(staged)
+    )
+
+
+@pytest.fixture()
+def allow_png_svg(monkeypatch):
+    """Model a deliberate future review that allows an image and SVG."""
+    monkeypatch.setattr(build_hf_space, "BINARY_ALLOWED_SUFFIXES", {".png"})
+    monkeypatch.setattr(build_hf_space, "TEXT_ALLOWED_SUFFIXES", {".py", ".md", ".txt", ".svg"})
+    monkeypatch.setattr(build_hf_space, "ALLOWED_SUFFIXES", {".py", ".md", ".txt", ".svg", ".png"})
+
+
+@pytest.mark.parametrize("encoding", ENCODINGS)
+def test_svg_path_and_fingerprint_payloads_fail_in_every_encoding(
+    staged: Path, allow_png_svg, monkeypatch, encoding: str
+) -> None:
+    invented = "zz synthetic invented term"
+    real_load = build_hf_space._load_script
+
+    def load(name):
+        module = real_load(name)
+        if name == "check_public_terms":
+            base = module.load_hashes
+            module.load_hashes = lambda path: frozenset(base(path)) | {module.fingerprint(invented)}
+        return module
+
+    monkeypatch.setattr(build_hf_space, "_load_script", load)
+    svg = '<svg xmlns="http://www.w3.org/2000/svg"><!-- {} --></svg>'
+    (staged / "a.svg").write_bytes(svg.format(PRIVATE_PATH).encode(encoding))
+    (staged / "b.svg").write_bytes(svg.format(invented).encode(encoding))
     problems = build_hf_space.verify_staged(staged)
-    assert "icon.svg: refers to a private location" in problems
-    assert "icon2.svgz: refers to a private location" in problems
+    assert "a.svg: refers to a private location" in problems, problems
+    assert any(p.startswith("b.svg:") and "fingerprint" in p for p in problems), problems
+
+
+def test_real_png_passes_and_wrong_magic_fails_when_png_is_allowed(
+    staged: Path, allow_png_svg
+) -> None:
+    (staged / "logo.png").write_bytes(_tiny_png())
     ok = '<svg xmlns="http://www.w3.org/2000/svg"/>'
     (staged / "icon.svg").write_text(ok, encoding="utf-8")
-    (staged / "icon2.svgz").write_bytes(gzip.compress(ok.encode()))
     assert build_hf_space.verify_staged(staged) == []
+    (staged / "fake.png").write_bytes(b"GIF89a" + b"\x00" * 10)
+    (staged / "tabs" / "padded.png").write_bytes((PRIVATE_PATH + "\f" * 12).encode("utf-16-le"))
+    problems = build_hf_space.verify_staged(staged)
+    assert "fake.png: contents do not match the .png file signature" in problems
+    assert "tabs/padded.png: contents do not match the .png file signature" in problems
+    assert "tabs/padded.png: refers to a private location" in problems
