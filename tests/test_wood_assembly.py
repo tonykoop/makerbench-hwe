@@ -354,7 +354,7 @@ def test_review_exploit_controls(runtime, tmp_path, variant, failed):
         assert any("Tongue03Length" in c["detail"] for c in failures)
     if variant == "rerouted-lengths":
         assert any(
-            c["check"] == "dimension_perturbation" and "Tongue02Length:" in c["detail"]
+            c["check"] == "dimension_perturbation" and "Tongue03Length:" in c["detail"]
             for c in failures
         ), failures
 
