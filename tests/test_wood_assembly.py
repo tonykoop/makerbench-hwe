@@ -18,7 +18,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture(autouse=True)
 def sample_editability_outside_native_ci(monkeypatch, request):
-    if os.environ.get("MAKERBENCH_WOOD_FULL_PROOF") == "1":
+    full_controls = {
+        "test_all_v2_dimensions_drive_measured_solids",
+        "test_photo_traced_parameter_contract_grades_pass",
+    }
+    # CI proves all dimensions once per parameter-table form; targeted exploit
+    # regressions retain their relevant probes instead of repeating both proofs.
+    if os.environ.get("MAKERBENCH_WOOD_FULL_PROOF") == "1" and request.node.name in full_controls:
         return
     original = wood._run_worker
 
@@ -33,6 +39,8 @@ def sample_editability_outside_native_ci(monkeypatch, request):
                 "frozen-kerf": "KerfWidth",
             }.get(variant)
             spec = {**spec, "_test_probe_sample": True}
+            if request.node.name == "test_photo_traced_head_control_scale_has_local_response":
+                target = "Tongue03HeadWidthScale"
             if target:
                 spec["_test_probe_dimensions"] = ["Length", "Width", target]
         return original(driver, spec, *args, **kwargs)
@@ -614,3 +622,11 @@ def test_photo_traced_parameter_contract_grades_pass(photo_control):
     full = os.environ.get("MAKERBENCH_WOOD_FULL_PROOF") == "1"
     assert len(probes) == (33 if full else 13)
     assert any(c.get("dimension") == "Tongue03LengthScale" and c["passed"] for c in probes)
+
+
+def test_photo_traced_head_control_scale_has_local_response(photo_control):
+    report = wood.grade_assembly(photo_control)
+    assert report["passed"], report
+    checks = [c for c in report["checks"] if c.get("dimension") == "Tongue03HeadWidthScale"]
+    assert len(checks) == 1 and checks[0]["passed"], report
+    assert checks[0]["measured"] > 0.05

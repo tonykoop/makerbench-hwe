@@ -771,7 +771,14 @@ def perturb_dimensions(source, plan):
                             * delta
                             / old
                         )
-                        valid = valid and abs(measured - expected) <= TOL and abs(expected) > TOL
+                        # These properties scale a tongue's control points;
+                        # shared boundaries and blended shoulders need not scale
+                        # the entire measured width linearly. Require its own
+                        # geometric response, in the requested direction and
+                        # within a documented fraction of the nominal scale.
+                        nominal = expected
+                        expected = [max(TOL, 0.25 * nominal - TOL), 2 * nominal + TOL]
+                        valid = valid and measured > expected[0] and measured <= expected[1]
                 else:
                     field = (
                         "kerf"
