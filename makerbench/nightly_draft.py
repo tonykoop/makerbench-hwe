@@ -10,6 +10,7 @@ refused, as is a draft that the runner would run differently from its plan.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -31,6 +32,16 @@ class DraftError(ValueError):
     """A draft that cannot be written as asked (message is user-facing)."""
 
 
+def _same_file(path: Path, protected: Path) -> bool:
+    """Whether ``path`` is ``protected``, including case aliases on a case-insensitive disk (/mnt/c)."""
+    try:
+        if path.exists() and protected.exists():
+            return os.path.samefile(path, protected)
+    except OSError:
+        pass
+    return os.path.normcase(str(path.resolve())).casefold() == os.path.normcase(str(protected.resolve())).casefold()
+
+
 def draft_matchup(
     *,
     instrument: str,
@@ -48,7 +59,8 @@ def draft_matchup(
     """Build the job with New Run and write it, alone, to ``out_path``. Returns ``{job, plan, out}``."""
     out_path = Path(out_path)
     live = [Path(runs_root) / LIVE_QUEUE_NAME, *map(Path, live_queues)]
-    if out_path.name in LIVE_QUEUE_NAMES or any(out_path.resolve() == queue.resolve() for queue in live):
+    if (out_path.name.casefold() in {name.casefold() for name in LIVE_QUEUE_NAMES}
+            or any(_same_file(out_path, queue) for queue in live)):
         raise DraftError(f"Refusing to write the live nightly queue ({out_path}); give a draft file name.")
     if out_path.exists() and not replace:
         raise DraftError(f"{out_path} already exists; pass --replace to overwrite the draft.")

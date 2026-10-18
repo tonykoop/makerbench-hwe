@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -98,3 +99,22 @@ def test_cli_draft_matchup_writes_the_draft_and_explains_refusals(tmp_path):
     assert '"deliverable": "single"' in result.output
     refused = CliRunner().invoke(app, [*args, "--out", str(env["live"])])
     assert refused.exit_code == 1 and "draft not written" in refused.output
+
+
+@pytest.mark.parametrize("alias", ["QUEUE.JSON", "Nightly-CAD-Queue.json", "TONIGHT.JSON", "hardlink"])
+def test_case_and_identity_aliases_of_the_live_queue_are_refused(tmp_path, alias):
+    env = _setup(tmp_path)
+    task_queue = tmp_path / "arena-nightly" / "tonight.json"
+    task_queue.parent.mkdir()
+    task_queue.write_text('{"jobs": []}')
+    before = task_queue.read_bytes()
+    if alias == "hardlink":  # another name for the same file (what QUEUE.JSON is on /mnt/c)
+        out = tmp_path / "arena-nightly" / "innocent-draft.json"
+        os.link(task_queue, out)
+    else:
+        out = task_queue.parent / alias
+    with pytest.raises(DraftError, match="live nightly queue"):
+        draft_matchup(instrument="sambuca", entrants=ENTRANTS, registry_path=env["registry_path"],
+                      runs_root=env["runs_root"], out_path=out, reference="Museum.jpg",
+                      instruments_root=env["instruments_root"], live_queues=[task_queue], replace=True)
+    assert task_queue.read_bytes() == before

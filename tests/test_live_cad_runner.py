@@ -364,3 +364,29 @@ def test_no_export_at_all_names_what_was_found(tmp_path):
     cfg = _config(tmp_path, runner=lambda argv, **kw: subprocess.CompletedProcess(argv, 3, stdout="", stderr=""))
     with pytest.raises(Exception, match=r"found nothing; driver exit 3"):
         live.run_live_agent(_REGISTRY["instruments"][0], tmp_path / "run" / "gen" / "t", cfg)
+
+
+def test_a_rerun_trial_never_advertises_the_previous_builds_native_file(tmp_path):
+    cfg = _config(tmp_path, runner=None)
+    cfg.cad_stem = "trumpet-sheetmetal_base_r1"
+    fake = _fake_runner_factory(cfg)
+    attempts = []
+
+    def runner(argv, **kwargs):
+        result = fake(argv, **kwargs)
+        if not attempts:  # the first build also saves a native file; the rerun exports STL only
+            native = next(ln.strip() for ln in argv[-1].splitlines() if ln.strip().endswith(".SLDPRT"))
+            (Path(cfg.wsl_staging_root) / native[len(cfg.win_staging_root):].lstrip("\\").replace("\\", "/")).write_bytes(b"old")
+        attempts.append(1)
+        return result
+
+    cfg.runner = runner
+    run_dir = tmp_path / "run"
+    trial = ArenaTrial(instrument_id="trumpet-sheetmetal", model_id="codex-sw", seed=0, rep=0,
+                       provider="solidworks-live", trial_id="trumpet-sheetmetal__seed0__rep0__codex-sw")
+    execute = live.make_live_execute_trial(registry=_REGISTRY, run_dir=run_dir, config=cfg)
+    assert "native_path" in execute(trial)
+    second = execute(trial)  # e.g. a resumed night rerunning the same trial
+    assert "native_path" not in second
+    folder = run_dir / "gen" / trial.trial_id / "trumpet-sheetmetal_base_r1"
+    assert sorted(p.name for p in folder.iterdir()) == ["trumpet-sheetmetal_base_r1_model.stl"]

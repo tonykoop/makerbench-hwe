@@ -362,8 +362,12 @@ def run_live_agent(spec: Mapping[str, object], gen_dir: Path,
     staging = Path(config.wsl_staging_root) / trial_id / stem
     wsl_stl = staging / stl_name
     staging.mkdir(parents=True, exist_ok=True)
-    for stale in staging.iterdir():  # never accept a stale export from a prior run
-        if stale.is_file():
+    # Never accept or advertise anything from a previous attempt of this trial (a resumed night
+    # reruns it): clear the staging folder and the copies this function made last time.
+    previous = [*staging.iterdir(), *((gen_dir / stem).iterdir() if (gen_dir / stem).is_dir() else ()),
+                gen_dir / "naming-notes.txt", gen_dir / "output.stl", gen_dir / "preview.png"]
+    for stale in previous:
+        if stale.is_file() or stale.is_symlink():
             stale.unlink()
 
     docs_dir = _prepare_driver_workspace(gen_dir, config)
