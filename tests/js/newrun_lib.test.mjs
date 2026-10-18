@@ -108,6 +108,18 @@ test("autofill fills once per instrument and never overwrites edits", async () =
   assert.equal(applyAutofill(form, "lyre", suggestion), form); // a stale response for another instrument
 });
 
+test("fill-the-gaps order rules", async () => {
+  const { gapCandidates, moveNight, nightDate } = await import("../../makerbench/arena_studio/static/app/lib/newrun.js");
+  const catalog = {
+    instruments: [{ id: "a", family: "drum" }, { id: "b", family: "string" }, { id: "c", family: "drum" }],
+    gaps: { without_cad: ["a", "b", "c"] },
+  };
+  assert.deepEqual(gapCandidates(catalog, "drum"), ["a", "c"]);
+  assert.deepEqual(moveNight(["a", "b", "c"], "c", -1), ["a", "c", "b"]);
+  assert.equal(nightDate("2026-10-31", 1), "2026-11-01");
+  assert.equal(nightDate("bad", 1), "");
+});
+
 test("a slow first suggestion keeps a brief typed and an image added while it loaded (#1108 review)", async () => {
   const { applyAutofill, chooseInstrument, editBrief } = await import("../../makerbench/arena_studio/static/app/lib/newrun.js");
   const catalog = { instruments: [{ id: "kora", brief: "registry" }, { id: "drum", brief: "drum" }] };

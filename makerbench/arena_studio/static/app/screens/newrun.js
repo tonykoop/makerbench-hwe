@@ -23,6 +23,10 @@ import {
   parseVariants,
   payload,
   applyAutofill,
+  gapCandidates,
+  MAX_GAP_NIGHTS,
+  moveNight,
+  nightDate,
   togglePick,
   toggleVariant,
   usd,
@@ -405,6 +409,81 @@ function Rail({ catalog, form, estimate, onTonight, onRunNow, busy }) {
   `;
 }
 
+const DEFAULT_GAP_NIGHTS = 7;
+
+function todayIso() {
+  const now = new Date(); // the Studio's local date, which is what "tonight" means to the server
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
+function FillGaps({ catalog, onQueued, onToast }) {
+  const [family, setFamily] = useState("all");
+  const [order, setOrder] = useState(() => gapCandidates(catalog).slice(0, DEFAULT_GAP_NIGHTS));
+  const [start, setStart] = useState(todayIso);
+  const [busy, setBusy] = useState(false);
+  const byId = useMemo(() => Object.fromEntries(catalog.instruments.map((item) => [item.id, item])), [catalog]);
+  const families = catalog.library?.filters?.family || [];
+  const gaps = catalog.gaps;
+  const pickFamily = (value) => {
+    setFamily(value);
+    setOrder(gapCandidates(catalog, value).slice(0, DEFAULT_GAP_NIGHTS));
+  };
+  const remaining = gapCandidates(catalog, family).filter((id) => !order.includes(id));
+  const queue = async () => {
+    setBusy(true);
+    try {
+      onQueued(await api("/api/newrun/fill-gaps", { method: "POST", body: { instruments: order, start_date: start } }));
+    } catch (error) {
+      onToast(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return html`
+    <section class="newrun-step newrun-gaps" aria-labelledby="gaps-title">
+      <h2 id="gaps-title">Fill the gaps <span class="newrun-sub">one instrument per night, overnight matchup each</span></h2>
+      <p class="hint" data-testid="gaps-progress">
+        Explorers complete <b>${gaps.explorers_complete}</b> of ${gaps.total}. ${gaps.without_cad.length} instruments have no CAD yet.
+      </p>
+      <div class="newrun-filters">
+        <label class="field"><span class="field-label">Family</span>
+          <select aria-label="Gap family" value=${family} onChange=${(event) => pickFamily(event.currentTarget.value)}>
+            <option value="all">All</option>
+            ${families.map((value) => html`<option key=${value} value=${value}>${value}</option>`)}
+          </select>
+        </label>
+        <label class="field"><span class="field-label">First night</span>
+          <input type="date" value=${start} min=${todayIso()} onInput=${(event) => setStart(event.currentTarget.value)} />
+        </label>
+      </div>
+      ${start > todayIso() && html`<p class="review-fail-note" data-testid="gaps-start-note">
+        The nightly runner has no start date: it takes the next queued job each night it runs. A first night after tonight is staged with its plans, not queued.</p>`}
+      <p class="hint">The runner keeps this order; dates are the earliest each could run${catalog.queue_writes ? ", after any jobs already queued" : ""}.</p>
+      <ol class="newrun-nights" aria-label="Nights, in order">
+        ${order.map(
+          (id, index) => html`<li key=${id} data-night=${id}>
+            <span class="newrun-night-date" title="Earliest night">#${index + 1} · ${nightDate(start, index)}</span>
+            <span class="newrun-night-name">${byId[id]?.name || id}${byId[id]?.arena_task ? "" : html` <span class="check-chip" data-state="unknown">needs a repo hero image</span>`}</span>
+            <span class="newrun-night-actions">
+              <button type="button" aria-label=${`Move ${byId[id]?.name || id} earlier`} disabled=${index === 0} onClick=${() => setOrder((o) => moveNight(o, id, -1))}>▲</button>
+              <button type="button" aria-label=${`Move ${byId[id]?.name || id} later`} disabled=${index === order.length - 1} onClick=${() => setOrder((o) => moveNight(o, id, 1))}>▼</button>
+              <button type="button" aria-label=${`Remove ${byId[id]?.name || id}`} onClick=${() => setOrder((o) => o.filter((x) => x !== id))}>✕</button>
+            </span>
+          </li>`,
+        )}
+      </ol>
+      ${remaining.length > 0 && html`<p class="hint" data-testid="gaps-more">
+        ${order.length < MAX_GAP_NIGHTS
+          ? html`<button type="button" class="button-link" onClick=${() => setOrder((o) => [...o, remaining[0]])}>Add a night</button>${" "}`
+          : `${MAX_GAP_NIGHTS} nights at most at a time; queue these, then come back for the rest. `}
+        (${remaining.length} more without CAD${family === "all" ? "" : ` in ${family}`})</p>`}
+      <div class="actions">
+        <button type="button" class="button" disabled=${busy || order.length === 0 || order.length > MAX_GAP_NIGHTS} onClick=${queue}>Queue ${plural(order.length, "night")}</button>
+      </div>
+    </section>
+  `;
+}
+
 function Form({ catalog, onRefresh, refreshing }) {
   const [form, setForm] = useState(() => {
     const draft = loadDraft();
@@ -413,6 +492,7 @@ function Form({ catalog, onRefresh, refreshing }) {
   const [toast, setToast] = useState(null);
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [gapsOpen, setGapsOpen] = useState(false);
   const dialog = useRef(null);
   const estimate = useEstimate(form);
 
@@ -451,8 +531,12 @@ function Form({ catalog, onRefresh, refreshing }) {
         ([id, preset]) => html`<button key=${id} type="button" class="review-night newrun-pill" aria-pressed=${form.preset === id ? "true" : "false"}
           onClick=${() => { setForm(freshForm(catalog, id)); setToast("Preset loaded. Change anything you like."); }}>${preset.label}</button>`,
       )}
+      <button type="button" class="review-night newrun-pill" aria-pressed=${gapsOpen ? "true" : "false"} disabled=${!catalog.library}
+        title=${catalog.library ? "Schedule CAD for instruments that have none" : "Refresh from the library first"}
+        onClick=${() => setGapsOpen((open) => !open)}>Fill the gaps</button>
       <button type="button" class="review-night newrun-pill" disabled title="Start this from a design card in Morning Review">Revise my favourite</button>
     </div>
+    ${gapsOpen && html`<${FillGaps} catalog=${catalog} onToast=${setToast} onQueued=${(data) => setResult({ path: "/api/newrun/fill-gaps", data })} />`}
     <div class="newrun-layout">
       <div class="newrun-steps">
         <${InstrumentStep} catalog=${catalog} form=${form} setForm=${setForm} onRefresh=${onRefresh} refreshing=${refreshing} />
@@ -467,7 +551,16 @@ function Form({ catalog, onRefresh, refreshing }) {
     <p class="review-toast" role="status" aria-live="polite" hidden=${!toast}>${toast || ""}</p>
     <dialog class="review-dialog" ref=${dialog} onClose=${() => setResult(null)}>
       ${result && html`
-        <h2>${result.path.endsWith("run-now") ? "Run started" : queued ? "Added to tonight" : result.data.staged_because?.length ? "Staged, not queued" : "Saved as a draft"}</h2>
+        <h2>${result.path.endsWith("run-now") ? "Run started" : queued ? (result.path.endsWith("fill-gaps") ? (result.data.staged?.length ? "Some nights queued, some staged" : "Nights queued") : "Added to tonight") : result.data.staged_because?.length ? "Staged, not queued" : "Saved as a draft"}</h2>
+        ${result.data.skipped?.length > 0 && html`<p class="review-fail-note">Skipped: ${result.data.skipped.map((s) => `${s.instrument} (${s.reason})`).join("; ")}</p>`}
+        ${result.data.order && html`<p data-testid="gaps-order">${queued
+            ? `Queued in this order: ${result.data.queued_order.join(", ")}.${result.data.ahead > 0 ? ` ${plural(result.data.ahead, "job")} already in the queue run first.` : ""}`
+            : `Planned order: ${result.data.order.join(", ")}. Nothing was queued.`}
+          The runner takes the next queued job each night it runs, so no night is booked to a date. Reorder or remove them in Tonight's Queue once it exists; until then the plan files hold the order.</p>`}
+        ${result.data.staged?.length > 0 && html`<div class="review-fail-note" data-testid="gaps-staged">
+          <p>Staged, not queued: the nightly runner can't apply these yet. Saved at <code>runs/${result.data.draft}</code> with their plans.</p>
+          <ul>${result.data.staged.map((row) => html`<li key=${row.instrument}><b>${row.instrument}</b>: ${row.reasons.join("; ")}</li>`)}</ul>
+        </div>`}
         <p>
           ${result.path.endsWith("run-now")
             ? "The arena run is starting on this PC."

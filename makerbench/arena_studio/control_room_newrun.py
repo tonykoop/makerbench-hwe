@@ -530,3 +530,67 @@ def ready_lights(*, queue_writes: bool, queue_path: Path, environ: Mapping[str, 
         {"state": "warn", "text": "Nightly runs need your GO (#664); this screen never switches them on"},
     ]
     return lights
+
+
+# --- Fill the gaps (#1110) -------------------------------------------------------
+
+#: Library CAD states that count as "no CAD yet".
+GAP_CAD = frozenset({"none", "pending", ""})
+MAX_GAP_NIGHTS = 30
+MATCHUP_ENTRANTS = ("cadam:fable", "freecad:opus", "solidworks:sol", "fusion:sonnet")
+
+
+def gap_summary(cards: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """The library's 'Explorers complete N/M' plus how many instruments have no CAD."""
+    return {
+        "explorers_complete": sum(1 for card in cards if card.get("completeness") == "complete"),
+        "total": len(cards),
+        "without_cad": [card["id"] for card in cards if str(card.get("cad") or "") in GAP_CAD],
+    }
+
+
+def future_start_gap(start: Any, today: Any) -> Optional[str]:
+    """The runner gap for a first night after tonight, or None (the runner has no start date)."""
+    if start <= today:
+        return None
+    return (f"a first night of {start.isoformat()} (the nightly runner has no start date; "
+            "it takes the next queued job each night it runs)")
+
+
+def fill_gap_forms(order: Sequence[str], cards: Mapping[str, Mapping[str, Any]], *,
+                   brief_for: Callable[[Mapping[str, Any]], str],
+                   hero_for: Callable[[Mapping[str, Any]], Optional[str]]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """One overnight-matchup form per instrument, in Tony's order, and every instrument left out with why.
+
+    More than MAX_GAP_NIGHTS instruments is refused outright, never truncated.
+    """
+    picked = list(dict.fromkeys(order))
+    if len(picked) > MAX_GAP_NIGHTS:
+        raise NewRunError(f"Fill the gaps queues at most {MAX_GAP_NIGHTS} nights at a time; {len(picked)} were picked.")
+    forms, skipped = [], []
+    for instrument_id in picked:
+        card = cards.get(instrument_id)
+        if card is None:
+            skipped.append({"instrument": instrument_id, "reason": "not in the library"})
+            continue
+        if str(card.get("cad") or "") not in GAP_CAD:
+            skipped.append({"instrument": instrument_id, "reason": "already has CAD"})
+            continue
+        hero = hero_for(card)
+        forms.append({
+            "instrument": instrument_id, "variants": [], "deliverable": "assembly" if card.get("assembly") else "single",
+            "entrants": list(MATCHUP_ENTRANTS), "brief": brief_for(card) or f"Model the {card.get('name') or instrument_id}.",
+            "references": [{"repo_image": hero}] if hero else [], "turns": RUNNER_TURNS, "cap_usd": 2.0, "stop_early": True,
+        })
+    return forms, skipped
+
+
+def queued_ahead(queue_path: Path) -> int:
+    """Jobs already queued or running, which the runner takes before anything added now."""
+    if not queue_path.is_file() or queue_path.is_symlink():
+        return 0
+    try:
+        _payload, jobs = nightly_cad.load_queue(queue_path)
+    except (OSError, ValueError):
+        return 0
+    return sum(1 for job in jobs if job.status in {"queued", "running"})

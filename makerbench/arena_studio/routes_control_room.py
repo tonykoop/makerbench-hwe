@@ -38,6 +38,11 @@ class NewRunPayload(BaseModel):
     stop_early: bool = True
 
 
+class FillGapsPayload(BaseModel):
+    instruments: list[str] = Field(default_factory=list)
+    start_date: Optional[str] = None
+
+
 class ReviewPayload(BaseModel):
     ranking: list[str]
     notes: dict[str, str] = Field(default_factory=dict)
@@ -200,6 +205,7 @@ def register_control_room_routes(
                 "filters": {key: sorted(set(lm.KNOWN_FILTERS[key]) | set(values))
                             for key, values in lm.filter_options(snapshot["entries"]).items()},
             },
+            "gaps": nr.gap_summary(items),
             "lights": nr.ready_lights(queue_writes=queue_writes, queue_path=nightly_queue),
             "queue_writes": queue_writes,
             "allow_live": service.allow_live,
@@ -279,6 +285,93 @@ def register_control_room_routes(
             raise HTTPException(status_code=409, detail=str(error))
         except (nr.NewRunError, ValueError) as error:
             raise HTTPException(status_code=400, detail=str(error))
+
+    @app.post("/api/newrun/fill-gaps")
+    def newrun_fill_gaps(payload: FillGapsPayload):
+        """#1110: one instrument per night, each with the default overnight matchup."""
+        from datetime import date
+
+        if lm.load_snapshot(runs_root) is None:
+            raise HTTPException(status_code=400, detail="Refresh from the library first: CAD status comes from it.")
+        today = date.today()
+        try:
+            start = date.fromisoformat(payload.start_date) if payload.start_date else today
+        except ValueError:
+            raise HTTPException(status_code=400, detail="start_date must be YYYY-MM-DD")
+        if start < today:
+            raise HTTPException(status_code=400, detail="The first night is in the past.")
+        start_gap = nr.future_start_gap(start, today)
+        cards = instruments()
+        registry = service.get_registry_tasks()
+        repos: dict[str, Optional[Path]] = {}
+
+        def repo_for(card) -> Optional[Path]:
+            if card["id"] not in repos:
+                repos[card["id"]] = ir.find_repo(service.instruments_root, str(card.get("slug") or card["id"]),
+                                                 ir.registry_repo_path(registry, card.get("arena_task")))
+            return repos[card["id"]]
+
+        def brief_for(card) -> str:
+            # A linked task keeps its registry brief: that is what the nightly runner sends.
+            if str(card.get("brief") or "").strip():
+                return str(card["brief"])
+            return ir.brief(repo_for(card), name=str(card.get("name")), slug=str(card.get("slug") or card["id"]))["text"]
+
+        def hero_for(card) -> Optional[str]:
+            if card.get("arena_task") and service.reference_image_path(card["id"]) is not None:
+                return None  # the task's own reference image is used
+            repo = repo_for(card)
+            return "hero-render.png" if repo is not None and "hero-render.png" in ir.repo_images(repo) else None
+
+        try:
+            forms, skipped = nr.fill_gap_forms(payload.instruments, cards, brief_for=brief_for, hero_for=hero_for)
+        except nr.NewRunError as error:
+            raise HTTPException(status_code=400, detail=str(error))
+        built = []
+        for form in forms:
+            repo = repo_for(cards[form["instrument"]])
+            try:
+                items = nr.build_jobs(form, instruments=cards, runs_root=runs_root,
+                                      task_reference=service.reference_image_path,
+                                      repo_image=lambda name, repo=repo: ir.repo_file(repo, f"images/{name}") if repo else None)
+            except nr.UnsafePath as error:
+                raise HTTPException(status_code=409, detail=str(error))
+            except (nr.NewRunError, ValueError) as error:
+                skipped.append({"instrument": form["instrument"], "reason": str(error)})
+                continue
+            for item in items:
+                # The runner keeps queue order but has no dates: a later first night is a gap (staged).
+                item["plan"].update({"preset": "fill-gaps", "order": len(built) + 1, "first_night": start.isoformat()})
+                if start_gap:
+                    item["plan"]["runner_cannot_apply"] = [*item["plan"]["runner_cannot_apply"], start_gap]
+                built.append(item)
+        if not built:
+            raise HTTPException(status_code=400, detail="None of these instruments can be queued: "
+                                + "; ".join(f"{s['instrument']}: {s['reason']}" for s in skipped))
+        try:
+            plans = nr.write_plans(runs_root, built)
+            response = {"plans": plans, "skipped": skipped, "first_night": start.isoformat(),
+                        "order": [item["plan"]["instrument_id"] for item in built], "jobs": [item["job"] for item in built]}
+            # A night the runner would run differently from its plan is staged, never queued.
+            runnable = [item for item in built if not item["plan"]["runner_cannot_apply"]]
+            staged = [item for item in built if item["plan"]["runner_cannot_apply"]]
+            staged_because = sorted({gap for item in staged for gap in item["plan"]["runner_cannot_apply"]})
+            # What actually went into the queue and what did not are reported apart, each staged
+            # instrument with its own reasons, so a mixed batch never reads as all queued.
+            staged_rows = [{"instrument": item["plan"]["instrument_id"], "reasons": item["plan"]["runner_cannot_apply"]}
+                           for item in staged]
+            if queue_writes and runnable:
+                response["ahead"] = nr.queued_ahead(nightly_queue)
+                added = nr.append_jobs(runs_root, runnable)
+                draft = nr.write_draft(runs_root, staged, staged_because=staged_because) if staged else None
+                return {**response, "queued": True, "added": added, "draft": draft,
+                        "queued_order": [item["plan"]["instrument_id"] for item in runnable],
+                        "staged": staged_rows, "staged_because": staged_because}
+            return {**response, "queued": False, "queued_order": [],
+                    "staged": staged_rows if queue_writes else [], "staged_because": staged_because if queue_writes else [],
+                    "draft": nr.write_draft(runs_root, built, staged_because=staged_because if queue_writes else ())}
+        except nr.UnsafePath as error:
+            raise HTTPException(status_code=409, detail=str(error))
 
     @app.post("/api/newrun/run-now")
     def newrun_run_now(payload: NewRunPayload):
