@@ -847,6 +847,8 @@ def perturb_dimensions(source, plan):
                         )
                         + "\n"
                     )
+            except Exception as exc:
+                raise ValueError(f"{name}/{dimension}: {exc}") from exc
             finally:
                 scratch.abortTransaction()
             actual = obj.Constraints[index].Value if index is not None else getattr(obj, dimension)
