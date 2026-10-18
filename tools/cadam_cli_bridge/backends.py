@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -13,6 +14,8 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from .prompt import Image
+
+log = logging.getLogger("cadam_cli_bridge")
 
 MAX_ARG_BYTES = 100_000  # a single argv string must stay well under the kernel's 128 KiB limit
 
@@ -51,8 +54,9 @@ def run_cli(argv: Sequence[str], *, stdin: Optional[bytes], timeout: float, cwd:
         proc.communicate()
         raise BackendTimeout(f"{Path(argv[0]).name} did not finish within {timeout:g}s") from None
     if proc.returncode != 0:
-        tail = err.decode("utf-8", "replace").strip()[-300:]
-        raise BackendError(f"{Path(argv[0]).name} exited {proc.returncode}: {tail}")
+        # stderr can carry credentials or prompt fragments: only its size is kept, never its text
+        log.warning("%s exited %s (%d bytes of stderr withheld)", Path(argv[0]).name, proc.returncode, len(err))
+        raise BackendError(f"{Path(argv[0]).name} exited with status {proc.returncode}")
     return out.decode("utf-8", "replace"), err.decode("utf-8", "replace")
 
 

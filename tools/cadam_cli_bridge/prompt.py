@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence
+
+
+IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 
 
 class RequestError(ValueError):
@@ -34,7 +39,9 @@ def _blocks(content: Any) -> list[Mapping[str, Any]]:
     if isinstance(content, str):
         return [{"type": "text", "text": content}]
     if isinstance(content, list):
-        return [b for b in content if isinstance(b, Mapping)]
+        if not all(isinstance(b, Mapping) for b in content):
+            raise RequestError("content blocks must be objects")
+        return list(content)
     raise RequestError("message content must be a string or a list of blocks")
 
 
@@ -59,6 +66,8 @@ def render_transcript(messages: Sequence[Mapping[str, Any]], images: list[Image]
     out: list[str] = []
     names: dict[str, str] = {}
     for message in messages:
+        if not isinstance(message, Mapping):
+            raise RequestError("every message must be an object")
         role = message.get("role")
         if role not in {"user", "assistant"}:
             raise RequestError("message role must be user or assistant")
@@ -71,7 +80,15 @@ def render_transcript(messages: Sequence[Mapping[str, Any]], images: list[Image]
                 source = block.get("source")
                 if not isinstance(source, Mapping) or source.get("type") != "base64":
                     raise RequestError("only base64 image sources are supported")
-                images.append(Image(str(source.get("media_type", "image/png")), str(source.get("data", ""))))
+                media_type, data = source.get("media_type", "image/png"), source.get("data")
+                if media_type not in IMAGE_TYPES:
+                    raise RequestError("image media_type must be png, jpeg, gif or webp")
+                try:
+                    if not isinstance(data, str) or not data or not base64.b64decode(data, validate=True):
+                        raise ValueError
+                except (ValueError, binascii.Error):
+                    raise RequestError("image data must be valid base64") from None
+                images.append(Image(media_type, data))
                 parts.append(f"[image {len(images)} attached]")
             elif kind == "tool_use":
                 names[str(block.get("id"))] = str(block.get("name"))
@@ -116,15 +133,28 @@ def build_prompt(body: Mapping[str, Any]) -> Prompt:
     transcript = render_transcript(body["messages"], images)
     tools = body.get("tools") or []
     tool_choice = body.get("tool_choice")
+    if not isinstance(tools, list) or not all(isinstance(t, Mapping) for t in tools):
+        raise RequestError("tools must be a list of objects")
+    if tool_choice is not None and (
+        not isinstance(tool_choice, Mapping) or tool_choice.get("type") not in {"auto", "any", "tool", "none"}
+    ):
+        raise RequestError("tool_choice must be an object of type auto, any, tool or none")
+    if tool_choice is not None and tool_choice.get("type") == "tool" and not isinstance(tool_choice.get("name"), str):
+        raise RequestError("tool_choice of type tool needs a name")
     use_tools = bool(tools) and (tool_choice or {}).get("type") != "none"
     if use_tools:
-        if not all(isinstance(t, Mapping) and t.get("name") for t in tools):
+        if not all(isinstance(t.get("name"), str) and t.get("name") for t in tools):
             raise RequestError("every tool needs a name")
+        if not all(isinstance(t.get("input_schema", {}), Mapping) for t in tools):
+            raise RequestError("a tool input_schema must be an object")
         if (tool_choice or {}).get("type") == "tool" and (tool_choice or {}).get("name") not in {t["name"] for t in tools}:
             raise RequestError("tool_choice names a tool that was not provided")
         transcript += tool_instructions(tools, tool_choice)
     transcript += "\n\n## assistant\n" if not use_tools else "\n"
-    return Prompt(system=system_text(body.get("system")), transcript=transcript, images=images, tools_required=use_tools)
+    system = body.get("system")
+    if system is not None and not isinstance(system, (str, list)):
+        raise RequestError("system must be a string or a list of text blocks")
+    return Prompt(system=system_text(system), transcript=transcript, images=images, tools_required=use_tools)
 
 
 _FENCE = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")

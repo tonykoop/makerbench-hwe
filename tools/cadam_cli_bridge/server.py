@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from .backends import BackendError, BackendTimeout, ClaudeBackend, CliResult, CodexBackend
-from .prompt import EnvelopeError, RequestError, build_prompt, parse_envelope
+from .prompt import EnvelopeError, Prompt, RequestError, build_prompt, parse_envelope
 
 log = logging.getLogger("cadam_cli_bridge")  # never given prompt text, only method/path/model/status/timing
 
@@ -98,15 +98,20 @@ class BridgeServer(ThreadingHTTPServer):
         super().__init__((config.host, config.port), _Handler)
 
     # ---- the model call ----------------------------------------------------------------
-    def complete(self, body: Mapping[str, Any]) -> tuple[list[dict], CliResult, str]:
+    def prepare(self, body: Mapping[str, Any]) -> tuple[ModelRoute, Prompt]:
+        """Everything that can be rejected without running a CLI (so a stream can still 400 before its headers)."""
         model = body.get("model")
-        route = self.config.models.get(str(model))
+        route = self.config.models.get(str(model)) if isinstance(model, str) else None
         if route is None:
             raise ApiError(404, "not_found_error", f"model {model} is not mapped by the bridge")
         try:
-            prompt = build_prompt(body)
+            return route, build_prompt(body)
         except RequestError as exc:
             raise ApiError(400, "invalid_request_error", str(exc)) from None
+
+    def complete(self, body: Mapping[str, Any], prepared: Optional[tuple[ModelRoute, Prompt]] = None) -> tuple[list[dict], CliResult, str]:
+        model = body.get("model")
+        route, prompt = prepared or self.prepare(body)
         backend = self.backends[route.runtime]
         tools = body.get("tools") or []
         transcript = prompt.transcript
@@ -183,14 +188,19 @@ class _Handler(BaseHTTPRequestHandler):
             if not isinstance(body, dict):
                 raise ApiError(400, "invalid_request_error", "body must be a JSON object")
             model = str(body.get("model"))
+            prepared = self.server.prepare(body)  # 400/404 before any CLI runs or any SSE header goes out
             if body.get("stream"):
-                status = self._stream(body)
+                status = self._stream(body, prepared)
             else:
-                blocks, result, name = self.server.complete(body)
+                blocks, result, name = self.server.complete(body, prepared)
                 self._send_json(200, self._message(blocks, result, name))
         except ApiError as exc:
             status = exc.status
             self._send_json(exc.status, _error_body(exc.kind, exc.message))
+        except Exception:  # noqa: BLE001 - a bug must not drop the connection or leak a traceback
+            log.exception("internal error")
+            status = 500
+            self._send_json(500, _error_body("api_error", "internal bridge error"))
         except (BrokenPipeError, ConnectionResetError):
             status = 499
         log.info("%s %s model=%s status=%s %.1fs", self.command, self._route(), model, status, time.monotonic() - started)
@@ -205,7 +215,7 @@ class _Handler(BaseHTTPRequestHandler):
             "usage": {"input_tokens": result.input_tokens, "output_tokens": result.output_tokens},
         }
 
-    def _stream(self, body: Mapping[str, Any]) -> int:
+    def _stream(self, body: Mapping[str, Any], prepared: tuple[ModelRoute, Prompt]) -> int:
         """SSE: headers and ``message_start`` go out at once (with pings while the CLI runs), then the
         validated blocks are replayed as content_block_* events. Errors after the headers are SSE errors."""
         message_id = f"msg_bridge_{uuid.uuid4().hex[:20]}"
@@ -224,9 +234,12 @@ class _Handler(BaseHTTPRequestHandler):
 
         def work() -> None:
             try:
-                outcome["value"] = self.server.complete(body)
+                outcome["value"] = self.server.complete(body, prepared)
             except ApiError as exc:
                 outcome["error"] = exc
+            except Exception:  # noqa: BLE001
+                log.exception("internal error")
+                outcome["error"] = ApiError(500, "api_error", "internal bridge error")
 
         worker = threading.Thread(target=work, daemon=True)
         worker.start()
@@ -254,7 +267,7 @@ class _Handler(BaseHTTPRequestHandler):
         used = any(b["type"] == "tool_use" for b in blocks)
         write(_sse("message_delta", {"type": "message_delta", "delta": {
             "stop_reason": "tool_use" if used else "end_turn", "stop_sequence": None},
-            "usage": {"output_tokens": result.output_tokens}}))
+            "usage": {"input_tokens": result.input_tokens, "output_tokens": result.output_tokens}}))
         write(_sse("message_stop", {"type": "message_stop"}))
         self.wfile.flush()
         return 200

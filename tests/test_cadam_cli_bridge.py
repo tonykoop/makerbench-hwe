@@ -253,9 +253,23 @@ def test_cli_timeout_is_a_504_and_the_process_is_killed(make):
     assert status == 504 and json.loads(raw)["error"]["type"] == "timeout_error"
 
 
-def test_cli_crash_is_a_502_with_a_short_reason(make):
+def test_cli_crash_is_a_502_with_only_the_exit_status(make):
     status, raw, _ = make(claude_plan=["FAIL"]).post(_body())
-    assert status == 502 and "exited 3" in json.loads(raw)["error"]["message"]
+    assert status == 502 and json.loads(raw)["error"]["message"] == "claude exited with status 3"
+    assert "blew up" not in raw  # stderr text is never forwarded
+
+
+def test_stderr_secrets_never_reach_the_client_logs_or_sse(make, caplog, tmp_path):
+    caplog.set_level(logging.DEBUG)
+    bridge = make(claude_plan=["FAIL"])
+    (tmp_path / "claude" / "claude").write_text((tmp_path / "claude" / "claude").read_text().replace(
+        'sys.stderr.write("claude blew up\\n")', 'sys.stderr.write("token=sk-SECRET-MARKER prompt=PRIVATE-FRAGMENT\\n")'))
+    status, raw, _ = bridge.post(_body())
+    streamed = bridge.post(_body(stream=True))[1]
+    logs = "\n".join(r.getMessage() for r in caplog.records)
+    for text in (raw, streamed, logs):
+        assert "SECRET-MARKER" not in text and "PRIVATE-FRAGMENT" not in text
+    assert status == 502 and "exited with status 3" in streamed and "withheld" in logs
 
 
 @pytest.mark.parametrize("key", [None, "wrong-key-0123456789ab", ""])
@@ -357,3 +371,42 @@ def test_envelope_helpers():
     with pytest.raises(EnvelopeError):
         parse_envelope("{}", [{"name": "t"}], {"type": "any"})
     assert parse_envelope("{}", [{"name": "t"}], None) == [{"type": "text", "text": ""}]
+
+
+# ---- request shape validation -------------------------------------------------------------
+
+
+@pytest.mark.parametrize("patch", [
+    {"messages": [None]}, {"messages": ["hi"]}, {"messages": "hi"}, {"messages": [{"role": "user", "content": 5}]},
+    {"messages": [{"role": "user", "content": [None]}]}, {"messages": [{"role": "robot", "content": "x"}]},
+    {"tools": TOOLS, "tool_choice": "auto"}, {"tools": TOOLS, "tool_choice": {"type": "bogus"}},
+    {"tools": TOOLS, "tool_choice": {"type": "tool"}}, {"tools": "nope"}, {"tools": [None]},
+    {"tools": [{"description": "no name"}]}, {"tools": [{"name": "t", "input_schema": "x"}]}, {"system": 5},
+    {"messages": [{"role": "user", "content": [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "a"}}]}]},
+    {"messages": [{"role": "user", "content": [{"type": "image", "source": {"type": "base64", "media_type": "text/html", "data": PNG}}]}]},
+    {"messages": [{"role": "user", "content": [{"type": "image", "source": {"type": "url", "url": "http://x"}}]}]},
+    {"model": 5},
+])
+def test_malformed_requests_get_a_clean_json_error_not_a_dropped_connection(make, tmp_path, patch):
+    bridge = make()
+    for stream in (False, True):
+        status, raw, ctype = bridge.post({**_body(), **patch, "stream": stream})
+        assert status in {400, 404} and ctype == "application/json", (patch, status, raw[:200])
+        assert json.loads(raw)["type"] == "error"
+    assert _calls(tmp_path, "claude") == []  # rejected before any CLI started
+
+
+def test_unexpected_internal_errors_are_a_json_500_not_a_traceback(make, monkeypatch):
+    bridge = make()
+    monkeypatch.setattr(type(bridge.server), "complete", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    status, raw, _ = bridge.post(_body())
+    assert status == 500 and json.loads(raw)["error"] == {"type": "api_error", "message": "internal bridge error"}
+    streamed = _events(bridge.post(_body(stream=True))[1])
+    assert [n for n, _ in streamed] == ["message_start", "error"] and "boom" not in json.dumps(streamed)
+
+
+def test_streaming_reports_the_same_usage_as_the_plain_response(make):
+    bridge = make(claude_plan=["same answer", "same answer"])
+    plain = json.loads(bridge.post(_body())[1])["usage"]
+    events = _events(bridge.post(_body(stream=True))[1])
+    assert dict(events)["message_delta"]["usage"] == plain == {"input_tokens": 111, "output_tokens": 7}
