@@ -1,0 +1,31 @@
+diff --git a/src/server/aiChat.ts b/src/server/aiChat.ts
+--- a/src/server/aiChat.ts
++++ b/src/server/aiChat.ts
+@@ -1242,5 +1242,7 @@
+     conversation.type === 'parametric' &&
+     leafRole === 'user' &&
+-    !forceBuildToolChoice;
++    (!forceBuildToolChoice ||
++      (resolvedProvider === 'openrouter' &&
++        actualModelId === 'anthropic/claude-opus-5.5'));
+ 
+   const result = streamText({
+@@ -1266,5 +1268,10 @@
+         return {
+           activeTools: ['build_parametric_model' as never],
+-          ...(forceBuildToolChoice
++          // OpenRouter's Opus 5.5 endpoints advertise auto-only tool choice.
++          ...(forceBuildToolChoice &&
++          !(
++            resolvedProvider === 'openrouter' &&
++            actualModelId === 'anthropic/claude-opus-5.5'
++          )
+             ? {
+                 toolChoice: {
+@@ -1280,5 +1287,5 @@
+                   : {}),
+               }
+-            : {}),
++            : { toolChoice: 'auto' as const }),
+         };
+       }

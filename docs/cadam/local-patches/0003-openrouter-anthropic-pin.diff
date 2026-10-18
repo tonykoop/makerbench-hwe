@@ -4,7 +4,7 @@ diff --git a/src/server/aiChat.ts b/src/server/aiChat.ts
 @@ -396,4 +396,8 @@
      return {
        model: providers.openrouter().chat(modelId, {
-+        // Keep forced tool_choice on Anthropic; other hosts may reject it.
++        // Keep Anthropic traffic on Anthropic; do not silently switch hosts.
 +        ...(modelId.startsWith('anthropic/')
 +          ? { provider: { order: ['Anthropic'], allow_fallbacks: false } }
 +          : {}),

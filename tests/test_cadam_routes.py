@@ -244,7 +244,7 @@ def pre(tmp_path):
   if (providerFor(modelId) === 'openrouter') {
     return {
       model: providers.openrouter().chat(modelId, {
-        // Keep forced tool_choice on Anthropic; other hosts may reject it.
+        // Keep Anthropic traffic on Anthropic; do not silently switch hosts.
         ...(modelId.startsWith('anthropic/')
           ? { provider: { order: ['Anthropic'], allow_fallbacks: false } }
           : {}),
