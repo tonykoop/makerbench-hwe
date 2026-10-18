@@ -518,8 +518,12 @@ def main():
         if name == "top" and variant == "photo-traced":
             # Restore the real native expression engine before delivery. Save
             # its rebuilt geometry, not the pre-expression construction cache.
+            native_expressions = TRACE_NATIVE_EXPRESSIONS[doc.Name]
             App.closeDocument(doc.Name)
             doc = App.openDocument(str(path))
+            # FreeCAD derives the reopened internal document name from the
+            # descriptive filename; preserve bindings across that name change.
+            TRACE_NATIVE_EXPRESSIONS[doc.Name] = native_expressions
             body = doc.getObject("PanelBody")
             prepare_batch(doc)
             apply_batch(doc)
