@@ -33,6 +33,9 @@ param(
     [string]$RepoWsl = "",
     [int]$Port = 8080,
     [string]$Registry = "",
+    # Review nights from the nightly task's output root instead of <repo>/runs, e.g.
+    # /mnt/c/Users/Tony/Documents/StudioPipeline-Pilot/arena-nightly/runs
+    [string]$ControlRoomRunsWsl = "",
     [switch]$NoBrowser
 )
 
@@ -57,6 +60,9 @@ if ([string]::IsNullOrWhiteSpace($RepoWsl)) {
 $registryArg = ""
 if (-not [string]::IsNullOrWhiteSpace($Registry)) {
     $registryArg = "--registry '$Registry'"
+}
+if (-not [string]::IsNullOrWhiteSpace($ControlRoomRunsWsl)) {
+    $registryArg = "$registryArg --control-room-runs '$ControlRoomRunsWsl'"
 }
 
 # Loopback ONLY (see the header comment above for the full guarantee). A

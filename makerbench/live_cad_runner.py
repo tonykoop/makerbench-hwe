@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping, Optional
 
-from . import render
+from . import cad_names, render
 from .code_cad_arena_runner import (
     evaluate_objective_trial,
     mesh_objective_gate,
@@ -100,6 +100,7 @@ LOOP: plan -> stage -> list_pending -> confirm -> capture_view (compare to the r
 
 WHEN DONE you MUST export the finished part: call the connector `{export_tool}` tool with format "stl" (the bridge writes mm), absolute path exactly:
     {win_stl}
+{native_line}FILE NAMES: {naming_rule} Use exactly the paths above.
 Then print a one-paragraph build summary. The STL at that path is your arena entry — if you do not export it, your entry does not count.
 """
 
@@ -140,6 +141,7 @@ class LiveCadConfig:
     env: Mapping[str, str] = field(default_factory=dict)   # HWE_SW_TOKEN/HOST/PORT etc.
     timeout_s: int = 1800
     runner: Callable[..., subprocess.CompletedProcess] = subprocess.run
+    cad_stem: Optional[str] = None                 # <instrument>_<variant>_<revision> (#1134); from the spec if unset
     driver_runtime: str = "codex"                  # "codex" (driver_argv) | "claude"
     wire_mcp: bool = True                          # pass the connector to the driver explicitly
     mcp_python: str = "python3"                    # runs the StudioPipeline-hwe MCP shim
@@ -200,6 +202,23 @@ def driver_command(config: LiveCadConfig, gen_dir: Path) -> list[str]:
     raise ValueError(f"unknown live driver runtime {config.driver_runtime!r} (expected one of {DRIVER_RUNTIMES})")
 
 
+_CAD_NAMES = {"hwe-solidworks": "SolidWorks", "hwe-fusion": "Fusion"}
+
+
+def live_brief(brief: str, connector: str) -> str:
+    """The registry brief for a live CAD agent, without its code-CAD wording.
+
+    Registry briefs are written for the OpenSCAD arena ("as ONE self-contained OpenSCAD program",
+    "one module per part"); a SolidWorks or Fusion agent builds bodies in a part instead.
+    """
+    cad = _CAD_NAMES.get(connector, "CAD")
+    text = re.sub(r"as ONE self-contained OpenSCAD program", f"in ONE {cad} part", brief)
+    text = re.sub(r"\bOpenSCAD (program|model|file)s?\b", f"{cad} part", text)
+    text = re.sub(r"\bone module per part\b", "one named body per part", text, flags=re.I)
+    text = re.sub(r"\ba top-level assembly module placing every part\b", "every body placed", text, flags=re.I)
+    return text.replace("OpenSCAD", cad)
+
+
 def _win_path(root: str, trial_id: str, name: str) -> str:
     return f"{root.rstrip(chr(92))}\\{trial_id}\\{name}"
 
@@ -215,6 +234,16 @@ def _reference_image(config: LiveCadConfig, instrument_id: str) -> Optional[Path
     return candidate if candidate.exists() else None
 
 
+_NATIVE_EXT = {"hwe-solidworks": "SLDPRT", "hwe-fusion": "f3d"}
+
+
+def deliverable_names(spec: Mapping[str, object], config: LiveCadConfig) -> tuple[str, str, str]:
+    """``(stem, STL name, native name)`` for the entry, per the #1134 naming rule."""
+    stem = config.cad_stem or cad_names.stem(str(spec.get("id")))
+    native = cad_names.name(stem, cad_names.MODEL_PART, _NATIVE_EXT.get(config.connector, "SLDPRT"))
+    return stem, cad_names.name(stem, cad_names.MODEL_PART, "stl"), native
+
+
 def build_assignment(
     spec: Mapping[str, object],
     config: LiveCadConfig,
@@ -222,6 +251,7 @@ def build_assignment(
     *,
     docs_dir: Optional[Path] = None,
     reference_image: Optional[Path] = None,
+    win_native: Optional[str] = None,
 ) -> str:
     """Render the driver agent's assignment for one instrument."""
     instrument_id = str(spec.get("id"))
@@ -246,10 +276,13 @@ def build_assignment(
         export_tool=_EXPORT_TOOL.get(config.connector, "export"),
         instrument_id=instrument_id,
         family=spec.get("family", "instrument"),
-        brief=spec.get("task_brief") or spec.get("task_brief_short") or instrument_id,
+        brief=live_brief(str(spec.get("task_brief") or spec.get("task_brief_short") or instrument_id), config.connector),
         env=" x ".join(str(x) for x in env) if env else "533 x 200 x 180",
         min_bodies=spec.get("min_bodies") or 5,
         win_stl=win_stl,
+        native_line=(f"If the connector can also save the native {config.cad_name} file, save it as exactly:\n    {win_native}\n"
+                     if win_native else ""),
+        naming_rule=cad_names.RULE,
     )
 
 
@@ -323,11 +356,19 @@ def run_live_agent(spec: Mapping[str, object], gen_dir: Path,
     """
     trial_id = gen_dir.name
     gen_dir.mkdir(parents=True, exist_ok=True)
-    win_stl = _win_path(config.win_staging_root, trial_id, "output.stl")
-    wsl_stl = Path(config.wsl_staging_root) / trial_id / "output.stl"
-    wsl_stl.parent.mkdir(parents=True, exist_ok=True)
-    if wsl_stl.exists():
-        wsl_stl.unlink()  # never accept a stale export from a prior run
+    stem, stl_name, native_name = deliverable_names(spec, config)
+    win_stl = _win_path(config.win_staging_root, trial_id, f"{stem}\\{stl_name}")
+    win_native = _win_path(config.win_staging_root, trial_id, f"{stem}\\{native_name}")
+    staging = Path(config.wsl_staging_root) / trial_id / stem
+    wsl_stl = staging / stl_name
+    staging.mkdir(parents=True, exist_ok=True)
+    # Never accept or advertise anything from a previous attempt of this trial (a resumed night
+    # reruns it): clear the staging folder and the copies this function made last time.
+    previous = [*staging.iterdir(), *((gen_dir / stem).iterdir() if (gen_dir / stem).is_dir() else ()),
+                gen_dir / "naming-notes.txt", gen_dir / "output.stl", gen_dir / "preview.png"]
+    for stale in previous:
+        if stale.is_file() or stale.is_symlink():
+            stale.unlink()
 
     docs_dir = _prepare_driver_workspace(gen_dir, config)
     source_image = _reference_image(config, str(spec.get("id")))
@@ -341,6 +382,7 @@ def run_live_agent(spec: Mapping[str, object], gen_dir: Path,
         win_stl,
         docs_dir=docs_dir,
         reference_image=staged_image,
+        win_native=win_native,
     )
     (gen_dir / "assignment.md").write_text(assignment, encoding="utf-8")
     argv = driver_command(config, gen_dir)
@@ -365,16 +407,37 @@ def run_live_agent(spec: Mapping[str, object], gen_dir: Path,
         encoding="utf-8",
     )
 
+    notes = []
     if not wsl_stl.exists() or wsl_stl.stat().st_size == 0:
-        raise render.CompileError(
-            f"live {config.backend} agent produced no STL at {wsl_stl} "
-            f"(driver exit {getattr(proc, 'returncode', '?')})"
-        )
-    staged = gen_dir / "output.stl"
+        # A misnamed export is a clear note, not a silent failure (#1134): one other STL is taken.
+        others = sorted(p for p in staging.glob("*.stl") if p.is_file() and p.stat().st_size > 0)
+        if len(others) != 1:
+            found = ", ".join(p.name for p in others) or "nothing"
+            raise render.CompileError(
+                f"live {config.backend} agent produced no STL at {wsl_stl} (found {found}; "
+                f"driver exit {getattr(proc, 'returncode', '?')})"
+            )
+        notes.append(f"exported {others[0].name}; the naming rule (#1134) asks for {stl_name}")
+        wsl_stl = others[0]
+    deliverables = gen_dir / stem
+    deliverables.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(wsl_stl, deliverables / stl_name)
+    native = staging / native_name
+    if native.is_file() and native.stat().st_size > 0:
+        shutil.copyfile(native, deliverables / native_name)
+    else:
+        misnamed = sorted(p for p in staging.glob(f"*.{_NATIVE_EXT.get(config.connector, 'SLDPRT')}")
+                          if p.is_file() and p.name.lower() != native_name.lower())
+        if misnamed:
+            notes.append(f"saved {misnamed[0].name}; the naming rule (#1134) asks for {native_name}")
+            shutil.copyfile(misnamed[0], deliverables / native_name)
+    if notes:
+        (gen_dir / "naming-notes.txt").write_text("\n".join(notes) + "\n", encoding="utf-8")
+    staged = gen_dir / "output.stl"  # the grader's working copy; the named deliverables sit beside it
     shutil.copyfile(wsl_stl, staged)
     # carry a preview if the agent left one beside the STL
-    for png_name in ("preview.png", "output.png", f"{trial_id}.png"):
-        src = wsl_stl.parent / png_name
+    for png_name in ("preview.png", "output.png", f"{trial_id}.png", f"{stem}_preview.png"):
+        src = staging / png_name
         if src.exists():
             shutil.copyfile(src, gen_dir / "preview.png")
             break
@@ -439,6 +502,13 @@ def make_live_execute_trial(
         payload["backend"] = config.backend
         payload["tier"] = "live"
         payload["context_tier"] = config.context_tier
+        stem, _stl, native_name = deliverable_names(spec, config)
+        native = gen_dir / stem / native_name
+        if native.is_file():
+            payload["native_path"] = native.as_posix()  # Morning Review's "Open in <CAD>"
+        notes = gen_dir / "naming-notes.txt"
+        if notes.is_file():
+            payload["naming_notes"] = notes.read_text(encoding="utf-8").splitlines()
         return payload
 
     return execute

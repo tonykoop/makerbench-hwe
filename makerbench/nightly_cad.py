@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator, Mapping, Optional
 
+from . import cad_names
 from . import code_cad_arena_runner as arena_runner
 from . import code_cad_providers as providers
 from .cadam_adapter import CadamClient, CadamConfig, CadamRecoveryRequiredError
@@ -324,6 +325,15 @@ def nightly_lease(path: Path, *, now: Callable[[], datetime]) -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+def night_stem(job: "NightlyJob") -> str:
+    """``<instrument>_<variant>_<revision>`` for the night's deliverables (#1134).
+
+    A nightly job builds the instrument as registered (variant ``base``); a Morning Review
+    revision is the design's next revision.
+    """
+    return cad_names.stem(job.instrument_id, cad_names.BASE_VARIANT, "r2" if job.revision else "r1")
+
+
 def _model_label(name: str) -> str:
     """``anthropic/claude-opus-5.5`` / ``claude-sonnet-5-5`` / ``gpt-6.1-sol`` -> ``Opus 5.5`` / ``Sonnet 5.5`` / ``GPT-6.1 Sol``."""
     bare = name.rsplit("/", 1)[-1]
@@ -396,6 +406,19 @@ def _night_inputs(run_dir: Path, job: NightlyJob, registry: Mapping[str, object]
         "deliverable": job.deliverable,
         "reference_image": reference_name,
     })  # no entrant identities here: the folder also holds the blind vote pages
+
+
+def _record_native(run_log_path: Path, job: NightlyJob, entrant: NightlyEntrant, path: Path) -> None:
+    """Point the trial's ``result.native_path`` at its #1134-named deliverable."""
+    trial_id = f"{job.instrument_id}__seed{job.seed}__rep0__{entrant.entrant_id}"
+    with file_lock(run_log_path):
+        payload = json.loads(run_log_path.read_text(encoding="utf-8"))
+        row = find_trial(payload, trial_id)
+        result = row.get("result") if isinstance(row, dict) else None
+        if not isinstance(result, dict):
+            return
+        result["native_path"] = Path(path).as_posix()
+        atomic_write_json(run_log_path, payload)
 
 
 def _record_route(run_log_path: Path, job: NightlyJob, entrant: NightlyEntrant) -> None:
@@ -692,12 +715,16 @@ class NightlyExecutor:
                 generated = generate()  # the bridge lives only for this CADAM turn
         else:
             generated = generate()
+        # The deliverable keeps the #1134 name; the adapter's own candidate.scad stays its working copy.
+        named = generated.scad_path.parent / night_stem(job) / cad_names.name(night_stem(job), cad_names.MODEL_PART, "scad")
+        named.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(generated.scad_path, named)
         arena_runner.ingest_candidate(
             run_log_path=run_dir / "run_log.json",
             registry=registry,
             instrument_id=job.instrument_id,
             model_id=entrant.entrant_id,
-            scad_path=generated.scad_path,
+            scad_path=named,
             run_dir=run_dir,
             seed=job.seed,
             provenance_extra={
@@ -713,6 +740,7 @@ class NightlyExecutor:
             # keeps the configured model id for the side-by-side smoke page
             trial_meta={"entrant_label": entrant.route_label},
         )
+        _record_native(run_dir / "run_log.json", job, entrant, named)
         return generated.cost_usd
 
     @staticmethod
@@ -797,6 +825,7 @@ class NightlyExecutor:
             images_root=images,
             context_tier=entrant.context_tier,
             timeout_s=entrant.timeout_s or 1800,
+            cad_stem=night_stem(job),
             env={
                 key: value
                 for key, value in os.environ.items()

@@ -441,3 +441,63 @@ def test_an_unroutable_entrant_fails_alone_and_the_night_still_finishes(tmp_path
     assert routes["mystery"] == "arena · unprefixed-model · OpenSCAD (route not recognized)"
     assert routes["bad-live"] == "live · codex- · SolidWorks live bridge (route not recognized)"
     assert routes["good-a"] == "CADAM · OpenRouter · Opus 5.5"
+
+
+def test_cadam_deliverable_is_named_and_linked_for_morning_review(tmp_path, monkeypatch):
+    from makerbench.cadam_adapter import CadamResult
+
+    class FakeCadam:
+        def __init__(self, config):
+            self.config = config
+
+        def generate(self, *, prompt, reference_image, output_dir, conversation_id, resume_only):
+            output_dir.mkdir(parents=True, exist_ok=True)
+            scad = output_dir / "candidate.scad"
+            scad.write_text("cube([40, 20, 10]);\n")
+            return CadamResult(conversation_id=conversation_id, scad_path=scad, stream_path=output_dir / "s.bin",
+                               prepared_image_path=reference_image, image_sha256="0" * 64, cost_usd=0.4,
+                               model=self.config.model)
+
+    monkeypatch.setattr(nightly_cad, "CadamClient", FakeCadam)
+    photo = _image(tmp_path / "reference.png")
+    queue = tmp_path / "queue.json"
+    atomic_write_json(queue, {"schema": "makerbench-nightly-cad-queue-v1", "jobs": [{
+        "job_id": "sambuca-matchup", "instrument_id": "sambuca", "reference_image": photo.as_posix(), "budget_usd": 2.0,
+        "entrants": [{"entrant_id": "cadam-opus", "kind": "cadam", "model_id": "anthropic/claude-opus-5.5", "max_cost_usd": 2.0},
+                     {"entrant_id": "other", "kind": "arena", "model_id": "stub"}]}]})
+    executor = NightlyExecutor(queue_path=queue, registry_path=_registry(tmp_path / "registry.json"),
+                               output_root=tmp_path / "runs", handlers={"arena": _synthetic_handler})
+    result = executor.run()
+    run_dir = Path(result["run_dir"])
+    named = run_dir / "cadam" / "cadam-opus" / "sambuca_base_r1" / "sambuca_base_r1_model.scad"
+    assert named.read_text() == "cube([40, 20, 10]);\n"
+    from makerbench.arena_studio import control_room as cr
+
+    design = next(d for d in cr.review_view(run_dir, tmp_path)["designs"] if d["entrant"] == "cadam-opus")
+    assert design["native"]["file"] == "sambuca_base_r1_model.scad"
+    assert nightly_cad.night_stem(NightlyJob(job_id="j", instrument_id="tongue_drum_wood_assembly",
+                                             reference_image="", entrants=[])) == "tongue-drum-wood-assembly_base_r1"
+
+
+def test_studio_can_review_nights_from_the_nightly_output_root(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from makerbench.arena_studio import create_studio_app
+
+    photo = _image(tmp_path / "reference.png")
+    queue = _matchup_queue(tmp_path / "queue.json", photo)
+    output_root = tmp_path / "arena-nightly" / "runs"
+    handlers = {"cadam": _synthetic_handler, "arena": _synthetic_handler,
+                "live": lambda *a: (_ for _ in ()).throw(RuntimeError("bridge down"))}
+    run_id = NightlyExecutor(queue_path=queue, registry_path=_registry(tmp_path / "registry.json"),
+                             output_root=output_root, handlers=handlers).run()["run_id"]
+    repo = tmp_path / "repo"
+    (repo / "runs").mkdir(parents=True)
+    default = TestClient(create_studio_app(registry_path=tmp_path / "registry.json", repo_root=repo),
+                         base_url="http://127.0.0.1")
+    assert default.get("/api/review/nights").json()["nights"] == []  # the repo's runs/ has no nights
+    pointed = TestClient(create_studio_app(registry_path=tmp_path / "registry.json", repo_root=repo,
+                                           control_room_runs_root=output_root), base_url="http://127.0.0.1")
+    assert [n["run_id"] for n in pointed.get("/api/review/nights").json()["nights"]] == [run_id]
+    view = pointed.get(f"/api/review/{run_id}").json()
+    assert {d["route"] for d in view["designs"]} >= {"CADAM · OpenRouter · Opus 5.5", "Claude Code · Sonnet 5.5 · Fusion live bridge"}
