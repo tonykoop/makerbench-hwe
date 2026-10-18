@@ -499,7 +499,7 @@ def audit_entrants(
 ) -> EntrantsStatus:
     """GO/NO-GO per entrant of the job the runner would claim next (read-only, nothing runs)."""
     from . import code_cad_providers as providers
-    from .live_cad_runner import LiveCadConfig, _MCP_MODULES, connector_available, driver_route
+    from .live_cad_runner import LiveCadConfig, _MCP_MODULES, connector_available, driver_route, driver_command
     from .nightly_cad import NightlyJob, route_label
 
     env = os.environ if environ is None else environ
@@ -583,6 +583,18 @@ def audit_entrants(
             config = LiveCadConfig(backend=entrant.backend, driver_model=model, driver_runtime=runtime,
                                    connector=connector, env=bridge_env(),
                                    **({"connector_cwd": Path(connector_root).as_posix()} if connector_root else {}))
+            if runtime == "codex" and connector == "hwe-solidworks":
+                # Inspect the real generated command without launching a driver or writing config.
+                argv = driver_command(config, Path("."))
+                overrides = dict(argv[i + 1].split("=", 1) for i, token in enumerate(argv)
+                                 if token == "-c" and "=" in argv[i + 1])
+                approved = overrides.get(f"mcp_servers.{connector}.default_tools_approval_mode") == '"approve"'
+                sandboxed = ("--sandbox" in argv and argv[argv.index("--sandbox") + 1] == "workspace-write"
+                             and "--dangerously-bypass-approvals-and-sandbox" not in argv)
+                ok = ok and approved and sandboxed
+                lines.append("hwe-solidworks tools pre-approved; workspace-write sandbox retained"
+                             if approved and sandboxed else
+                             "Codex config must pre-approve hwe-solidworks tools and retain workspace-write sandbox")
             shim = Path(config.connector_cwd) / (_MCP_MODULES[connector].replace(".", "/") + ".py")
             if not shim.is_file():
                 ok = False
