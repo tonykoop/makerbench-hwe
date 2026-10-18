@@ -5,7 +5,7 @@ Refs #1088, S1–S2. This is the separate **wood_assembly** track, registered in
 printable tongue-drum task or mesh scoreline. S3 will add entrant generation and
 Arena run-log integration. No model evaluations ship here.
 
-The v2 brief follows Tony's actual reference photo: five broad paddle/club
+The v2 brief asks for the layout in Tony's actual reference photo: five broad paddle/club
 tongues from each short end, filling the width with single shared kerfs.
 Rounded heads are about 1.6 times their throat width, and sizes and lengths
 vary. The fields nest around a small connected central void. Root slits start
@@ -215,3 +215,22 @@ The seven files remain within the existing 256-member intake cap.
 
 The generated seed-0 GOOD control is supplied separately in `fixture-v2/`.
 It is a geometric test control, not a measured/tuned instrument build release.
+
+### Comparing the native outline with a photo
+
+`scripts/render_wood_photo_overlay.py` extracts the recomputed native top-plane
+edges in the confined FreeCAD worker. Supply `--bundle`, `--photo`, `--out` and
+`--corners` (eight pixel coordinates: top-left, top-right, bottom-right,
+bottom-left of the plate). It rectifies those photo corners to the public plate
+size, then exports `outline.png`, `photo-rectified.png` and `overlay.png` at
+3 pixels/mm. Red lines are actual CAD edges; the photograph and CAD geometry are
+not warped to make their silhouettes agree. `calibration.json` records the
+registration and `native-state.json` records recomputed validity and solid count.
+Invalid/multiple solids or native errors return exit status 2 after exporting
+the diagnostic images. An overlay is not a passing grade or a match verdict.
+Keep photographs, generated native files and diagnostic images uncommitted.
+
+The retained handwritten fixture has not yet passed that visual comparison.
+Its native topology checks do not establish a photo match. The bounded photo
+revision found that two broader spline-shoulder candidates detached solids;
+those candidates were rejected and the last valid fixture was retained.
