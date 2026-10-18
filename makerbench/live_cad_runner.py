@@ -427,13 +427,13 @@ def connector_mcp_probe(
         if isinstance(message, dict) and message.get("id") == 2:
             reply = message
     if reply is None:
-        tail = _redact_transcript((getattr(proc, "stderr", "") or "").strip()[-300:], env)
+        tail = _redact_transcript((getattr(proc, "stderr", "") or "").strip(), env)[-300:]
         return False, f"{config.connector} MCP shim gave no ping reply (exit {getattr(proc, 'returncode', '?')}): {tail}"
     result = reply.get("result") or {}
     text = " ".join(str(part.get("text", "")) for part in result.get("content") or [] if isinstance(part, dict))
     if reply.get("error") or result.get("isError"):
         detail = text or str((reply.get("error") or {}).get("message", "error"))
-        return False, f"{config.connector} MCP ping failed through the driver's launch path: {_redact_transcript(detail[:300], env)}"
+        return False, f"{config.connector} MCP ping failed through the driver's launch path: {_redact_transcript(detail, env)[:300]}"
     return True, f"{config.connector} MCP shim answered ping through the driver's launch path"
 
 

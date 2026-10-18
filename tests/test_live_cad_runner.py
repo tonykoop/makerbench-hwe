@@ -477,3 +477,27 @@ def test_assignment_points_at_the_staged_connector_docs(tmp_path):
     a = live.build_assignment(_REGISTRY["instruments"][0], _config(tmp_path, runner=None), r"C:\out\x.stl", docs_dir=docs)
     assert f"{docs.as_posix()}/luthier-bridge-build-loop.md" in a
     assert "connector-docs/docs/" not in a
+
+
+@pytest.mark.parametrize("reply", ["no-reply", "error"])
+def test_mcp_probe_redacts_before_truncating(tmp_path, reply):
+    # A token straddling the 300-char cutoff must not leak a prefix (stderr keeps the tail,
+    # an error reply keeps the head).
+    token = "SECRETTOKEN0123456789abcdef"
+    cfg = _claude_fusion(tmp_path, env={"HWE_FUSION_TOKEN": token})
+    if reply == "no-reply":
+        stderr = token + "x" * (300 - 10)  # the last 300 chars hold only the token's tail
+        stdout = ""
+    else:
+        stderr = ""
+        detail = "y" * 290 + token  # the first 300 chars hold only the token's head
+        stdout = json.dumps({"jsonrpc": "2.0", "id": 2,
+                             "result": {"content": [{"type": "text", "text": detail}], "isError": True}})
+
+    def run(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 1, stdout=stdout, stderr=stderr)
+
+    ok, message = live.connector_mcp_probe(cfg, environ={"HWE_FUSION_TOKEN": token}, run=run)
+    assert not ok
+    for size in range(6, len(token) + 1):
+        assert token[:size] not in message and token[-size:] not in message
