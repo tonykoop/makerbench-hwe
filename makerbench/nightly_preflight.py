@@ -585,11 +585,19 @@ def audit_entrants(
             if not shim.is_file():
                 ok = False
                 lines.append(f"MCP shim missing: {shim}")
+            token_key = "HWE_SW_TOKEN" if connector == "hwe-solidworks" else "HWE_FUSION_TOKEN"
+            if connector == "hwe-solidworks" and not config.env.get(token_key):
+                ok = False  # the SolidWorks bridge refuses unauthenticated calls
+                lines.append(f"{token_key} is not set in the secrets file or the environment (the bridge requires it)")
             if ping(config):
                 lines.append(f"{connector} bridge answered an authenticated ping")
             else:
                 ok = False
-                lines.append(f"{connector} bridge did not answer ({SOLIDWORKS_START_HINT if connector == 'hwe-solidworks' else FUSION_START_HINT})")
+                host_key = "HWE_SW_HOST" if connector == "hwe-solidworks" else "HWE_FUSION_HOST"
+                host = config.env.get(host_key, "127.0.0.1")
+                lines.append(f"{connector} bridge did not answer at {host} "
+                             f"({SOLIDWORKS_START_HINT if connector == 'hwe-solidworks' else FUSION_START_HINT}; "
+                             "from WSL, 127.0.0.1 reaches Windows only with mirrored networking)")
         checks.append(EntrantCheck(entrant.entrant_id, route, ok, tuple(lines)))
     return EntrantsStatus(job.job_id, tuple(notes), job_ok, tuple(checks))
 

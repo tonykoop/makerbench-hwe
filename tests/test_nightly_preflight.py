@@ -509,6 +509,7 @@ def test_each_missing_piece_is_its_own_no_go(tmp_path, monkeypatch):
     assert verdict["cadam-opus"][0] is False and "not reachable" in verdict["cadam-opus"][1] and "ceiling" in verdict["cadam-opus"][1]
     assert verdict["freecad-opus"][0] is False and "MAKERBENCH_FREECAD_APPDIR is not set" in verdict["freecad-opus"][1]
     assert verdict["solidworks-sol"][0] is False and "start_solidworks_bridge.ps1" in verdict["solidworks-sol"][1]
+    assert "HWE_SW_TOKEN is not set" in verdict["solidworks-sol"][1] and "mirrored networking" in verdict["solidworks-sol"][1]
     assert verdict["fusion-sonnet"][0] is False and "claude is not on PATH" in verdict["fusion-sonnet"][1]
     lines = _report_lines(status)
     assert "NO-GO solidworks-sol · Codex · GPT-6.1 Sol · SolidWorks live bridge" in lines and lines.endswith("preflight: NO-GO")
