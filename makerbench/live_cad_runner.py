@@ -170,6 +170,36 @@ def _mcp_server(config: LiveCadConfig) -> dict:
             "env_names": list(_CONNECTOR_ENV.get(config.connector, ()))}
 
 
+def codex_mcp_overrides(config: LiveCadConfig, *, approve: bool) -> list[str]:
+    """``-c mcp_servers.<connector>.*`` overrides wiring the connector into one Codex session.
+
+    The bridge env is forwarded by name (``env_vars``), so no token reaches argv. ``approve``
+    pre-approves this connector's tools only (``default_tools_approval_mode``); nothing else.
+    """
+    server = _mcp_server(config)
+    key = f"mcp_servers.{config.connector}"
+    argv = [
+        "-c", f"{key}.command={json.dumps(server['command'])}",
+        "-c", f"{key}.args={json.dumps(server['args'])}",
+        "-c", f"{key}.env={{PYTHONPATH={json.dumps(server['pythonpath'])}}}",
+        "-c", f"{key}.env_vars={json.dumps(server['env_names'])}",
+    ]
+    if approve:
+        argv += ["-c", f'{key}.default_tools_approval_mode="approve"']
+    return argv
+
+
+def write_claude_mcp_config(config: LiveCadConfig, path: Path) -> Path:
+    """Write the ``--mcp-config`` JSON holding only the connector, its env as ``${NAME:-default}`` refs."""
+    server = _mcp_server(config)
+    env = {name: "${%s:-%s}" % (name, _CONNECTOR_DEFAULTS.get(name, "")) for name in server["env_names"]}
+    env["PYTHONPATH"] = server["pythonpath"]
+    path.write_text(json.dumps(
+        {"mcpServers": {config.connector: {"command": server["command"], "args": server["args"], "env": env}}},
+        indent=2, sort_keys=True), encoding="utf-8")
+    return path
+
+
 def driver_command(config: LiveCadConfig, gen_dir: Path) -> list[str]:
     """The driver argv (without the assignment) for the entrant's runtime.
 
@@ -184,27 +214,12 @@ def driver_command(config: LiveCadConfig, gen_dir: Path) -> list[str]:
     if config.driver_runtime == "codex":
         argv = [tok.format(model=config.driver_model, workspace=workspace) for tok in config.driver_argv]
         if config.wire_mcp:
-            server = _mcp_server(config)
-            key = f"mcp_servers.{config.connector}"
-            argv += [
-                "-c", f"{key}.command={json.dumps(server['command'])}",
-                "-c", f"{key}.args={json.dumps(server['args'])}",
-                "-c", f"{key}.env={{PYTHONPATH={json.dumps(server['pythonpath'])}}}",
-                "-c", f"{key}.env_vars={json.dumps(server['env_names'])}",
-            ]
-            if config.connector == "hwe-solidworks":
-                # codex exec cannot prompt. Approve this CAD connector only;
-                # shell commands retain the workspace-write sandbox.
-                argv += ["-c", f'{key}.default_tools_approval_mode="approve"']
+            # codex exec cannot prompt. Approve this CAD connector only;
+            # shell commands retain the workspace-write sandbox.
+            argv += codex_mcp_overrides(config, approve=config.connector == "hwe-solidworks")
         return argv
     if config.driver_runtime == "claude":
-        server = _mcp_server(config)
-        mcp_config = gen_dir / "driver-mcp.json"
-        env = {name: "${%s:-%s}" % (name, _CONNECTOR_DEFAULTS.get(name, "")) for name in server["env_names"]}
-        env["PYTHONPATH"] = server["pythonpath"]
-        mcp_config.write_text(json.dumps(
-            {"mcpServers": {config.connector: {"command": server["command"], "args": server["args"], "env": env}}},
-            indent=2, sort_keys=True), encoding="utf-8")
+        mcp_config = write_claude_mcp_config(config, gen_dir / "driver-mcp.json")
         return [
             "claude", "-p", "--model", config.driver_model, "--output-format", "text",
             f"--mcp-config={mcp_config.resolve().as_posix()}", "--strict-mcp-config", "--restricted",
