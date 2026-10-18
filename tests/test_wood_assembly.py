@@ -41,6 +41,8 @@ def sample_editability_outside_native_ci(monkeypatch, request):
             spec = {**spec, "_test_probe_sample": True}
             if request.node.name == "test_photo_traced_head_control_scale_has_local_response":
                 target = "Tongue03HeadWidthScale"
+            if request.node.name == "test_photo_traced_fifth_length_scale_controls_its_own_tip":
+                target = "Tongue05LengthScale"
             if target:
                 spec["_test_probe_dimensions"] = ["Length", "Width", target]
         return original(driver, spec, *args, **kwargs)
@@ -630,3 +632,11 @@ def test_photo_traced_head_control_scale_has_local_response(photo_control):
     checks = [c for c in report["checks"] if c.get("dimension") == "Tongue03HeadWidthScale"]
     assert len(checks) == 1 and checks[0]["passed"], report
     assert checks[0]["measured"] > 0.05
+
+
+def test_photo_traced_fifth_length_scale_controls_its_own_tip(photo_control):
+    report = wood.grade_assembly(photo_control)
+    assert report["passed"], json.dumps([c for c in report["checks"] if not c["passed"]], indent=2)
+    checks = [c for c in report["checks"] if c.get("dimension") == "Tongue05LengthScale"]
+    assert len(checks) == 1 and checks[0]["passed"], report
+    assert checks[0]["measured"] > 0.5

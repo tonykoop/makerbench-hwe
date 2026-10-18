@@ -134,7 +134,7 @@ def fit_profile(paths, void):
     from scipy.interpolate import BSpline
     from scipy.signal import find_peaks
     from scipy.ndimage import gaussian_filter1d
-    from shapely.geometry import Polygon, LineString, Point, box
+    from shapely.geometry import Polygon, LineString, box
     from shapely.ops import unary_union
 
     # Preserve actual photograph root positions. Remove one extra top root instead
@@ -299,13 +299,7 @@ def fit_profile(paths, void):
                 "root_center": root_center(t),
             }
         )
-    # Give every coordinate the owner of the adjacent reconstructed cantilever.
-    points = {}
-    for c in curves:
-        for p in [c["root_a"], c["root_b"]] + [p for piece in c["pieces"] for p in piece["poles"]]:
-            key = ",".join(f"{v:.10f}" for v in p)
-            owner = int(np.argmin([Point(p).distance(t) for t in tongues]))
-            points[key] = owner
+    points = assign_point_owners(curves, tongues)
     out = {
         "smooth_runs": curves,
         "point_owners": points,
@@ -318,6 +312,41 @@ def fit_profile(paths, void):
 
     out["orientation"] = 1 if poly.exterior.is_ccw else -1
     return out
+
+
+def assign_point_owners(curves, tongues):
+    """Use the physical curve boundary; spline poles can lie in a neighbour."""
+    from scipy.interpolate import BSpline
+    from shapely.geometry import Point
+
+    points = {}
+    for run in curves:
+        for point in [run["root_a"], run["root_b"]] + [
+            v for piece in run["pieces"] for v in piece["poles"]
+        ]:
+            key = ",".join(f"{v:.10f}" for v in point)
+            points[key] = int(np.argmin([Point(point).distance(t) for t in tongues]))
+    assigned = {}
+    for run in curves:
+        for piece in run["pieces"]:
+            curve = BSpline(piece["knots"], piece["poles"], 3)
+            samples = curve(np.linspace(0.1, 0.9, 9))
+            distances = [
+                sum(t.boundary.distance(Point(v)) for v in samples) / len(samples) for t in tongues
+            ]
+            owner = int(np.argmin(distances))
+            # Frame curves have no adjacent isolated cantilever. Keep their
+            # existing endpoint attribution; actual tongue curves agree within
+            # the public 0.05 mm geometric tolerance.
+            if distances[owner] > 0.05:
+                continue
+            for point in piece["poles"]:
+                key = ",".join(f"{v:.10f}" for v in point)
+                if key in assigned and assigned[key] != owner:
+                    raise ValueError("A shared spline endpoint has conflicting tongue owners")
+                assigned[key] = owner
+    points.update(assigned)
+    return points
 
 
 def main():

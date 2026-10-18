@@ -60,3 +60,62 @@ def test_traced_control_has_ten_owners_and_small_smooth_spline_sections():
         # A single nominal-width semicircle joins each pair of shared slit edges.
         assert abs(abs(run["root_b"][1] - following["root_a"][1]) - 3.2) < 1e-8
         assert abs(run["root_b"][0] - following["root_a"][0]) < 1e-8
+
+
+def test_fifth_tongue_scale_moves_its_actual_tip_without_changing_default_curves():
+    """Poles can cross the slot: ownership must follow the physical boundary."""
+    import math
+    from scipy.interpolate import BSpline
+    from shapely.geometry import Polygon, box
+
+    profile = json.loads((ROOT / "tests/fixtures/wood_photo_trace.json").read_text())
+
+    def footprint(edited=False):
+        points = []
+        for run in profile["smooth_runs"]:
+            points.append(run["root_a"])
+            for piece in run["pieces"]:
+                poles = []
+                for x, y in piece["poles"]:
+                    owner = profile["point_owners"][f"{x:.10f},{y:.10f}"]
+                    if edited and owner == 4:
+                        origin = 80 if profile["tongues"][owner]["side"] == "left" else 377
+                        x += (x - origin) * 0.01
+                    poles.append((x, y))
+                points.extend(BSpline(piece["knots"], poles, 3)(np.linspace(0, 1, 200)))
+            points.append(run["root_b"])
+            x, y = run["root_b"]
+            cy = run["cap_next"][1]
+            angle = math.atan2(y - cy, 0)
+            direction = (
+                1 if ((run["left_next"] and y > cy) or (not run["left_next"] and y < cy)) else -1
+            )
+            angles = np.linspace(angle, angle + direction * math.pi, 30)
+            points.extend(np.column_stack((x + 1.6 * np.cos(angles), cy + 1.6 * np.sin(angles))))
+        slots = Polygon(points)
+        assert slots.is_valid
+        material = box(0, 0, 457, 241).difference(slots).intersection(box(80.001, 0, 376.999, 241))
+        tongues = [
+            g
+            for g in material.geoms
+            if g.bounds[1] > 0.05
+            and g.bounds[3] < 240.95
+            and ((abs(g.bounds[0] - 80.001) < 0.05) != (abs(g.bounds[2] - 376.999) < 0.05))
+        ]
+
+        def root_center(g):
+            from shapely.geometry import LineString
+
+            x = 85 if abs(g.bounds[0] - 80.001) < 0.05 else 372
+            return g.intersection(LineString([(x, 0), (x, 241)])).centroid.y
+
+        return sorted(tongues, key=root_center)
+
+    baseline = footprint()
+    edited = footprint(True)
+    assert len(baseline) == len(edited) == 10
+    assert trace.assign_point_owners(profile["smooth_runs"], baseline) == profile["point_owners"]
+    before = 457 - baseline[4].bounds[0]
+    after = 457 - edited[4].bounds[0]
+    assert abs((after - before) - (before - 80) * 0.01) < 0.005
+    assert after - before > 0.5
