@@ -1,0 +1,37 @@
+diff --git a/src/server/aiChat.ts b/src/server/aiChat.ts
+index f5f5468..4859799 100644
+--- a/src/server/aiChat.ts
++++ b/src/server/aiChat.ts
+@@ -37,12 +37,14 @@ import {
+ import { handleMeshRequest } from './mesh';
+ import {
+   buildStepToolChoice,
+-  providerFor,
++  providerFor as directProviderFor,
+   thinkingEnabledFor,
+   usesAdaptiveAnthropicThinking,
+ } from './modelCapabilities';
+ import { getAnonSupabaseClient } from './supabaseClient';
+ 
++type ChatProvider = 'anthropic' | 'google' | 'openrouter';
++
+ /**
+  * USD list price per **million** tokens, keyed by the same model IDs the
+  * client picker uses. `cacheRead` / `cacheWrite` are per-million prices
+@@ -427,6 +429,16 @@ function jsonResponse(body: unknown, status: number) {
+ const THINKING_BUDGET_TOKENS = 9000;
+ const PARAMETRIC_MAX_OUTPUT_TOKENS = 64000;
+ 
++// Local patch (makerbench-hwe 0001): fall back to OpenRouter (same model-id
++// namespace) when the direct provider key is absent, so Claude/Gemini picks
++// work with only OPENROUTER_API_KEY set.
++function providerFor(modelId: string): ChatProvider {
++  const direct = directProviderFor(modelId);
++  if (direct === 'anthropic' && !env('ANTHROPIC_API_KEY')) return 'openrouter';
++  if (direct === 'google' && !env('GOOGLE_API_KEY')) return 'openrouter';
++  return direct;
++}
++
+ type AnthropicProvider = ReturnType<typeof createAnthropic>;
+ type GoogleProvider = ReturnType<typeof createGoogleGenerativeAI>;
+ 
