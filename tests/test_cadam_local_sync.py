@@ -210,7 +210,7 @@ def test_refuses_a_non_clone(tmp_path):
 
 def test_committed_patches_are_wellformed_and_scoped():
     diffs = sorted(PATCHES.glob("*.diff"))
-    assert [d.name for d in diffs] == ["0001-openrouter-fallback.diff", "0002-cli-bridge-provider-switch.diff"]
+    assert [d.name for d in diffs] == ["0001-openrouter-fallback.diff", "0002-cli-bridge-provider-switch.diff", "0003-openrouter-anthropic-pin.diff"]
     assert re.fullmatch(r"[0-9a-f]{40}", (PATCHES / "BASE").read_text().strip())
     for diff in diffs:
         touched = set(re.findall(r"^diff --git a/(\S+) b/", diff.read_text(), re.M))

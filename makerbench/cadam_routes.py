@@ -77,6 +77,19 @@ def cli_version(binary: str, run: Run = default_run) -> str:
     return line[:80] if code == 0 and line else "unknown"
 
 
+def anthropic_provider_pinned(cadam_dir: Path) -> bool:
+    """Read-only check that the local routing patch is applied at the SDK call.
+
+    Reverse-checking the canonical hunk also checks its surrounding call site;
+    a comment or an unused provider setting elsewhere cannot satisfy preflight.
+    """
+    patch = REPO_ROOT / "docs/cadam/local-patches/0003-openrouter-anthropic-pin.diff"
+    code, _ = default_run([
+        "git", "-C", str(cadam_dir), "apply", "--reverse", "--check", str(patch),
+    ])
+    return code == 0
+
+
 @dataclass(frozen=True)
 class BridgeSettings:
     host: str

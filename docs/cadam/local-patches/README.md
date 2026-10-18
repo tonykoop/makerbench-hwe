@@ -7,6 +7,7 @@ Reviewable patches for the local clone of Adam-CAD/CADAM (`_meta/CADAM`). **Noth
 | --- | --- |
 | `0001-openrouter-fallback.diff` | `src/server/aiChat.ts`: when `ANTHROPIC_API_KEY` / `GOOGLE_API_KEY` is absent, `anthropic/*` and `google/*` models route through OpenRouter (same model-id namespace), so the stock route works with only `OPENROUTER_API_KEY`. |
 | `0002-cli-bridge-provider-switch.diff` | `CADAM_PROVIDER_OVERRIDE=cli-bridge` sends `anthropic/*` and `openai/*` models to the CLI bridge (`tools/cadam_cli_bridge`) through the Anthropic provider at `ANTHROPIC_BASE_URL`, with the request's model id verbatim; skips the direct-Anthropic title/suggestion helpers and refuses `createAnthropicText` so the bridge key never goes to api.anthropic.com. |
+| `0003-openrouter-anthropic-pin.diff` | Pins OpenRouter `anthropic/*` requests to `provider: { order: ['Anthropic'], allow_fallbacks: false }` at the AI SDK model call. Other model families and direct/CLI routes keep their existing routing. Prevents a Google-hosted Claude endpoint rejecting forced tool choice. Nightly preflight reverse-checks this patch in `CADAM_DIR` before reporting GO for an Anthropic OpenRouter entrant. |
 
 `BASE` is the upstream commit the patches were cut against (`e339e3a`, "swap Gemini 3.1 Pro for Gemini 4 Argon"). They are
 minimal deltas against that tree: `git apply --check` passes on a pristine `git archive` of it, and `tsc --noEmit -p tsconfig.app.json`
