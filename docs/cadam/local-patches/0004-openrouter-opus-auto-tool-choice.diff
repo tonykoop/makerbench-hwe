@@ -1,0 +1,64 @@
+diff --git a/src/server/aiChat.ts b/src/server/aiChat.ts
+--- a/src/server/aiChat.ts
++++ b/src/server/aiChat.ts
+@@ -396,7 +396,7 @@
+     return {
+       model: providers.openrouter().chat(modelId, {
+-        // Keep Anthropic traffic on Anthropic; do not silently switch hosts.
++        // Prefer Anthropic; allow other hosts with auto tool choice.
+         ...(modelId.startsWith('anthropic/')
+-          ? { provider: { order: ['Anthropic'], allow_fallbacks: false } }
++          ? { provider: { order: ['Anthropic'], allow_fallbacks: true } }
+           : {}),
+         ...(thinking ? { reasoning: { max_tokens: thinkingBudget } } : {}),
+@@ -1242,5 +1242,7 @@
+     conversation.type === 'parametric' &&
+     leafRole === 'user' &&
+-    !forceBuildToolChoice;
++    (!forceBuildToolChoice ||
++      (resolvedProvider === 'openrouter' &&
++        actualModelId === 'anthropic/claude-opus-5.5'));
+ 
+   const result = streamText({
+@@ -1266,5 +1268,10 @@
+         return {
+           activeTools: ['build_parametric_model' as never],
+-          ...(forceBuildToolChoice
++          // OpenRouter's Opus 5.5 endpoints advertise auto-only tool choice.
++          ...(forceBuildToolChoice &&
++          !(
++            resolvedProvider === 'openrouter' &&
++            actualModelId === 'anthropic/claude-opus-5.5'
++          )
+             ? {
+                 toolChoice: {
+@@ -1280,5 +1287,5 @@
+                   : {}),
+               }
+-            : {}),
++            : { toolChoice: 'auto' as const }),
+         };
+       }
+@@ -1320,4 +1327,22 @@
+         },
+       });
++    },
++    onStepFinish: ({ response, providerMetadata }) => {
++      if (
++        resolvedProvider === 'openrouter' &&
++        actualModelId === 'anthropic/claude-opus-5.5'
++      ) {
++        const upstream = providerMetadata?.openrouter?.provider;
++        // Route evidence only; never log request bodies, headers, or reasoning.
++        console.info(
++          '[cadam-openrouter-route]',
++          JSON.stringify({
++            conversationId: conversation.id,
++            model: actualModelId,
++            provider: typeof upstream === 'string' ? upstream : null,
++            generationId: response.id ?? null,
++          }),
++        );
++      }
+     },
+     // Observability for the auto-tool-choice fallback (Claude 5 / Fable /

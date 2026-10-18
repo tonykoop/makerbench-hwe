@@ -3,6 +3,7 @@
 import json
 import os
 import stat
+import subprocess
 import sys
 from datetime import datetime, timezone
 from functools import partial
@@ -193,8 +194,6 @@ def test_cli_bridge_route_starts_the_bridge_for_the_turn_and_stops_it_after(worl
 
 
 def test_an_already_listening_bridge_is_reused_and_left_running(world):
-    import subprocess
-
     proc = subprocess.Popen([str(world.bridge_dir / "fake_bridge.py"), str(world.port)])
     try:
         for _ in range(50):
@@ -237,6 +236,23 @@ def pre(tmp_path):
     cadam = tmp_path / "CADAM" / "src" / "lib"
     cadam.mkdir(parents=True)
     (cadam / "utils.ts").write_text("export const models = [\n  {\n    id: 'anthropic/claude-fable-5.1',\n  },\n  {\n    id: 'anthropic/claude-sonnet-5.5',\n  },\n];\n")
+    server = cadam.parent / "server"
+    server.mkdir()
+    (server / "aiChat.ts").write_text("""function buildChatModel() {
+  if (providerFor(modelId) === 'openrouter') {
+    return {
+      model: providers.openrouter().chat(modelId, {
+        // Prefer Anthropic; allow other hosts with auto tool choice.
+        ...(modelId.startsWith('anthropic/')
+          ? { provider: { order: ['Anthropic'], allow_fallbacks: true } }
+          : {}),
+        ...(thinking ? { reasoning: { max_tokens: thinkingBudget } } : {}),
+        usage: { include: true },
+      }),
+    };
+  }
+}
+""")
     config = tmp_path / "bridge.json"
     config.write_text(json.dumps({"port": 8787, "models": {"anthropic/claude-sonnet-5.5": {"runtime": "claude", "cli_model": "claude-sonnet-5-5"}}}))
     repo = tmp_path / "repo"
@@ -387,3 +403,36 @@ def test_recorded_route_label_is_route_aware_and_stays_total():
     assert nightly_cad.route_label(default) == "CADAM · OpenRouter · Fable 5.1"
     odd = NightlyEntrant(entrant_id="x", kind="cadam", model_id="", route="cli-bridge", runtime="codex")
     assert isinstance(nightly_cad.route_label(odd), str)  # no exception even for a malformed entrant
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda s: s.replace("allow_fallbacks: true", "allow_fallbacks: false"),
+    lambda s: s.replace("['Anthropic']", "['Google']"),
+    lambda s: s.replace("startsWith('anthropic/')", "startsWith('google/')"),
+    lambda s: s.replace("providers.openrouter().chat", "unused.chat"),
+    lambda s: "// provider: { order: ['Anthropic'], allow_fallbacks: true }\n",
+])
+def test_preflight_rejects_missing_or_drifted_provider_pin(pre, mutation):
+    source = pre.tmp / "CADAM/src/server/aiChat.ts"
+    source.write_text(mutation(source.read_text()))
+    assert any("provider pin MISSING or drifted" in t for t in _failed(pre.audit(OR)))
+
+
+def test_preflight_checks_fallback_preference_and_non_anthropic_is_unaffected(pre):
+    clone = pre.tmp / "CADAM"
+    source = clone / "src/server/aiChat.ts"
+    original = source.read_text()
+    assert cadam_routes.anthropic_provider_pinned(clone)
+    source.write_text(original.replace("allow_fallbacks: true", "allow_fallbacks: false"))
+    assert not cadam_routes.anthropic_provider_pinned(clone)
+    assert any("provider pin MISSING" in t for t in _failed(pre.audit(OR)))
+    other = {**OR, "model_id": "google/example"}
+    assert not any("provider pin" in t for status in pre.audit(other) for _, t in status.checks)
+    source.write_text(original)
+    assert all(status.ok for status in pre.audit(OR))
+
+
+def test_preflight_reports_fallbacks_enabled(pre):
+    messages = [text for status in pre.audit(OR) for ok, text in status.checks if ok]
+    assert any("Anthropic preferred, fallbacks enabled" in text for text in messages)
+    assert not any("fallbacks disabled" in text for text in messages)
