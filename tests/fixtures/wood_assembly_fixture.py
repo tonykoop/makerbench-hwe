@@ -14,6 +14,7 @@ from pathlib import Path
 import FreeCAD as App
 import Part
 import Sketcher
+from _wood_native import prepare_batch, apply_batch
 
 
 def save_visibility(doc, path):
@@ -517,6 +518,8 @@ def main():
             App.closeDocument(doc.Name)
             doc = App.openDocument(str(path))
             body = doc.getObject("PanelBody")
+            prepare_batch(doc)
+            apply_batch(doc)
             for feature in body.Group:
                 if feature.TypeId in {"PartDesign::Pad", "PartDesign::Pocket"}:
                     feature.Shape = Part.Shape()
@@ -533,6 +536,7 @@ def main():
                 raise ValueError("Photo trace native expression restore/rebuild failed")
             App.ParamGet("User parameter:BaseApp/Preferences/Document").SetInt("CountBackupFiles", 0)
             doc.save()
+            save_trace_expressions(doc, path)
         save_visibility(doc, path)
         bodies[name] = body
         rows.append(dict(part_id=name, file=f"parts/{name}.FCStd",
