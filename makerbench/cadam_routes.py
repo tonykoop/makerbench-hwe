@@ -78,16 +78,23 @@ def cli_version(binary: str, run: Run = default_run) -> str:
 
 
 def anthropic_provider_pinned(cadam_dir: Path) -> bool:
-    """Read-only check that the local routing patch is applied at the SDK call.
+    """Read-only check of the final Anthropic preference at the SDK call.
 
-    Reverse-checking the canonical hunk also checks its surrounding call site;
+    Checking the canonical hunk also checks its surrounding call site;
     a comment or an unused provider setting elsewhere cannot satisfy preflight.
     """
     patch = REPO_ROOT / "docs/cadam/local-patches/0003-openrouter-anthropic-pin.diff"
-    code, _ = default_run([
-        "git", "-C", str(cadam_dir), "apply", "--reverse", "--check", str(patch),
-    ])
-    return code == 0
+    try:
+        # Patch 0004 supersedes 0003's strict pin with an ordered preference.
+        expected = "".join(line[1:] for line in patch.read_text().splitlines(keepends=True)
+                           if line.startswith((" ", "+")) and not line.startswith("+++"))
+        expected = expected.replace("allow_fallbacks: false", "allow_fallbacks: true").replace(
+            "Keep Anthropic traffic on Anthropic; do not silently switch hosts.",
+            "Prefer Anthropic; allow other hosts with auto tool choice.",
+        )
+        return expected in (cadam_dir / "src/server/aiChat.ts").read_text()
+    except (OSError, UnicodeError):
+        return False
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,16 @@
 diff --git a/src/server/aiChat.ts b/src/server/aiChat.ts
 --- a/src/server/aiChat.ts
 +++ b/src/server/aiChat.ts
+@@ -396,7 +396,7 @@
+     return {
+       model: providers.openrouter().chat(modelId, {
+-        // Keep Anthropic traffic on Anthropic; do not silently switch hosts.
++        // Prefer Anthropic; allow other hosts with auto tool choice.
+         ...(modelId.startsWith('anthropic/')
+-          ? { provider: { order: ['Anthropic'], allow_fallbacks: false } }
++          ? { provider: { order: ['Anthropic'], allow_fallbacks: true } }
+           : {}),
+         ...(thinking ? { reasoning: { max_tokens: thinkingBudget } } : {}),
 @@ -1242,5 +1242,7 @@
      conversation.type === 'parametric' &&
      leafRole === 'user' &&
@@ -29,3 +39,26 @@ diff --git a/src/server/aiChat.ts b/src/server/aiChat.ts
 +            : { toolChoice: 'auto' as const }),
          };
        }
+@@ -1320,4 +1327,22 @@
+         },
+       });
++    },
++    onStepFinish: ({ response, providerMetadata }) => {
++      if (
++        resolvedProvider === 'openrouter' &&
++        actualModelId === 'anthropic/claude-opus-5.5'
++      ) {
++        const upstream = providerMetadata?.openrouter?.provider;
++        // Route evidence only; never log request bodies, headers, or reasoning.
++        console.info(
++          '[cadam-openrouter-route]',
++          JSON.stringify({
++            conversationId: conversation.id,
++            model: actualModelId,
++            provider: typeof upstream === 'string' ? upstream : null,
++            generationId: response.id ?? null,
++          }),
++        );
++      }
+     },
+     // Observability for the auto-tool-choice fallback (Claude 5 / Fable /

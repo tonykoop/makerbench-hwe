@@ -194,8 +194,6 @@ def test_cli_bridge_route_starts_the_bridge_for_the_turn_and_stops_it_after(worl
 
 
 def test_an_already_listening_bridge_is_reused_and_left_running(world):
-    import subprocess
-
     proc = subprocess.Popen([str(world.bridge_dir / "fake_bridge.py"), str(world.port)])
     try:
         for _ in range(50):
@@ -244,9 +242,9 @@ def pre(tmp_path):
   if (providerFor(modelId) === 'openrouter') {
     return {
       model: providers.openrouter().chat(modelId, {
-        // Keep Anthropic traffic on Anthropic; do not silently switch hosts.
+        // Prefer Anthropic; allow other hosts with auto tool choice.
         ...(modelId.startsWith('anthropic/')
-          ? { provider: { order: ['Anthropic'], allow_fallbacks: false } }
+          ? { provider: { order: ['Anthropic'], allow_fallbacks: true } }
           : {}),
         ...(thinking ? { reasoning: { max_tokens: thinkingBudget } } : {}),
         usage: { include: true },
@@ -408,11 +406,11 @@ def test_recorded_route_label_is_route_aware_and_stays_total():
 
 
 @pytest.mark.parametrize("mutation", [
-    lambda s: s.replace("allow_fallbacks: false", "allow_fallbacks: true"),
+    lambda s: s.replace("allow_fallbacks: true", "allow_fallbacks: false"),
     lambda s: s.replace("['Anthropic']", "['Google']"),
     lambda s: s.replace("startsWith('anthropic/')", "startsWith('google/')"),
     lambda s: s.replace("providers.openrouter().chat", "unused.chat"),
-    lambda s: "// provider: { order: ['Anthropic'], allow_fallbacks: false }\n",
+    lambda s: "// provider: { order: ['Anthropic'], allow_fallbacks: true }\n",
 ])
 def test_preflight_rejects_missing_or_drifted_provider_pin(pre, mutation):
     source = pre.tmp / "CADAM/src/server/aiChat.ts"
@@ -420,14 +418,21 @@ def test_preflight_rejects_missing_or_drifted_provider_pin(pre, mutation):
     assert any("provider pin MISSING or drifted" in t for t in _failed(pre.audit(OR)))
 
 
-def test_preflight_checks_applied_patch_and_non_anthropic_is_unaffected(pre):
+def test_preflight_checks_fallback_preference_and_non_anthropic_is_unaffected(pre):
     clone = pre.tmp / "CADAM"
-    patch = cadam_routes.REPO_ROOT / "docs/cadam/local-patches/0003-openrouter-anthropic-pin.diff"
+    source = clone / "src/server/aiChat.ts"
+    original = source.read_text()
     assert cadam_routes.anthropic_provider_pinned(clone)
-    subprocess.run(["git", "-C", str(clone), "apply", "-R", str(patch)], check=True)
+    source.write_text(original.replace("allow_fallbacks: true", "allow_fallbacks: false"))
     assert not cadam_routes.anthropic_provider_pinned(clone)
     assert any("provider pin MISSING" in t for t in _failed(pre.audit(OR)))
     other = {**OR, "model_id": "google/example"}
     assert not any("provider pin" in t for status in pre.audit(other) for _, t in status.checks)
-    subprocess.run(["git", "-C", str(clone), "apply", str(patch)], check=True)
+    source.write_text(original)
     assert all(status.ok for status in pre.audit(OR))
+
+
+def test_preflight_reports_fallbacks_enabled(pre):
+    messages = [text for status in pre.audit(OR) for ok, text in status.checks if ok]
+    assert any("Anthropic preferred, fallbacks enabled" in text for text in messages)
+    assert not any("fallbacks disabled" in text for text in messages)

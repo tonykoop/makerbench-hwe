@@ -403,8 +403,8 @@ def audit_routes(
             if model.startswith("anthropic/"):
                 pinned = cadam_routes.anthropic_provider_pinned(cadam_dir)
                 checks.append((pinned, "OpenRouter Anthropic provider pin "
-                               + ("configured (fallbacks disabled)" if pinned else
-                                  "MISSING or drifted; apply docs/cadam/local-patches/0003-openrouter-anthropic-pin.diff")))
+                               + ("configured (Anthropic preferred, fallbacks enabled)" if pinned else
+                                  "MISSING or drifted; apply docs/cadam/local-patches/0001-0004 in order")))
             listed = cadam_routes.picker_has_model(cadam_dir, model)
             if listed is None:
                 checks.append((False, f"CADAM clone or model catalog not found at {cadam_dir} (set CADAM_DIR)"))
