@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Optional
 
 from . import cad_names, render
+from . import code_cad_providers as providers
 from .code_cad_arena_runner import (
     evaluate_objective_trial,
     mesh_objective_gate,
@@ -52,7 +53,6 @@ _CONNECTOR_ENV = {
     "hwe-solidworks": ("HWE_SW_HOST", "HWE_SW_PORT", "HWE_SW_TOKEN"),
     "hwe-fusion": ("HWE_FUSION_HOST", "HWE_FUSION_PORT", "HWE_FUSION_TOKEN"),
 }
-_CLAUDE_FAMILY = re.compile(r"^(fable|opus|sonnet|haiku)-(\d+)[.-](\d+)$", re.I)
 
 
 def driver_route(model_id: str) -> tuple[str, str]:
@@ -76,9 +76,7 @@ def driver_route(model_id: str) -> tuple[str, str]:
     if not name:
         raise ValueError(f"live driver model id {model_id!r} names no model")
     if runtime == "claude":
-        family = _CLAUDE_FAMILY.match(name)
-        if family:
-            name = f"claude-{family.group(1).lower()}-{family.group(2)}-{family.group(3)}"
+        name = providers.claude_cli_model(name)
     return runtime, name
 
 # instrument family -> a short structural + negative reference hint appended to

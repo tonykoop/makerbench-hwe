@@ -562,10 +562,14 @@ def audit_entrants(
                 else:
                     lines.append(f"ceiling ${entrant.max_cost_usd:.2f}")
         elif entrant.kind == "arena":
-            provider = providers.provider_for_model_id(entrant.model_id)
-            model = providers.model_name_for_model_id(entrant.model_id, provider) or "CLI default"
+            provider, cli_model = providers.cli_model_for_model_id(entrant.model_id)
+            model = cli_model or "CLI default"
             binary = providers.CLI_BINARIES.get(provider)
             lines.append(f"{provider} CLI, model {model}, backend {entrant.backend}, context {entrant.context_tier}")
+            problem = providers.claude_cli_model_problem(cli_model) if provider == "claude" else None
+            if problem:
+                ok = False  # the CLI exits rc=1 unrecognized_model (dry night, #663)
+                lines.append(problem)
             if binary and which(binary) is None:
                 ok = False
                 lines.append(f"{binary} is not on PATH")
@@ -577,6 +581,10 @@ def audit_entrants(
             runtime, model = driver_route(entrant.model_id)
             connector = "hwe-fusion" if entrant.backend == "fusion-live" else "hwe-solidworks"
             lines.append(f"driver {runtime} --model {model}, connector {connector}")
+            problem = providers.claude_cli_model_problem(model) if runtime == "claude" else None
+            if problem:
+                ok = False
+                lines.append(problem)
             if which(runtime) is None:
                 ok = False
                 lines.append(f"{runtime} is not on PATH")
