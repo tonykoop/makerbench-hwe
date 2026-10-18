@@ -6,6 +6,8 @@ import fcntl
 import itertools
 import json
 import os
+import re
+import shutil
 import socket
 import uuid
 from contextlib import contextmanager
@@ -18,7 +20,7 @@ from . import code_cad_arena_runner as arena_runner
 from . import code_cad_providers as providers
 from .cadam_adapter import CadamClient, CadamConfig, CadamRecoveryRequiredError
 from .code_cad_orchestrator import OrchestrationConfig, run_orchestration
-from .live_cad_runner import LiveCadConfig, connector_available, make_live_execute_trial
+from .live_cad_runner import LiveCadConfig, connector_available, driver_route, make_live_execute_trial
 from . import nightly_revisions as revisions
 from .run_log_io import atomic_write_json, file_lock, find_trial, has_trial, trial_rows
 from .schema import MatchupMetadata, matchup_metadata
@@ -27,6 +29,14 @@ from .schema import MatchupMetadata, matchup_metadata
 SCHEMA = "makerbench-nightly-cad-queue-v1"
 STATE_SCHEMA = "makerbench-nightly-cad-state-v1"
 MORNING_SCHEMA = "makerbench-nightly-cad-morning-v1"
+BRIEF_SCHEMA = "makerbench-nightly-cad-brief-v1"
+#: What a night builds. Assembly nights need an assembly harness the runner does not have yet.
+DELIVERABLES = ("single",)
+REFERENCE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
+_BACKEND_LABELS = {"openscad": "OpenSCAD", "freecad": "FreeCAD", "cadquery": "CadQuery", "blender": "Blender",
+                   "solidworks-live": "SolidWorks live bridge", "fusion-live": "Fusion live bridge"}
+_RUNTIME_LABELS = {"claude": "Claude Code", "codex": "Codex", "gemini": "Gemini CLI", "agy": "Antigravity",
+                   "openrouter": "OpenRouter", "stub": "Stub"}
 
 
 @dataclass(frozen=True)
@@ -85,6 +95,7 @@ class NightlyJob:
     # A Control Room revision (#1116): one entrant continued from its best turn with feedback.
     # Never read from the nightly queue file; the executor builds it from the revision queue.
     revision: Optional[dict] = None
+    deliverable: str = "single"
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, object]) -> "NightlyJob":
@@ -102,6 +113,7 @@ class NightlyJob:
             status=str(payload.get("status") or "queued"),
             run_id=str(payload["run_id"]) if payload.get("run_id") else None,
             run_dir=str(payload["run_dir"]) if payload.get("run_dir") else None,
+            deliverable=str(payload.get("deliverable") or "single"),
         )
 
     def validate(self) -> None:
@@ -114,6 +126,10 @@ class NightlyJob:
             raise ValueError("nightly jobs require at least two entrants")
         if self.budget_usd < 0:
             raise ValueError("budget_usd cannot be negative")
+        if self.deliverable == "assembly":
+            raise ValueError("assembly nights are not supported by the nightly runner yet; queue a single-part night")
+        if self.deliverable not in DELIVERABLES:
+            raise ValueError(f"unknown nightly deliverable {self.deliverable!r} (expected one of {DELIVERABLES})")
         for entrant in self.entrants:
             entrant.validate()
 
@@ -127,6 +143,7 @@ class NightlyJob:
             "status": self.status,
             "run_id": self.run_id,
             "run_dir": self.run_dir,
+            "deliverable": self.deliverable,
             "entrants": [entrant.__dict__ for entrant in self.entrants],
         }
 
@@ -284,6 +301,83 @@ def nightly_lease(path: Path, *, now: Callable[[], datetime]) -> Iterator[None]:
             yield
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _model_label(name: str) -> str:
+    """``anthropic/claude-opus-5.5`` / ``claude-sonnet-5-5`` / ``gpt-6.1-sol`` -> ``Opus 5.5`` / ``Sonnet 5.5`` / ``GPT-6.1 Sol``."""
+    bare = name.rsplit("/", 1)[-1]
+    family = re.match(r"^(?:claude-)?(fable|opus|sonnet|haiku)-(\d+)[.-](\d+)$", bare, re.I)
+    if family:
+        return f"{family.group(1).title()} {family.group(2)}.{family.group(3)}"
+    gpt = re.match(r"^gpt-([0-9.]+)(?:-(.+))?$", bare, re.I)
+    if gpt:
+        return f"GPT-{gpt.group(1)}" + (f" {gpt.group(2).replace('-', ' ').title()}" if gpt.group(2) else "")
+    return bare
+
+
+def route_label(entrant: NightlyEntrant) -> str:
+    """The route Morning Review shows for an entrant, e.g. ``CADAM · OpenRouter · Opus 5.5`` (#1099)."""
+    if entrant.kind == "cadam":
+        return f"CADAM · OpenRouter · {_model_label(entrant.model_id)}"
+    if entrant.kind == "live":
+        runtime, model = driver_route(entrant.model_id)
+        return f"{_RUNTIME_LABELS[runtime]} · {_model_label(model)} · {_BACKEND_LABELS.get(entrant.backend, entrant.backend)}"
+    provider = providers.provider_for_model_id(entrant.model_id)
+    model = providers.model_name_for_model_id(entrant.model_id, provider) or entrant.model_id
+    return (f"{_RUNTIME_LABELS.get(provider, provider)} · {_model_label(model)} · "
+            f"{_BACKEND_LABELS.get(entrant.backend, entrant.backend)}")
+
+
+def _night_inputs(run_dir: Path, job: NightlyJob, registry: Mapping[str, object], *, night: str) -> None:
+    """``brief.json`` and a ``reference.*`` copy in the run folder, for Morning Review (#1105).
+
+    Written once, at the first claim; a resumed night keeps what it started with.
+    """
+    brief_path = run_dir / "brief.json"
+    reference_name = None
+    source = Path(job.reference_image) if job.reference_image else None
+    if source is not None and source.is_file():
+        suffix = source.suffix.lower()
+        if suffix in REFERENCE_SUFFIXES:
+            reference_name = f"reference{suffix}"
+            target = run_dir / reference_name
+            if not target.exists():
+                shutil.copyfile(source, target)
+        else:
+            reference_name = "reference.png"
+            target = run_dir / reference_name
+            if not target.exists():
+                from PIL import Image
+
+                with Image.open(source) as image:
+                    image.convert("RGB").save(target, format="PNG", optimize=True)
+    if brief_path.exists():
+        return
+    spec = arena_runner.instrument_spec_from_registry(registry, job.instrument_id)
+    atomic_write_json(brief_path, {
+        "schema": BRIEF_SCHEMA,
+        "night": night,
+        "instrument_id": job.instrument_id,
+        "title": str(spec.get("display_name") or spec.get("name") or job.instrument_id),
+        "brief": str(spec.get("task_brief") or spec.get("task_brief_short") or ""),
+        "deliverable": job.deliverable,
+        "reference_image": reference_name,
+    })  # no entrant identities here: the folder also holds the blind vote pages
+
+
+def _record_route(run_log_path: Path, job: NightlyJob, entrant: NightlyEntrant) -> None:
+    """Stamp the entrant's route on its trial row (``meta.route``), which Morning Review shows."""
+    trial_id = f"{job.instrument_id}__seed{job.seed}__rep0__{entrant.entrant_id}"
+    with file_lock(run_log_path):
+        payload = json.loads(run_log_path.read_text(encoding="utf-8"))
+        row = find_trial(payload, trial_id)
+        if not isinstance(row, dict):
+            return
+        meta = row.setdefault("meta", {})
+        if not isinstance(meta, dict) or meta.get("route"):
+            return
+        meta["route"] = route_label(entrant)
+        atomic_write_json(run_log_path, payload)
 
 
 def _fresh_run_log(run_dir: Path, job: NightlyJob, *,
@@ -629,9 +723,11 @@ class NightlyExecutor:
             with Image.open(job.reference_image) as source:
                 source.convert("RGB").save(target, format="PNG", optimize=True)
         connector = "hwe-fusion" if entrant.backend == "fusion-live" else "hwe-solidworks"
+        runtime, driver_model = driver_route(entrant.model_id)
         config = LiveCadConfig(
             backend=entrant.backend,
-            driver_model=entrant.model_id,
+            driver_model=driver_model,
+            driver_runtime=runtime,
             connector=connector,
             images_root=images,
             context_tier=entrant.context_tier,
@@ -643,7 +739,9 @@ class NightlyExecutor:
             },
         )
         if not connector_available(config):
-            raise RuntimeError(f"{connector} authenticated preflight failed")
+            hint = (" (start it with StudioPipeline-hwe scripts\\start_solidworks_bridge.ps1)"
+                    if connector == "hwe-solidworks" else " (open Fusion with the Luthier Bridge add-in running)")
+            raise RuntimeError(f"{connector} authenticated preflight failed{hint}")
         execute = make_live_execute_trial(registry=registry, run_dir=run_dir, config=config)
         orchestration = OrchestrationConfig(
             instrument_ids=(job.instrument_id,),
@@ -751,6 +849,7 @@ class NightlyExecutor:
                 save_queue(self.queue_path, payload, jobs)
             _fresh_run_log(run_dir, job, matchup=matchup)
             registry = arena_runner.load_arena_registry(self.registry_path)
+            _night_inputs(run_dir, job, registry, night=self.now().astimezone(timezone.utc).date().isoformat())
             budget = _resume_budget(run_dir, limit_usd=job.budget_usd)
             outcomes: list[dict] = []
             self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
@@ -835,6 +934,7 @@ class NightlyExecutor:
                     outcomes.append(
                         {"entrant_id": entrant.entrant_id, "status": "error", "error": str(exc)}
                     )
+                _record_route(run_dir / "run_log.json", job, entrant)
                 self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
 
             run_log = json.loads((run_dir / "run_log.json").read_text(encoding="utf-8"))

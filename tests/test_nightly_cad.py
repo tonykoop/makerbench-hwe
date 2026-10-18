@@ -344,3 +344,77 @@ def test_failed_cadam_dispatch_persists_no_token_in_run_log_or_state(tmp_path, m
     persisted = "".join(p.read_text(errors="replace") for p in run_dir.rglob("*.json"))
     assert token not in persisted and token not in json.dumps(result, default=str)
     assert "HTTP 401" in persisted  # the redacted reason is what gets recorded
+
+
+def _matchup_queue(path: Path, reference: Path, **job) -> Path:
+    atomic_write_json(path, {"schema": "makerbench-nightly-cad-queue-v1", "jobs": [{
+        "job_id": "sambuca-matchup", "instrument_id": "sambuca", "reference_image": reference.as_posix(),
+        "budget_usd": 2.5,
+        "entrants": [
+            {"entrant_id": "cadam-opus-5.5", "kind": "cadam", "model_id": "anthropic/claude-opus-5.5", "max_cost_usd": 2.0},
+            {"entrant_id": "freecad-opus-5.5", "kind": "arena", "model_id": "claude-code-opus-5.5",
+             "backend": "freecad", "context_tier": "image"},
+            {"entrant_id": "codex-live", "kind": "live", "model_id": "codex-gpt-6.1-sol", "backend": "solidworks-live"},
+            {"entrant_id": "fusion-sonnet-5.5", "kind": "live", "model_id": "claude-code-sonnet-5.5", "backend": "fusion-live"},
+        ],
+        **job,
+    }]})
+    return path
+
+
+def test_route_labels_name_runtime_model_and_backend():
+    label = lambda **e: nightly_cad.route_label(NightlyEntrant.from_dict({"entrant_id": "x", **e}))  # noqa: E731
+    assert label(kind="cadam", model_id="anthropic/claude-opus-5.5") == "CADAM · OpenRouter · Opus 5.5"
+    assert label(kind="arena", model_id="claude-code-opus-5.5", backend="freecad") == "Claude Code · Opus 5.5 · FreeCAD"
+    assert label(kind="live", model_id="codex-gpt-6.1-sol", backend="solidworks-live") == "Codex · GPT-6.1 Sol · SolidWorks live bridge"
+    assert label(kind="live", model_id="gpt-6.1-sol", backend="solidworks-live") == "Codex · GPT-6.1 Sol · SolidWorks live bridge"
+    assert label(kind="live", model_id="claude-code-sonnet-5.5", backend="fusion-live") == "Claude Code · Sonnet 5.5 · Fusion live bridge"
+
+
+def test_deliverable_is_recorded_and_assembly_nights_are_refused(tmp_path):
+    reference = _image(tmp_path / "reference.png")
+    job = NightlyJob.from_dict({"job_id": "j", "instrument_id": "sambuca", "reference_image": reference.as_posix(),
+                                "entrants": [{"entrant_id": "a", "model_id": "a"}, {"entrant_id": "b", "model_id": "b"}]})
+    job.validate()
+    assert job.deliverable == "single" and job.as_dict()["deliverable"] == "single"
+    for value, message in (("assembly", "not supported by the nightly runner yet"), ("kit", "unknown nightly deliverable")):
+        job.deliverable = value
+        with pytest.raises(ValueError, match=message):
+            job.validate()
+
+
+def test_a_matchup_night_writes_what_morning_review_reads(tmp_path):
+    from makerbench.arena_studio import control_room as cr
+
+    photo = tmp_path / "SambucaPhoto.jpg"
+    Image.new("RGB", (320, 240), (90, 60, 30)).save(photo, format="JPEG")
+    queue = _matchup_queue(tmp_path / "queue.json", photo)
+
+    def handler(job, entrant, run_dir, registry):
+        if entrant.entrant_id == "codex-live":
+            raise RuntimeError("connector unavailable")
+        return _synthetic_handler(job, entrant, run_dir, registry)
+
+    executor = NightlyExecutor(queue_path=queue, registry_path=_registry(tmp_path / "registry.json"),
+                               output_root=tmp_path / "runs", now=lambda: datetime(2026, 10, 18, 7, 30, tzinfo=timezone.utc),
+                               handlers={"cadam": handler, "arena": handler, "live": handler})
+    result = executor.run()
+    run_dir = Path(result["run_dir"])
+    brief = json.loads((run_dir / "brief.json").read_text())
+    assert brief["night"] == "2026-10-18" and brief["deliverable"] == "single" and brief["reference_image"] == "reference.jpg"
+    assert brief["brief"] == "A historical boat-bodied harp." and "entrants" not in brief
+    assert (run_dir / "reference.jpg").read_bytes() == photo.read_bytes()
+
+    view = cr.review_view(run_dir, tmp_path)
+    routes = {d["entrant"]: d["route"] for d in view["designs"]}
+    assert routes == {
+        "cadam-opus-5.5": "CADAM · OpenRouter · Opus 5.5",
+        "freecad-opus-5.5": "Claude Code · Opus 5.5 · FreeCAD",
+        "codex-live": "Codex · GPT-6.1 Sol · SolidWorks live bridge",  # the failed entrant is labelled too
+        "fusion-sonnet-5.5": "Claude Code · Sonnet 5.5 · Fusion live bridge",
+    }
+    assert view["brief"]["has_reference"] is True and cr.discover_nights(tmp_path / "runs") == [run_dir.resolve()]
+    summary = json.loads((run_dir / "morning-summary.json").read_text())
+    for name in summary["pair_files"]:
+        page = (run_dir / "morning-vote" / name).read_text()
+        assert "Opus" not in page and "Sonnet" not in page and "OpenRouter" not in page  # vote pages stay blind
