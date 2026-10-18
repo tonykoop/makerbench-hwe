@@ -470,6 +470,8 @@ def _bridge_checks(setting, entries, env, runtime, model, run, http_get, which, 
 
 SOLIDWORKS_START_HINT = (r"start it: powershell -File C:\Users\Tony\Documents\GitHub\StudioPipeline-hwe"
                          r"\scripts\start_solidworks_bridge.ps1 (SolidWorks open with a blank part)")
+FUSION_UNATTENDED_HINT = ("Restart the Luthier Bridge add-in with LUTHIER_UNATTENDED=1 and HWE_FUSION_TOKEN set "
+                          "(StudioPipeline/hwe#544).")
 FUSION_START_HINT = "start it: open Fusion with the Luthier Bridge add-in running (listener on 8766)"
 
 
@@ -496,13 +498,33 @@ def audit_entrants(
     ping: Optional[Callable[[object], bool]] = None,
     routes: Sequence[RouteStatus] = (),
     connector_root: Optional[Path] = None,
+    mcp_probe: Optional[Callable[..., tuple[bool, str]]] = None,
+    unattended: Optional[Callable[[object], Optional[bool]]] = None,
 ) -> EntrantsStatus:
-    """GO/NO-GO per entrant of the job the runner would claim next (read-only, nothing runs)."""
+    """GO/NO-GO per entrant of the job the runner would claim next (read-only, nothing runs).
+
+    A live entrant whose bridge answers is also probed through the driver's own MCP launch
+    (``connector_mcp_probe``: the generated config, its env expansion, a ``ping`` tool call), since a
+    raw ping passing did not stop the #663 Fusion driver failing. A Fusion entrant also needs the
+    bridge in unattended mode (hwe#544), or every ``confirm`` waits for a human. Both follow the
+    transport: a caller that injects ``ping`` skips them unless it injects them too.
+    """
     from . import code_cad_providers as providers
-    from .live_cad_runner import LiveCadConfig, _MCP_MODULES, connector_available, driver_route, driver_command
+    from .live_cad_runner import (
+        LiveCadConfig,
+        _MCP_MODULES,
+        connector_available,
+        connector_mcp_probe,
+        connector_unattended,
+        driver_command,
+        driver_route,
+    )
     from .nightly_cad import NightlyJob, route_label
 
     env = os.environ if environ is None else environ
+    if ping is None:
+        mcp_probe = mcp_probe or connector_mcp_probe
+        unattended = unattended or connector_unattended
     ping = ping or connector_available
     try:
         payload = json.loads(Path(queue_path).read_text(encoding="utf-8"))
@@ -613,6 +635,19 @@ def audit_entrants(
                 lines.append(f"{token_key} is not set in the secrets file or the environment (the bridge requires it)")
             if ping(config):
                 lines.append(f"{connector} bridge answered an authenticated ping")
+                if mcp_probe is not None:
+                    launched, message = mcp_probe(config, environ={**env, **config.env})
+                    ok = ok and launched
+                    lines.append(message)
+                if unattended is not None and connector == "hwe-fusion":
+                    mode = unattended(config)
+                    if mode is True:
+                        lines.append("Fusion bridge is in unattended mode (confirm applies without a prompt)")
+                    else:
+                        ok = False
+                        lines.append("Fusion bridge is NOT in unattended mode"
+                                     + (" (it does not report the mode; update the Luthier Bridge add-in)" if mode is None else "")
+                                     + ": every confirm would wait for a human. " + FUSION_UNATTENDED_HINT)
             else:
                 ok = False
                 host_key = "HWE_SW_HOST" if connector == "hwe-solidworks" else "HWE_FUSION_HOST"
@@ -640,6 +675,8 @@ def build_report(
     check_entrants: bool = False,
     which: Callable[[str], Optional[str]] = shutil.which,
     bridge_ping: Optional[Callable[[object], bool]] = None,
+    bridge_mcp_probe: Optional[Callable[..., tuple[bool, str]]] = None,
+    bridge_unattended: Optional[Callable[[object], Optional[bool]]] = None,
 ) -> PreflightReport:
     entries = parse_secrets_file(secrets_path) if secrets_path.exists() else {}
     cadam = audit_cadam(entries, transport=cadam_transport, environ=environ)
@@ -652,7 +689,8 @@ def build_report(
         cadam=cadam,
         routes=routes,
         entrants=(audit_entrants(queue_path, entries, cadam=cadam, environ=environ, which=which, ping=bridge_ping,
-                                 routes=routes)
+                                 routes=routes, mcp_probe=bridge_mcp_probe,
+                                 unattended=bridge_unattended)
                   if check_entrants else None),
     )
 

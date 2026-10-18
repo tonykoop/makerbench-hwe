@@ -393,3 +393,159 @@ def test_a_rerun_trial_never_advertises_the_previous_builds_native_file(tmp_path
     assert "native_path" not in second
     folder = run_dir / "gen" / trial.trial_id / "trumpet-sheetmetal_base_r1"
     assert sorted(p.name for p in folder.iterdir()) == ["trumpet-sheetmetal_base_r1_model.stl"]
+
+
+# A stand-in for the StudioPipeline-hwe Fusion shim: answers ``ping`` with the host it was given,
+# or with the shim's own "bridge error" when that host is empty, as the real one did in #663.
+_FAKE_FUSION_SHIM = '''
+import json, os, sys
+host = os.environ.get("HWE_FUSION_HOST", "127.0.0.1")
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get("id") != 2:
+        continue
+    if host:
+        result = {"content": [{"type": "text", "text": "pong " + host + ":" + os.environ.get("HWE_FUSION_PORT", "")}], "isError": False}
+    else:
+        result = {"content": [{"type": "text", "text": "bridge error: <urlopen error [Errno -2] Name or service not known>"}], "isError": True}
+    print(json.dumps({"jsonrpc": "2.0", "id": 2, "result": result}), flush=True)
+'''
+
+
+def _fake_fusion_checkout(tmp_path: Path) -> Path:
+    root = tmp_path / "StudioPipeline-hwe"
+    (root / "driver").mkdir(parents=True)
+    (root / "driver" / "__init__.py").write_text("")
+    (root / "driver" / "fusion_mcp_server.py").write_text(_FAKE_FUSION_SHIM)
+    return root
+
+
+def _claude_fusion(root: Path, env=None) -> live.LiveCadConfig:
+    import sys
+
+    return live.LiveCadConfig(backend="fusion-live", driver_model="claude-sonnet-5-5", driver_runtime="claude",
+                              connector="hwe-fusion", connector_cwd=root.as_posix(), mcp_python=sys.executable,
+                              env=env or {})
+
+
+def test_claude_mcp_config_falls_back_to_the_shim_defaults_not_an_empty_host(tmp_path):
+    # #663: the night's env had HWE_FUSION_PORT but no HWE_FUSION_HOST, and ``${HWE_FUSION_HOST:-}``
+    # reached the shim as "" -> http://:8766 -> "Name or service not known".
+    live.driver_command(_claude_fusion(tmp_path), tmp_path)
+    env = json.loads((tmp_path / "driver-mcp.json").read_text())["mcpServers"]["hwe-fusion"]["env"]
+    assert env["HWE_FUSION_HOST"] == "${HWE_FUSION_HOST:-127.0.0.1}"
+    assert env["HWE_FUSION_PORT"] == "${HWE_FUSION_PORT:-8766}"
+    assert live.expand_mcp_env(env["HWE_FUSION_HOST"], {"HWE_FUSION_PORT": "8766"}) == "127.0.0.1"
+    assert live.expand_mcp_env(env["HWE_FUSION_HOST"], {"HWE_FUSION_HOST": ""}) == "127.0.0.1"
+    assert live.expand_mcp_env(env["HWE_FUSION_HOST"], {"HWE_FUSION_HOST": "172.29.32.1"}) == "172.29.32.1"
+
+
+def test_mcp_probe_launches_the_shim_the_way_the_claude_driver_does(tmp_path):
+    root = _fake_fusion_checkout(tmp_path)
+    ok, message = live.connector_mcp_probe(_claude_fusion(root), environ={"HWE_FUSION_PORT": "8766", "PATH": "/usr/bin:/bin"})
+    assert ok, message
+    assert "answered ping" in message
+
+
+def test_mcp_probe_reports_the_shims_bridge_error(tmp_path):
+    root = _fake_fusion_checkout(tmp_path)
+    cfg = _claude_fusion(root)
+    saved = dict(live._CONNECTOR_DEFAULTS)
+    try:
+        live._CONNECTOR_DEFAULTS.pop("HWE_FUSION_HOST")  # the pre-#663 config: an empty fallback
+        ok, message = live.connector_mcp_probe(cfg, environ={"HWE_FUSION_PORT": "8766", "PATH": "/usr/bin:/bin"})
+    finally:
+        live._CONNECTOR_DEFAULTS.clear()
+        live._CONNECTOR_DEFAULTS.update(saved)
+    assert not ok and "Name or service not known" in message
+
+
+def test_mcp_probe_refuses_a_driver_that_cannot_call_its_connector(tmp_path, monkeypatch):
+    root = _fake_fusion_checkout(tmp_path)
+    real = live.driver_command
+
+    def narrowed(config, gen_dir):
+        return [tok if not tok.startswith("--allowedTools=") else "--allowedTools=Read" for tok in real(config, gen_dir)]
+
+    monkeypatch.setattr(live, "driver_command", narrowed)
+    ok, message = live.connector_mcp_probe(_claude_fusion(root), environ={})
+    assert not ok and "mcp__hwe-fusion" in message
+
+
+def test_assignment_points_at_the_staged_connector_docs(tmp_path):
+    docs = tmp_path / "gen" / "connector-docs"
+    a = live.build_assignment(_REGISTRY["instruments"][0], _config(tmp_path, runner=None), r"C:\out\x.stl", docs_dir=docs)
+    assert f"{docs.as_posix()}/luthier-bridge-build-loop.md" in a
+    assert "connector-docs/docs/" not in a
+
+
+@pytest.mark.parametrize("reply", ["no-reply", "error"])
+def test_mcp_probe_redacts_before_truncating(tmp_path, reply):
+    # A token straddling the 300-char cutoff must not leak a prefix (stderr keeps the tail,
+    # an error reply keeps the head).
+    token = "SECRETTOKEN0123456789abcdef"
+    cfg = _claude_fusion(tmp_path, env={"HWE_FUSION_TOKEN": token})
+    if reply == "no-reply":
+        stderr = token + "x" * (300 - 10)  # the last 300 chars hold only the token's tail
+        stdout = ""
+    else:
+        stderr = ""
+        detail = "y" * 290 + token  # the first 300 chars hold only the token's head
+        stdout = json.dumps({"jsonrpc": "2.0", "id": 2,
+                             "result": {"content": [{"type": "text", "text": detail}], "isError": True}})
+
+    def run(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 1, stdout=stdout, stderr=stderr)
+
+    ok, message = live.connector_mcp_probe(cfg, environ={"HWE_FUSION_TOKEN": token}, run=run)
+    assert not ok
+    for size in range(6, len(token) + 1):
+        assert token[:size] not in message and token[-size:] not in message
+
+
+@pytest.mark.parametrize("body, expected", [({"ok": True, "unattended": True}, True),
+                                            ({"ok": True, "unattended": False}, False),
+                                            ({"ok": True}, None), (None, None)])
+def test_connector_unattended_reads_the_bridge_ping(monkeypatch, body, expected):
+    monkeypatch.setattr(live, "_bridge_ping", lambda config: body)
+    cfg = live.LiveCadConfig(backend="fusion-live", driver_model="m", connector="hwe-fusion")
+    assert live.connector_unattended(cfg) is expected
+
+
+class _PingResponse:
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def read(self, size=-1):
+        return self._body if size is None or size < 0 else self._body[:size]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+@pytest.mark.parametrize("body", [
+    json.dumps({"ok": True, "have_adsk": True, "unattended": True, "pad": "x" * (64 * 1024)}).encode(),
+    b"[" * 50_000 + b"]" * 50_000,                                   # oversized nesting
+    b'{"ok": true, "unattended": true, "x": ' + b"[" * 20_000 + b"]" * 20_000 + b"}",  # deep, under the cap
+    b"\xff\xfe not json",
+])
+def test_bridge_ping_fails_closed_on_hostile_bodies(monkeypatch, body):
+    import urllib.request
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: _PingResponse(body))
+    cfg = live.LiveCadConfig(backend="fusion-live", driver_model="m", connector="hwe-fusion")
+    assert live._bridge_ping(cfg) is None
+    assert live.connector_available(cfg) is False
+    assert live.connector_unattended(cfg) is None
+
+
+def test_bridge_ping_reads_a_normal_body(monkeypatch):
+    import urllib.request
+
+    body = json.dumps({"ok": True, "have_adsk": True, "unattended": True}).encode()
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: _PingResponse(body))
+    cfg = live.LiveCadConfig(backend="fusion-live", driver_model="m", connector="hwe-fusion")
+    assert live.connector_available(cfg) is True and live.connector_unattended(cfg) is True

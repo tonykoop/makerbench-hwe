@@ -642,3 +642,37 @@ def test_solidworks_config_regression_is_no_go(tmp_path, monkeypatch, broken):
     assert not status.ok
     assert not status.entrants[0].ok
     assert "must pre-approve hwe-solidworks" in " ".join(status.entrants[0].notes)
+
+
+def test_a_live_entrant_whose_mcp_launch_fails_is_no_go(tmp_path):
+    # #663: the raw ping passed while the driver's own MCP launch could not reach the bridge.
+    reference = tmp_path / "photo.jpg"
+    reference.write_bytes(b"x")
+    seen = []
+
+    def probe(config, environ):
+        seen.append((config.driver_runtime, environ.get("HWE_FUSION_PORT")))
+        return (config.connector != "hwe-fusion", f"{config.connector} MCP ping failed through the driver's launch path: bridge error")
+
+    status = audit_entrants(_queue_file(tmp_path, [_matchup_job(reference)]), {"HWE_SW_TOKEN": FAKE_TOKEN, "HWE_FUSION_PORT": "8766"},
+                            cadam=_CADAM_OK, environ={}, which=lambda name: "/bin/x", ping=lambda config: True,
+                            connector_root=_shims(tmp_path), mcp_probe=probe)
+    verdict = {item.entrant_id: (item.ok, " ".join(item.notes)) for item in status.entrants}
+    assert verdict["fusion-sonnet"][0] is False and "driver's launch path" in verdict["fusion-sonnet"][1]
+    assert ("claude", "8766") in seen
+
+
+@pytest.mark.parametrize("mode, go", [(True, True), (False, False), (None, False)])
+def test_fusion_entrant_needs_an_unattended_bridge(tmp_path, mode, go):
+    # hwe#544: a headless driver cannot approve confirm; the bridge must be started unattended.
+    reference = tmp_path / "photo.jpg"
+    reference.write_bytes(b"x")
+    status = audit_entrants(_queue_file(tmp_path, [_matchup_job(reference)]), {"HWE_SW_TOKEN": FAKE_TOKEN},
+                            cadam=_CADAM_OK, environ={}, which=lambda name: "/bin/x", ping=lambda config: True,
+                            connector_root=_shims(tmp_path), unattended=lambda config: mode)
+    verdict = {item.entrant_id: (item.ok, " ".join(item.notes)) for item in status.entrants}
+    assert verdict["fusion-sonnet"][0] is go
+    assert ("unattended mode" in verdict["fusion-sonnet"][1])
+    if not go:
+        assert "LUTHIER_UNATTENDED=1" in verdict["fusion-sonnet"][1]
+    assert "unattended" not in verdict["solidworks-sol"][1]  # Fusion only

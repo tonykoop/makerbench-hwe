@@ -26,6 +26,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping, Optional
@@ -53,6 +54,14 @@ _CONNECTOR_ENV = {
     "hwe-solidworks": ("HWE_SW_HOST", "HWE_SW_PORT", "HWE_SW_TOKEN"),
     "hwe-fusion": ("HWE_FUSION_HOST", "HWE_FUSION_PORT", "HWE_FUSION_TOKEN"),
 }
+# Claude Code expands an unset ``${NAME:-}`` to "", and the shims take a set-but-empty
+# HWE_*_HOST as the host itself (``http://:8766`` -> "Name or service not known", #663), so the
+# generated config carries the shims' own defaults instead of an empty fallback.
+_CONNECTOR_DEFAULTS = {
+    "HWE_SW_HOST": "127.0.0.1", "HWE_SW_PORT": "8767",
+    "HWE_FUSION_HOST": "127.0.0.1", "HWE_FUSION_PORT": "8766",
+}
+_ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
 
 def driver_route(model_id: str) -> tuple[str, str]:
@@ -84,8 +93,8 @@ def driver_route(model_id: str) -> tuple[str, str]:
 _ASSIGNMENT_TEMPLATE = """You are an AUTONOMOUS CAD agent competing in the Code-CAD A/B Arena. Build the instrument below in LIVE CAD via the `{connector}` MCP connector, replicating the reference, fully hands-off. Do NOT ask anything — decide and act (build-loop autonomy).
 
 STEP 0 — ground yourself (read fully before touching geometry):
-- {conn_dir}/docs/luthier-bridge-build-loop.md   (the build contract)
-- {conn_dir}/docs/luthier-bridge-conventions.md  (units mm / origin / axis / feature vocabulary)
+- {docs_dir}/luthier-bridge-build-loop.md   (the build contract)
+- {docs_dir}/luthier-bridge-conventions.md  (units mm / origin / axis / feature vocabulary)
 {image_line}
 CONNECTOR: `{connector}` MCP tools are registered ({tool_menu}). A disposable empty part is open — the seat is yours. First 3 calls read-only: ping, get_context, list_pending. Do NOT assume a tool name — the exact vocabulary is whatever get_context / the tool list advertises; use those names.
 
@@ -191,7 +200,7 @@ def driver_command(config: LiveCadConfig, gen_dir: Path) -> list[str]:
     if config.driver_runtime == "claude":
         server = _mcp_server(config)
         mcp_config = gen_dir / "driver-mcp.json"
-        env = {name: "${%s:-}" % name for name in server["env_names"]}
+        env = {name: "${%s:-%s}" % (name, _CONNECTOR_DEFAULTS.get(name, "")) for name in server["env_names"]}
         env["PYTHONPATH"] = server["pythonpath"]
         mcp_config.write_text(json.dumps(
             {"mcpServers": {config.connector: {"command": server["command"], "args": server["args"], "env": env}}},
@@ -272,7 +281,7 @@ def build_assignment(
     env = spec.get("envelope_mm") or []
     return _ASSIGNMENT_TEMPLATE.format(
         connector=config.connector,
-        conn_dir=(docs_dir or Path(config.connector_cwd)).as_posix(),
+        docs_dir=(docs_dir or Path(config.connector_cwd) / "docs").as_posix(),
         image_line=image_line,
         tool_menu=_TOOL_MENU.get(config.connector, _TOOL_MENU["hwe-solidworks"]),
         export_tool=_EXPORT_TOOL.get(config.connector, "export"),
@@ -321,12 +330,11 @@ def _redact_transcript(text: str, env: Mapping[str, str]) -> str:
     return redacted
 
 
-def connector_available(config: LiveCadConfig) -> bool:
-    """Best-effort preflight: the adapter answers an authenticated ping.
+_PING_MAX_BYTES = 64 * 1024
 
-    WSL cannot see the Windows CAD app directly; this only checks the HTTP
-    boundary. A False here means don't bother launching agents.
-    """
+
+def _bridge_ping(config: LiveCadConfig) -> Optional[dict]:
+    """The bridge's authenticated ``/ping`` body, or None when it does not answer."""
     prefix = "HWE_FUSION" if config.for_fusion() else "HWE_SW"
     default_port = "8766" if config.for_fusion() else "8767"
     host = config.env.get(f"{prefix}_HOST") or os.environ.get(f"{prefix}_HOST", "127.0.0.1")
@@ -341,11 +349,117 @@ def connector_available(config: LiveCadConfig) -> bool:
         req.add_header("Authorization", f"Bearer {token}")
     try:
         with urllib.request.urlopen(req, timeout=8) as resp:
-            data = _json.loads(resp.read().decode())
-        # SolidWorks reports liveness via ``api_available``; Fusion via ``have_adsk``.
-        return bool(data.get("ok") and (data.get("api_available") or data.get("have_adsk")))
-    except (urllib.error.URLError, OSError, ValueError):
-        return False
+            raw = resp.read(_PING_MAX_BYTES + 1)
+        if len(raw) > _PING_MAX_BYTES:
+            return None  # a ping is tiny; anything bigger is not a bridge we trust
+        data = _json.loads(raw.decode())
+    except (urllib.error.URLError, OSError, ValueError, RecursionError):
+        return None  # fail closed: not available, not unattended
+    return data if isinstance(data, dict) else None
+
+
+def connector_available(config: LiveCadConfig) -> bool:
+    """Best-effort preflight: the adapter answers an authenticated ping.
+
+    WSL cannot see the Windows CAD app directly; this only checks the HTTP
+    boundary. A False here means don't bother launching agents.
+    """
+    data = _bridge_ping(config) or {}
+    # SolidWorks reports liveness via ``api_available``; Fusion via ``have_adsk``.
+    return bool(data.get("ok") and (data.get("api_available") or data.get("have_adsk")))
+
+
+def connector_unattended(config: LiveCadConfig) -> Optional[bool]:
+    """Whether the bridge was started in unattended mode (None: it did not say).
+
+    The Luthier Bridge asks the client to approve every ``confirm`` unless Tony started it with
+    ``LUTHIER_UNATTENDED=1`` and a token (StudioPipeline/hwe#544); a headless driver cannot answer
+    that prompt, so an unattended night needs the bridge in that mode. The runner never answers it.
+    """
+    data = _bridge_ping(config)
+    if data is None or "unattended" not in data:
+        return None
+    return data.get("unattended") is True
+
+
+def expand_mcp_env(value: str, environ: Mapping[str, str]) -> str:
+    """Resolve ``${NAME}`` / ``${NAME:-default}`` the way Claude Code does for ``--mcp-config``.
+
+    An unset or empty variable takes the default (or "" without one), as the probe below found.
+    """
+    def resolve(match: re.Match) -> str:
+        current = environ.get(match.group(1)) or ""
+        return current or (match.group(2) or "")
+    return _ENV_REF.sub(resolve, value)
+
+
+def _mcp_launch(config: LiveCadConfig, workspace: Path, environ: Mapping[str, str]) -> tuple[list[str], dict, list[str]]:
+    """``(server argv, server env, problems)`` exactly as the driver's runtime would launch it."""
+    argv = driver_command(config, workspace)
+    problems: list[str] = []
+    if config.driver_runtime == "claude":
+        allowed = next((tok.split("=", 1)[1] for tok in argv if tok.startswith("--allowedTools=")), "")
+        if f"mcp__{config.connector}" not in allowed.split(","):
+            problems.append(f"--allowedTools does not allow mcp__{config.connector}")
+        server = json.loads((workspace / "driver-mcp.json").read_text(encoding="utf-8"))["mcpServers"][config.connector]
+        env = {**environ, **{key: expand_mcp_env(str(value), environ) for key, value in server.get("env", {}).items()}}
+        return [server["command"], *server["args"]], env, problems
+    server = _mcp_server(config)
+    # Codex forwards ``env_vars`` by name from its own env and sets ``env`` (PYTHONPATH) literally.
+    env = {**environ, "PYTHONPATH": server["pythonpath"]}
+    return [server["command"], *server["args"]], env, problems
+
+
+def connector_mcp_probe(
+    config: LiveCadConfig,
+    *,
+    environ: Optional[Mapping[str, str]] = None,
+    timeout_s: float = 30.0,
+    run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> tuple[bool, str]:
+    """Launch the connector's MCP shim the way the driver does and call its ``ping`` tool.
+
+    ``connector_available`` only proves WSL can reach the bridge; this proves the shim the agent
+    gets (same generated config, same env expansion, same allowed tools) can too (#663).
+    """
+    base = {**os.environ, **config.env} if environ is None else {**environ}
+    with tempfile.TemporaryDirectory(prefix="mcp-probe-") as tmp:
+        workspace = Path(tmp)
+        try:
+            argv, env, problems = _mcp_launch(config, workspace, base)
+        except (OSError, ValueError, KeyError) as exc:
+            return False, f"{config.connector} MCP config could not be built: {exc}"
+        if problems:
+            return False, "; ".join(problems)
+        messages = [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                        "clientInfo": {"name": "makerbench-preflight", "version": "1"}}},
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "ping", "arguments": {}}},
+        ]
+        try:
+            proc = run(argv, input="".join(json.dumps(m) + "\n" for m in messages), cwd=workspace, env=env,
+                       capture_output=True, text=True, timeout=timeout_s, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, f"{config.connector} MCP shim did not run: {exc}"
+    reply = None
+    for line in (getattr(proc, "stdout", "") or "").splitlines():
+        try:
+            message = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(message, dict) and message.get("id") == 2:
+            reply = message
+    if reply is None:
+        tail = _redact_transcript((getattr(proc, "stderr", "") or "").strip(), env)[-300:]
+        return False, f"{config.connector} MCP shim gave no ping reply (exit {getattr(proc, 'returncode', '?')}): {tail}"
+    result = reply.get("result") or {}
+    text = " ".join(str(part.get("text", "")) for part in result.get("content") or [] if isinstance(part, dict))
+    if reply.get("error") or result.get("isError"):
+        detail = text or str((reply.get("error") or {}).get("message", "error"))
+        return False, f"{config.connector} MCP ping failed through the driver's launch path: {_redact_transcript(detail, env)[:300]}"
+    return True, f"{config.connector} MCP shim answered ping through the driver's launch path"
 
 
 def run_live_agent(spec: Mapping[str, object], gen_dir: Path,
