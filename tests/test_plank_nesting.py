@@ -84,3 +84,69 @@ def test_fill_suggestions_list_shorter_keys():
     segs, pl, un, oid, rows = pn.nest(plank, blanks, [{"key": "B4", "count": 1}])
     rep = pn.report(plank, segs, pl, un, rows, blanks)
     assert any("D5" in s["keys_that_fit"] for s in rep["fill_suggestions"])
+
+
+def _order(tmp_path, **over):
+    d = {
+        "blanks": {"B4": {"length": 14.0, "width": 1.75}},
+        "order": [{"key": "B4", "count": 1}],
+    }
+    d.update(over)
+    f = tmp_path / "order.json"
+    f.write_text(json.dumps(d))
+    return f
+
+
+def _rejects(tmp_path, **over):
+    out = tmp_path / "out"
+    try:
+        pn.run(_order(tmp_path, **over), out)
+    except pn.NestingError:
+        return not any(tmp_path.glob("escaped*")) and not (tmp_path / "x").exists()
+    raise AssertionError(f"expected NestingError for {over}")
+
+
+def test_order_id_must_be_slug_and_never_escapes_out(tmp_path):
+    for bad in ("x/../../escaped", "../escaped", "a/b", "A B", "", ".."):
+        assert _rejects(tmp_path, order_id=bad)
+    folder, _ = pn.run(_order(tmp_path, order_id="my-order-1"), tmp_path / "out")
+    assert folder.parent == (tmp_path / "out").resolve()
+
+
+def test_svg_text_is_escaped(tmp_path):
+    from xml.etree import ElementTree as ET
+
+    key = "</text><script>void(0)</script><text>&"
+    f = _order(tmp_path, blanks={key: {"length": 14.0, "width": 1.75}}, order=[{"key": key, "count": 1}])
+    folder, _ = pn.run(f, tmp_path / "out")
+    root = ET.parse(next(folder.glob("*_layout.svg"))).getroot()
+    assert not [e for e in root.iter() if e.tag.endswith("script")]
+    assert any(key in (e.text or "") for e in root.iter())
+
+
+def test_numeric_validation_rejects_bad_inputs(tmp_path):
+    assert _rejects(tmp_path, order=[{"key": "B4", "count": -1}])
+    assert _rejects(tmp_path, order=[{"key": "B4", "count": 0}])
+    assert _rejects(tmp_path, order=[{"key": "B4", "count": 1.5}])
+    assert _rejects(tmp_path, order=[{"key": "B4", "count": 10**9}])
+    assert _rejects(tmp_path, blanks={"B4": {"length": 14.0, "width": -1}})
+    assert _rejects(tmp_path, blanks={"B4": {"length": "x", "width": 1}})
+    assert _rejects(tmp_path, blanks={"B4": {"length": float("nan"), "width": 1}})
+    assert _rejects(tmp_path, plank={"length": -96})
+    assert _rejects(tmp_path, plank={"crosscut_kerf": -1})
+    assert _rejects(tmp_path, plank={"bogus": 1})
+
+
+def test_impossible_bed_fails_promptly(tmp_path):
+    import time
+
+    t = time.time()
+    assert _rejects(tmp_path, plank={"bed_x": 2, "bed_clearance": 2, "crosscut_kerf": 0})
+    assert _rejects(tmp_path, plank={"bed_x": 1.6, "bed_clearance": 0, "crosscut_kerf": 0})
+    assert time.time() - t < 2
+
+
+def test_blank_longer_than_bed_is_unplaced_not_success(tmp_path):
+    f = _order(tmp_path, blanks={"B4": {"length": 60.0, "width": 1.75}})
+    folder, rep = pn.run(f, tmp_path / "out")
+    assert rep["unplaced_blanks"] and rep["placed_blanks"] == 0

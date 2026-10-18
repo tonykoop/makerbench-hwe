@@ -22,12 +22,18 @@ import csv
 import hashlib
 import json
 import math
+import re
+from xml.sax.saxutils import escape
 from dataclasses import dataclass, field
 from pathlib import Path
 
 INSTRUMENT = "naf-flute-plank"
 REVISION = "r1"
 EPS = 1e-9
+MAX_DIM = 1000.0  # inches; sanity bound for any caller-supplied length
+MAX_COUNT = 500  # flutes per order line
+MAX_TABS = 20
+_SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 
 
 @dataclass(frozen=True)
@@ -47,6 +53,26 @@ class PlankSpec:
     tabs_per_blank: int = 0  # 0 = no tabs (tape-only hold-down)
     tab_width: float = 0.5
     tab_height: float = 0.125  # material left uncut under the tab
+
+    def __post_init__(self):
+        for name in ("length", "width", "thickness", "bed_x", "bed_y", "tool_diameter",
+                     "dowel_diameter", "edge_margin_x", "edge_margin_y"):
+            _pos(name, getattr(self, name))
+        for name in ("kerf_clearance", "crosscut_kerf", "bed_clearance", "tab_width", "tab_height"):
+            _nonneg(name, getattr(self, name))
+        if not isinstance(self.tabs_per_blank, int) or isinstance(self.tabs_per_blank, bool) \
+                or not 0 <= self.tabs_per_blank <= MAX_TABS:
+            raise NestingError(f"tabs_per_blank must be an integer 0..{MAX_TABS}")
+        if self.length > MAX_DIM or self.width > MAX_DIM:
+            raise NestingError(f"plank dimensions must be <= {MAX_DIM} in")
+        if self.width > self.bed_y:
+            raise NestingError("plank width exceeds bed Y; tiling in Y is not supported")
+        if self.max_segment_length - 2 * self.edge_margin_x <= self.spacing:
+            raise NestingError("bed (minus clearance and end margins) cannot hold any blank")
+        if self.width - 2 * self.edge_margin_y <= 0:
+            raise NestingError("edge margins leave no usable plank width")
+        if self.dowel_diameter > 0.8 * self.edge_margin_x:
+            raise NestingError("dowel diameter too large for the end margin")
 
     @property
     def spacing(self) -> float:
@@ -89,6 +115,34 @@ class NestingError(ValueError):
     pass
 
 
+def _pos(name, v):
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0:
+        raise NestingError(f"{name} must be a finite number > 0, got {v!r}")
+
+
+def _nonneg(name, v):
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0:
+        raise NestingError(f"{name} must be a finite number >= 0, got {v!r}")
+
+
+def validate_order(plank: "PlankSpec", blanks: dict, order: list) -> None:
+    if not blanks or not order:
+        raise NestingError("blanks and order must be non-empty")
+    for k, b in blanks.items():
+        _pos(f"blank {k!r} length", b.length)
+        _pos(f"blank {k!r} width", b.width)
+        if b.length > MAX_DIM or b.width > MAX_DIM:
+            raise NestingError(f"blank {k!r} exceeds {MAX_DIM} in")
+    for line in order:
+        c = line.get("count")
+        if isinstance(c, bool) or not isinstance(c, int) or not 0 <= c <= MAX_COUNT:
+            raise NestingError(f"count for {line.get('key')!r} must be an integer 0..{MAX_COUNT}, got {c!r}")
+        if line.get("key") not in blanks:
+            raise NestingError(f"no half-blank size for key {line.get('key')!r}")
+    if sum(line["count"] for line in order) == 0:
+        raise NestingError("order requests zero flutes")
+
+
 def order_id(plank: PlankSpec, blanks: dict, order: list) -> str:
     canon = json.dumps(
         {
@@ -103,11 +157,10 @@ def order_id(plank: PlankSpec, blanks: dict, order: list) -> str:
 
 def crosscut_plan(plank: PlankSpec) -> list[Segment]:
     """Split the plank into the fewest equal segments that fit the bed in X."""
-    if plank.width + 2 * 0 > plank.bed_y:
-        raise NestingError("plank width exceeds bed Y; tiling in Y is not supported")
-    n = 1
-    while (plank.length - plank.crosscut_kerf * (n - 1)) / n > plank.max_segment_length + EPS:
-        n += 1
+    k, m = plank.crosscut_kerf, plank.max_segment_length
+    n = max(1, math.ceil((plank.length + k) / (m + k) - EPS))  # closed form, no loop
+    if n > 100:
+        raise NestingError("crosscut plan needs more than 100 segments; check bed and plank sizes")
     seg_len = (plank.length - plank.crosscut_kerf * (n - 1)) / n
     segs, x0 = [], 0.0
     for i in range(n):
@@ -145,7 +198,10 @@ def nest(plank: PlankSpec, blanks: dict, order: list, oid: str | None = None):
     stacked across the plank width; a row's height is its first blank's width.
     Blanks that cannot fit are returned in ``unplaced`` rather than dropped.
     """
-    oid = oid or order_id(plank, blanks, order)
+    validate_order(plank, blanks, order)
+    oid = order_id(plank, blanks, order) if oid is None else oid
+    if not _SLUG.fullmatch(oid):
+        raise NestingError(f"order_id must match {_SLUG.pattern!r}, got {oid!r}")
     segs = crosscut_plan(plank)
     items = sorted(expand_order(order, blanks, oid), key=lambda t: (-t[1].length, -t[1].width, t[0], t[2]))
     usable_w = plank.width - 2 * plank.edge_margin_y
@@ -305,7 +361,7 @@ def render_svg(plank, segs, placements, unplaced, rep, scale=12.0):
             out.append(
                 f'<rect x="{x:.1f}" y="{y:.1f}" width="{p.length * scale:.1f}" height="{p.width * scale:.1f}" fill="{color[p.key]}" fill-opacity="0.7" stroke="#222"/>'
             )
-            out.append(f'<text x="{x + 3:.1f}" y="{y + p.width * scale / 2 + 3:.1f}">{p.serial} {p.key} {p.half}</text>')
+            out.append(f'<text x="{x + 3:.1f}" y="{y + p.width * scale / 2 + 3:.1f}">{escape(p.serial)} {escape(p.key)} {escape(p.half)}</text>')
             for tx in p.tabs_x:
                 out.append(f'<rect x="{pad + tx * scale - plank.tab_width * scale / 2:.1f}" y="{y - 2:.1f}" width="{plank.tab_width * scale:.1f}" height="4" fill="#000"/>')
                 out.append(f'<rect x="{pad + tx * scale - plank.tab_width * scale / 2:.1f}" y="{y + p.width * scale - 2:.1f}" width="{plank.tab_width * scale:.1f}" height="4" fill="#000"/>')
@@ -317,10 +373,15 @@ def render_svg(plank, segs, placements, unplaced, rep, scale=12.0):
 
 
 def load_order(path):
-    d = json.loads(Path(path).read_text())
-    plank = PlankSpec(**d.get("plank", {}))
-    blanks = {k: BlankType(k, float(v["length"]), float(v["width"])) for k, v in d["blanks"].items()}
-    return plank, blanks, d["order"], d.get("order_id")
+    try:
+        d = json.loads(Path(path).read_text())
+        plank = PlankSpec(**d.get("plank", {}))
+        blanks = {k: BlankType(k, v["length"], v["width"]) for k, v in d["blanks"].items()}
+        return plank, blanks, d["order"], d.get("order_id")
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
+        if isinstance(e, NestingError):
+            raise
+        raise NestingError(f"invalid order file: {e!r}") from e
 
 
 def run(order_path, out_dir):
@@ -328,7 +389,10 @@ def run(order_path, out_dir):
     segs, placements, unplaced, oid, rows = nest(plank, blanks, order, oid)
     rep = report(plank, segs, placements, unplaced, rows, blanks)
     stem = f"{INSTRUMENT}_{oid}_{REVISION}"
-    folder = Path(out_dir) / stem
+    root = Path(out_dir).resolve()
+    folder = (root / stem).resolve()
+    if folder.parent != root:
+        raise NestingError("output folder escapes --out")
     folder.mkdir(parents=True, exist_ok=True)
     (folder / f"{stem}_layout.svg").write_text(render_svg(plank, segs, placements, unplaced, rep))
     write_serial_map(folder / f"{stem}_serial-map.csv", plank, segs, placements)
@@ -341,7 +405,11 @@ def main(argv=None):
     ap.add_argument("order", help="order JSON (plank, blanks, order)")
     ap.add_argument("--out", default="generated")
     a = ap.parse_args(argv)
-    folder, rep = run(a.order, a.out)
+    try:
+        folder, rep = run(a.order, a.out)
+    except NestingError as e:
+        print(f"error: {e}")
+        return 2
     print(f"{folder}: utilisation {rep['utilisation']:.1%}, unplaced {len(rep['unplaced_blanks'])}")
     return 1 if rep["unplaced_blanks"] else 0
 
