@@ -26,9 +26,15 @@ MAX_BYTES = 16 * 1024**2
 
 
 def _archive(path):
-    from .wood_assembly import _check_document
+    from .wood_assembly import PARTS, _check_document, bundle_roles
 
-    _check_document(path)
+    allowed_links = ()
+    if path.name.endswith("_assembly.FCStd"):
+        files = bundle_roles(path.parent)
+        if path.name != files["assembly"]:
+            raise ValueError("Native input is not the declared assembly")
+        allowed_links = {files[part] for part in PARTS}
+    _check_document(path, allowed_links)
     return zipfile.ZipFile(path)
 
 
