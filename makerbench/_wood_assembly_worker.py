@@ -25,7 +25,6 @@ CHECKS = []
 STARTED = time.monotonic()
 
 
-
 def add(name, passed, measured, required, unit, body, explanation):
     CHECKS.append(
         dict(
@@ -134,7 +133,23 @@ def same_shape(a, b):
             return isinstance(y, (float, int)) and math.isclose(x, y, abs_tol=1e-9, rel_tol=1e-12)
         return x == y
 
-    return equal(geometry_signature(a), geometry_signature(b))
+    if equal(geometry_signature(a), geometry_signature(b)):
+        return True
+    # Analytic circle/plane results can have equivalent periodic parameterizations.
+    # Keep the exact solid-difference check for these small analytic controls;
+    # never apply the expensive coincident-solid boolean to spline geometry.
+    analytic = all(
+        not isinstance(edge.Curve, (Part.BSplineCurve, Part.BezierCurve))
+        for shape in (a, b)
+        for edge in shape.Edges
+    ) and all(
+        not isinstance(face.Surface, (Part.BSplineSurface, Part.BezierSurface))
+        for shape in (a, b)
+        for face in shape.Faces
+    )
+    if analytic:
+        return a.cut(b).Volume <= 1e-5 and b.cut(a).Volume <= 1e-5
+    return False
 
 
 def recompute_document(doc, force=True):
@@ -215,20 +230,61 @@ def section_intervals(shape, x, z):
     return line_intervals(shape, 0, x, z)
 
 
-def spline_probe(shape, tongue, field):
+def tongue_component(shape, tongue):
+    """Find the actual separated tongue by its stable side and root section."""
     length = SPEC["size_mm"][0]
-    z = SPEC["panel_thickness_mm"]["top"] / 2
+    root = SPEC["tongues"]["root_band_mm"]
+    trim = root + 0.001
+    x = root + 5 if tongue["side"] == "left" else length - root - 5
+    center = tongue.get("root_center", tongue["center"])
+    matches = []
+    for candidate in isolated_tongues(shape):
+        box = candidate.BoundBox
+        left = abs(box.XMin - trim) < TOL
+        right = abs(box.XMax - (length - trim)) < TOL
+        if left == right or left != (tongue["side"] == "left"):
+            continue
+        spans = section_intervals(candidate, x, SPEC["panel_thickness_mm"]["top"] / 2)
+        if len(spans) == 1 and spans[0][0] < center < spans[0][1]:
+            matches.append(candidate)
+    if len(matches) != 1:
+        raise ValueError(
+            f"tongue measurement error: expected one {tongue['side']} root at Y={center}, found {len(matches)}"
+        )
+    return matches[0]
+
+
+def spline_probe(shape, tongue, field):
+    component = tongue_component(shape, tongue)
     if field == "length":
-        spans = line_intervals(shape, 1, tongue["center"], z)
-        values = [
-            b if tongue["side"] == "left" else length - a
-            for a, b in spans
-            if (abs(a) < 1e-6 if tongue["side"] == "left" else abs(b - length) < 1e-6)
-        ]
-        return values[0] if len(values) == 1 else 0.0
-    spans = section_intervals(shape, tongue["head_x"], z)
+        box = component.BoundBox
+        return box.XMax if tongue["side"] == "left" else SPEC["size_mm"][0] - box.XMin
+    spans = section_intervals(component, tongue["head_x"], SPEC["panel_thickness_mm"]["top"] / 2)
     values = [b - a for a, b in spans if a < tongue["center"] < b]
-    return values[0] if len(values) == 1 else 0.0
+    if len(values) != 1:
+        raise ValueError(
+            f"tongue head measurement error: expected one section, found {len(values)}"
+        )
+    return values[0]
+
+
+def isolated_tongues(shape):
+    length, width, _ = SPEC["size_mm"]
+    thickness = SPEC["panel_thickness_mm"]["top"]
+    trim = SPEC["tongues"]["root_band_mm"] + 0.001
+    bottom = [f for f in shape.Faces if f.BoundBox.ZLength < 1e-7 and abs(f.BoundBox.ZMin) < 1e-7]
+    if len(bottom) != 1:
+        raise ValueError("top: require one planar bottom footprint")
+    inner = bottom[0].cut(Part.makePlane(trim, width))
+    inner = inner.cut(Part.makePlane(trim, width, App.Vector(length - trim, 0, 0)))
+    return sorted(
+        (
+            f.extrude(App.Vector(0, 0, thickness))
+            for f in inner.Faces
+            if f.BoundBox.YMin > TOL and f.BoundBox.YMax < width - TOL
+        ),
+        key=lambda t: (t.BoundBox.YMin + t.BoundBox.YMax) / 2,
+    )
 
 
 def paddle_measurements(shape, scales=False):
@@ -241,19 +297,7 @@ def paddle_measurements(shape, scales=False):
     thickness = SPEC["panel_thickness_mm"]["top"]
     root = SPEC["tongues"]["root_band_mm"]
     trim = root + 0.001
-    bottom = [f for f in shape.Faces if f.BoundBox.ZLength < 1e-7 and abs(f.BoundBox.ZMin) < 1e-7]
-    if len(bottom) != 1:
-        raise ValueError("top: require one planar bottom footprint")
-    inner = bottom[0].cut(Part.makePlane(trim, width))
-    inner = inner.cut(Part.makePlane(trim, width, App.Vector(length - trim, 0, 0)))
-    tongues = sorted(
-        (
-            f.extrude(App.Vector(0, 0, thickness))
-            for f in inner.Faces
-            if f.BoundBox.YMin > TOL and f.BoundBox.YMax < width - TOL
-        ),
-        key=lambda t: (t.BoundBox.YMin + t.BoundBox.YMax) / 2,
-    )
+    tongues = isolated_tongues(shape)
     measured = []
     for tongue in tongues:
         box = tongue.BoundBox
@@ -280,6 +324,11 @@ def paddle_measurements(shape, scales=False):
             )
             continue
         extreme = box.XMax if side == "left" else box.XMin
+        root_x = root + 5 if side == "left" else length - root - 5
+        root_sections = section_intervals(tongue, root_x, thickness / 2)
+        if len(root_sections) != 1:
+            raise ValueError("tongue measurement error: expected one root section")
+        root_center = sum(root_sections[0]) / 2
         cap_edges = [
             e
             for e in tongue.Edges
@@ -313,7 +362,9 @@ def paddle_measurements(shape, scales=False):
             ]
             through = all(len(v) == 1 and abs(v[0][1] - v[0][0] - head) < 1e-5 for v in slices)
             probe_length = spline_probe(
-                shape, dict(side=side, center=center, head_x=head_x), "length"
+                shape,
+                dict(side=side, center=center, root_center=root_center, head_x=head_x),
+                "length",
             )
             measured.append(
                 dict(
@@ -363,6 +414,7 @@ def paddle_measurements(shape, scales=False):
                 head=head,
                 kerf=min(head_gaps) if len(head_gaps) == 2 else 0.0,
                 center=center,
+                root_center=root_center,
                 through=flat,
                 shape=tongue,
             )
@@ -395,7 +447,7 @@ def inspect_paddles(shape, table):
         SPEC["tongues"]["area_fraction_min"],
         "fraction",
         "top",
-        "The ten actual cantilevers, excluding the end bands and long-side frame, must occupy at least the public area floor, excluding the fixed rim and frame.",
+        "The numerator is the area of the ten actual cantilevers after severing the end bands and excluding the long-side frame; the denominator is the full uncut top blank area (length times width).",
     )
     for side, x in [
         ("left", SPEC["tongues"]["root_band_mm"] + 5),
@@ -550,16 +602,8 @@ def probe_measurement(shape, tongue, field, table, number):
     center = tongue["center"]
     left = tongue["side"] == "left"
     if field == "length":
-        section = shape.common(
-            Part.makeLine(App.Vector(0, center, z), App.Vector(length, center, z))
-        )
-        spans = [(e.BoundBox.XMin, e.BoundBox.XMax) for e in section.Edges]
-        root = [
-            b if left else length - a
-            for a, b in spans
-            if (abs(a) < 1e-5 if left else abs(b - length) < 1e-5)
-        ]
-        return root[0] if len(root) == 1 else 0.0
+        component = tongue_component(shape, tongue)
+        return component.BoundBox.XMax if left else length - component.BoundBox.XMin
     if field in {"head", "kerf", "neck"}:
         distance = (
             getattr(table, f"Tongue{number:02d}Length").Value
@@ -576,7 +620,9 @@ def probe_measurement(shape, tongue, field, table, number):
                 return b - a
             if 0 < i < len(sections) - 1:
                 return min(a - sections[i - 1][1], sections[i + 1][0] - b)
-    return 0.0
+    raise ValueError(
+        f"Tongue{number:02d} {field} measurement error: expected one measurable section"
+    )
 
 
 def dimension_plan(name, doc, body, profile):
