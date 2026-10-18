@@ -131,7 +131,44 @@ def test_diverged_history_stops_before_patching_and_restores_local_changes(world
     result = world.run()
     assert result.returncode == 2 and "No patches applied" in result.stdout
     assert text(world) == "dirty edit\n"  # restored from the stash
-    assert git(world.clone, "stash", "list") == ""
+    assert "cadam-local-sync-" in git(world.clone, "stash", "list")  # and the stash is kept
+
+
+def test_failed_pull_recovery_preserves_staged_and_unstaged_content_separately(world):
+    (world.clone / "README.md").write_text("local commit\n")
+    git(world.clone, "commit", "-qam", "local only")
+    world.advance("README.md", "upstream commit\n")
+    target = world.clone / "src/server/aiChat.ts"
+    target.write_text("staged edit\n")
+    git(world.clone, "add", "src/server/aiChat.ts")
+    target.write_text("unstaged edit\n")
+    result = world.run()
+    assert result.returncode == 2
+    assert git(world.clone, "show", ":src/server/aiChat.ts") == "staged edit"  # the index content came back
+    assert target.read_text() == "unstaged edit\n"
+    stash = git(world.clone, "stash", "list")
+    assert "cadam-local-sync-" in stash and "stash@{0}" in result.stdout  # kept, and its ref is reported
+    assert git(world.clone, "show", "stash@{0}^2:src/server/aiChat.ts") == "staged edit"  # the stash still holds the staged version
+
+
+def test_failed_pull_recovery_that_conflicts_keeps_the_stash_and_names_it(world):
+    (world.clone / "src/server/aiChat.ts").write_text("my edit\n")
+    git(world.clone, "commit", "-qam", "local commit touching the same file")
+    world.advance("src/server/aiChat.ts", "upstream edit\n")
+    (world.clone / "src/server/aiChat.ts").write_text("dirty on top\n")
+    result = world.run()
+    assert result.returncode == 2
+    assert "stash@{0}" in result.stdout and "cadam-local-sync-" in git(world.clone, "stash", "list")
+
+
+def test_script_is_executable_and_runs_directly(world):
+    assert git(ROOT, "ls-files", "-s", "scripts/cadam_local_sync.sh").startswith("100755")
+    assert os.access(SCRIPT, os.X_OK)
+    env = {**ENV, "CADAM_DIR": str(world.clone), "PATCH_DIR": str(world.patches)}
+    done = subprocess.run([str(SCRIPT), "--help"], env=env, capture_output=True, text=True)
+    assert done.returncode == 0 and "cadam_local_sync.sh" in done.stdout
+    ran = subprocess.run([str(SCRIPT), "--no-install"], env=env, capture_output=True, text=True)
+    assert ran.returncode == 0 and text(world) == PATCHED
 
 
 def test_dry_run_changes_nothing(world):

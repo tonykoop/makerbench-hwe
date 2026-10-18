@@ -57,7 +57,12 @@ restore_hint() {
 if ! git_c pull --ff-only; then
   say "fast-forward pull failed (local commits or diverged history). No patches applied."
   if [ -n "$stash_ref" ]; then
-    git_c stash pop >/dev/null 2>&1 && say "restored your stashed changes" || restore_hint
+    # apply (not pop) with --index so staged and unstaged content come back separately, and the stash stays
+    if git_c stash apply --index "$stash_ref" >/dev/null 2>&1; then
+      say "restored your local changes (staged/unstaged preserved); the stash is kept as $stash_ref - drop it once you are satisfied"
+    else
+      say "could not re-apply your local changes cleanly; they are safe in $stash_ref (git -C '$CADAM_DIR' stash show -p $stash_ref)"
+    fi
   fi
   exit 2
 fi
