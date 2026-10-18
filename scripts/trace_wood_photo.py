@@ -8,7 +8,6 @@ The output is a public handwritten-fixture input, never a model result/grade.
 import argparse
 import hashlib
 import json
-import math
 from pathlib import Path
 
 import numpy as np
@@ -121,65 +120,159 @@ def trace_paths(mask, gray):
     return paths, void, skeleton
 
 
-def adapt_ten(points):
-    """Collapse the photo's extra narrow top tongue, fading below its tip."""
-    p = np.array(points, float)
-    x, y = p.T
-    mapped = np.where(x < 270, x, np.where(x <= 353, 270, x - 83)) * 723 / (723 - 83)
-    weight = np.clip((650 - y) / 120, 0, 1)
-    p[:, 0] = x + (mapped - x) * weight
-    return p
-
-
 def fit_profile(paths, void):
+    """Fit observed shared slit positions with small smooth native spline pieces.
+
+    Preserve six observed top roots, omitting the extra narrow root at x=270
+    rather than shifting the other photographed branches. Segmentation gaps
+    are bridged at nominal kerf width; these are reconstruction assumptions.
+    """
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from scipy.interpolate import splprep, splev, BSpline
-    from shapely.geometry import LineString, Polygon, Point, box
+    from scipy.interpolate import BSpline
+    from scipy.signal import find_peaks
+    from scipy.ndimage import gaussian_filter1d
+    from shapely.geometry import Polygon, LineString, Point, box
     from shapely.ops import unary_union
 
-    physical = []
-    for points in paths:
-        p = adapt_ten(points)
-        physical.append(np.column_stack((p[:, 1] / 3, p[:, 0] / 3)))
+    # Preserve actual photograph root positions. Remove one extra top root instead
+    # of warping all six roots away from the observed alternating slits.
+    paths = [
+        np.column_stack((np.array(p)[:, 1] / 3, np.array(p)[:, 0] / 3))
+        for i, p in enumerate(paths)
+        if i != 2
+    ]
+    mask = void
     fig, ax = plt.subplots()
-    contours = ax.contour(void.astype(float), levels=[0.5]).allsegs[0]
+    segments = ax.contour(mask.astype(float), levels=[0.5]).allsegs[0]
     plt.close(fig)
     voids = []
-    for points in contours:
+    for points in segments:
         if len(points) < 20:
             continue
-        p = adapt_ten(points * 2)
-        polygon = Polygon(np.column_stack((p[:, 1] / 3, p[:, 0] / 3))).buffer(0)
-        if polygon.area > 15:
-            voids.append(polygon)
-    cut = unary_union([LineString(p).buffer(1.6, quad_segs=6) for p in physical] + voids)
+        p = points * 2
+        poly = Polygon(np.column_stack((p[:, 1] / 3, p[:, 0] / 3))).buffer(0)
+        if poly.area > 15:
+            voids.append(poly.simplify(0.6, preserve_topology=True))
+    cut = unary_union(
+        [LineString(p).simplify(0.25).buffer(1.6, quad_segs=6) for p in paths] + voids
+    )
     if cut.geom_type != "Polygon":
-        cut = cut.buffer(0.3).buffer(-0.3)
-    if cut.geom_type != "Polygon":
-        raise ValueError("Threshold gaps leave disconnected cut profiles")
-    # Fill tiny segmentation islands; they are rejected loose chips, not tongues.
-    cut = Polygon(cut.exterior).buffer(0.45).buffer(-0.45).buffer(-0.3).buffer(0.3)
-    cut = cut.simplify(0.1, preserve_topology=True)
-    points = np.asarray(cut.exterior.coords)
-    for error in (0.12, 0.06, 0.03, 0.015, 0.005, 0):
-        spline, _ = splprep(points.T, s=len(points) * error**2, per=True, k=3)
-        sample = np.asarray(splev(np.linspace(0, 1, 30000), spline)).T
-        if Polygon(sample).is_valid:
-            break
-    else:
-        raise ValueError("No simple smooth spline fits the photographed cut")
-    knots, coeff, degree = spline
-    native = BSpline(knots, np.asarray(coeff).T, degree).insert_knot(0, 3).insert_knot(1, 3)
-    first, last = np.flatnonzero(native.t == 0)[0], np.flatnonzero(native.t == 1)[-1]
-    clamped = native.t[first : last + 1]
-    poles = native.c[first : first + len(clamped) - 4]
-    # Ownership only controls native editing; dimensions below are measured
-    # from the trace, never asserted as benchmark scores.
-    polygon = Polygon(native(np.linspace(0, 1, 25000)))
-    inner = box(0, 0, 457, 241).difference(polygon).intersection(box(80.001, 0, 376.999, 241))
+        from shapely.ops import nearest_points
+
+        pieces = [g for g in cut.geoms if g.area > 10]
+        cut = max(pieces, key=lambda g: g.area)
+        for g in pieces:
+            if g.equals(cut):
+                continue
+            a, b = nearest_points(cut, g)
+            cut = unary_union([cut, g, LineString([a, b]).buffer(1.6)])
+    cut = Polygon(cut.exterior).buffer(0.5).buffer(-0.5).buffer(-0.3).buffer(0.3).simplify(0.15)
+    p = np.array(cut.exterior.coords)
+    # Uniform arclength sampling gives stable geometric curve partitions.
+    ring = LineString(p)
+    points = np.array(
+        [ring.interpolate(v).coords[0] for v in np.linspace(0, ring.length, 20000, endpoint=False)]
+    )
+
+    npoints = len(points)
+    padded = np.tile(points, (3, 1))
+    peaks = []
+    for sign in (1, -1):
+        ids, _ = find_peaks(sign * padded[:, 0], prominence=65, distance=150)
+        peaks.extend(
+            [
+                int(i - npoints)
+                for i in ids
+                if npoints <= i < 2 * npoints
+                and (padded[i, 0] > 385 if sign == 1 else padded[i, 0] < 70)
+            ]
+        )
+    peaks.sort()
+
+    curves = []
+    samples = []
+
+    def fit_head(q, depth=0):
+        # Smooth sub-pixel noise over an arclength window before fitting a small curve.
+        distances = np.r_[0, np.cumsum(np.linalg.norm(np.diff(q, axis=0), axis=1))]
+        uniform = np.linspace(0, distances[-1], max(20, int(distances[-1] / 0.3)))
+        q = np.column_stack([np.interp(uniform, distances, q[:, j]) for j in (0, 1)])
+        q[1:-1] = gaussian_filter1d(q, 5, axis=0, mode="nearest")[1:-1]
+        u = uniform / uniform[-1]
+        n = 8
+        k = 3
+        knots = np.r_[np.zeros(4), np.linspace(0, 1, n - k + 1)[1:-1], np.ones(4)]
+        basis = BSpline.design_matrix(u, knots, k).toarray()
+        poles = np.zeros((n, 2))
+        poles[0] = q[0]
+        poles[-1] = q[-1]
+        fixed = basis[:, 0:1] * q[0] + basis[:, -1:] * q[-1]
+        poles[1:-1] = np.linalg.lstsq(basis[:, 1:-1], q - fixed, rcond=None)[0]
+        errors = np.linalg.norm(basis @ poles - q, axis=1)
+        if max(errors) > 1.2 and depth < 5:
+            split = max(8, min(len(q) - 9, int(np.argmax(errors))))
+            if split < 0.2 * len(q) or split > 0.8 * len(q):
+                split = len(q) // 2
+            return fit_head(q[: split + 1], depth + 1) + fit_head(q[split:], depth + 1)
+        return [dict(poles=poles.tolist(), knots=knots.tolist(), error=float(max(errors)))]
+
+    for index, (start, end) in enumerate(zip(peaks, peaks[1:] + [peaks[0] + len(points)])):
+        q = points[np.arange(start, end + 1) % len(points)]
+        a, b = q[0], q[-1]
+        lefta = a[0] < 200
+        leftb = b[0] < 200
+        ja = np.flatnonzero(q[:, 0] > 105 if lefta else q[:, 0] < 352)[0]
+        jb = np.flatnonzero(q[:, 0] > 105 if leftb else q[:, 0] < 352)[-1]
+        qa, qb = q[ja], q[jb]
+        roota = np.array([a[0] + 1.6 if lefta else a[0] - 1.6, a[1] + np.sign(qa[1] - a[1]) * 1.6])
+        rootb = np.array([b[0] + 1.6 if leftb else b[0] - 1.6, b[1] + np.sign(qb[1] - b[1]) * 1.6])
+        fitted = fit_head(q[ja : jb + 1])
+        sample = np.concatenate(
+            [BSpline(c["knots"], c["poles"], 3)(np.linspace(0, 1, 300))[:-1] for c in fitted]
+            + [np.array([qb])]
+        )
+        curves.append(
+            dict(
+                pieces=fitted,
+                root_a=roota.tolist(),
+                root_b=rootb.tolist(),
+                cap_next=b.tolist(),
+                left_next=bool(leftb),
+            )
+        )
+        samples.extend([roota, qa])
+        samples.extend(sample[1:])
+        samples.append(rootb)
+        center = np.array([rootb[0], b[1]])
+        theta = np.arctan2(rootb[1] - center[1], rootb[0] - center[0])
+        direction = (
+            1 if ((leftb and rootb[1] > center[1]) or (not leftb and rootb[1] < center[1])) else -1
+        )
+        t = np.linspace(theta, theta + direction * np.pi, 30)
+        samples.extend(center + np.column_stack((1.6 * np.cos(t), 1.6 * np.sin(t))))
+
+    samples = []
+    for c in curves:
+        samples.append(c["root_a"])
+        for piece in c["pieces"]:
+            samples.extend(BSpline(piece["knots"], piece["poles"], 3)(np.linspace(0, 1, 200)))
+        samples.append(c["root_b"])
+        b = np.array(c["cap_next"])
+        p = np.array(c["root_b"])
+        center = np.array([p[0], b[1]])
+        theta = np.arctan2(p[1] - b[1], p[0] - center[0])
+        direction = (
+            1 if ((c["left_next"] and p[1] > b[1]) or (not c["left_next"] and p[1] < b[1])) else -1
+        )
+        t = np.linspace(theta, theta + direction * np.pi, 30)
+        samples.extend(center + np.column_stack((1.6 * np.cos(t), 1.6 * np.sin(t))))
+    poly = Polygon(samples)
+    assert poly.is_valid
+    wood = box(0, 0, 457, 241).difference(poly)
+    inner = wood.intersection(box(80.001, 0, 376.999, 241))
     tongues = [
         g
         for g in inner.geoms
@@ -187,167 +280,44 @@ def fit_profile(paths, void):
         and g.bounds[3] < 240.95
         and ((abs(g.bounds[0] - 80.001) < 0.05) != (abs(g.bounds[2] - 376.999) < 0.05))
     ]
-    tongues.sort(key=lambda g: (g.bounds[1] + g.bounds[3]) / 2)
-    if len(tongues) != 10:
-        raise ValueError(f"Trace must separate ten tongues; actual={len(tongues)}")
-    table = []
-    for tongue in tongues:
-        left = abs(tongue.bounds[0] - 80.001) < 0.05
-        tip = tongue.bounds[2] if left else 457 - tongue.bounds[0]
-        neck = tongue.intersection(
-            LineString([(85 if left else 372, 0), (85 if left else 372, 241)])
+
+    def root_center(g):
+        left = abs(g.bounds[0] - 80.001) < 0.05
+        sec = g.intersection(LineString([(85 if left else 372, 0), (85 if left else 372, 241)]))
+        return sec.centroid.y
+
+    # Root order is stable under head-width edits, unlike a head bbox centroid.
+    tongues.sort(key=root_center)
+    assert len(tongues) == 10
+    rows = []
+    for t in tongues:
+        left = abs(t.bounds[0] - 80.001) < 0.05
+        rows.append(
+            {
+                "side": "left" if left else "right",
+                "center": (t.bounds[1] + t.bounds[3]) / 2,
+                "root_center": root_center(t),
+            }
         )
-        head, center, headx = 0, 0, 0
-        for distance in np.linspace(115, tip - 2, 200):
-            x = distance if left else 457 - distance
-            section = tongue.intersection(LineString([(x, 0), (x, 241)]))
-            if section.length > head:
-                head, center, headx = section.length, section.centroid.y, x
-        table.append(
-            dict(
-                side="left" if left else "right",
-                length=tip,
-                neck=neck.length,
-                head=head,
-                center=center,
-                neckcenter=neck.centroid.y,
-                headx=headx,
-            )
-        )
-    owners = []
-    for x, y in poles:
-        owner = int(np.argmin([Point(x, y).distance(tongue) for tongue in tongues]))
-        distance = x if table[owner]["side"] == "left" else 457 - x
-        owners.append([owner, float(np.clip((distance - 95) / 30, 0, 1))])
-    return dict(
-        clamped_poles=poles.tolist(),
-        clamped_knots=clamped.tolist(),
-        owners=owners,
-        tongues=table,
-        nominal_kerf_mm=3.2,
-        adaptation="collapse top photo horizontal interval 270..353 px; fade to identity rows 530..650",
-    )
+    # Give every coordinate the owner of the adjacent reconstructed cantilever.
+    points = {}
+    for c in curves:
+        for p in [c["root_a"], c["root_b"]] + [p for piece in c["pieces"] for p in piece["poles"]]:
+            key = ",".join(f"{v:.10f}" for v in p)
+            owner = int(np.argmin([Point(p).distance(t) for t in tongues]))
+            points[key] = owner
+    out = {
+        "smooth_runs": curves,
+        "point_owners": points,
+        "tongues": rows,
+        "nominal_kerf_mm": 3.2,
+        "source_photo_sha256": None,
+        "adaptation": "preserve photographed slit positions; omit extra narrow top root at photo x=270 px instead of warping all top roots",
+        "curves_per_run": [len(c["pieces"]) for c in curves],
+    }
 
-
-def fit_arc_chain(s):
-    """Fit the traced boundary and check the complete arc/line ring for crossings."""
-    from scipy.interpolate import BSpline
-    from shapely.geometry import LineString, Polygon
-
-    b = BSpline(s["clamped_knots"], s["clamped_poles"], 3)
-    p = np.asarray(LineString(b(np.linspace(0, 1, 30000))).simplify(0.035).coords)
-    p[-1] = p[0]
-
-    def circle(a, m, b):
-        v = m - a
-        w = b - a
-        det = 2 * (v[0] * w[1] - v[1] * w[0])
-        if abs(det) < 1e-7:
-            return None
-        c = a + np.array(
-            [
-                (np.dot(v, v) * w[1] - np.dot(w, w) * v[1]) / det,
-                (v[0] * np.dot(w, w) - w[0] * np.dot(v, v)) / det,
-            ]
-        )
-        return c, np.linalg.norm(a - c)
-
-    def fit(points, tol):
-        result = []
-        i = 0
-        spans = []
-        while i < len(points) - 1:
-            best = None
-            for end in range(i + 1, min(len(points), i + 100)):
-                q = points[i : end + 1]
-                a, z = q[0], q[-1]
-                v = z - a
-                n = np.linalg.norm(v)
-                if n < 1e-6:
-                    continue
-                error = np.max(np.abs((q[:, 0] - a[0]) * v[1] - (q[:, 1] - a[1]) * v[0])) / n
-                if error <= tol:
-                    candidate = ["line", a.tolist(), z.tolist()]
-                elif len(q) >= 3:
-                    m = q[len(q) // 2]
-                    c = circle(a, m, z)
-                    if c is None:
-                        continue
-                    center, r = c
-                    angles = np.unwrap(np.arctan2(q[:, 1] - center[1], q[:, 0] - center[0]))
-                    delta = np.diff(angles)
-                    if (
-                        np.max(np.abs(np.linalg.norm(q - center, axis=1) - r)) > tol
-                        or abs(angles[-1] - angles[0]) > math.pi * 1.25
-                        or not (np.all(delta > -0.01) or np.all(delta < 0.01))
-                    ):
-                        continue
-                    candidate = ["arc", a.tolist(), m.tolist(), z.tolist()]
-                else:
-                    continue
-                best = (end, candidate)
-            if best is None:
-                best = (i + 1, ["line", points[i].tolist(), points[i + 1].tolist()])
-            end, segment = best
-            spans.append((i, end))
-            i = end
-            result.append(segment)
-        return result, spans
-
-    chain, spans = fit(p, 0.18)
-
-    def line_for(seg):
-        if seg[0] == "line":
-            return LineString(seg[1:])
-        a, m, z = np.array(seg[1:])
-        c, r = circle(a, m, z)
-        ang = np.unwrap(
-            np.arctan2(np.array([a, m, z])[:, 1] - c[1], np.array([a, m, z])[:, 0] - c[0])
-        )
-        t = np.linspace(ang[0], ang[-1], 300)
-        return LineString(c + np.column_stack((r * np.cos(t), r * np.sin(t))))
-
-    from shapely.strtree import STRtree
-
-    for repair in range(12):
-        lines = [line_for(seg) for seg in chain]
-        tree = STRtree(lines)
-        pairs = tree.query(lines, predicate="intersects")
-        bad = set()
-        for i, j in pairs.T:
-            if i >= j:
-                continue
-            cross = lines[i].intersection(lines[j])
-            if j == i + 1 or (i == 0 and j == len(lines) - 1):
-                common = np.array(lines[i].coords[-1] if j == i + 1 else lines[i].coords[0])
-                if (
-                    cross.geom_type == "Point"
-                    and np.linalg.norm(np.array(cross.coords[0]) - common) < 1e-5
-                ):
-                    continue
-                if cross.is_empty:
-                    continue
-            bad.update([int(i), int(j)])
-        if not bad:
-            break
-        new = []
-        ns = []
-        for i, seg in enumerate(chain):
-            a, b = spans[i]
-            if i in bad and b > a + 1:
-                for j in range(a, b):
-                    new.append(["line", p[j].tolist(), p[j + 1].tolist()])
-                    ns.append((j, j + 1))
-            else:
-                new.append(seg)
-                ns.append((a, b))
-        chain, spans = new, ns
-    sample = []
-    for seg in chain:
-        sample.extend(list(line_for(seg).coords)[:-1])
-
-    assert Polygon(sample).is_valid
-    return chain
+    out["orientation"] = 1 if poly.exterior.is_ccw else -1
+    return out
 
 
 def main():
@@ -368,7 +338,6 @@ def main():
         draw.line([tuple(p) for p in path], fill="cyan", width=3)
     diagnostic.save(args.out / "centerlines.png")
     profile = fit_profile(paths, void)
-    profile["arc_chain"] = fit_arc_chain(profile)
     profile["source_photo_sha256"] = hashlib.sha256(args.source_photo.read_bytes()).hexdigest()
     (args.out / "wood_photo_trace.json").write_text(json.dumps(profile, indent=2) + "\n")
 

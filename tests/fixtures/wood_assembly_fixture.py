@@ -266,103 +266,138 @@ def paddle_cutout(body, table, length, width, thickness, variant, root_band):
 
 
 def traced_cutout(body, table, trace, length, width, thickness):
-    """Native, fully constrained spline pockets from the photographed cut network."""
-    for i in range(1,11):
+    """Small native spline sections, simple root caps, and direct scale expressions."""
+    for i in range(1, 11):
         for suffix in ("LengthScale", "HeadWidthScale"):
             name = f"Tongue{i:02d}{suffix}"
             table.addProperty("App::PropertyFloat", name, "Photo trace scales")
-            setattr(table,name,1.0)
+            setattr(table, name, 1.0)
     table.addProperty("App::PropertyLength", "KerfWidth", "Photo trace scales")
-    table.KerfWidth = trace["nominal_kerf_mm"]
-    poles = trace["clamped_poles"]
+    table.KerfWidth = 3.2
     sketch = body.newObject("Sketcher::SketchObject", "TracedKerf")
     sketch.Placement.Base.z = thickness
-    constraints, native_expressions, geometries, table_expressions = [], [], [], []
+    expressions = []
+    endpoint_refs = {}
+    normals = {}
 
-    node_cache = {}
+    def key(point):
+        return ",".join(f"{v:.10f}" for v in point)
 
-    def point_expression(point):
-        key = tuple(round(c,12) for c in point)
-        if key in node_cache:
-            return node_cache[key]
-        x,y = point
-        nearest = min(range(len(poles)),key=lambda n:(poles[n][0]-x)**2+(poles[n][1]-y)**2)
-        owner,weight = trace["owners"][nearest]
-        tongue = trace["tongues"][owner]
-        origin = 80.0 if tongue["side"] == "left" else 377.0
-        center = tongue["center"]
-        prefix = f"StockOutline.Tongue{owner+1:02d}"
-        tangent = App.Vector(*poles[min(nearest+1,len(poles)-1)],0)-App.Vector(*poles[max(nearest-1,0)],0)
-        norm = math.hypot(tangent.x,tangent.y) or 1.0
-        nx,ny = tangent.y/norm,-tangent.x/norm
-        ex = f"(({x:.14g} mm)+({x-origin:.14g} mm)*({prefix}LengthScale-1)+({nx:.14g})*(StockOutline.KerfWidth-(3.2 mm))/2)*StockOutline.Constraints.Length/(457 mm)"
-        ey = f"(({y:.14g} mm)+({(y-center)*weight:.14g} mm)*({prefix}HeadWidthScale-1)+({ny:.14g})*(StockOutline.KerfWidth-(3.2 mm))/2)*StockOutline.Constraints.Width/(241 mm)"
-        node = len(node_cache)
-        refs = []
-        for axis,value,expr in (("X",x,ex),("Y",y,ey)):
-            name = f"TraceNode{node}{axis}"
-            table.addProperty("App::PropertyDistance",name,"Trace coordinates")
-            setattr(table,name,value)
-            table.setEditorMode(name,2)
-            table_expressions.append((name,expr.replace("StockOutline.","")))
-            refs.append("StockOutline."+name)
-        node_cache[key] = tuple(refs)
-        return tuple(refs)
+    def controller(point, normal):
+        x, y = point
+        owner = trace["point_owners"][key(point)]
+        row = trace["tongues"][owner]
+        origin = 80.0 if row["side"] == "left" else 377.0
+        distance = x if row["side"] == "left" else 457 - x
+        weight = max(0.0, min(1.0, (distance - 105) / 15))
+        nx, ny = normals.setdefault(key(point), normal)
+        prefix = f"StockOutline.Tongue{owner + 1:02d}"
+        ex = f"(({x - nx * 1.6:.14g} mm)+({x - origin:.14g} mm)*({prefix}LengthScale-1))*StockOutline.Constraints.Length/(457 mm)+({nx:.14g})*StockOutline.KerfWidth/2"
+        ey = f"(({y - ny * 1.6:.14g} mm)+({(y - row['center']) * weight:.14g} mm)*({prefix}HeadWidthScale-1))*StockOutline.Constraints.Width/(241 mm)+({ny:.14g})*StockOutline.KerfWidth/2"
+        return ex, ey
 
-    def dimensional(kind,geo,position,value,expression):
-        index = len(constraints)
-        args = (kind,geo,position,value) if position is not None else (kind,geo,value)
-        constraints.append(Sketcher.Constraint(*args))
-        native_expressions.append((f"Constraints[{index}]",expression))
+    for run in trace["smooth_runs"]:
+        for piece in run["pieces"]:
+            poles = piece["poles"]
+            knots = piece["knots"]
+            unique = sorted(set(knots))
+            curve = Part.BSplineCurve()
+            curve.buildFromPolesMultsKnots(
+                [App.Vector(x, y, 0) for x, y in poles],
+                [knots.count(k) for k in unique],
+                unique,
+                False,
+                3,
+            )
+            geo = sketch.addGeometry(curve, False)
+            first = sketch.GeometryCount
+            sketch.exposeInternalGeometry(geo)
+            constraints = []
+            pending = []
+            for j, point in enumerate(poles):
+                a = poles[max(0, j - 1)]
+                b = poles[min(len(poles) - 1, j + 1)]
+                tx, ty = b[0] - a[0], b[1] - a[1]
+                norm = math.hypot(tx, ty) or 1
+                sign = trace.get("orientation", 1)
+                normal = (sign * ty / norm, -sign * tx / norm)
+                ex, ey = controller(point, normal)
+                for axis, value, expr in (("X", point[0], ex), ("Y", point[1], ey)):
+                    constraints.append(Sketcher.Constraint("Distance" + axis, first + j, 3, value))
+                    pending.append(expr)
+            start = sketch.ConstraintCount
+            sketch.addConstraint(constraints)
+            sketch.renameConstraint(start, f"TraceControl{geo}")
+            expressions.extend(
+                (f"Constraints[{start + j}]", expr) for j, expr in enumerate(pending)
+            )
+            endpoint_refs[key(poles[0])] = (first, 3)
+            endpoint_refs[key(poles[-1])] = (first + len(poles) - 1, 3)
 
-    for segment in trace["arc_chain"]:
-        kind,*points = segment
-        vectors = [App.Vector(x,y,0) for x,y in points]
-        expressions = [point_expression(point) for point in points]
-        if kind == "line":
-            geo = len(geometries)
-            geometries.append(Part.LineSegment(*vectors))
-            for n,(point,expr) in enumerate(zip(points,expressions),1):
-                dimensional("DistanceX",geo,n,point[0],expr[0])
-                dimensional("DistanceY",geo,n,point[1],expr[1])
-        else:
-            arc = Part.Arc(*vectors)
-            circle = arc.toShape().Curve
-            angles = [math.atan2(v.y-circle.Center.y,v.x-circle.Center.x) for v in vectors]
-            span = (angles[-1]-angles[0]) % (2*math.pi)
-            forward = (angles[1]-angles[0]) % (2*math.pi) < span
-            start,end = (angles[0],angles[-1]) if forward else (angles[-1],angles[0])
-            span = (end-start) % (2*math.pi)
-            geo = len(geometries)
-            geometries.append(Part.ArcOfCircle(Part.Circle(circle.Center,App.Vector(0,0,1),circle.Radius),start,start+span))
-            (ax,ay),(bx,by),(cx,cy) = expressions
-            # Native circle through the three traced/deformed sample points.
-            d = f"(2*(({ax})*(({by})-({cy}))+({bx})*(({cy})-({ay}))+({cx})*(({ay})-({by}))))"
-            aa,bb,cc = [f"(({x})*({x})+({y})*({y}))" for x,y in expressions]
-            ux = f"({aa}*(({by})-({cy}))+{bb}*(({cy})-({ay}))+{cc}*(({ay})-({by})))/{d}"
-            uy = f"({aa}*(({cx})-({bx}))+{bb}*(({ax})-({cx}))+{cc}*(({bx})-({ax})))/{d}"
-            center_x,center_y = f"TraceArc{geo}X",f"TraceArc{geo}Y"
-            for name,expr,value in [(center_x,ux,circle.Center.x),(center_y,uy,circle.Center.y)]:
-                table.addProperty("App::PropertyDistance",name,"Trace coordinates")
-                setattr(table,name,value)
-                table.setEditorMode(name,2)
-                table_expressions.append((name,expr.replace("StockOutline.","")))
-            ux,uy = "StockOutline."+center_x,"StockOutline."+center_y
-            radius = f"sqrt((({ax})-({ux}))*(({ax})-({ux}))+(({ay})-({uy}))*(({ay})-({uy})))"
-            dimensional("DistanceX",geo,3,circle.Center.x,ux)
-            dimensional("DistanceY",geo,3,circle.Center.y,uy)
-            dimensional("Radius",geo,None,circle.Radius,radius)
-            for n in (1,2):
-                which = (0 if n == 1 else -1) if forward else (-1 if n == 1 else 0)
-                point,expr = vectors[which],expressions[which]
-                # Choose the well-conditioned endpoint coordinate for this arc.
-                use_x = abs(point.y-circle.Center.y) > .2*circle.Radius
-                dimensional("DistanceX" if use_x else "DistanceY",geo,n,
-                            point.x if use_x else point.y,expr[0] if use_x else expr[1])
-    sketch.addGeometry(geometries,False)
-    sketch.addConstraint(constraints)
-    sketch.renameConstraint(0,"TraceControl")
-    TRACE_NATIVE_EXPRESSIONS[body.Document.Name] = {"TracedKerf":native_expressions,"StockOutline":table_expressions}
+    # Cap endpoints are inferred from centre/radius; line endpoints coincide
+    # with these and the actual spline poles, so every resized profile stays closed.
+    cap_refs = {}
+    for run in trace["smooth_runs"]:
+        p = run["root_b"]
+        cy = run["cap_next"][1]
+        cx = p[0]
+        start = math.pi / 2 if run["left_next"] else -math.pi / 2
+        geo = sketch.addGeometry(
+            Part.ArcOfCircle(
+                Part.Circle(App.Vector(cx, cy, 0), App.Vector(0, 0, 1), 1.6), start, start + math.pi
+            ),
+            False,
+        )
+        base = sketch.ConstraintCount
+        sketch.addConstraint(
+            [
+                Sketcher.Constraint("DistanceX", geo, 3, cx),
+                Sketcher.Constraint("DistanceY", geo, 3, cy),
+                Sketcher.Constraint("Radius", geo, 1.6),
+                Sketcher.Constraint("Vertical", geo, 3, geo, 1),
+                Sketcher.Constraint("Vertical", geo, 3, geo, 2),
+            ]
+        )
+        expressions.extend(
+            [
+                (
+                    f"Constraints[{base}]",
+                    f"({cx:.14g} mm)*StockOutline.Constraints.Length/(457 mm)",
+                ),
+                (
+                    f"Constraints[{base + 1}]",
+                    f"({cy:.14g} mm)*StockOutline.Constraints.Width/(241 mm)",
+                ),
+                (f"Constraints[{base + 2}]", "StockOutline.KerfWidth/2"),
+            ]
+        )
+        for n in (1, 2):
+            v = sketch.getPoint(geo, n)
+            cap_refs[key((v.x, v.y))] = (geo, n)
+    for run in trace["smooth_runs"]:
+        for root, head in [
+            (run["root_a"], run["pieces"][0]["poles"][0]),
+            (run["root_b"], run["pieces"][-1]["poles"][-1]),
+        ]:
+            geo = sketch.addGeometry(
+                Part.LineSegment(App.Vector(*root, 0), App.Vector(*head, 0)), False
+            )
+            target = cap_refs.get(key(root))
+            if target is None:
+                target = min(
+                    cap_refs.items(),
+                    key=lambda item: sum(
+                        (float(v) - c) ** 2 for v, c in zip(item[0].split(","), root)
+                    ),
+                )[1]
+            endpoint = endpoint_refs[key(head)]
+            sketch.addConstraint(
+                [
+                    Sketcher.Constraint("Coincident", geo, 1, *target),
+                    Sketcher.Constraint("Coincident", geo, 2, *endpoint),
+                ]
+            )
+    TRACE_NATIVE_EXPRESSIONS[body.Document.Name] = {"TracedKerf": expressions}
     pocket = body.newObject("PartDesign::Pocket", "PhotoTracedThroughKerf")
     pocket.Profile = sketch
     pocket.Length = thickness
@@ -476,6 +511,28 @@ def main():
         path = out / "parts" / f"{name}.FCStd"
         doc.saveAs(str(path))
         save_trace_expressions(doc, path)
+        if name == "top" and variant == "photo-traced":
+            # Restore the real native expression engine before delivery. Save
+            # its rebuilt geometry, not the pre-expression construction cache.
+            App.closeDocument(doc.Name)
+            doc = App.openDocument(str(path))
+            body = doc.getObject("PanelBody")
+            for feature in body.Group:
+                if feature.TypeId in {"PartDesign::Pad", "PartDesign::Pocket"}:
+                    feature.Shape = Part.Shape()
+                    feature.touch()
+            doc.recompute(None, True, True)
+            for live in (o for o in doc.Objects if o.TypeId == "Sketcher::SketchObject"):
+                if live.solve() != 0 or live.DoF != 0:
+                    raise ValueError("Photo trace must solve live with zero degrees of freedom")
+            doc.recompute()
+            if (body.Shape.isNull() or not body.Shape.isValid()
+                    or len(body.Shape.Solids) != 1
+                    or any(any(word in str(o.State).lower() for word in ("invalid", "error"))
+                           for o in doc.Objects)):
+                raise ValueError("Photo trace native expression restore/rebuild failed")
+            App.ParamGet("User parameter:BaseApp/Preferences/Document").SetInt("CountBackupFiles", 0)
+            doc.save()
         save_visibility(doc, path)
         bodies[name] = body
         rows.append(dict(part_id=name, file=f"parts/{name}.FCStd",
