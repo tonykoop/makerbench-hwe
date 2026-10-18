@@ -125,13 +125,29 @@ def test_cli_dry_run_prints_the_argv(tmp_path, monkeypatch):
 
 
 def _parse_codex(argv):
-    """Codex's own TOML parsing of the session's ``-c`` overrides, as it would apply them."""
-    import tomllib
+    """Codex's own TOML parsing of the session's ``-c`` overrides, as it would apply them.
+
+    tomllib is 3.11+; CI runs 3.10, so fall back to tomli, else to JSON (the session writes its
+    string arrays with json.dumps, which TOML reads the same way) for the values JSON can read.
+    """
+    try:
+        import tomllib as toml
+    except ModuleNotFoundError:
+        try:
+            import tomli as toml
+        except ModuleNotFoundError:
+            toml = None
 
     merged = {}
     for item in (argv[i + 1] for i, tok in enumerate(argv) if tok == "-c"):
         key, _, value = item.partition("=")
-        merged[key] = tomllib.loads(f"v = {value}")["v"]
+        if toml is not None:
+            merged[key] = toml.loads(f"v = {value}")["v"]
+        else:
+            try:
+                merged[key] = json.loads(value)
+            except ValueError:
+                continue  # an inline table (env={PYTHONPATH=...}) is not JSON; not under test here
     return merged
 
 
@@ -139,6 +155,8 @@ def test_codex_session_replaces_inherited_writable_roots(tmp_path):
     """A user config.toml with ``writable_roots=["/home/user/other-project"]`` must not widen this session."""
     plan, _, workdir = _plan(tmp_path)
     inherited = {"sandbox_workspace_write.writable_roots": ["/home/user/other-project"]}
+    work = workdir.resolve().as_posix()
+    assert f"sandbox_workspace_write.writable_roots={json.dumps([work])}" in plan.argv
     effective = {**inherited, **_parse_codex(plan.argv)}  # -c overrides win over config.toml
     assert effective["sandbox_workspace_write.writable_roots"] == [workdir.resolve().as_posix()]
 
