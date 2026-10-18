@@ -496,13 +496,29 @@ def audit_entrants(
     ping: Optional[Callable[[object], bool]] = None,
     routes: Sequence[RouteStatus] = (),
     connector_root: Optional[Path] = None,
+    mcp_probe: Optional[Callable[..., tuple[bool, str]]] = None,
 ) -> EntrantsStatus:
-    """GO/NO-GO per entrant of the job the runner would claim next (read-only, nothing runs)."""
+    """GO/NO-GO per entrant of the job the runner would claim next (read-only, nothing runs).
+
+    A live entrant whose bridge answers is also probed through the driver's own MCP launch
+    (``connector_mcp_probe``: the generated config, its env expansion, a ``ping`` tool call), since a
+    raw ping passing did not stop the #663 Fusion driver failing. The probe follows the transport:
+    a caller that injects ``ping`` skips it unless it injects ``mcp_probe`` too.
+    """
     from . import code_cad_providers as providers
-    from .live_cad_runner import LiveCadConfig, _MCP_MODULES, connector_available, driver_route, driver_command
+    from .live_cad_runner import (
+        LiveCadConfig,
+        _MCP_MODULES,
+        connector_available,
+        connector_mcp_probe,
+        driver_command,
+        driver_route,
+    )
     from .nightly_cad import NightlyJob, route_label
 
     env = os.environ if environ is None else environ
+    if mcp_probe is None and ping is None:
+        mcp_probe = connector_mcp_probe
     ping = ping or connector_available
     try:
         payload = json.loads(Path(queue_path).read_text(encoding="utf-8"))
@@ -613,6 +629,10 @@ def audit_entrants(
                 lines.append(f"{token_key} is not set in the secrets file or the environment (the bridge requires it)")
             if ping(config):
                 lines.append(f"{connector} bridge answered an authenticated ping")
+                if mcp_probe is not None:
+                    launched, message = mcp_probe(config, environ={**env, **config.env})
+                    ok = ok and launched
+                    lines.append(message)
             else:
                 ok = False
                 host_key = "HWE_SW_HOST" if connector == "hwe-solidworks" else "HWE_FUSION_HOST"
@@ -640,6 +660,7 @@ def build_report(
     check_entrants: bool = False,
     which: Callable[[str], Optional[str]] = shutil.which,
     bridge_ping: Optional[Callable[[object], bool]] = None,
+    bridge_mcp_probe: Optional[Callable[..., tuple[bool, str]]] = None,
 ) -> PreflightReport:
     entries = parse_secrets_file(secrets_path) if secrets_path.exists() else {}
     cadam = audit_cadam(entries, transport=cadam_transport, environ=environ)
@@ -652,7 +673,7 @@ def build_report(
         cadam=cadam,
         routes=routes,
         entrants=(audit_entrants(queue_path, entries, cadam=cadam, environ=environ, which=which, ping=bridge_ping,
-                                 routes=routes)
+                                 routes=routes, mcp_probe=bridge_mcp_probe)
                   if check_entrants else None),
     )
 

@@ -21,7 +21,13 @@ from . import code_cad_arena_runner as arena_runner
 from . import code_cad_providers as providers
 from .cadam_adapter import CadamClient, CadamConfig, CadamRecoveryRequiredError
 from .code_cad_orchestrator import OrchestrationConfig, run_orchestration
-from .live_cad_runner import LiveCadConfig, connector_available, driver_route, make_live_execute_trial
+from .live_cad_runner import (
+    LiveCadConfig,
+    connector_available,
+    connector_mcp_probe,
+    driver_route,
+    make_live_execute_trial,
+)
 from . import cadam_routes
 from . import nightly_revisions as revisions
 from .run_log_io import atomic_write_json, file_lock, find_trial, has_trial, trial_rows
@@ -836,6 +842,9 @@ class NightlyExecutor:
             hint = (" (start it with StudioPipeline-hwe scripts\\start_solidworks_bridge.ps1)"
                     if connector == "hwe-solidworks" else " (open Fusion with the Luthier Bridge add-in running)")
             raise RuntimeError(f"{connector} authenticated preflight failed{hint}")
+        launched, message = connector_mcp_probe(config)
+        if not launched:
+            raise RuntimeError(message)
         execute = make_live_execute_trial(registry=registry, run_dir=run_dir, config=config)
         orchestration = OrchestrationConfig(
             instrument_ids=(job.instrument_id,),

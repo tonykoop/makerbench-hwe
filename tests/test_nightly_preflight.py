@@ -642,3 +642,21 @@ def test_solidworks_config_regression_is_no_go(tmp_path, monkeypatch, broken):
     assert not status.ok
     assert not status.entrants[0].ok
     assert "must pre-approve hwe-solidworks" in " ".join(status.entrants[0].notes)
+
+
+def test_a_live_entrant_whose_mcp_launch_fails_is_no_go(tmp_path):
+    # #663: the raw ping passed while the driver's own MCP launch could not reach the bridge.
+    reference = tmp_path / "photo.jpg"
+    reference.write_bytes(b"x")
+    seen = []
+
+    def probe(config, environ):
+        seen.append((config.driver_runtime, environ.get("HWE_FUSION_PORT")))
+        return (config.connector != "hwe-fusion", f"{config.connector} MCP ping failed through the driver's launch path: bridge error")
+
+    status = audit_entrants(_queue_file(tmp_path, [_matchup_job(reference)]), {"HWE_SW_TOKEN": FAKE_TOKEN, "HWE_FUSION_PORT": "8766"},
+                            cadam=_CADAM_OK, environ={}, which=lambda name: "/bin/x", ping=lambda config: True,
+                            connector_root=_shims(tmp_path), mcp_probe=probe)
+    verdict = {item.entrant_id: (item.ok, " ".join(item.notes)) for item in status.entrants}
+    assert verdict["fusion-sonnet"][0] is False and "driver's launch path" in verdict["fusion-sonnet"][1]
+    assert ("claude", "8766") in seen
