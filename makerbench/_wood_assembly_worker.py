@@ -105,29 +105,35 @@ def paddle_measurements(shape):
             continue
         side = "left" if left and not right else "right" if right and not left else "invalid"
         span = box.XMax if side == "left" else length-box.XMin
-        center = (box.YMin+box.YMax)/2
-        head = box.YLength
-        station = root + 5
-        x = station if side == "left" else length-station
-        sections = section_intervals(shape, x, thickness/2)
-        indices = [i for i, (a,b) in enumerate(sections) if a < center < b]
-        neck = 0.0
-        if len(indices) == 1:
-            i = indices[0]
-            a,b = sections[i]
-            neck = b-a
-        head_x = span-head/2 if side == "left" else length-span+head/2
-        head_sections = section_intervals(shape, head_x, thickness/2)
+        if side == "invalid":
+            measured.append(dict(side=side,length=span,neck=0.0,head=0.0,kerf=0.0,
+                                 center=(box.YMin+box.YMax)/2,through=False,shape=tongue))
+            continue
+        extreme = box.XMax if side == "left" else box.XMin
+        cap_edges = [e for e in tongue.Edges if isinstance(e.Curve,Part.Circle)
+                     and e.BoundBox.ZLength < 1e-6 and abs(e.Curve.Center.z) < 1e-6
+                     and abs(e.Curve.Center.x+(e.Curve.Radius if side == "left" else -e.Curve.Radius)-extreme) < 1e-5]
+        if not cap_edges:
+            raise ValueError("top: the free rounded paddle head must have a measurable circular cap")
+        cap = max(cap_edges,key=lambda e:e.Length)
+        center = cap.Curve.Center.y
+        head = 2*cap.Curve.Radius
+        vertices = [v.Point for e in cap_edges if abs(e.Curve.Radius-cap.Curve.Radius) < 1e-6
+                    for v in e.Vertexes]
+        neck_x = min(v.x for v in vertices) if side == "left" else max(v.x for v in vertices)
+        x = neck_x+(1e-7 if side == "left" else -1e-7)
+        slices = [section_intervals(tongue,x,z) for z in (0.1,thickness/2,thickness-0.1)]
+        widths = [b-a for sections in slices for a,b in sections if a < center < b]
+        neck = widths[1] if len(widths) == 3 else 0.0
+        flat = len(widths) == 3 and max(widths)-min(widths) < 1e-5
+        head_sections = section_intervals(shape,cap.Curve.Center.x,thickness/2)
         head_gaps = []
-        for i, (a,b) in enumerate(head_sections):
+        for i,(a,b) in enumerate(head_sections):
             if a < center < b and 0 < i < len(head_sections)-1:
-                head_gaps = [a-head_sections[i-1][1], head_sections[i+1][0]-b]
-        # A through-cut must produce the same footprint at all stock depths.
-        slices = [section_intervals(tongue, x, z) for z in (0.1, thickness/2, thickness-0.1)]
-        flat = all(len(s) == 1 and abs(s[0][1]-s[0][0]-neck) < 1e-5 for s in slices)
-        measured.append(dict(side=side, length=span, neck=neck, head=head,
+                head_gaps = [a-head_sections[i-1][1],head_sections[i+1][0]-b]
+        measured.append(dict(side=side,length=span,neck=neck,head=head,
                              kerf=min(head_gaps) if len(head_gaps) == 2 else 0.0,
-                             center=center, through=flat, shape=tongue))
+                             center=center,through=flat,shape=tongue))
     return measured
 
 
@@ -141,10 +147,17 @@ def inspect_paddles(shape, table):
         "from the frame as its own solid, free on three sides. Blind cuts, bridges and wrong-edge roots fail.")
     length, width, _ = SPEC["size_mm"]
     thickness = SPEC["panel_thickness_mm"]["top"]
-    remaining = shape.Volume/(length*width*thickness)
-    add("top_plate_remaining_area", remaining > 0.85, remaining, "> 0.85", "fraction", "top",
-        "Through-cut volume must retain more than 85% of the blank footprint; broad excavated fields fail.")
-    if len(tongues) != 10:
+    fraction = sum(t["shape"].Volume for t in tongues)/(length*width*thickness)
+    add("tongue_area", fraction >= 0.5, fraction, ">= 0.50", "fraction", "top",
+        "The ten actual cantilevers, excluding the end bands and long-side frame, must fill at least half the plate.")
+    for side,x in [("left",SPEC["tongues"]["root_band_mm"]+5),
+                   ("right",length-SPEC["tongues"]["root_band_mm"]-5)]:
+        intervals = section_intervals(shape,x,thickness/2)
+        gaps = [b[0]-a[1] for a,b in zip(intervals,intervals[1:])]
+        add("shared_kerf_lines", len(gaps) == 6 and all(abs(g-SPEC["tongues"]["kerf_width_mm"]) <= TOL for g in gaps),
+            gaps, "six single 3.2 mm kerfs around five root regions", "mm", "top/"+side,
+            "Adjacent tongues share one kerf; paired U slots and intervening plate strips fail the root cross-section.")
+    if len(tongues) != 10 or any(t["side"] == "invalid" for t in tongues):
         return tongues
     add("nominal_kerf", abs(table.KerfWidth.Value-SPEC["tongues"]["kerf_width_mm"]) <= TOL,
         table.KerfWidth.Value,SPEC["tongues"]["kerf_width_mm"],"mm","top",
@@ -152,8 +165,8 @@ def inspect_paddles(shape, table):
     length, width, _ = SPEC["size_mm"]
     thickness = SPEC["panel_thickness_mm"]["top"]
     void = Part.makeBox(length, width, thickness).cut(shape)
-    add("individual_kerf_slots", 1 <= len(void.Solids) <= 10, len(void.Solids), "1..10 joined U-slot voids", "voids", "top",
-        "Narrow U slots may join where opposing tips meet; retained soundboard area is checked independently.")
+    add("individual_kerf_slots", len(void.Solids) == 1, len(void.Solids), 1, "connected kerf network", "top",
+        "Shared root slits and nesting head cuts must meet in one small central void.")
     varied = len({round(t["length"], 3) for t in tongues}) > 1 \
              and len({round(t["head"], 3) for t in tongues}) > 1
     add("varied_paddles", varied, bool(varied), True, "parameter variation", "top",
@@ -205,12 +218,13 @@ def probe_measurement(shape, tongue, field, table, number):
         root = [b if left else length-a for a,b in spans
                 if (abs(a) < 1e-5 if left else abs(b-length) < 1e-5)]
         return root[0] if len(root) == 1 else 0.0
-    if field in {"head", "kerf"}:
+    if field in {"head", "kerf", "neck"}:
         distance = getattr(table, f"Tongue{number:02d}Length").Value \
                    - getattr(table, f"Tongue{number:02d}HeadWidth").Value/2
-    else:
-        root = SPEC["tongues"]["root_band_mm"]
-        distance = root+5
+        if field == "neck":
+            half_head = getattr(table,f"Tongue{number:02d}HeadWidth").Value/2
+            half_neck = getattr(table,f"Tongue{number:02d}NeckWidth").Value/2
+            distance -= math.sqrt(max(0,half_head*half_head-half_neck*half_neck))-1e-7
     sections = section_intervals(shape, distance if left else length-distance, z)
     for i, (a,b) in enumerate(sections):
         if a < center < b:
