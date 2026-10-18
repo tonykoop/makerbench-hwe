@@ -15,12 +15,14 @@ import {
   cardDetail,
   cellReason,
   chooseInstrument,
+  editBrief,
   clampTurns,
   duration,
   filterInstruments,
   freshForm,
   parseVariants,
   payload,
+  applyAutofill,
   togglePick,
   toggleVariant,
   usd,
@@ -230,10 +232,40 @@ function EntrantStep({ catalog, form, setForm }) {
   `;
 }
 
+function Provenance({ suggestion }) {
+  if (!suggestion || (!suggestion.fields.length && !suggestion.tables.length && !suggestion.notes.length)) return null;
+  return html`
+    <details class="newrun-provenance" data-testid="brief-provenance">
+      <summary>Where this came from (${suggestion.sources.join(", ") || "no repo files"})</summary>
+      ${suggestion.fields.length > 0 && html`<div class="table-scroll"><table class="data-table">
+        <caption class="visually-hidden">Brief fields and their source files</caption>
+        <thead><tr><th scope="col">Field</th><th scope="col">Value</th><th scope="col">From</th></tr></thead>
+        <tbody>${suggestion.fields.map((f) => html`<tr key=${f.source + f.label}><th scope="row">${f.label}</th><td>${f.value}</td><td><code>${f.source}</code></td></tr>`)}</tbody>
+      </table></div>`}
+      ${suggestion.tables.map((t) => html`<p class="hint" key=${t.source}>Table <code>${t.source}</code>: ${t.rows.length} rows (${t.columns.slice(0, 6).join(", ")}).</p>`)}
+      ${suggestion.notes.map((note) => html`<p class="hint" key=${note}>${note}</p>`)}
+    </details>
+  `;
+}
+
 function ReferenceStep({ form, setForm, onToast }) {
   const input = useRef(null);
   const [taskImage, setTaskImage] = useState(true);
   useEffect(() => setTaskImage(true), [form.instrument]);
+  const variant = form.variants.length === 1 ? form.variants[0] : "";
+  const suggestion = useResource(
+    form.instrument
+      ? `/api/newrun/instrument/${encodeURIComponent(form.instrument)}/brief${variant ? `?variant=${encodeURIComponent(variant)}` : ""}`
+      : null,
+  );
+  useEffect(() => {
+    if (suggestion.status === "ready" && suggestion.data.repo_found) {
+      const instrument = form.instrument;
+      setForm((f) => applyAutofill(f, instrument, suggestion.data));
+    }
+  }, [suggestion.status, suggestion.data]);
+  const imageUrl = (ref) =>
+    ref.repo_image ? `/api/newrun/instrument/${encodeURIComponent(form.instrument)}/image/${encodeURIComponent(ref.repo_image)}` : ref.data;
   const add = (files) => {
     for (const file of [...files].filter((f) => /^image\/(png|jpeg|webp)$/.test(f.type))) {
       if (file.size > MAX_REFERENCE_BYTES) {
@@ -255,7 +287,8 @@ function ReferenceStep({ form, setForm, onToast }) {
         </figure>`}
         ${form.references.map(
           (ref, index) => html`<figure class="newrun-ref" key=${ref.name + index}>
-            <img src=${ref.data} alt=${`Reference image ${ref.name}`} />
+            <img src=${imageUrl(ref)} alt=${`Reference image ${ref.name}`} />
+            ${ref.repo_image && html`<figcaption>From the repo</figcaption>`}
             <button type="button" aria-label=${`Remove ${ref.name}`} onClick=${() => setForm((f) => ({ ...f, references: f.references.filter((_, i) => i !== index) }))}>✕</button>
           </figure>`,
         )}
@@ -267,10 +300,12 @@ function ReferenceStep({ form, setForm, onToast }) {
         <input ref=${input} type="file" accept="image/png,image/jpeg,image/webp" multiple hidden onChange=${(event) => add(event.currentTarget.files)} />
       </div>
       <label class="field" for="newrun-brief"><span class="field-label">Brief for every entrant</span></label>
+      ${form.autofill_for === form.instrument && html`<p class="hint" data-testid="brief-filled">Filled in from the instrument repo; edit anything.</p>`}
       <textarea id="newrun-brief" class="review-note newrun-brief" value=${form.brief} onInput=${(event) => {
         const value = event.currentTarget.value;
-        setForm((f) => ({ ...f, brief: value }));
+        setForm((f) => editBrief(f, value));
       }}></textarea>
+      <${Provenance} suggestion=${suggestion.status === "ready" ? suggestion.data : null} />
     <//>
   `;
 }

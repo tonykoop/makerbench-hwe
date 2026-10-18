@@ -95,3 +95,31 @@ test("variant chips toggle into a sweep", async () => {
   assert.equal(form.preset, null);
   assert.deepEqual(toggleVariant(form, "TD-8").variants, ["TD-10"]);
 });
+
+test("autofill fills once per instrument and never overwrites edits", async () => {
+  const { applyAutofill, payload } = await import("../../makerbench/arena_studio/static/app/lib/newrun.js");
+  const suggestion = { text: "Model the kora.", images: ["hero-render.png"] };
+  let form = { instrument: "kora", brief: "registry", references: [], variants: [], entrants: [], turns: 5, cap_usd: 2 };
+  form = applyAutofill(form, "kora", suggestion);
+  assert.equal(form.brief, "Model the kora.");
+  assert.deepEqual(payload(form).references, [{ repo_image: "hero-render.png" }]);
+  form = { ...form, brief: "Model the kora, but taller." };
+  assert.equal(applyAutofill(form, "kora", suggestion).brief, "Model the kora, but taller.");
+  assert.equal(applyAutofill(form, "lyre", suggestion), form); // a stale response for another instrument
+});
+
+test("a slow first suggestion keeps a brief typed and an image added while it loaded (#1108 review)", async () => {
+  const { applyAutofill, chooseInstrument, editBrief } = await import("../../makerbench/arena_studio/static/app/lib/newrun.js");
+  const catalog = { instruments: [{ id: "kora", brief: "registry" }, { id: "drum", brief: "drum" }] };
+  const suggestion = { text: "Model the kora.", images: ["hero-render.png"] };
+  let form = chooseInstrument({ instrument: "", references: [], variants: [] }, catalog, "kora");
+  form = editBrief(form, "My own kora brief.");
+  form = { ...form, references: [{ name: "sketch.png", data: "data:image/png;base64,AA" }] };
+  form = applyAutofill(form, "kora", suggestion);
+  assert.equal(form.brief, "My own kora brief.");
+  assert.deepEqual(form.references.map((r) => r.name), ["sketch.png", "hero-render.png"]);
+  // Kora -> drum -> kora before any drum suggestion: kora fills again, without a stale marker.
+  form = chooseInstrument(chooseInstrument(form, catalog, "drum"), catalog, "kora");
+  assert.equal(form.autofill_for, null);
+  assert.equal(applyAutofill(form, "kora", suggestion).brief, "Model the kora.");
+});

@@ -26,6 +26,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 from .. import nightly_cad
 from ..run_log_io import atomic_write_json, file_lock
 from . import doe
+from .instrument_repo import RepoFileError, read_bounded
 
 PLAN_SCHEMA = "makerbench-control-room-run-plan-v1"
 DRAFT_SCHEMA = "makerbench-control-room-tonight-draft-v1"
@@ -273,9 +274,29 @@ def confined(runs_root: Path, *parts: str) -> Path:
     return path
 
 
-def _save_references(images: Sequence[Mapping[str, Any]], runs_root: Path, base_id: str) -> list[Path]:
+def _save_references(images: Sequence[Mapping[str, Any]], runs_root: Path, base_id: str,
+                     repo_image: Optional[Callable[[str], Optional[Path]]] = None) -> list[Path]:
     saved = []
     for index, image in enumerate(images[:MAX_REFERENCES]):
+        if image.get("repo_image"):
+            # An image from the instrument repo (#1108): copied into the plan, never referenced in place.
+            source = repo_image(str(image["repo_image"])) if repo_image else None
+            if source is None:
+                raise NewRunError(f"Reference image {image['repo_image']} is not in the instrument repo.")
+            try:
+                raw = read_bounded(source, MAX_REFERENCE_BYTES)  # refused before it is read into memory
+            except (OSError, RepoFileError):
+                raw = b""
+            suffix = next((ext for magic, ext in IMAGE_MAGIC.items() if raw.startswith(magic)), None)
+            if suffix is None:
+                raise NewRunError(f"Reference image {image['repo_image']} is not a PNG, JPEG or WebP under 10 MB.")
+            name = f"reference-{index + 1}{suffix}"
+            path = confined(runs_root, str(CONTROL_ROOM_DIR), "plans", base_id, "references", name)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            confined(runs_root, str(CONTROL_ROOM_DIR), "plans", base_id, "references", name)
+            path.write_bytes(raw)
+            saved.append(path)
+            continue
         data_url = str(image.get("data") or "")
         head, _, body = data_url.partition(",")
         if not head.startswith("data:image/") or ";base64" not in head:
@@ -400,7 +421,8 @@ def run_now_gaps(form: Mapping[str, Any], card: Optional[Mapping[str, Any]]) -> 
 
 
 def build_jobs(form: Mapping[str, Any], *, instruments: Mapping[str, Mapping[str, Any]], runs_root: Path,
-               task_reference: Callable[[str], Optional[Path]], now: Optional[datetime] = None) -> list[dict[str, Any]]:
+               task_reference: Callable[[str], Optional[Path]], now: Optional[datetime] = None,
+               repo_image: Optional[Callable[[str], Optional[Path]]] = None) -> list[dict[str, Any]]:
     """Validate the form and return ``[{"job": NightlyJob dict, "plan": plan}]``, one per variant.
 
     The cap bounds the whole sweep: each variant's job gets an equal share, split again
@@ -417,7 +439,7 @@ def build_jobs(form: Mapping[str, Any], *, instruments: Mapping[str, Mapping[str
     while (plans_dir / base_id).exists() or any((plans_dir / f"{base_id}{('-' + _slug(v)) if v else ''}.json").exists() for v in variants):
         base_id = f"cr-{when.strftime('%Y%m%dT%H%M%SZ')}-{_slug(instrument_id)}-{suffix}"  # same second, same instrument
         suffix += 1
-    uploads = _save_references(form.get("references") or [], runs_root, base_id)
+    uploads = _save_references(form.get("references") or [], runs_root, base_id, repo_image)
     reference = uploads[0] if uploads else task_reference(instrument_id)
     if reference is None:
         raise NewRunError("Add a reference image: this instrument has none on disk.")
