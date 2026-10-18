@@ -64,3 +64,46 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 - `tests/test_nightly_cad_scripts.py` lints `scripts/windows/` against the
   legacy checkout path and exercises the preflight RED (bogus path) and green
   (real paths) from WSL.
+
+## Fixing a design step by step
+
+The nightly driver builds hands-off in one pass. Some fixes need to go step by step on a complex
+assembly: measure, adjust, re-measure, render. For those, open an **interactive** session wired
+the same way as the driver:
+
+- the CAD connector's MCP tools are pre-approved, for that one server only;
+- the bridge env goes by name (`env_vars` / `${NAME:-}`), so no token is on disk or in argv;
+- shell commands stay sandboxed (Codex `workspace-write`), and other Claude tools still prompt;
+- nothing is written to `~/.codex/config.toml` or to the Claude settings.
+
+The interactive Claude session runs without `--restricted`, so a supervised session can run small
+measurement scripts; each one prompts. The unattended nightly driver keeps `--restricted`.
+
+What bounds each session:
+
+- **Claude:** the permission mode is pinned to `manual` (the prompting mode) and `--setting-sources=` loads no user,
+  project or local `settings.json`. An inherited `defaultMode` (auto/bypass/acceptEdits),
+  `permissions.allow` rule or `additionalDirectories` cannot widen approval. Managed policy settings
+  and `CLAUDE.md` memory files still load.
+- **Codex:** `sandbox_workspace_write.writable_roots` is set to the workdir alone, replacing any
+  roots in `config.toml`, and `--ask-for-approval on-request` overrides an inherited `never`.
+- **Both:** the `--prompt-file` text goes after `--`, so it is never read as an option.
+
+```bash
+# sambuca r2: make the neck meet the hull, in SolidWorks, with Codex
+scripts/live-cad-session.sh --cad solidworks --runtime codex \
+  --workdir /mnt/c/Users/Tony/Documents/StudioPipeline-Pilot/arena-nightly/runs/<run-id> \
+  --prompt-file neck-step1.md
+# same with Claude Code in Fusion: --cad fusion --runtime claude  (default model claude-opus-5-5)
+```
+
+`neck-step1.md` holds only the first step, for example: *"Measure the gap between the neck heel
+and the hull's bow face and report it in mm. Change nothing."* Give each next step in the
+session: move the neck so the heel touches the hull, re-measure (gap 0, no interpenetration),
+`capture_view`, then save the native file.
+
+The launcher reads `--secrets` (default `StudioPipeline-Pilot/arena-nightly/makerbench-nightly.env`)
+in its own process and never prints it. It refuses to start if the bridge does not answer an
+authenticated ping, or if the connector's MCP shim cannot ping through the driver's own launch
+path. `--dry-run` runs those checks and prints the argv. The same command is
+`python -m makerbench.cli arena live-cad-session`.

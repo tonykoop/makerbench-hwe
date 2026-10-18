@@ -34,6 +34,7 @@ from . import render
 from . import scad_sandbox
 from . import solidworks_backend
 from .live_cad_runner import LIVE_BACKENDS, LiveCadConfig, make_live_execute_trial
+from .live_cad_session import DEFAULT_SECRETS as DEFAULT_LIVE_SECRETS
 from .parametric_backend import (
     PARAMETRIC_BACKEND,
     make_parametric_execute_trial,
@@ -1491,6 +1492,39 @@ def arena_preflight(
         console.print(line, markup=False, highlight=False)
     if not report.ok:
         raise typer.Exit(code=1)
+
+
+@arena_app.command("live-cad-session")
+def arena_live_cad_session(
+        cad: str = typer.Option(..., "--cad", help="solidworks | fusion"),
+        runtime: str = typer.Option("codex", "--runtime", help="codex | claude"),
+        model: Optional[str] = typer.Option(None, "--model", help="CLI model (default gpt-6.1-sol for codex, claude-opus-5-5 for claude)."),
+        workdir: str = typer.Option(..., "--workdir", help="Folder the agent works in (e.g. a rehearsal or run folder)."),
+        secrets: str = typer.Option(str(DEFAULT_LIVE_SECRETS), "--secrets", help="Env file holding HWE_* bridge settings; read in-process, never echoed."),
+        prompt_file: Optional[str] = typer.Option(None, "--prompt-file", help="Optional first instruction for the session."),
+        connector_root: Optional[str] = typer.Option(None, "--connector-root", help="StudioPipeline-hwe checkout holding the MCP shims (default: the runner's)."),
+        dry_run: bool = typer.Option(False, "--dry-run", help="Run the checks and print the argv instead of launching.")):
+    """Interactive step-by-step live CAD session, wired like the nightly driver (#663).
+
+    The connector's MCP tools are pre-approved for that server only, the bridge env goes by
+    name (no token in argv or on disk), and every other tool keeps its usual prompt / sandbox.
+    Refuses to launch when the bridge or the MCP launch path does not answer ping.
+    """
+    from . import live_cad_session
+
+    try:
+        plan = live_cad_session.plan_session(
+            cad=cad, runtime=runtime, model=model, workdir=Path(workdir), secrets=Path(secrets),
+            prompt_file=Path(prompt_file) if prompt_file else None, connector_root=connector_root)
+    except live_cad_session.SessionError as exc:
+        console.print(f"live-cad-session: {exc}", markup=False, highlight=False)
+        raise typer.Exit(code=1)
+    console.print(f"live-cad-session: {plan.connector} answered; starting {plan.argv[0]} in {plan.cwd}",
+                  markup=False, highlight=False)
+    if dry_run:
+        console.print(" ".join(plan.argv), markup=False, highlight=False)
+        return
+    live_cad_session.launch(plan)
 
 
 @arena_app.command("workbench-job")
