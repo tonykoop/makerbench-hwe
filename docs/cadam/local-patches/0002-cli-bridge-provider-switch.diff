@@ -1,0 +1,98 @@
+diff --git a/src/server/aiChat.ts b/src/server/aiChat.ts
+index 4859799..a0d5d60 100644
+--- a/src/server/aiChat.ts
++++ b/src/server/aiChat.ts
+@@ -432,7 +432,22 @@ const PARAMETRIC_MAX_OUTPUT_TOKENS = 64000;
+ // Local patch (makerbench-hwe 0001): fall back to OpenRouter (same model-id
+ // namespace) when the direct provider key is absent, so Claude/Gemini picks
+ // work with only OPENROUTER_API_KEY set.
++// Local patch (makerbench-hwe 0002): CADAM_PROVIDER_OVERRIDE=cli-bridge sends
++// anthropic/* and openai/* models to the CLI bridge (tools/cadam_cli_bridge),
++// which speaks the Anthropic Messages API at ANTHROPIC_BASE_URL.
++function cliBridgeActive(): boolean {
++  return env('CADAM_PROVIDER_OVERRIDE') === 'cli-bridge';
++}
++
++function viaCliBridge(modelId: string): boolean {
++  return (
++    cliBridgeActive() &&
++    (modelId.startsWith('anthropic/') || modelId.startsWith('openai/'))
++  );
++}
++
+ function providerFor(modelId: string): ChatProvider {
++  if (viaCliBridge(modelId)) return 'anthropic';
+   const direct = directProviderFor(modelId);
+   if (direct === 'anthropic' && !env('ANTHROPIC_API_KEY')) return 'openrouter';
+   if (direct === 'google' && !env('GOOGLE_API_KEY')) return 'openrouter';
+@@ -470,6 +485,11 @@ function createChatProviders(): ChatProviders {
+     anthropic: () => {
+       if (!anthropic) {
+         const baseURL = normalizedAnthropicBaseURL();
++        if (cliBridgeActive() && !baseURL) {
++          throw new Error(
++            'CADAM_PROVIDER_OVERRIDE=cli-bridge needs ANTHROPIC_BASE_URL (the bridge URL)',
++          );
++        }
+         anthropic = createAnthropic({
+           apiKey: requiredEnv('ANTHROPIC_API_KEY'),
+           ...(baseURL ? { baseURL } : {}),
+@@ -509,6 +529,13 @@ function buildChatModel(
+   const hasCappedThinkingBudget =
+     thinking && thinkingBudget !== THINKING_BUDGET_TOKENS;
+ 
++  if (viaCliBridge(modelId)) {
++    // The bridge maps the request's model id verbatim (e.g.
++    // "anthropic/claude-sonnet-5.5" or "openai/gpt-6.1-sol"); thinking options
++    // are not forwarded because the CLIs manage their own reasoning.
++    return { model: providers.anthropic()(modelId) };
++  }
++
+   if (providerFor(modelId) === 'openrouter') {
+     return {
+       model: providers.openrouter().chat(modelId, {
+@@ -1450,7 +1477,7 @@ export async function handleAiChatRequest(req: Request) {
+     execute: async ({ writer }) => {
+       // Title (first user turn only) runs in parallel with the model
+       // stream — fire-and-forget; the assistant doesn't wait on it.
+-      if (isFirstUserTurn && env('ANTHROPIC_API_KEY')) {
++      if (isFirstUserTurn && env('ANTHROPIC_API_KEY') && !cliBridgeActive()) {
+         void emitConversationTitle({
+           writer,
+           anthropic: providers.anthropic(),
+@@ -1596,7 +1623,11 @@ export async function handleAiChatRequest(req: Request) {
+             // continuation `onFinish` will fire suggestions for the real
+             // final state. Avoids a wasted Haiku call AND prevents
+             // mid-turn placeholder pills.
+-            if (!hasPendingToolCall && env('ANTHROPIC_API_KEY')) {
++            if (
++              !hasPendingToolCall &&
++              env('ANTHROPIC_API_KEY') &&
++              !cliBridgeActive()
++            ) {
+               // MUST be awaited (not `void`). `createUIMessageStream`
+               // closes the SSE controller as soon as the merged stream
+               // drains — and the merged stream resolves once this
+diff --git a/src/server/anthropic.ts b/src/server/anthropic.ts
+index e4b9b7b..83d816d 100644
+--- a/src/server/anthropic.ts
++++ b/src/server/anthropic.ts
+@@ -1,4 +1,4 @@
+-import { requiredEnv } from './env';
++import { env, requiredEnv } from './env';
+ 
+ type AnthropicContent =
+   | string
+@@ -54,6 +54,12 @@ export async function createAnthropicText({
+   content: AnthropicContent;
+   maxTokens: number;
+ }): Promise<string> {
++  if (env('CADAM_PROVIDER_OVERRIDE') === 'cli-bridge') {
++    // Never send the bridge key to api.anthropic.com; these helper routes need a direct key.
++    throw new Error(
++      'anthropic text helpers are not available through the CLI bridge',
++    );
++  }
+   const response = await fetch('https://api.anthropic.com/v1/messages', {
+     method: 'POST',
+     headers: {
