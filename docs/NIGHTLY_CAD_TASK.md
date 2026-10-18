@@ -76,6 +76,10 @@ the same way as the driver:
 - shell commands stay sandboxed (Codex `workspace-write`), and other Claude tools still prompt;
 - nothing is written to `~/.codex/config.toml` or to the Claude settings.
 
+The interactive Claude session runs without `--restricted`, so a supervised session can run small
+measurement scripts under your own Claude permission settings. The unattended nightly driver keeps
+`--restricted`.
+
 ```bash
 # sambuca r2: make the neck meet the hull, in SolidWorks, with Codex
 scripts/live-cad-session.sh --cad solidworks --runtime codex \
