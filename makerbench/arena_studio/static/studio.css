@@ -2828,6 +2828,13 @@ body[data-demo="true"] .demo-header-links {
   overflow-wrap: anywhere;
 }
 
+.review-joint-note,
+.review-diagnostics {
+  margin: 0;
+  font-size: var(--step--1);
+  overflow-wrap: anywhere;
+}
+
 .review-stats {
   display: flex;
   flex-wrap: wrap;

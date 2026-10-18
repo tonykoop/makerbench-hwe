@@ -44,6 +44,9 @@ SUMMARY_FILE = "morning-summary.json"
 REVIEW_FILE = "morning-review.json"
 BASE_CHECKS = ("renders", "watertight", "nonzero_volume", "fits_envelope", "body_count")
 DECLARED_CHECKS = ("topology", "interfaces")
+#: Wood is built, not printed (#1150): for a joinery design STL closure is a grader diagnostic
+#: only. body_count stays a headline check: it is how distinct parts are counted at all.
+WOOD_DIAGNOSTICS = ("watertight",)
 DEFAULT_EXTRA_TURNS = 3
 MAX_EXTRA_TURNS = 12
 MAX_NOTE_CHARS = 4000
@@ -147,15 +150,36 @@ def _charges(state: Mapping[str, Any]) -> dict[str, float]:
     return out
 
 
-def _check_list(objective: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _joints(objective: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
+    """The #1150 joints report, when the design's spec declared joints."""
+    report = _mapping(_mapping(objective.get("checks")).get("joints"))
+    return report if isinstance(report.get("joints"), list) else None
+
+
+def _check_state(scores: Mapping[str, Any], name: str) -> str:
+    score = scores.get(name)
+    return "unknown" if not isinstance(score, (int, float)) else ("pass" if score >= 1.0 else "fail")
+
+
+def _check_list(objective: Mapping[str, Any], *, joinery: bool = False) -> list[dict[str, Any]]:
+    """Morning Review's chips. A joinery design (declared joints, or the wood-assembly track) leads
+    with one chip per joint and keeps the STL checks in ``WOOD_DIAGNOSTICS`` out of the chips."""
     scores = retained_checks(objective)
-    names = [*BASE_CHECKS, *(name for name in DECLARED_CHECKS if name in scores)]
-    out = []
-    for name in names:
-        score = scores.get(name)
-        state = "unknown" if not isinstance(score, (int, float)) else ("pass" if score >= 1.0 else "fail")
-        out.append({"name": name, "state": state, "declared": name in DECLARED_CHECKS})
+    base = [name for name in BASE_CHECKS if not (joinery and name in WOOD_DIAGNOSTICS)]
+    names = [*base, *(name for name in DECLARED_CHECKS if name in scores)]
+    out = [{"name": name, "state": _check_state(scores, name), "declared": name in DECLARED_CHECKS} for name in names]
+    for joint in (_joints(objective) or {}).get("joints") or []:
+        if isinstance(joint, Mapping):
+            state = str(joint.get("status")) if joint.get("status") in ("pass", "fail") else "unknown"
+            out.append({"name": str(joint.get("joint") or "joint"), "state": state, "declared": True,
+                        "joint": True, "detail": str(joint.get("sentence") or "")})
     return out
+
+
+def _diagnostics(objective: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The STL checks a joinery design keeps as internal diagnostics, not headline chips."""
+    scores = retained_checks(objective)
+    return [{"name": name, "state": _check_state(scores, name)} for name in WOOD_DIAGNOSTICS]
 
 
 def _fmt(value: Any, unit: Any) -> str:
@@ -181,6 +205,8 @@ def failure_sentence(failure: Mapping[str, Any]) -> str:
         return f"The mesh has {measured} {noun}; the brief needs {threshold}."
     if check == "watertight":
         return f"The mesh is not closed{where}, so it cannot be printed or measured as a solid."
+    if check == "joints":
+        return str(failure.get("detail") or f"The joint {failure.get('joint') or body} does not touch.")
     if check == "nonzero_volume":
         return f"The part{where} has no volume ({_fmt(measured, unit)})."
     return f"The {check} check measured {_fmt(measured, unit)}{where}; it needs {_fmt(threshold, unit)}."
@@ -228,8 +254,14 @@ def _design(run_dir: Path, repo_root: Path, row: Mapping[str, Any], charges: Map
     meta = _mapping(row.get("meta"))
     trial_id = str(row.get("trial_id"))
     entrant = str(row.get("model_id") or trial_id)
-    checks = _check_list(objective)
-    failures = [failure_sentence(f) for f in _trial_failed_checks(row, result, objective)] if objective else []
+    joinery = _joints(objective) is not None or result.get("track") == "wood_assembly"
+    checks = _check_list(objective, joinery=joinery)
+    failed = _trial_failed_checks(row, result, objective) if objective else []
+    if joinery:
+        failed = [f for f in failed if f.get("check") not in WOOD_DIAGNOSTICS]
+    failures = [failure_sentence(f) for f in failed]
+    joint_notes = [check["detail"] for check in checks
+                   if check.get("joint") and check["state"] == "unknown" and check.get("detail")]
     status = str(row.get("status") or "pending")
     if not objective:
         reason = row.get("error") or result.get("error") or f"it ended with status {status}"
@@ -254,6 +286,8 @@ def _design(run_dir: Path, repo_root: Path, row: Mapping[str, Any], charges: Map
         "checks": checks,
         "all_pass": bool(checks) and all(check["state"] == "pass" for check in checks),
         "failures": failures,
+        "joint_notes": joint_notes,
+        "diagnostics": _diagnostics(objective) if joinery and objective else [],
         "rate": trial_objective_rate(row),
         "editable_parameters": editable if isinstance(editable, int) else None,
         "time_s": row.get("wall_time_s") if isinstance(row.get("wall_time_s"), (int, float)) else None,

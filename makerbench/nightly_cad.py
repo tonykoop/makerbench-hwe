@@ -410,6 +410,7 @@ def _night_inputs(run_dir: Path, job: NightlyJob, registry: Mapping[str, object]
         "instrument_id": job.instrument_id,
         "title": str(spec.get("display_name") or spec.get("name") or job.instrument_id),
         "brief": str(spec.get("task_brief") or spec.get("task_brief_short") or ""),
+        "brief_version": int(spec.get("brief_version") or 1),  # #1150: graded joints arrived in v2
         "deliverable": job.deliverable,
         "reference_image": reference_name,
     })  # no entrant identities here: the folder also holds the blind vote pages

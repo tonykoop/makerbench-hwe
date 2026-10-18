@@ -156,12 +156,18 @@ function Card({ runId, design, index, count, state, useWebgl, onMove, onNote, on
         <div class="review-who"><h3>${design.name}</h3><span class="review-route">${design.route}</span></div>
         <ul class="review-chips" aria-label="Checks">
           ${design.checks.map(
-            (check) => html`<li key=${check.name} class="check-chip" data-state=${check.state}>
+            (check) => html`<li key=${check.name} class="check-chip" data-state=${check.state} title=${check.detail || ""}>
               ${check.name}${check.state === "fail" ? " ✕" : check.state === "unknown" ? " ?" : ""}
             </li>`,
           )}
         </ul>
         ${design.failures.map((text) => html`<p class="review-fail-note">${text}</p>`)}
+        ${(design.joint_notes || []).map((text) => html`<p class="review-joint-note">${text}</p>`)}
+        ${(design.diagnostics || []).length > 0 &&
+        html`<p class="hint review-diagnostics">
+          Grader diagnostics (STL only; wood is built, not printed):
+          ${design.diagnostics.map((item) => `${item.name} ${item.state === "pass" ? "✓" : item.state === "fail" ? "✕" : "?"}`).join(" · ")}
+        </p>`}
         <p class="review-stats">
           <span>Editable: <b>${design.editable_parameters == null ? "not recorded" : plural(design.editable_parameters, "parameter")}</b></span>
           <span>Time <b>${minutesText(design.time_s)}</b></span>

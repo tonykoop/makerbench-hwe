@@ -286,7 +286,8 @@ def test_export_winners_confirms_target_paths_before_writing(
         assert "instruments/ocarina/winner.scad" in text
         assert "instruments/kora/winner.scad" in text
         assert "../escape" in text
-        assert page.evaluate("() => document.activeElement.id") == "export-confirm-title"
+        # Focus moves in an effect after the dialog renders: wait for it, as the sibling tests do.
+        page.wait_for_function("() => document.activeElement?.id === 'export-confirm-title'")
         assert not (analytics_repo / "instruments").exists()
 
         confirm.get_by_role("button", name="Cancel").click()
