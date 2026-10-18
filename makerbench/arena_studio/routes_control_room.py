@@ -356,13 +356,19 @@ def register_control_room_routes(
             runnable = [item for item in built if not item["plan"]["runner_cannot_apply"]]
             staged = [item for item in built if item["plan"]["runner_cannot_apply"]]
             staged_because = sorted({gap for item in staged for gap in item["plan"]["runner_cannot_apply"]})
+            # What actually went into the queue and what did not are reported apart, each staged
+            # instrument with its own reasons, so a mixed batch never reads as all queued.
+            staged_rows = [{"instrument": item["plan"]["instrument_id"], "reasons": item["plan"]["runner_cannot_apply"]}
+                           for item in staged]
             if queue_writes and runnable:
                 response["ahead"] = nr.queued_ahead(nightly_queue)
                 added = nr.append_jobs(runs_root, runnable)
                 draft = nr.write_draft(runs_root, staged, staged_because=staged_because) if staged else None
                 return {**response, "queued": True, "added": added, "draft": draft,
-                        "staged": [item["plan"]["instrument_id"] for item in staged], "staged_because": staged_because}
-            return {**response, "queued": False, "staged_because": staged_because if queue_writes else [],
+                        "queued_order": [item["plan"]["instrument_id"] for item in runnable],
+                        "staged": staged_rows, "staged_because": staged_because}
+            return {**response, "queued": False, "queued_order": [],
+                    "staged": staged_rows if queue_writes else [], "staged_because": staged_because if queue_writes else [],
                     "draft": nr.write_draft(runs_root, built, staged_because=staged_because if queue_writes else ())}
         except nr.UnsafePath as error:
             raise HTTPException(status_code=409, detail=str(error))

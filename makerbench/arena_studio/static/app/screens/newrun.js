@@ -551,11 +551,16 @@ function Form({ catalog, onRefresh, refreshing }) {
     <p class="review-toast" role="status" aria-live="polite" hidden=${!toast}>${toast || ""}</p>
     <dialog class="review-dialog" ref=${dialog} onClose=${() => setResult(null)}>
       ${result && html`
-        <h2>${result.path.endsWith("run-now") ? "Run started" : queued ? (result.path.endsWith("fill-gaps") ? "Nights queued" : "Added to tonight") : result.data.staged_because?.length ? "Staged, not queued" : "Saved as a draft"}</h2>
+        <h2>${result.path.endsWith("run-now") ? "Run started" : queued ? (result.path.endsWith("fill-gaps") ? (result.data.staged?.length ? "Some nights queued, some staged" : "Nights queued") : "Added to tonight") : result.data.staged_because?.length ? "Staged, not queued" : "Saved as a draft"}</h2>
         ${result.data.skipped?.length > 0 && html`<p class="review-fail-note">Skipped: ${result.data.skipped.map((s) => `${s.instrument} (${s.reason})`).join("; ")}</p>`}
-        ${result.data.order && html`<p data-testid="gaps-order">${queued ? "Queued in this order" : "Planned order"}: ${result.data.order.join(", ")}.
-          ${queued && result.data.ahead > 0 ? ` ${plural(result.data.ahead, "job")} already in the queue run first.` : ""}
+        ${result.data.order && html`<p data-testid="gaps-order">${queued
+            ? `Queued in this order: ${result.data.queued_order.join(", ")}.${result.data.ahead > 0 ? ` ${plural(result.data.ahead, "job")} already in the queue run first.` : ""}`
+            : `Planned order: ${result.data.order.join(", ")}. Nothing was queued.`}
           The runner takes the next queued job each night it runs, so no night is booked to a date. Reorder or remove them in Tonight's Queue once it exists; until then the plan files hold the order.</p>`}
+        ${result.data.staged?.length > 0 && html`<div class="review-fail-note" data-testid="gaps-staged">
+          <p>Staged, not queued: the nightly runner can't apply these yet. Saved at <code>runs/${result.data.draft}</code> with their plans.</p>
+          <ul>${result.data.staged.map((row) => html`<li key=${row.instrument}><b>${row.instrument}</b>: ${row.reasons.join("; ")}</li>`)}</ul>
+        </div>`}
         <p>
           ${result.path.endsWith("run-now")
             ? "The arena run is starting on this PC."

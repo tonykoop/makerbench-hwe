@@ -23,9 +23,20 @@ ORIGIN = {"Origin": "http://127.0.0.1"}
 LATER = (date.today() + timedelta(days=3)).isoformat()
 
 
-def _client(tmp_path: Path, refresh: bool = True, **kwargs) -> tuple[TestClient, Path]:
+def link_assembly_to_cajon(repo: Path) -> None:
+    """Point the fixture's wood-assembly task at the library's CAD-less cajon card: a gap the runner can't apply."""
+    registry = json.loads((repo / "registry.json").read_text(encoding="utf-8"))
+    for task in registry["instruments"]:
+        if task["id"] == "tongue_drum_wood_assembly":
+            task["repo_path"] = "percussion/cajon"
+    (repo / "registry.json").write_text(json.dumps(registry), encoding="utf-8")
+
+
+def _client(tmp_path: Path, refresh: bool = True, mixed: bool = False, **kwargs) -> tuple[TestClient, Path]:
     (tmp_path / "repo").mkdir()
     repo = build_newrun_repo(tmp_path / "repo")
+    if mixed:
+        link_assembly_to_cajon(repo)
     root = build_instruments_root(tmp_path / "instruments")
     app = create_studio_app(registry_path=repo / "registry.json", repo_root=repo, instruments_root=root,
                             library_fetch=lambda: PAGE, **kwargs)
@@ -105,3 +116,16 @@ def test_more_than_thirty_nights_is_refused_not_truncated(tmp_path: Path):
     forms, skipped = nr.fill_gap_forms(picked[:nr.MAX_GAP_NIGHTS], {"kora": {"id": "kora", "cad": "none"}},
                                        brief_for=lambda card: "", hero_for=lambda card: None)
     assert len(forms) + len(skipped) == nr.MAX_GAP_NIGHTS  # every picked instrument is accounted for
+
+
+def test_a_mixed_batch_reports_queued_and_staged_apart(tmp_path: Path):
+    client, repo = _client(tmp_path, mixed=True, control_room_queue_writes=True)
+    body = {"instruments": ["kora", "tongue_drum_wood_assembly"]}
+    result = client.post("/api/newrun/fill-gaps", json=body, headers=ORIGIN).json()
+    assert result["queued"] is True and result["added"] == 1
+    assert result["order"] == ["kora", "tongue_drum_wood_assembly"]  # the planned order
+    assert result["queued_order"] == ["kora"]  # what is actually in the queue
+    assert result["staged"] == [{"instrument": "tongue_drum_wood_assembly", "reasons": ["the wood-assembly mode"]}]
+    assert result["draft"] and (repo / "runs" / result["draft"]).is_file()
+    _payload, jobs = nightly_cad.load_queue(repo / "runs" / "nightly-cad-queue.json")
+    assert [job.instrument_id for job in jobs] == ["kora", "kora"]  # the staged assembly never reached the queue

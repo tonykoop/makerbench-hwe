@@ -487,3 +487,38 @@ def test_a_slow_brief_suggestion_never_overwrites_what_was_typed(repo: Path, tmp
     finally:
         server.should_exit = True
         thread.join(timeout=10)
+
+
+def test_a_mixed_fill_gaps_batch_shows_what_queued_and_what_was_staged(tmp_path: Path):
+    from test_control_room_fill_gaps import link_assembly_to_cajon
+    from test_control_room_variants import build_instruments_root
+
+    (tmp_path / "repo").mkdir()
+    repo = build_newrun_repo(tmp_path / "repo")
+    link_assembly_to_cajon(repo)
+    root = build_instruments_root(tmp_path / "instruments")
+    server, thread, url = _serve(repo, instruments_root=root, library_fetch=lambda: LIBRARY_PAGE, control_room_queue_writes=True)
+    try:
+        with sync_playwright() as playwright:
+            browser = _launch(playwright)
+            context, page, problems, _ = _open(browser, url)
+            page.get_by_role("button", name="Refresh from the library").click()
+            page.locator("[data-testid=library-status]", has_text="refreshed").wait_for()
+            page.get_by_role("button", name="Fill the gaps").click()
+            nights = page.locator(".newrun-nights li")
+            for name in ("Bansuri", "Glass Harp <Starter>"):
+                page.get_by_role("button", name=f"Remove {name}", exact=False).first.click()
+            page.wait_for_function("() => document.querySelectorAll('.newrun-nights li').length === 2")
+            assert nights.evaluate_all("rows => rows.map(r => r.dataset.night)") == ["kora", "tongue_drum_wood_assembly"]
+            page.get_by_role("button", name="Queue 2 nights").click()
+            dialog = page.locator("dialog.review-dialog")
+            dialog.locator("h2", has_text="Some nights queued, some staged").wait_for()
+            assert "Queued in this order: kora." in dialog.get_by_test_id("gaps-order").inner_text()
+            staged = dialog.get_by_test_id("gaps-staged").inner_text()
+            assert "tongue_drum_wood_assembly: the wood-assembly mode" in staged and "runs/control-room/" in staged
+            assert problems == []
+            context.close()
+            browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
