@@ -17,8 +17,8 @@ Body identification
     1. **Named bodies.** When a native/bridge body listing is present (``[{name, bbox_mm:
        {min, max}}]``, e.g. SolidWorks ``list_bodies``), a part is the one listed body whose
        name contains one of the part's ``names`` (case and ``-``/``_``/space folded), matched
-       to the mesh body with the same bounding box (each coordinate within
-       ``LISTING_BBOX_TOLERANCE_MM``).
+       to the mesh body whose bounding box is nearest to the listed one (every coordinate within
+       ``LISTING_BBOX_TOLERANCE_MM``; a tie leaves it unmatched).
     2. **Geometric fallback.** Otherwise the part's ``identify`` rule picks among the major
        bodies (volume at least ``MAJOR_BODY_FRACTION`` of the largest; pegs and pins are not
        parts), in the order the parts are declared, never reusing a body. ``e1 <= e2 <= e3``
@@ -70,6 +70,8 @@ MAX_SAMPLES = 20_000
 #: Candidate triangle pairs measured exactly per joint (beyond this the joint is unknown).
 MAX_TRIANGLE_PAIRS = 5_000_000
 PAIR_BATCH = 100_000
+COUNT_BATCH = 4_096
+TOO_DENSE = "triangle-exact: too dense"
 RULES = ("largest_bbox_volume", "largest_plate", "longest", "longest_strip")
 
 
@@ -133,12 +135,12 @@ def _by_listing(names: Sequence[str], listing: Sequence[Mapping[str, Any]],
         lo, hi = np.asarray(box["min"], dtype=float), np.asarray(box["max"], dtype=float)
     except (KeyError, TypeError, ValueError):
         return None, "the listed body has no bounding box"
-    matches = [i for i, body in enumerate(bodies)
-               if np.all(np.abs(body.bounds[0] - lo) <= LISTING_BBOX_TOLERANCE_MM)
-               and np.all(np.abs(body.bounds[1] - hi) <= LISTING_BBOX_TOLERANCE_MM)]
-    if len(matches) != 1:
+    deviation = {i: float(max(np.abs(body.bounds[0] - lo).max(), np.abs(body.bounds[1] - hi).max()))
+                 for i, body in enumerate(bodies)}
+    matches = sorted((d, i) for i, d in deviation.items() if d <= LISTING_BBOX_TOLERANCE_MM)
+    if not matches or (len(matches) > 1 and matches[1][0] - matches[0][0] <= 1e-6):
         return None, f"listed body {named[0].get('name')!r} matches {len(matches)} mesh bodies"
-    return matches[0], f"named {named[0].get('name')!r}"
+    return matches[0][1], f"named {named[0].get('name')!r}"
 
 
 def identify(block: Mapping[str, Any], bodies: Sequence[trimesh.Trimesh],
@@ -276,8 +278,9 @@ def _exact_gap(a: trimesh.Trimesh, b: trimesh.Trimesh) -> Optional[float]:
 
     A sampled distance gives an upper bound ``U``. Only triangle pairs whose bounding spheres can
     come within ``U`` are compared exactly (vertex–triangle, edge–edge and edge-through-triangle
-    tests), so the minimum over them is the true minimum. ``None`` when that candidate set is too
-    large to measure (``MAX_TRIANGLE_PAIRS``): the caller reports the joint unknown.
+    tests), so the minimum over them is the true minimum. The candidates are counted first and
+    streamed in chunks, so memory stays bounded; ``None`` when there are more than
+    ``MAX_TRIANGLE_PAIRS`` (the caller reports the joint ``unknown (too dense)``, never a pass).
     """
     from scipy.spatial import cKDTree
 
@@ -287,19 +290,29 @@ def _exact_gap(a: trimesh.Trimesh, b: trimesh.Trimesh) -> Optional[float]:
     ra = np.linalg.norm(ta - ca[:, None], axis=2).max(axis=1)
     rb = np.linalg.norm(tb - cb[:, None], axis=2).max(axis=1)
     reach = upper + float(rb.max()) + 1e-9
-    neighbours = cKDTree(cb).query_ball_point(ca, ra + reach)
-    ia = np.repeat(np.arange(len(ca)), [len(n) for n in neighbours])
-    if len(ia) > MAX_TRIANGLE_PAIRS:
-        return None
-    if not len(ia):
-        return upper
-    ib = np.fromiter((j for n in neighbours for j in n), dtype=np.int64, count=len(ia))
-    keep = np.linalg.norm(ca[ia] - cb[ib], axis=1) <= ra[ia] + rb[ib] + upper + 1e-9
-    ia, ib = ia[keep], ib[keep]
+    tree, radii = cKDTree(cb), ra + reach
+    # Count before materialising anything (#1152 review): the budget bounds memory, not just work.
+    counts = np.zeros(len(ca), dtype=np.int64)
+    for start in range(0, len(ca), COUNT_BATCH):
+        sl = slice(start, start + COUNT_BATCH)
+        counts[sl] = tree.query_ball_point(ca[sl], radii[sl], return_length=True)
+        if int(counts[: sl.stop].sum()) > MAX_TRIANGLE_PAIRS:
+            return None
     best = upper
-    for start in range(0, len(ia), PAIR_BATCH):
-        sl = slice(start, start + PAIR_BATCH)
-        best = min(best, float(_triangle_pairs_distance(ta[ia[sl]], tb[ib[sl]]).min()))
+    start = 0
+    while start < len(ca):  # stream A's triangles in chunks of at most ~PAIR_BATCH candidate pairs
+        stop, pairs = start, 0
+        while stop < len(ca) and (stop == start or pairs + counts[stop] <= PAIR_BATCH):
+            pairs += int(counts[stop])
+            stop += 1
+        if pairs:
+            neighbours = tree.query_ball_point(ca[start:stop], radii[start:stop])
+            ia = np.repeat(np.arange(start, stop), counts[start:stop])
+            ib = np.fromiter((j for n in neighbours for j in n), dtype=np.int64, count=len(ia))
+            keep = np.linalg.norm(ca[ia] - cb[ib], axis=1) <= ra[ia] + rb[ib] + upper + 1e-9
+            if keep.any():
+                best = min(best, float(_triangle_pairs_distance(ta[ia[keep]], tb[ib[keep]]).min()))
+        start = stop
     return best
 
 
@@ -314,7 +327,8 @@ def measure(a: trimesh.Trimesh, b: trimesh.Trimesh) -> dict[str, Any]:
         gap = assembly_fit._gap(sa, sb, SEARCH_MM)
         if gap is not None:
             return {"gap_mm": gap, "penetration_mm": 0.0 if overlap is not None else None, "method": "manifold"}
-    return {"gap_mm": _exact_gap(a, b), "penetration_mm": None, "method": "triangle-exact"}
+    gap = _exact_gap(a, b)
+    return {"gap_mm": gap, "penetration_mm": None, "method": "triangle-exact" if gap is not None else TOO_DENSE}
 
 
 def _fmt_mm(value: float) -> str:
@@ -359,7 +373,8 @@ def check(spec: Mapping[str, Any], bodies: Sequence[trimesh.Trimesh],
         row.update(gap_mm=None if gap is None else round(gap, 3),
                    penetration_mm=None if depth is None else round(depth, 3), method=measured.get("method"))
         if gap is None:
-            row.update(status="unknown", sentence=f"{label}: unknown — gap not measurable")
+            why = "too dense" if measured.get("method") == TOO_DENSE else "gap not measurable"
+            row.update(status="unknown", sentence=f"{label}: unknown ({why})")
         elif gap > tolerance:
             shown = f"> {SEARCH_MM:.0f}" if gap >= SEARCH_MM else _fmt_mm(gap)
             row.update(status="fail", reason="gap", sentence=f"{label}: {shown} mm gap — FAIL")

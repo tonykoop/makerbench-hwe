@@ -206,3 +206,46 @@ def test_a_too_deep_joint_explains_its_penetration_in_the_gate(tmp_path):
     row = next(f for f in objective["failures"] if f["check"] == "joints")
     assert (row["reason"], row["unit"], row["threshold"]) == ("penetration", "mm penetration", 20.0)
     assert row["measured"] == pytest.approx(40.0, abs=0.5)
+
+
+_DENSE_FANS = r"""
+import resource
+import numpy as np, trimesh
+import scipy.spatial  # noqa: F401 - imported before the cap, like the grader process already is
+from makerbench import joint_contact as jc
+
+def fan(z, n=20_000, radius=100.0):
+    angle = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    rim = np.c_[radius * np.cos(angle), radius * np.sin(angle), np.full(n, z)]
+    vertices = np.vstack([[0, 0, z], rim])
+    faces = np.c_[np.zeros(n, int), 1 + np.arange(n), 1 + (np.arange(n) + 1) % n]
+    return trimesh.Trimesh(vertices, faces, process=False)
+
+jc._sampled_gap = lambda a, b: 0.8  # the true gap: isolate the candidate stage, as the review did
+spec = {"joints": {"version": 1, "parts": {
+    "top": {"names": ["top"]}, "bottom": {"names": ["bottom"]}}, "pairs": [["top", "bottom"]]}}
+bodies = [fan(0.8), fan(0.0)]
+listing = [{"name": n, "bbox_mm": {"min": b.bounds[0].tolist(), "max": b.bounds[1].tolist()}}
+           for n, b in zip(("top", "bottom"), bodies)]
+soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+used = int(open("/proc/self/statm").read().split()[0]) * resource.getpagesize()
+resource.setrlimit(resource.RLIMIT_AS, (used + 1500 * 2**20, hard))  # 1.5 GiB more for the check
+row = jc.check(spec, bodies, listing)["joints"][0]
+print(row["status"], "|", row["sentence"])
+"""
+
+
+def test_an_over_budget_joint_is_unknown_within_bounded_memory(tmp_path):
+    """Codex's #1152 reproduction: two 20k-triangle fan disks 0.8 mm apart give ~400M candidate
+    pairs. The budget is checked before any pair list exists, so it ends ``unknown (too dense)``
+    inside a 1.5 GiB address-space cap instead of exhausting memory."""
+    import subprocess
+    import sys
+
+    script = tmp_path / "dense_fans.py"
+    script.write_text(_DENSE_FANS, encoding="utf-8")
+    root = Path(__file__).resolve().parents[1]
+    proc = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=300,
+                          env={"PYTHONPATH": str(root), "PATH": "/usr/bin:/bin", "OPENBLAS_NUM_THREADS": "1"}, cwd=root)
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert proc.stdout.strip() == "unknown | top↔bottom: unknown (too dense)"
