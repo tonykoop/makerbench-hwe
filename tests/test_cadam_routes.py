@@ -159,7 +159,9 @@ def test_openrouter_route_uses_the_stock_cadam_and_never_starts_the_bridge(world
     row, prov = _row_for(result, "cadam-or")
     assert prov["route"] == "openrouter" and prov["entrant_label"] == "CADAM · OpenRouter · anthropic/claude-fable-5.1"
     assert "runtime" not in prov and "cli_version" not in prov
-    assert row["meta"] == {"entrant_label": "CADAM · OpenRouter · anthropic/claude-fable-5.1", "route": "CADAM · OpenRouter"}
+    # entrant_label keeps the configured id; meta.route is #1131's recorded route label (pretty model name)
+    assert row["meta"]["entrant_label"] == "CADAM · OpenRouter · anthropic/claude-fable-5.1"
+    assert row["meta"]["route"] == "CADAM · OpenRouter · Fable 5.1"
 
 
 def _row_for(result, entrant):
@@ -184,7 +186,7 @@ def test_cli_bridge_route_starts_the_bridge_for_the_turn_and_stops_it_after(worl
     assert prov["route"] == "cli-bridge" and prov["runtime"] == "claude"
     assert prov["cli_version"] == "claude 9.9.9 (fake)" and prov["cli_model"] == "claude-sonnet-5-5"
     assert prov["entrant_label"] == "CADAM via CLI · claude · anthropic/claude-sonnet-5.5"
-    assert row["meta"]["route"] == "CADAM via CLI · claude"
+    assert row["meta"]["route"] == "CADAM via CLI · claude · Sonnet 5.5"  # recorded by #1131's _record_route, route-aware
     labels = {_row_for(result, e)[0]["meta"]["entrant_label"] for e in ("cadam-cli-claude", "cadam-or")}
     assert len(labels) == 2  # two routes, two entrants, never merged
     assert KEY not in json.dumps(prov)
@@ -375,3 +377,13 @@ def test_other_unrunnable_bridge_configs_are_not_go(pre, patch):
     assert _failed(pre.audit(CLI))
     with pytest.raises(cadam_routes.BridgeError):
         cadam_routes.CliBridge(pre.config, KEY)
+
+
+def test_recorded_route_label_is_route_aware_and_stays_total():
+    """#1131's route_label never raises; the CADAM routes layer on top of it."""
+    bridge = NightlyEntrant(entrant_id="b", kind="cadam", model_id="anthropic/claude-sonnet-5.5", route="cli-bridge", runtime="claude")
+    assert nightly_cad.route_label(bridge) == "CADAM via CLI · claude · Sonnet 5.5"
+    default = NightlyEntrant(entrant_id="o", kind="cadam", model_id="anthropic/claude-fable-5.1")
+    assert nightly_cad.route_label(default) == "CADAM · OpenRouter · Fable 5.1"
+    odd = NightlyEntrant(entrant_id="x", kind="cadam", model_id="", route="cli-bridge", runtime="codex")
+    assert isinstance(nightly_cad.route_label(odd), str)  # no exception even for a malformed entrant
