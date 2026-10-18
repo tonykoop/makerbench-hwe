@@ -11,6 +11,7 @@ The two are reported as separate entrants and never merged: "CADAM · OpenRouter
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
@@ -33,6 +34,7 @@ RUNTIMES = ("claude", "codex")
 DEFAULT_CADAM_DIR = "/mnt/c/Users/Tony/Documents/GitHub/_meta/CADAM"
 DEFAULT_BRIDGE_CADAM_URL = "http://127.0.0.1:3001"
 DEFAULT_BRIDGE_CONFIG_KEY_ENV = "CADAM_CLI_BRIDGE_KEY"
+MIN_KEY_CHARS = 16  # the bridge itself refuses a shorter shared key
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 Run = Callable[[Sequence[str]], "tuple[int, str]"]
@@ -102,6 +104,33 @@ def read_bridge_config(path: Path) -> BridgeSettings:
     )
 
 
+def bridge_config_problems(settings: BridgeSettings) -> list[str]:
+    """Why the bridge could not run with this config (the same rules tools/cadam_cli_bridge enforces)."""
+    problems = []
+    try:
+        if not ipaddress.ip_address(settings.host).is_loopback:
+            problems.append(f"bridge host {settings.host} is not loopback (the bridge binds loopback only)")
+    except ValueError:
+        problems.append(f"bridge host {settings.host!r} is not an IP address")
+    if not 0 < settings.port < 65536:
+        problems.append(f"bridge port {settings.port} is out of range")
+    if not settings.models:
+        problems.append("the bridge config maps no models")
+    for name, spec in settings.models.items():
+        if spec.get("runtime") not in RUNTIMES:
+            problems.append(f"model {name}: runtime must be claude or codex")
+        if not str(spec.get("cli_model") or "").strip():
+            problems.append(f"model {name}: cli_model is required")
+    return problems
+
+
+def key_problem(key: Optional[str]) -> Optional[str]:
+    """None when the shared key is usable; otherwise a fixed, value-free reason."""
+    if not key or not key.strip():
+        return "MISSING"
+    return None if len(key) >= MIN_KEY_CHARS else f"TOO SHORT (needs at least {MIN_KEY_CHARS} characters)"
+
+
 def picker_has_model(cadam_dir: Path, model_id: str) -> Optional[bool]:
     """Whether CADAM's model picker lists ``model_id`` (None: the clone or its catalog is not there)."""
     catalog = Path(cadam_dir) / "src" / "lib" / "utils.ts"
@@ -131,6 +160,9 @@ class CliBridge:
     ) -> None:
         self.config_path = Path(config_path)
         self.settings = read_bridge_config(self.config_path)
+        problems = bridge_config_problems(self.settings)
+        if problems:
+            raise BridgeError(problems[0])
         self.key = key
         self.command = list(command) if command else [sys.executable, "-m", "tools.cadam_cli_bridge", "--config", str(self.config_path)]
         self.popen, self.http_get, self.sleep, self.startup_s, self.cwd = popen, http_get, sleep, startup_s, cwd
@@ -186,8 +218,8 @@ def bridge_settings_for_run(environ: Mapping[str, str]) -> tuple[Path, str]:
     key = environ.get(DEFAULT_BRIDGE_CONFIG_KEY_ENV, "")
     if not path or not Path(path).is_file():
         raise BridgeError("CADAM_CLI_BRIDGE_CONFIG does not point at a bridge config file")
-    if len(key) < 16:
-        raise BridgeError(f"{DEFAULT_BRIDGE_CONFIG_KEY_ENV} is not set to a shared key of at least 16 characters")
+    if key_problem(key):
+        raise BridgeError(f"{DEFAULT_BRIDGE_CONFIG_KEY_ENV} is not set to a shared key of at least {MIN_KEY_CHARS} characters")
     return Path(path), key
 
 

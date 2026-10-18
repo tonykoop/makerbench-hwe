@@ -332,3 +332,46 @@ def test_report_goes_no_go_on_a_failed_route_and_prints_no_secret(pre):
     assert "[PASS] route: CADAM · OpenRouter · anthropic/claude-fable-5.1" in text
     for secret in (SECRET, KEY):
         assert secret not in text
+
+
+# ---- review: settings that cannot run must not be GO --------------------------------------------
+
+
+def _write_config(pre, **changes):
+    raw = json.loads(pre.config.read_text())
+    raw.update(changes)
+    pre.config.write_text(json.dumps(raw))
+
+
+def test_a_short_shared_key_is_not_go_and_is_never_printed(pre):
+    short = "short-key"
+    statuses = pre.audit(CLI, entries={**pre.entries, "CADAM_CLI_BRIDGE_KEY": short})
+    failed = _failed(statuses)
+    assert any("CADAM_CLI_BRIDGE_KEY: TOO SHORT" in t for t in failed)
+    assert short not in " ".join(text for s in statuses for _, text in s.checks)
+    # the runner rejects the identical environment before the turn
+    with pytest.raises(cadam_routes.BridgeError, match="at least 16"):
+        cadam_routes.bridge_settings_for_run({"CADAM_CLI_BRIDGE_CONFIG": str(pre.config), "CADAM_CLI_BRIDGE_KEY": short})
+
+
+def test_a_model_without_cli_model_is_not_go(pre):
+    _write_config(pre, models={"anthropic/claude-sonnet-5.5": {"runtime": "claude"}})
+    failed = _failed(pre.audit(CLI))
+    assert any("has no cli_model" in t for t in failed) and any("cli_model is required" in t for t in failed)
+
+
+def test_a_non_loopback_bridge_host_is_not_go_and_not_startable_or_reusable(pre):
+    _write_config(pre, host="0.0.0.0")
+    failed = _failed(pre.audit(CLI))
+    assert any("is not loopback" in t for t in failed)
+    assert any("bridge cannot run with this config" in t for t in failed)  # a listener on that host is not accepted either
+    with pytest.raises(cadam_routes.BridgeError, match="loopback"):
+        cadam_routes.CliBridge(pre.config, KEY)
+
+
+@pytest.mark.parametrize("patch", [{"port": 0}, {"port": 70000}, {"host": "localhost"}, {"models": {}}])
+def test_other_unrunnable_bridge_configs_are_not_go(pre, patch):
+    _write_config(pre, **patch)
+    assert _failed(pre.audit(CLI))
+    with pytest.raises(cadam_routes.BridgeError):
+        cadam_routes.CliBridge(pre.config, KEY)

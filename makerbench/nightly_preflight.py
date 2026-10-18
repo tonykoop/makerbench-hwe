@@ -388,7 +388,11 @@ def _bridge_checks(setting, entries, env, runtime, model, run, http_get, which, 
     checks: list[tuple[bool, str]] = []
     if runtime not in cadam_routes.RUNTIMES:
         return [(False, f"runtime {runtime!r} is not claude or codex")]
-    key_status = classify_secret_value(entries.get(cadam_routes.DEFAULT_BRIDGE_CONFIG_KEY_ENV) or env.get(cadam_routes.DEFAULT_BRIDGE_CONFIG_KEY_ENV))
+    key_value = entries.get(cadam_routes.DEFAULT_BRIDGE_CONFIG_KEY_ENV) or env.get(cadam_routes.DEFAULT_BRIDGE_CONFIG_KEY_ENV)
+    key_status = classify_secret_value(key_value)
+    if key_status == SECRET_PRESENT:
+        too_short = cadam_routes.key_problem(key_value)
+        key_status = too_short or SECRET_PRESENT  # same rule the runner and the bridge enforce; the value is never shown
     checks.append((key_status == SECRET_PRESENT, f"{cadam_routes.DEFAULT_BRIDGE_CONFIG_KEY_ENV}: {key_status}"))
     config_path = Path(setting("CADAM_CLI_BRIDGE_CONFIG"))
     settings = None
@@ -400,13 +404,17 @@ def _bridge_checks(setting, entries, env, runtime, model, run, http_get, which, 
         except (OSError, ValueError, AttributeError):
             checks.append((False, "bridge config is not valid JSON"))
     if settings is not None:
+        problems = cadam_routes.bridge_config_problems(settings)
+        checks.extend((False, problem) for problem in problems)
         mapped = settings.models.get(model)
         if mapped is None:
             checks.append((False, f"model {model} is not mapped in the bridge config"))
         elif mapped.get("runtime") != runtime:
             checks.append((False, f"model {model} is mapped to runtime {mapped.get('runtime')}, not {runtime}"))
-        else:
+        elif str(mapped.get("cli_model") or "").strip():
             checks.append((True, f"model {model} -> {runtime} {mapped.get('cli_model')}"))
+        else:
+            checks.append((False, f"model {model} has no cli_model in the bridge config"))
         binary = settings.binary(runtime)
         if which(binary) is None and not Path(binary).is_file():
             checks.append((False, f"{runtime} CLI ({binary}) not found on PATH"))
@@ -416,11 +424,12 @@ def _bridge_checks(setting, entries, env, runtime, model, run, http_get, which, 
             code, _ = run(login)
             checks.append((code == 0, f"{runtime} CLI {'is logged in' if code == 0 else 'is NOT logged in (run the CLI login)'}"
                            f" ({cadam_routes.cli_version(binary, run)})"))
-        listening = http_get(settings.health_url) == 200
-        startable = (repo_root / "tools" / "cadam_cli_bridge" / "__init__.py").is_file()
+        listening = http_get(settings.health_url) == 200 and not problems
+        startable = (repo_root / "tools" / "cadam_cli_bridge" / "__init__.py").is_file() and not problems
         checks.append((listening or startable,
                        "bridge is already listening" if listening else
                        "bridge will be started by the runner" if startable else
+                       "bridge cannot run with this config (see above)" if problems else
                        "bridge is not listening and tools/cadam_cli_bridge is missing"))
     bridge_cadam = setting("CADAM_BRIDGE_BASE_URL", cadam_routes.DEFAULT_BRIDGE_CADAM_URL)
     status = http_get(bridge_cadam)
