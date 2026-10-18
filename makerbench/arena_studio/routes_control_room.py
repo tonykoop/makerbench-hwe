@@ -61,8 +61,12 @@ def register_control_room_routes(
     library_manifest: Optional[Path] = None,
     promote_publish: bool = False,
     promote_pr_opener: Optional[Callable[[Path, str, str, str], str]] = None,
+    runs_root: Optional[Path] = None,
 ) -> None:
-    runs_root = service.repo_root / "runs"
+    # Where nights are read from (and Control Room files kept). The scheduled nightly task writes
+    # to its own output root (e.g. StudioPipeline-Pilot/arena-nightly/runs), so Studio can be
+    # pointed there; the default stays the repo's runs/ folder.
+    runs_root = Path(runs_root) if runs_root is not None else service.repo_root / "runs"
     open_file: cr.Opener = opener or cr.windows_opener
 
     def night_dir(run_id: str) -> Path:

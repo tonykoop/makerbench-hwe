@@ -1541,6 +1541,11 @@ def arena_studio(
             False,
             "--control-room-promote",
             help="Let Morning Review's Promote to library push its branch and open a PR in the instrument repo. Off: the branch stays local.",
+        ),
+        control_room_runs: Optional[str] = typer.Option(
+            None,
+            "--control-room-runs",
+            help="Runs root the Control Room reads nights from (default <repo>/runs). Point it at the nightly task's output root, e.g. /mnt/c/Users/Tony/Documents/StudioPipeline-Pilot/arena-nightly/runs, to review those nights.",
         )):
     """Launch the MakerBench Arena Studio web interface (Issue #696)."""
 
@@ -1577,6 +1582,7 @@ def arena_studio(
         control_room_queue_writes=control_room_queue_writes,
         library_manifest=Path(library_manifest) if library_manifest else None,
         control_room_promote=control_room_promote,
+        control_room_runs_root=Path(control_room_runs) if control_room_runs else None,
     )
     console.print(f"[bold green]MakerBench Arena Studio running at http://{host}:{port}/[/bold green]")
     uvicorn.run(app, host=host, port=port)

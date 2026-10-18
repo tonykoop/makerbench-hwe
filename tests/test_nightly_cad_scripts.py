@@ -213,3 +213,10 @@ def test_runner_passes_the_pinned_freecad_appdir_unless_the_secrets_file_sets_on
     # Exported after the secrets file is sourced, keeping a value the file already set.
     assert text.index("source '$SecretsWsl'") < text.index('export MAKERBENCH_FREECAD_APPDIR="`${MAKERBENCH_FREECAD_APPDIR:-$FreecadAppDirWsl}"')
     assert text.index("export MAKERBENCH_FREECAD_APPDIR") < text.index("arena overnight")
+
+
+def test_studio_launcher_can_point_morning_review_at_the_nightly_output_root():
+    text = STUDIO_LAUNCHER.read_text(encoding="utf-8")
+    assert re.search(r'\[string\]\$ControlRoomRunsWsl\s*=\s*""', text)
+    assert "--control-room-runs '$ControlRoomRunsWsl'" in text
+    assert "--allow-remote" not in text.split("#>", 1)[1]  # still loopback only
