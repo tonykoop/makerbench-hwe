@@ -77,8 +77,17 @@ the same way as the driver:
 - nothing is written to `~/.codex/config.toml` or to the Claude settings.
 
 The interactive Claude session runs without `--restricted`, so a supervised session can run small
-measurement scripts under your own Claude permission settings. The unattended nightly driver keeps
-`--restricted`.
+measurement scripts; each one prompts. The unattended nightly driver keeps `--restricted`.
+
+What bounds each session:
+
+- **Claude:** the permission mode is pinned to `default` and `--setting-sources=` loads no user,
+  project or local `settings.json`. An inherited `defaultMode` (auto/bypass/acceptEdits),
+  `permissions.allow` rule or `additionalDirectories` cannot widen approval. Managed policy settings
+  and `CLAUDE.md` memory files still load.
+- **Codex:** `sandbox_workspace_write.writable_roots` is set to the workdir alone, replacing any
+  roots in `config.toml`, and `--ask-for-approval on-request` overrides an inherited `never`.
+- **Both:** the `--prompt-file` text goes after `--`, so it is never read as an option.
 
 ```bash
 # sambuca r2: make the neck meet the hull, in SolidWorks, with Codex

@@ -38,10 +38,12 @@ def test_codex_session_is_interactive_and_approves_only_its_connector(tmp_path):
     argv = plan.argv
     assert argv[:3] == ["codex", "-m", "gpt-6.1-sol"] and "exec" not in argv
     assert argv[argv.index("-C") + 1] == workdir.resolve().as_posix()
-    assert argv[argv.index("--add-dir") + 1] == workdir.resolve().as_posix()
+    assert f"--add-dir={workdir.resolve().as_posix()}" in argv
     assert argv[argv.index("--sandbox") + 1] == "workspace-write"
+    assert argv[argv.index("--ask-for-approval") + 1] == "on-request"
     overrides = [argv[i + 1] for i, tok in enumerate(argv) if tok == "-c"]
-    assert all(item.startswith("mcp_servers.hwe-solidworks.") for item in overrides)
+    assert overrides[0] == f'sandbox_workspace_write.writable_roots=["{workdir.resolve().as_posix()}"]'
+    assert all(item.startswith("mcp_servers.hwe-solidworks.") for item in overrides[1:])
     assert [o for o in overrides if "approval" in o] == ['mcp_servers.hwe-solidworks.default_tools_approval_mode="approve"']
     assert 'mcp_servers.hwe-solidworks.env_vars=["HWE_SW_HOST", "HWE_SW_PORT", "HWE_SW_TOKEN"]' in overrides
     joined = " ".join(argv)
@@ -54,8 +56,9 @@ def test_claude_session_preallows_read_and_the_connector_and_nothing_else(tmp_pa
     argv = plan.argv
     assert argv[:3] == ["claude", "--model", "claude-opus-5-5"] and "-p" not in argv
     assert "--allowedTools=Read,mcp__hwe-fusion" in argv and "--strict-mcp-config" in argv
-    assert not any(tok.startswith("--permission-mode") or "dontAsk" in tok or "dangerously" in tok for tok in argv)
-    assert argv[argv.index("--add-dir") + 1] == workdir.resolve().as_posix()
+    assert argv[argv.index("--permission-mode") + 1] == "default" and "--setting-sources=" in argv
+    assert not any("dontAsk" in tok or "dangerously" in tok or "bypass" in tok for tok in argv)
+    assert f"--add-dir={workdir.resolve().as_posix()}" in argv
     config_path = next(tok.split("=", 1)[1] for tok in argv if tok.startswith("--mcp-config="))
     config_text = open(config_path, encoding="utf-8").read()
     server = json.loads(config_text)["mcpServers"]
@@ -92,7 +95,7 @@ def test_workdir_prompt_and_model_handling(tmp_path):
     prompt.write_text("Measure the gap between the neck heel and the hull.\n", encoding="utf-8")
     plan, _, _ = _plan(tmp_path, runtime="claude", model="opus-5.5", prompt_file=prompt)
     assert plan.argv[2] == "claude-opus-5-5"
-    assert plan.argv[-1] == "Measure the gap between the neck heel and the hull."
+    assert plan.argv[-2:] == ["--", "Measure the gap between the neck heel and the hull."]
     with pytest.raises(session.SessionError, match="not a Claude Code model name"):
         _plan(tmp_path, runtime="claude", model="opus5.5")
     with pytest.raises(session.SessionError, match="--cad must be one of"):
@@ -119,3 +122,34 @@ def test_cli_dry_run_prints_the_argv(tmp_path, monkeypatch):
                                       "--workdir", str(workdir), "--secrets", str(_secrets(tmp_path)), "--dry-run"])
     assert result.exit_code == 0, result.output
     assert "--allowedTools=Read,mcp__hwe-fusion" in result.output and FAKE_TOKEN not in result.output
+
+
+def _parse_codex(argv):
+    """Codex's own TOML parsing of the session's ``-c`` overrides, as it would apply them."""
+    import tomllib
+
+    merged = {}
+    for item in (argv[i + 1] for i, tok in enumerate(argv) if tok == "-c"):
+        key, _, value = item.partition("=")
+        merged[key] = tomllib.loads(f"v = {value}")["v"]
+    return merged
+
+
+def test_codex_session_replaces_inherited_writable_roots(tmp_path):
+    """A user config.toml with ``writable_roots=["/home/user/other-project"]`` must not widen this session."""
+    plan, _, workdir = _plan(tmp_path)
+    inherited = {"sandbox_workspace_write.writable_roots": ["/home/user/other-project"]}
+    effective = {**inherited, **_parse_codex(plan.argv)}  # -c overrides win over config.toml
+    assert effective["sandbox_workspace_write.writable_roots"] == [workdir.resolve().as_posix()]
+
+
+@pytest.mark.parametrize("runtime", ["codex", "claude"])
+@pytest.mark.parametrize("text", ["--permission-mode=bypassPermissions", "--add-dir=/elsewhere", "-v", "plain step"])
+def test_the_initial_prompt_is_always_positional(tmp_path, runtime, text):
+    prompt = tmp_path / "step.md"
+    prompt.write_text(text + "\n", encoding="utf-8")
+    plan, _, _ = _plan(tmp_path, cad="fusion", runtime=runtime, prompt_file=prompt)
+    separator = plan.argv.index("--")
+    assert plan.argv[separator + 1:] == [text]  # after "--", nothing is an option
+    assert all(not tok.startswith("--add-dir=/elsewhere") for tok in plan.argv[:separator])
+    assert "bypassPermissions" not in " ".join(plan.argv[:separator])
