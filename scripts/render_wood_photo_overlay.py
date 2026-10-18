@@ -18,7 +18,8 @@ from makerbench import wood_assembly as wood
 WORKER = '''import FreeCAD as App
 from pathlib import Path
 import json
-doc = App.openDocument('/inputs/parts/top.FCStd')
+files = json.loads(Path('/inputs/manifest.json').read_text())['files']
+doc = App.openDocument(str(Path('/inputs') / files['top']))
 for obj in doc.Objects:
     obj.touch()
 doc.recompute(None, True, True)
