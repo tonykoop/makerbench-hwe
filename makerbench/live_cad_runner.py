@@ -1,7 +1,8 @@
 """Live CAD backend for the arena — autonomous agent builds the entrant live.
 
 `arena run --backend solidworks-live|fusion-live` generates each entrant by
-spawning an autonomous driver agent (e.g. ``codex exec -m gpt-5.6-sol``) that
+spawning an autonomous driver agent (``codex exec -m gpt-6.1-sol`` or
+``claude -p --model claude-sonnet-5-5``) that
 drives the hwe-solidworks / hwe-fusion Luthier-Bridge MCP connector to build the
 instrument in the live CAD app from the reference image + brief, then exports an
 STL. The arena wraps that STL through the same objective gate and trial-row
@@ -20,6 +21,7 @@ entrants into the blind Elo pool.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -39,6 +41,45 @@ from .code_cad_objective import RenderArtifacts
 from .code_cad_orchestrator import ArenaTrial, TrialExecutor
 
 LIVE_BACKENDS = ("solidworks-live", "fusion-live")
+DEFAULT_DRIVER_MODEL = "gpt-6.1-sol"
+DRIVER_RUNTIMES = ("codex", "claude")
+
+# The StudioPipeline-hwe MCP shim each connector runs, and the bridge env it needs. The driver is
+# told about its connector explicitly on every run (never through a user's CLI config), and the
+# env is forwarded by NAME, so no token is written to disk or put on a command line.
+_MCP_MODULES = {"hwe-solidworks": "driver.solidworks_mcp_server", "hwe-fusion": "driver.fusion_mcp_server"}
+_CONNECTOR_ENV = {
+    "hwe-solidworks": ("HWE_SW_HOST", "HWE_SW_PORT", "HWE_SW_TOKEN"),
+    "hwe-fusion": ("HWE_FUSION_HOST", "HWE_FUSION_PORT", "HWE_FUSION_TOKEN"),
+}
+_CLAUDE_FAMILY = re.compile(r"^(fable|opus|sonnet|haiku)-(\d+)[.-](\d+)$", re.I)
+
+
+def driver_route(model_id: str) -> tuple[str, str]:
+    """``(runtime, CLI model)`` for a live entrant's driver model id.
+
+    ``codex-<model>`` drives with Codex, ``claude-code-<model>`` / ``claude-<model>`` with Claude
+    Code (``opus-5.5`` becomes the full name ``claude-opus-5-5``), and a bare id stays a Codex
+    model, as every live entrant was before the runtime could be chosen.
+    """
+    raw = str(model_id or "").strip()
+    lowered = raw.lower()
+    for prefix, runtime in (("claude-code-", "claude"), ("codex-", "codex")):
+        if lowered.startswith(prefix):
+            name = raw[len(prefix):]
+            break
+    else:
+        if lowered.startswith("claude-"):
+            runtime, name = "claude", raw
+        else:
+            runtime, name = "codex", raw
+    if not name:
+        raise ValueError(f"live driver model id {model_id!r} names no model")
+    if runtime == "claude":
+        family = _CLAUDE_FAMILY.match(name)
+        if family:
+            name = f"claude-{family.group(1).lower()}-{family.group(2)}-{family.group(3)}"
+    return runtime, name
 
 # instrument family -> a short structural + negative reference hint appended to
 # the brief when an image is unavailable; the image is preferred when present.
@@ -82,7 +123,7 @@ class LiveCadConfig:
     """How to run one live CAD entrant."""
 
     backend: str                                   # "solidworks-live" | "fusion-live"
-    driver_model: str                              # e.g. "gpt-5.6-sol"
+    driver_model: str                              # the CLI model, e.g. "gpt-6.1-sol"
     connector: str = "hwe-solidworks"              # MCP server name
     connector_cwd: str = "/mnt/c/Users/Tony/Documents/GitHub/StudioPipeline-hwe"
     driver_argv: tuple[str, ...] = (
@@ -99,6 +140,9 @@ class LiveCadConfig:
     env: Mapping[str, str] = field(default_factory=dict)   # HWE_SW_TOKEN/HOST/PORT etc.
     timeout_s: int = 1800
     runner: Callable[..., subprocess.CompletedProcess] = subprocess.run
+    driver_runtime: str = "codex"                  # "codex" (driver_argv) | "claude"
+    wire_mcp: bool = True                          # pass the connector to the driver explicitly
+    mcp_python: str = "python3"                    # runs the StudioPipeline-hwe MCP shim
 
     @property
     def cad_name(self) -> str:
@@ -106,6 +150,54 @@ class LiveCadConfig:
 
     def for_fusion(self) -> bool:
         return self.backend == "fusion-live"
+
+
+def _mcp_server(config: LiveCadConfig) -> dict:
+    module = _MCP_MODULES.get(config.connector)
+    if module is None:
+        raise ValueError(f"no MCP shim is known for connector {config.connector}")
+    return {"command": config.mcp_python, "args": ["-m", module],
+            "pythonpath": Path(config.connector_cwd).as_posix(),
+            "env_names": list(_CONNECTOR_ENV.get(config.connector, ()))}
+
+
+def driver_command(config: LiveCadConfig, gen_dir: Path) -> list[str]:
+    """The driver argv (without the assignment) for the entrant's runtime.
+
+    Codex keeps ``driver_argv`` (workspace-write sandbox, ephemeral) and gets the connector
+    through ``-c mcp_servers.<connector>.*`` overrides, forwarding the bridge env by name
+    (``env_vars``). Claude Code gets a generated ``--mcp-config`` whose env values are
+    ``${NAME:-}`` references, loads no other MCP server (``--strict-mcp-config``), drops
+    command-running tools (``--restricted``) and runs ``dontAsk`` with only Read and the
+    connector's tools allowed, so it can read its brief and photo and drive CAD, nothing else.
+    """
+    workspace = gen_dir.resolve().as_posix()
+    if config.driver_runtime == "codex":
+        argv = [tok.format(model=config.driver_model, workspace=workspace) for tok in config.driver_argv]
+        if config.wire_mcp:
+            server = _mcp_server(config)
+            key = f"mcp_servers.{config.connector}"
+            argv += [
+                "-c", f"{key}.command={json.dumps(server['command'])}",
+                "-c", f"{key}.args={json.dumps(server['args'])}",
+                "-c", f"{key}.env={{PYTHONPATH={json.dumps(server['pythonpath'])}}}",
+                "-c", f"{key}.env_vars={json.dumps(server['env_names'])}",
+            ]
+        return argv
+    if config.driver_runtime == "claude":
+        server = _mcp_server(config)
+        mcp_config = gen_dir / "driver-mcp.json"
+        env = {name: "${%s:-}" % name for name in server["env_names"]}
+        env["PYTHONPATH"] = server["pythonpath"]
+        mcp_config.write_text(json.dumps(
+            {"mcpServers": {config.connector: {"command": server["command"], "args": server["args"], "env": env}}},
+            indent=2, sort_keys=True), encoding="utf-8")
+        return [
+            "claude", "-p", "--model", config.driver_model, "--output-format", "text",
+            f"--mcp-config={mcp_config.resolve().as_posix()}", "--strict-mcp-config", "--restricted",
+            "--permission-mode", "dontAsk", f"--allowedTools=Read,mcp__{config.connector}",
+        ]
+    raise ValueError(f"unknown live driver runtime {config.driver_runtime!r} (expected one of {DRIVER_RUNTIMES})")
 
 
 def _win_path(root: str, trial_id: str, name: str) -> str:
@@ -251,10 +343,7 @@ def run_live_agent(spec: Mapping[str, object], gen_dir: Path,
         reference_image=staged_image,
     )
     (gen_dir / "assignment.md").write_text(assignment, encoding="utf-8")
-    argv = [
-        tok.format(model=config.driver_model, workspace=gen_dir.resolve().as_posix())
-        for tok in config.driver_argv
-    ]
+    argv = driver_command(config, gen_dir)
     argv.append(assignment)
     env = {**os.environ, **config.env}
     try:

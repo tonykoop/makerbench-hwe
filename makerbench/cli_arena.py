@@ -445,7 +445,7 @@ def arena_run(
             "--backend",
             help="CAD-backend axis (#601/#627/#752/#799): 'openscad', 'cadquery', 'build123d', 'freecad', 'blender', 'solidworks', 'fusion', or the agentic live tiers 'solidworks-live'/'fusion-live'.",
         ),
-        driver_model: str = typer.Option("gpt-5.6-sol", "--driver-model", help="Live backends only: the codex driver model each entrant agent uses."),
+        driver_model: str = typer.Option("gpt-6.1-sol", "--driver-model", help="Live backends only: the driver model each entrant agent uses. A bare id (gpt-6.1-sol) or codex-<model> drives with Codex; claude-code-<model> (e.g. claude-code-sonnet-5.5) drives with Claude Code."),
         image_map: Optional[str] = typer.Option(None, "--image-map", help="JSON file mapping instrument_id -> inspiration image path; required for --context-tier image (#609), optional lead reference image for studio."),
         stub: bool = typer.Option(False, "--stub", help="Swap every entrant for the zero-token stub generator (smoke runs)."),
         sandboxed_compile: bool = typer.Option(
@@ -563,8 +563,9 @@ def arena_run(
                 "HWE_FUSION_PORT": os.environ.get("HWE_FUSION_PORT", default_port),
             }.items() if v
         }
+        driver_runtime, driver_cli_model = live_cad_runner.driver_route(driver_model)
         live_config = LiveCadConfig(
-            backend=backend, driver_model=driver_model, connector=connector,
+            backend=backend, driver_model=driver_cli_model, driver_runtime=driver_runtime, connector=connector,
             images_root=Path(instruments_root) if instruments_root else None,
             context_tier=context_tier,
             env=live_env,

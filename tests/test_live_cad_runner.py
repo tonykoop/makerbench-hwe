@@ -7,6 +7,7 @@ agent -> STL -> objective gate -> trial row — is exercised offline.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -242,3 +243,68 @@ def test_make_live_execute_trial_full_row(tmp_path):
     assert row["render_ok"] is True  # box renders/loads
     assert row["objective"]["sub_scores"]["watertight"] == 1.0
     assert "transcript_path" in row["gen"]
+
+
+@pytest.mark.parametrize("model_id, route", [
+    ("gpt-6.1-sol", ("codex", "gpt-6.1-sol")),               # a bare id stays a Codex model
+    ("codex-gpt-6.1-sol", ("codex", "gpt-6.1-sol")),
+    ("claude-code-sonnet-5.5", ("claude", "claude-sonnet-5-5")),
+    ("claude-code-opus-5.5", ("claude", "claude-opus-5-5")),
+    ("claude-sonnet-5-5", ("claude", "claude-sonnet-5-5")),
+    ("claude-code-sonnet", ("claude", "sonnet")),             # an alias passes through
+])
+def test_driver_route_picks_the_runtime_and_cli_model(model_id, route):
+    assert live.driver_route(model_id) == route
+
+
+def test_driver_route_refuses_an_empty_model():
+    with pytest.raises(ValueError, match="names no model"):
+        live.driver_route("codex-")
+
+
+def test_codex_driver_gets_its_connector_by_name_without_tokens(tmp_path):
+    cfg = live.LiveCadConfig(backend="solidworks-live", driver_model="gpt-6.1-sol",
+                             env={"HWE_SW_TOKEN": "super-secret-token"})
+    argv = live.driver_command(cfg, tmp_path)
+    assert argv[:4] == ["codex", "exec", "-m", "gpt-6.1-sol"]
+    assert argv[argv.index("--sandbox") + 1] == "workspace-write"
+    overrides = [argv[i + 1] for i, tok in enumerate(argv) if tok == "-c"]
+    assert 'mcp_servers.hwe-solidworks.command="python3"' in overrides
+    assert 'mcp_servers.hwe-solidworks.args=["-m", "driver.solidworks_mcp_server"]' in overrides
+    assert 'mcp_servers.hwe-solidworks.env_vars=["HWE_SW_HOST", "HWE_SW_PORT", "HWE_SW_TOKEN"]' in overrides
+    assert any(o.startswith("mcp_servers.hwe-solidworks.env={PYTHONPATH=") for o in overrides)
+    assert "super-secret-token" not in " ".join(argv)
+
+
+def test_claude_driver_is_confined_to_read_and_its_connector(tmp_path):
+    cfg = live.LiveCadConfig(backend="fusion-live", driver_model="claude-sonnet-5-5", driver_runtime="claude",
+                             connector="hwe-fusion", env={"HWE_FUSION_TOKEN": "super-secret-token"})
+    argv = live.driver_command(cfg, tmp_path)
+    assert argv[:4] == ["claude", "-p", "--model", "claude-sonnet-5-5"]
+    for flag in ("--strict-mcp-config", "--restricted"):
+        assert flag in argv
+    assert argv[argv.index("--permission-mode") + 1] == "dontAsk"
+    assert "--allowedTools=Read,mcp__hwe-fusion" in argv
+    config_path = Path(next(tok for tok in argv if tok.startswith("--mcp-config=")).split("=", 1)[1])
+    server = json.loads(config_path.read_text())["mcpServers"]["hwe-fusion"]
+    assert server["args"] == ["-m", "driver.fusion_mcp_server"]
+    assert server["env"]["HWE_FUSION_TOKEN"] == "${HWE_FUSION_TOKEN:-}"  # forwarded by name, never written
+    assert "super-secret-token" not in config_path.read_text() + " ".join(argv)
+
+
+def test_claude_driver_runs_the_assignment_and_unknown_runtimes_are_refused(tmp_path):
+    seen = {}
+    cfg = _config(tmp_path, runner=None)
+    cfg.driver_runtime, cfg.driver_model, cfg.backend, cfg.connector = "claude", "claude-sonnet-5-5", "fusion-live", "hwe-fusion"
+    fake = _fake_runner_factory(cfg)
+
+    def runner(argv, **kwargs):
+        seen["argv"] = argv
+        return fake(argv, **kwargs)
+
+    cfg.runner = runner
+    live.run_live_agent(_REGISTRY["instruments"][0], tmp_path / "run" / "gen" / "fusion-trial", cfg)
+    assert seen["argv"][0] == "claude" and "hwe-fusion" in seen["argv"][-1]
+    cfg.driver_runtime = "gemini"
+    with pytest.raises(ValueError, match="unknown live driver runtime"):
+        live.driver_command(cfg, tmp_path)
