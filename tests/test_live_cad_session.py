@@ -56,7 +56,7 @@ def test_claude_session_preallows_read_and_the_connector_and_nothing_else(tmp_pa
     argv = plan.argv
     assert argv[:3] == ["claude", "--model", "claude-opus-5-5"] and "-p" not in argv
     assert "--allowedTools=Read,mcp__hwe-fusion" in argv and "--strict-mcp-config" in argv
-    assert argv[argv.index("--permission-mode") + 1] == "default" and "--setting-sources=" in argv
+    assert argv[argv.index("--permission-mode") + 1] == "manual" and "--setting-sources=" in argv
     assert not any("dontAsk" in tok or "dangerously" in tok or "bypass" in tok for tok in argv)
     assert f"--add-dir={workdir.resolve().as_posix()}" in argv
     config_path = next(tok.split("=", 1)[1] for tok in argv if tok.startswith("--mcp-config="))

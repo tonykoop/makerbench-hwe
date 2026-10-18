@@ -81,7 +81,7 @@ measurement scripts; each one prompts. The unattended nightly driver keeps `--re
 
 What bounds each session:
 
-- **Claude:** the permission mode is pinned to `default` and `--setting-sources=` loads no user,
+- **Claude:** the permission mode is pinned to `manual` (the prompting mode) and `--setting-sources=` loads no user,
   project or local `settings.json`. An inherited `defaultMode` (auto/bypass/acceptEdits),
   `permissions.allow` rule or `additionalDirectories` cannot widen approval. Managed policy settings
   and `CLAUDE.md` memory files still load.

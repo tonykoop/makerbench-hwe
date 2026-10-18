@@ -90,10 +90,10 @@ def session_command(config: LiveCadConfig, workdir: Path, session_dir: Path,
                 *codex_mcp_overrides(config, approve=True)]
     elif config.driver_runtime == "claude":
         mcp_config = write_claude_mcp_config(config, session_dir / "session-mcp.json")
-        # Shell stays available but prompts: the mode is pinned to "default" and no user/project/local
+        # Shell stays available but prompts: the mode is pinned to "manual" and no user/project/local
         # settings load (--setting-sources=), so an inherited defaultMode, allow rule or
         # additionalDirectories cannot widen approval. Managed policy settings and CLAUDE.md still load.
-        argv = ["claude", "--model", config.driver_model, "--permission-mode", "default", "--setting-sources=",
+        argv = ["claude", "--model", config.driver_model, "--permission-mode", "manual", "--setting-sources=",
                 f"--mcp-config={mcp_config.resolve().as_posix()}", "--strict-mcp-config",
                 f"--allowedTools=Read,mcp__{config.connector}", f"--add-dir={work}"]
     else:
