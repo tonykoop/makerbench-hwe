@@ -16,6 +16,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
+from . import nightly_revisions as confine
 from .arena_studio import control_room as cr
 
 SCHEMA = "makerbench-cadam-routes-smoke-v1"
@@ -25,7 +26,8 @@ DEFAULT_OUT = "/mnt/c/Users/Tony/Documents/StudioPipeline-Pilot/arena-nightly/ca
 FABLE = "anthropic/claude-fable-5.1"
 CLAUDE_BEST = "anthropic/claude-fable-5.1"
 CODEX_BEST = "openai/gpt-6.1-sol"
-OPENROUTER_CAP_USD = 3.0
+OPENROUTER_RESERVATION_USD = 3.0  # reserved from the nightly budget and checked AFTER the call: not a hard cap
+EARLIER_SMOKE_USD = 0.28  # the one-generation Fable 5.1 smoke of #660
 
 NOT_APPLES = (
     "These are three separate entrants and are never merged into one score. Each CLI route also carries its own "
@@ -36,7 +38,7 @@ NOT_APPLES = (
 def smoke_entrants(*, fable: str = FABLE, claude_model: str = CLAUDE_BEST, codex_model: str = CODEX_BEST) -> list[dict[str, Any]]:
     base = {"kind": "cadam", "backend": "openscad", "context_tier": "image", "timeout_s": 1200}
     return [
-        {**base, "entrant_id": "cadam-openrouter-fable-5-1", "model_id": fable, "route": "openrouter", "max_cost_usd": OPENROUTER_CAP_USD},
+        {**base, "entrant_id": "cadam-openrouter-fable-5-1", "model_id": fable, "route": "openrouter", "max_cost_usd": OPENROUTER_RESERVATION_USD},
         {**base, "entrant_id": "cadam-cli-claude", "model_id": claude_model, "route": "cli-bridge", "runtime": "claude"},
         {**base, "entrant_id": "cadam-cli-codex", "model_id": codex_model, "route": "cli-bridge", "runtime": "codex"},
     ]
@@ -45,7 +47,7 @@ def smoke_entrants(*, fable: str = FABLE, claude_model: str = CLAUDE_BEST, codex
 def smoke_job(job_id: str, reference_image: str, entrants: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     return {
         "job_id": job_id, "instrument_id": INSTRUMENT_ID, "reference_image": reference_image, "seed": 0,
-        "budget_usd": OPENROUTER_CAP_USD + 1.0, "status": "queued", "entrants": [dict(e) for e in entrants],
+        "budget_usd": OPENROUTER_RESERVATION_USD + 1.0, "status": "queued", "entrants": [dict(e) for e in entrants],
     }
 
 
@@ -57,7 +59,10 @@ def plan_lines(entrants: Sequence[Mapping[str, Any]], reference: str, out_dir: s
     lines = ["CADAM routes smoke plan (nothing is run in plan mode)", f"  reference photo: {reference}", f"  output page: {out_dir}"]
     for entrant in entrants:
         if entrant["route"] == "openrouter":
-            cost = f"OpenRouter spend, capped at ${entrant['max_cost_usd']:.2f}"
+            cost = (
+                f"OpenRouter spend, NOT hard-capped: ${entrant['max_cost_usd']:.2f} is only reserved and compared after the call "
+                f"(the earlier one-generation smoke cost ${EARLIER_SMOKE_USD:.2f}; a long generation can exceed ${entrant['max_cost_usd']:.2f})"
+            )
         else:
             cost = f"{entrant['runtime']} subscription quota (no OpenRouter spend)"
         lines.append(f"  - {entrant['entrant_id']}: {entrant['model_id']} via {entrant['route']} -> {cost}")
@@ -68,7 +73,7 @@ def plan_lines(entrants: Sequence[Mapping[str, Any]], reference: str, out_dir: s
 
 
 def comparison(run_dir: Path, repo_root: Path, order: Optional[Sequence[str]] = None,
-               labels: Optional[Mapping[str, str]] = None) -> dict[str, Any]:
+               labels: Optional[Mapping[str, str]] = None, routes: Optional[Mapping[str, str]] = None) -> dict[str, Any]:
     """One column per entrant (in smoke order), joined from Morning Review's view of the finished run."""
     run_dir = Path(run_dir).resolve()
     view = cr.review_view(run_dir, repo_root)
@@ -92,6 +97,8 @@ def comparison(run_dir: Path, repo_root: Path, order: Optional[Sequence[str]] = 
         column = {k: design[k] for k in ("entrant", "name", "status", "failures", "checks", "rate", "cost", "time_s", "route", "all_pass")}
         if design["name"] == entrant_id and entrant_id in labels:  # a failed turn leaves no label meta: use the configured one
             column["name"] = labels[entrant_id]
+        if (routes or {}).get(entrant_id) == "cli-bridge":
+            column["cost"] = {"kind": "subscription"}  # the ledger records a $0 charge; that is not an OpenRouter bill
         columns.append({**column, "files": files})
     return {"schema": SCHEMA, "run_id": run_dir.name, "instrument_id": view.get("instrument_id"), "columns": columns,
             "reference": cr.reference_path(run_dir), "note": NOT_APPLES}
@@ -136,29 +143,40 @@ def render_page(data: Mapping[str, Any], rel: Mapping[str, Mapping[str, str]]) -
     )
 
 
+def _dest(out_dir: Path, *parts: str) -> Path:
+    """A destination under ``out_dir``: every existing component must be a real (non-symlink) path inside it."""
+    path = confine.confined_child(out_dir, *parts)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return confine.confined_child(out_dir, *parts)  # re-checked after the folders exist
+
+
 def publish(run_dir: Path, out_dir: Path, repo_root: Path, order: Optional[Sequence[str]] = None,
-            labels: Optional[Mapping[str, str]] = None) -> Path:
-    """Write ``<out_dir>/<run_id>/index.html`` (+ copied renders/sources) and point ``<out_dir>/index.html`` at it."""
-    data = comparison(run_dir, repo_root, order, labels)
-    target = Path(out_dir) / data["run_id"]
-    target.mkdir(parents=True, exist_ok=True)
+            labels: Optional[Mapping[str, str]] = None, routes: Optional[Mapping[str, str]] = None) -> Path:
+    """Write ``<out_dir>/<run_id>/index.html`` (+ copied renders/sources) and point ``<out_dir>/index.html`` at it.
+
+    Refuses (``RevisionQueueError``) any symlinked destination folder or file, or one resolving outside ``out_dir``.
+    """
+    data = comparison(run_dir, repo_root, order, labels, routes)
+    run_id = data["run_id"]
+    if not confine.is_slug(run_id) or not all(confine.is_slug(c["entrant"]) for c in data["columns"]):
+        raise confine.RevisionQueueError("run id and entrant ids must be plain names to be published")
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
     rel: dict[str, dict[str, str]] = {}
     for col in data["columns"]:
-        folder = target / col["entrant"]
         for kind, src in col["files"].items():
-            folder.mkdir(exist_ok=True)
             name = "preview.png" if kind == "preview" else "candidate.scad"
-            shutil.copyfile(src, folder / name)
+            shutil.copyfile(src, _dest(out, run_id, col["entrant"], name))
             rel.setdefault(col["entrant"], {})[kind] = f"{col['entrant']}/{name}"
     if data["reference"]:
-        shutil.copyfile(data["reference"], target / "reference.jpg")
+        shutil.copyfile(data["reference"], _dest(out, run_id, "reference.jpg"))
     page = render_page(data, rel)
-    (target / "index.html").write_text(page, encoding="utf-8")
+    _dest(out, run_id, "index.html").write_text(page, encoding="utf-8")
     summary = {k: v for k, v in data.items() if k not in {"reference"}}
     for col in summary["columns"]:
         col["files"] = rel.get(col["entrant"], {})
-    (target / "comparison.json").write_text(json.dumps(summary, indent=2, sort_keys=True, default=str), encoding="utf-8")
-    (Path(out_dir) / "index.html").write_text(
+    _dest(out, run_id, "comparison.json").write_text(json.dumps(summary, indent=2, sort_keys=True, default=str), encoding="utf-8")
+    _dest(out, "index.html").write_text(
         f'<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url={html.escape(data["run_id"])}/index.html">'
         f'<a href="{html.escape(data["run_id"])}/index.html">latest CADAM routes smoke</a>', encoding="utf-8")
-    return target / "index.html"
+    return out / run_id / "index.html"

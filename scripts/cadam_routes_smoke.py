@@ -2,9 +2,12 @@
 """CADAM routes side-by-side smoke (#1103): ONE command, safe by default.
 
     python scripts/cadam_routes_smoke.py                      # plan + redacted preflight; runs nothing, spends nothing
-    python scripts/cadam_routes_smoke.py --run --tony-go      # the real run: spends OpenRouter budget and subscription quota
+    python scripts/cadam_routes_smoke.py --run --tony-go --yes   # the real run: spends OpenRouter money and subscription quota
 
-The real run needs BOTH flags (the go flag records that Tony approved the spend). It first runs the same
+The OpenRouter route is NOT hard-capped: nothing limits a request provider-side. The $3 in the plan is only reserved
+from the nightly budget and compared after the call (an earlier one-generation Fable 5.1 smoke cost $0.28; a long
+generation can cost more). So the real run needs ALL of --run, --tony-go (Tony approved the spend) and --yes (you accept
+the uncapped OpenRouter cost). It first runs the same
 redacted preflight as `arena preflight` and refuses on NO-GO, then runs one job through the three routes
 (OpenRouter Fable 5.1, claude via the CLI bridge, codex via the CLI bridge) with the sambuca photo, and writes a
 3-column comparison page. Secrets are read from the nightly secrets file into this process only; never printed.
@@ -32,8 +35,9 @@ DEFAULT_RUNS = "/mnt/c/Users/Tony/Documents/StudioPipeline-Pilot/arena-nightly/r
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--run", action="store_true", help="actually run the smoke (needs --tony-go)")
+    p.add_argument("--run", action="store_true", help="actually run the smoke (needs --tony-go and --yes)")
     p.add_argument("--tony-go", action="store_true", help="Tony's go for the quota/spend; required with --run")
+    p.add_argument("--yes", action="store_true", help="accept that the OpenRouter route is not hard-capped; required with --run")
     p.add_argument("--secrets", default=DEFAULT_SECRETS)
     p.add_argument("--runs-root", default=DEFAULT_RUNS)
     p.add_argument("--out", default=smoke.DEFAULT_OUT)
@@ -48,8 +52,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None, *, executor_factory=None, environ=None) -> int:
     args = build_parser().parse_args(argv)
     env = os.environ if environ is None else environ
-    if args.run and not args.tony_go:
-        print("refusing: --run spends OpenRouter budget and subscription quota; add --tony-go once Tony has said go.", file=sys.stderr)
+    if args.run and not (args.tony_go and args.yes):
+        print("refusing: --run spends OpenRouter money (NOT hard-capped; the $3 is only a post-call check) and subscription quota; "
+              "it needs both --tony-go (Tony has said go) and --yes (you accept the uncapped OpenRouter cost).", file=sys.stderr)
         return 2
     entrants = smoke.smoke_entrants(fable=args.fable, claude_model=args.claude_model, codex_model=args.codex_model)
     print("\n".join(smoke.plan_lines(entrants, args.reference, args.out)))
@@ -70,7 +75,7 @@ def main(argv=None, *, executor_factory=None, environ=None) -> int:
         named_paths={"reference_photo": Path(args.reference), "runs_root": runs_root}, environ=env)
     print("\n".join(nightly_preflight.render_report_lines(report)))
     if not args.run:
-        print("\nplan only: re-run with --run --tony-go to spend the quota.")
+        print("\nplan only: re-run with --run --tony-go --yes to spend the quota and the (uncapped) OpenRouter cost.")
         return 0 if report.ok else 1
     if not report.ok:
         print("\nrefusing to run: preflight is NO-GO.", file=sys.stderr)
@@ -84,7 +89,8 @@ def main(argv=None, *, executor_factory=None, environ=None) -> int:
     from makerbench.nightly_cad import NightlyEntrant
 
     labels = {e["entrant_id"]: NightlyEntrant.from_dict(e).route_label for e in entrants}
-    page = smoke.publish(run_dir, Path(args.out), ROOT, order=[e["entrant_id"] for e in entrants], labels=labels)
+    routes = {e["entrant_id"]: e["route"] for e in entrants}
+    page = smoke.publish(run_dir, Path(args.out), ROOT, order=[e["entrant_id"] for e in entrants], labels=labels, routes=routes)
     print(f"\nrun {result.get('run_id')}: {result.get('status')}; comparison page: {page}")
     return 0
 
