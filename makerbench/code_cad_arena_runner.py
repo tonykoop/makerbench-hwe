@@ -639,6 +639,7 @@ def ingest_candidate(
     provenance_extra: Optional[Mapping[str, object]] = None,
     compiler: Compiler = compile_scad_to_artifacts,
     gate_factory: Callable[[Mapping[str, object]], Callable] = mesh_objective_gate,
+    trial_meta: Optional[Mapping[str, object]] = None,
 ) -> dict:
     """Add one externally-generated candidate to an existing run log (#616).
 
@@ -722,6 +723,7 @@ def ingest_candidate(
         "status": str(payload.get("status") or "scored"),
         "attempts": 1,
         "result": payload,
+        **({"meta": {k: v for k, v in trial_meta.items() if v is not None}} if trial_meta else {}),
     }
 
     run_log_path = Path(run_log_path)

@@ -5,6 +5,10 @@ Audits activation state without ever printing secret values:
 - Secrets: each required key is PRESENT / MISSING / PLACEHOLDER. With bot sign-in
   credentials (``CADAM_BOT_EMAIL`` / ``CADAM_BOT_PASSWORD`` / ``VITE_SUPABASE_ANON_KEY``) the static
   ``CADAM_ACCESS_TOKEN`` is no longer required.
+- CADAM routes (#1102): for every CADAM entrant in the queue, the route it will use. OpenRouter: key
+  present, model in CADAM's picker. CLI bridge: bridge config + shared key, model mapped to the
+  entrant's runtime, CLI binary present and logged in, bridge startable (or already listening), and the
+  bridge-mode CADAM instance answering. Only classifications and fixed text are printed.
 - CADAM (#660): the local app at ``CADAM_BASE_URL`` answers (any HTTP reply below 500; a 5xx or no
   answer is NO-GO), in both authentication modes. With bot credentials a real password sign-in must
   also succeed. Only the outcome is reported, never a token or a reply body.
@@ -27,6 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping, Optional, Sequence
 
+from . import cadam_routes
 from .cadam_adapter import CadamAuthError, HttpTransport, sign_in
 
 BOT_SECRET_KEYS: tuple[str, ...] = (
@@ -112,12 +117,23 @@ class CadamStatus:
 
 
 @dataclass(frozen=True)
+class RouteStatus:
+    label: str
+    checks: tuple[tuple[bool, str], ...]  # (ok, fixed text)
+
+    @property
+    def ok(self) -> bool:
+        return all(ok for ok, _ in self.checks)
+
+
+@dataclass(frozen=True)
 class PreflightReport:
     secrets: tuple[SecretStatus, ...]
     lock: LockStatus
     queue: QueueStatus
     paths: tuple[PathStatus, ...] = field(default_factory=tuple)
     cadam: Optional[CadamStatus] = None
+    routes: tuple[RouteStatus, ...] = ()
 
     @property
     def secrets_ok(self) -> bool:
@@ -130,7 +146,8 @@ class PreflightReport:
     @property
     def ok(self) -> bool:
         cadam_ok = self.cadam is None or self.cadam.ok
-        return self.secrets_ok and self.lock.ok and self.queue.ok and self.paths_ok and cadam_ok
+        routes_ok = all(route.ok for route in self.routes)
+        return self.secrets_ok and self.lock.ok and self.queue.ok and self.paths_ok and cadam_ok and routes_ok
 
 
 def classify_secret_value(value: Optional[str]) -> str:
@@ -303,6 +320,116 @@ def audit_cadam(
     return CadamStatus(base_url, True, True, f"CADAM server up at {base_url}; bot sign-in succeeded")
 
 
+def queued_cadam_entrants(queue_path: Path) -> list[dict]:
+    """Distinct (route, runtime, model) of the CADAM entrants in queued/running jobs, in queue order."""
+    try:
+        import json
+
+        jobs = json.loads(Path(queue_path).read_text(encoding="utf-8")).get("jobs") or []
+    except (OSError, ValueError, AttributeError):
+        return []
+    seen, found = set(), []
+    for job in jobs:
+        if not isinstance(job, Mapping) or str(job.get("status") or "queued") not in {"queued", "running"}:
+            continue
+        for entrant in job.get("entrants") or []:
+            if not isinstance(entrant, Mapping) or entrant.get("kind") != "cadam":
+                continue
+            key = (
+                str(entrant.get("route") or cadam_routes.ROUTE_OPENROUTER),
+                str(entrant.get("runtime") or ""),
+                str(entrant.get("model_id") or ""),
+            )
+            if key not in seen:
+                seen.add(key)
+                found.append({"route": key[0], "runtime": key[1], "model_id": key[2]})
+    return found
+
+
+def audit_routes(
+    queue_path: Path,
+    entries: Mapping[str, str],
+    *,
+    environ: Optional[Mapping[str, str]] = None,
+    run: cadam_routes.Run = cadam_routes.default_run,
+    http_get: cadam_routes.HttpGet = cadam_routes.default_http_get,
+    which: Callable[[str], Optional[str]] = cadam_routes.which_binary,
+    repo_root: Path = cadam_routes.REPO_ROOT,
+) -> tuple[RouteStatus, ...]:
+    """Route-specific readiness for every CADAM entrant queued. Read-only; no model call is made."""
+    env = os.environ if environ is None else environ
+
+    def setting(key: str, default: str = "") -> str:
+        return (entries.get(key) or env.get(key) or default).strip()
+
+    statuses = []
+    for entrant in queued_cadam_entrants(queue_path):
+        route, runtime, model = entrant["route"], entrant["runtime"], entrant["model_id"]
+        label = cadam_routes.route_label(route, runtime, model)
+        checks: list[tuple[bool, str]] = []
+        cadam_dir = Path(setting("CADAM_DIR", cadam_routes.DEFAULT_CADAM_DIR))
+        if route == cadam_routes.ROUTE_OPENROUTER:
+            status = classify_secret_value(entries.get("OPENROUTER_API_KEY") or env.get("OPENROUTER_API_KEY"))
+            checks.append((status == SECRET_PRESENT, f"OPENROUTER_API_KEY: {status}"))
+            listed = cadam_routes.picker_has_model(cadam_dir, model)
+            if listed is None:
+                checks.append((False, f"CADAM clone or model catalog not found at {cadam_dir} (set CADAM_DIR)"))
+            else:
+                checks.append((listed, f"model {model} {'is in' if listed else 'is NOT in'} CADAM's picker"))
+        elif route == cadam_routes.ROUTE_CLI_BRIDGE:
+            checks.extend(_bridge_checks(setting, entries, env, runtime, model, run, http_get, which, repo_root))
+        else:
+            checks.append((False, f"unknown CADAM route {route!r} (use openrouter or cli-bridge)"))
+        statuses.append(RouteStatus(label, tuple(checks)))
+    return tuple(statuses)
+
+
+def _bridge_checks(setting, entries, env, runtime, model, run, http_get, which, repo_root):
+    checks: list[tuple[bool, str]] = []
+    if runtime not in cadam_routes.RUNTIMES:
+        return [(False, f"runtime {runtime!r} is not claude or codex")]
+    key_status = classify_secret_value(entries.get(cadam_routes.DEFAULT_BRIDGE_CONFIG_KEY_ENV) or env.get(cadam_routes.DEFAULT_BRIDGE_CONFIG_KEY_ENV))
+    checks.append((key_status == SECRET_PRESENT, f"{cadam_routes.DEFAULT_BRIDGE_CONFIG_KEY_ENV}: {key_status}"))
+    config_path = Path(setting("CADAM_CLI_BRIDGE_CONFIG"))
+    settings = None
+    if not setting("CADAM_CLI_BRIDGE_CONFIG") or not config_path.is_file():
+        checks.append((False, "CADAM_CLI_BRIDGE_CONFIG does not point at a bridge config file"))
+    else:
+        try:
+            settings = cadam_routes.read_bridge_config(config_path)
+        except (OSError, ValueError, AttributeError):
+            checks.append((False, "bridge config is not valid JSON"))
+    if settings is not None:
+        mapped = settings.models.get(model)
+        if mapped is None:
+            checks.append((False, f"model {model} is not mapped in the bridge config"))
+        elif mapped.get("runtime") != runtime:
+            checks.append((False, f"model {model} is mapped to runtime {mapped.get('runtime')}, not {runtime}"))
+        else:
+            checks.append((True, f"model {model} -> {runtime} {mapped.get('cli_model')}"))
+        binary = settings.binary(runtime)
+        if which(binary) is None and not Path(binary).is_file():
+            checks.append((False, f"{runtime} CLI ({binary}) not found on PATH"))
+        else:
+            login = ["claude", "auth", "status"] if runtime == "claude" else ["codex", "login", "status"]
+            login[0] = binary
+            code, _ = run(login)
+            checks.append((code == 0, f"{runtime} CLI {'is logged in' if code == 0 else 'is NOT logged in (run the CLI login)'}"
+                           f" ({cadam_routes.cli_version(binary, run)})"))
+        listening = http_get(settings.health_url) == 200
+        startable = (repo_root / "tools" / "cadam_cli_bridge" / "__init__.py").is_file()
+        checks.append((listening or startable,
+                       "bridge is already listening" if listening else
+                       "bridge will be started by the runner" if startable else
+                       "bridge is not listening and tools/cadam_cli_bridge is missing"))
+    bridge_cadam = setting("CADAM_BRIDGE_BASE_URL", cadam_routes.DEFAULT_BRIDGE_CADAM_URL)
+    status = http_get(bridge_cadam)
+    up = 0 < status < 500
+    checks.append((up, f"bridge-mode CADAM {'answers' if up else 'is not reachable'} at {bridge_cadam}"
+                       + ("" if up else " (start it with CADAM_PROVIDER_OVERRIDE=cli-bridge; see docs/cadam/LOCAL_SETUP.md)")))
+    return checks
+
+
 def build_report(
     *,
     secrets_path: Path,
@@ -313,6 +440,9 @@ def build_report(
     pid_alive: Callable[[int], bool] = _pid_alive,
     cadam_transport: Optional[HttpTransport] = None,
     environ: Optional[Mapping[str, str]] = None,
+    route_run: cadam_routes.Run = cadam_routes.default_run,
+    route_http_get: cadam_routes.HttpGet = cadam_routes.default_http_get,
+    route_which: Callable[[str], Optional[str]] = cadam_routes.which_binary,
 ) -> PreflightReport:
     entries = parse_secrets_file(secrets_path) if secrets_path.exists() else {}
     return PreflightReport(
@@ -321,6 +451,7 @@ def build_report(
         queue=audit_queue(queue_path),
         paths=audit_paths(named_paths),
         cadam=audit_cadam(entries, transport=cadam_transport, environ=environ),
+        routes=audit_routes(queue_path, entries, environ=environ, run=route_run, http_get=route_http_get, which=route_which),
     )
 
 
@@ -334,6 +465,9 @@ def render_report_lines(report: PreflightReport) -> list[str]:
     if report.cadam is not None:
         lines.append(f"[{'PASS' if report.cadam.ok else 'FAIL'}] cadam")
         lines.append(f"  {report.cadam.message}")
+    for route in report.routes:
+        lines.append(f"[{'PASS' if route.ok else 'FAIL'}] route: {route.label}")
+        lines.extend(f"  [{'ok' if ok else 'FAIL'}] {text}" for ok, text in route.checks)
     lock = report.lock
     lock_detail = f" pid={lock.pid}" if lock.pid is not None else ""
     lines.append(f"[{'PASS' if lock.ok else 'FAIL'}] lock: {lock.status}{lock_detail}")
