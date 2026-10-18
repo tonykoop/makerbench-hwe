@@ -97,6 +97,27 @@ def _publish_text(text: str, repo_root: Path) -> str:
     return redact_host_paths(text.replace(root + os.sep, "").replace(root, "."))
 
 
+#: The Control Room beacon (#1112): the library's "Run tonight" links show only when this decodes
+#: at exactly this size. Keep it in step with instrument-showcase's RUN_TONIGHT_JS.
+BEACON_PATH = "/api/control-room/beacon.png"
+BEACON_SIZE = (23, 7)
+
+
+def beacon_png() -> bytes:
+    """A solid BEACON_SIZE PNG, built from the PNG spec (no image library needed)."""
+    import struct
+    import zlib
+
+    width, height = BEACON_SIZE
+    raw = b"".join(b"\x00" + b"\x2b\x6c\xb0" * width for _ in range(height))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+
+
 def create_studio_app(
     default_run_dir: Optional[Path] = None,
     registry_path: Path = Path(DEFAULT_REGISTRY),
@@ -193,6 +214,16 @@ def create_studio_app(
     )
 
     # API Routes
+    @app.get(BEACON_PATH)
+    def control_room_beacon():
+        """A fixed-size image the public instrument library loads to see if Control Room runs (#1112).
+
+        An ``<img>`` from another origin needs no CORS and reveals nothing but whether a picture
+        of exactly BEACON_SIZE decoded, which an unrelated server on the same port will not serve.
+        """
+        return Response(content=beacon_png(), media_type="image/png", headers={
+            "Cache-Control": "no-store", "Cross-Origin-Resource-Policy": "cross-origin"})
+
     @app.get("/api/health")
     def health():
         return {
