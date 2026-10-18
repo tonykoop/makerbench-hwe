@@ -8,7 +8,7 @@ sub-scores they were graded with::
     "joints": {
       "version": 1,
       "tolerance_mm": 0.5,               # a gap above this FAILs the joint
-      "joinery_allowance_mm": 20,        # interpenetration deeper than this is a warning
+      "joinery_allowance_mm": 20,        # interpenetration deeper than this FAILs the joint
       "parts": {"hull": {"names": ["hull"], "identify": "largest_bbox_volume"}, ...},
       "pairs": [["neck_arc", "hull"], ...]
     }
@@ -38,8 +38,11 @@ Measurement
     Two watertight parts are measured as manifold3d solids: the gap triangle by triangle
     (``Manifold.min_gap``); an overlap reports gap 0 and its penetration depth (the deepest
     point of the shared solid, as in ``assembly_fit``). A part that is not watertight is
-    measured surface to surface from sampled points (vertices and face centroids, both ways),
-    an upper bound on the gap; its interpenetration is not measured.
+    measured exactly surface to surface, triangle against triangle (``_exact_gap``: vertex–
+    triangle, edge–edge and edge-through-triangle tests over the pairs a sampled upper bound
+    leaves in reach), so touching or crossing panels measure 0; its interpenetration is not
+    measured. A joint FAILs on a gap above ``tolerance_mm`` or a penetration deeper than
+    ``joinery_allowance_mm`` (#1150).
 """
 
 from __future__ import annotations
@@ -64,6 +67,9 @@ LISTING_BBOX_TOLERANCE_MM = 1.0
 #: Gaps beyond this are reported as "> SEARCH_MM" (the search is bounded).
 SEARCH_MM = 1000.0
 MAX_SAMPLES = 20_000
+#: Candidate triangle pairs measured exactly per joint (beyond this the joint is unknown).
+MAX_TRIANGLE_PAIRS = 5_000_000
+PAIR_BATCH = 100_000
 RULES = ("largest_bbox_volume", "largest_plate", "longest", "longest_strip")
 
 
@@ -178,11 +184,122 @@ def _samples(mesh: trimesh.Trimesh) -> np.ndarray:
     return points
 
 
-def _surface_gap(a: trimesh.Trimesh, b: trimesh.Trimesh) -> float:
+def _sampled_gap(a: trimesh.Trimesh, b: trimesh.Trimesh) -> float:
+    """An upper bound on the surface gap: sampled points of each mesh to the other's surface."""
     best = float("inf")
     for source, target in ((a, b), (b, a)):
         _, distance, _ = trimesh.proximity.closest_point(target, _samples(source))
         best = min(best, float(np.min(distance)))
+    return best
+
+
+def _point_triangle(p: np.ndarray, a: np.ndarray, b: np.ndarray, c: np.ndarray) -> np.ndarray:
+    """Distance from points ``p`` to triangles ``abc`` (row-wise; Ericson's closest-point regions)."""
+    ab, ac, ap = b - a, c - a, p - a
+    d1, d2 = np.einsum("ij,ij->i", ab, ap), np.einsum("ij,ij->i", ac, ap)
+    bp = p - b
+    d3, d4 = np.einsum("ij,ij->i", ab, bp), np.einsum("ij,ij->i", ac, bp)
+    cp = p - c
+    d5, d6 = np.einsum("ij,ij->i", ab, cp), np.einsum("ij,ij->i", ac, cp)
+    va, vb, vc = d3 * d6 - d5 * d4, d5 * d2 - d1 * d6, d1 * d4 - d3 * d2
+    denom = va + vb + vc
+    with np.errstate(divide="ignore", invalid="ignore"):
+        v = np.where(np.abs(denom) > 0, vb / denom, 0.0)
+        w = np.where(np.abs(denom) > 0, vc / denom, 0.0)
+    closest = a + ab * v[:, None] + ac * w[:, None]                      # interior
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t_ab = np.clip(np.where(d1 - d3 != 0, d1 / (d1 - d3), 0.0), 0, 1)
+        t_ac = np.clip(np.where(d2 - d6 != 0, d2 / (d2 - d6), 0.0), 0, 1)
+        t_bc = np.clip(np.where((d4 - d3) + (d5 - d6) != 0, (d4 - d3) / ((d4 - d3) + (d5 - d6)), 0.0), 0, 1)
+    regions = [
+        (d1 <= 0) & (d2 <= 0), (d3 >= 0) & (d4 <= d3), (d6 >= 0) & (d5 <= d6),
+        (vc <= 0) & (d1 >= 0) & (d3 <= 0), (vb <= 0) & (d2 >= 0) & (d6 <= 0),
+        (va <= 0) & ((d4 - d3) >= 0) & ((d5 - d6) >= 0),
+    ]
+    points = [a, b, c, a + ab * t_ab[:, None], a + ac * t_ac[:, None], b + (c - b) * t_bc[:, None]]
+    for region, point in zip(reversed(regions), reversed(points)):  # first matching region wins
+        closest = np.where(region[:, None], point, closest)
+    return np.linalg.norm(p - closest, axis=1)
+
+
+def _segment_segment(p1, q1, p2, q2) -> np.ndarray:
+    """Distance between segments ``p1q1`` and ``p2q2`` (row-wise; Ericson 5.1.9)."""
+    d1, d2, r = q1 - p1, q2 - p2, p1 - p2
+    a, e = np.einsum("ij,ij->i", d1, d1), np.einsum("ij,ij->i", d2, d2)
+    f, c = np.einsum("ij,ij->i", d2, r), np.einsum("ij,ij->i", d1, r)
+    b = np.einsum("ij,ij->i", d1, d2)
+    denom = a * e - b * b
+    with np.errstate(divide="ignore", invalid="ignore"):
+        s = np.where(denom > 1e-18, np.clip((b * f - c * e) / denom, 0, 1), 0.0)
+        t = np.where(e > 1e-18, (b * s + f) / e, 0.0)
+        s = np.where(t < 0, np.where(a > 1e-18, np.clip(-c / a, 0, 1), 0.0), s)
+        s = np.where(t > 1, np.where(a > 1e-18, np.clip((b - c) / a, 0, 1), 0.0), s)
+    t = np.clip(t, 0, 1)
+    return np.linalg.norm((p1 + d1 * s[:, None]) - (p2 + d2 * t[:, None]), axis=1)
+
+
+def _segment_crosses_triangle(p, q, a, b, c) -> np.ndarray:
+    """Whether segment ``pq`` passes through triangle ``abc`` (row-wise Möller–Trumbore)."""
+    d = q - p
+    e1, e2 = b - a, c - a
+    h = np.cross(d, e2)
+    det = np.einsum("ij,ij->i", e1, h)
+    ok = np.abs(det) > 1e-12
+    inv = np.where(ok, 1.0 / np.where(ok, det, 1.0), 0.0)
+    s = p - a
+    u = inv * np.einsum("ij,ij->i", s, h)
+    qv = np.cross(s, e1)
+    v = inv * np.einsum("ij,ij->i", d, qv)
+    t = inv * np.einsum("ij,ij->i", e2, qv)
+    eps = 1e-9
+    return ok & (u >= -eps) & (v >= -eps) & (u + v <= 1 + eps) & (t >= -eps) & (t <= 1 + eps)
+
+
+def _triangle_pairs_distance(ta: np.ndarray, tb: np.ndarray) -> np.ndarray:
+    """Exact distance per triangle pair (``ta[i]`` to ``tb[i]``): 0 when they cross or touch."""
+    best = np.full(len(ta), np.inf)
+    for i in range(3):  # each vertex of one to the other triangle
+        best = np.minimum(best, _point_triangle(ta[:, i], tb[:, 0], tb[:, 1], tb[:, 2]))
+        best = np.minimum(best, _point_triangle(tb[:, i], ta[:, 0], ta[:, 1], ta[:, 2]))
+    for i in range(3):  # each edge pair
+        for j in range(3):
+            best = np.minimum(best, _segment_segment(ta[:, i], ta[:, (i + 1) % 3], tb[:, j], tb[:, (j + 1) % 3]))
+    crossing = np.zeros(len(ta), dtype=bool)
+    for i in range(3):  # an edge piercing the other triangle's interior
+        crossing |= _segment_crosses_triangle(ta[:, i], ta[:, (i + 1) % 3], tb[:, 0], tb[:, 1], tb[:, 2])
+        crossing |= _segment_crosses_triangle(tb[:, i], tb[:, (i + 1) % 3], ta[:, 0], ta[:, 1], ta[:, 2])
+    return np.where(crossing, 0.0, best)
+
+
+def _exact_gap(a: trimesh.Trimesh, b: trimesh.Trimesh) -> Optional[float]:
+    """The exact surface-to-surface minimum distance, triangle against triangle.
+
+    A sampled distance gives an upper bound ``U``. Only triangle pairs whose bounding spheres can
+    come within ``U`` are compared exactly (vertex–triangle, edge–edge and edge-through-triangle
+    tests), so the minimum over them is the true minimum. ``None`` when that candidate set is too
+    large to measure (``MAX_TRIANGLE_PAIRS``): the caller reports the joint unknown.
+    """
+    from scipy.spatial import cKDTree
+
+    upper = _sampled_gap(a, b)
+    ta, tb = np.asarray(a.triangles, float), np.asarray(b.triangles, float)
+    ca, cb = ta.mean(axis=1), tb.mean(axis=1)
+    ra = np.linalg.norm(ta - ca[:, None], axis=2).max(axis=1)
+    rb = np.linalg.norm(tb - cb[:, None], axis=2).max(axis=1)
+    reach = upper + float(rb.max()) + 1e-9
+    neighbours = cKDTree(cb).query_ball_point(ca, ra + reach)
+    ia = np.repeat(np.arange(len(ca)), [len(n) for n in neighbours])
+    if len(ia) > MAX_TRIANGLE_PAIRS:
+        return None
+    if not len(ia):
+        return upper
+    ib = np.fromiter((j for n in neighbours for j in n), dtype=np.int64, count=len(ia))
+    keep = np.linalg.norm(ca[ia] - cb[ib], axis=1) <= ra[ia] + rb[ib] + upper + 1e-9
+    ia, ib = ia[keep], ib[keep]
+    best = upper
+    for start in range(0, len(ia), PAIR_BATCH):
+        sl = slice(start, start + PAIR_BATCH)
+        best = min(best, float(_triangle_pairs_distance(ta[ia[sl]], tb[ib[sl]]).min()))
     return best
 
 
@@ -197,7 +314,7 @@ def measure(a: trimesh.Trimesh, b: trimesh.Trimesh) -> dict[str, Any]:
         gap = assembly_fit._gap(sa, sb, SEARCH_MM)
         if gap is not None:
             return {"gap_mm": gap, "penetration_mm": 0.0 if overlap is not None else None, "method": "manifold"}
-    return {"gap_mm": _surface_gap(a, b), "penetration_mm": None, "method": "surface-samples"}
+    return {"gap_mm": _exact_gap(a, b), "penetration_mm": None, "method": "triangle-exact"}
 
 
 def _fmt_mm(value: float) -> str:
@@ -224,7 +341,7 @@ def check(spec: Mapping[str, Any], bodies: Sequence[trimesh.Trimesh],
             and "joinery_allowance_mm" in pair[2] else default_allowance
         label = joint_label(a, b)
         row: dict[str, Any] = {"joint": label, "parts": [a, b], "identified": {a: found.get(a), b: found.get(b)},
-                               "tolerance_mm": tolerance, "joinery_allowance_mm": allowance, "warning": None}
+                               "tolerance_mm": tolerance, "joinery_allowance_mm": allowance}
         ia, ib = (found.get(a) or {}).get("body"), (found.get(b) or {}).get("body")
         if ia is None or ib is None:
             missing = [p for p, i in ((a, ia), (b, ib)) if i is None]
@@ -245,12 +362,13 @@ def check(spec: Mapping[str, Any], bodies: Sequence[trimesh.Trimesh],
             row.update(status="unknown", sentence=f"{label}: unknown — gap not measurable")
         elif gap > tolerance:
             shown = f"> {SEARCH_MM:.0f}" if gap >= SEARCH_MM else _fmt_mm(gap)
-            row.update(status="fail", sentence=f"{label}: {shown} mm gap — FAIL")
+            row.update(status="fail", reason="gap", sentence=f"{label}: {shown} mm gap — FAIL")
         else:
             row["status"] = "pass"
             if depth is not None and depth > allowance:
-                row["warning"] = f"interpenetrates {_fmt_mm(depth)} mm, beyond the {_fmt_mm(allowance)} mm joinery allowance"
-                row["sentence"] = f"{label}: touching, but {row['warning']} — WARNING"
+                row.update(status="fail", reason="penetration",
+                           sentence=f"{label}: interpenetrates {_fmt_mm(depth)} mm, beyond the "
+                                    f"{_fmt_mm(allowance)} mm joinery allowance — FAIL")
             elif depth is not None and depth > 0:
                 row["sentence"] = f"{label}: seated {_fmt_mm(depth)} mm deep — PASS"
             else:

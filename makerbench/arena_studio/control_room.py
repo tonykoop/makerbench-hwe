@@ -260,8 +260,8 @@ def _design(run_dir: Path, repo_root: Path, row: Mapping[str, Any], charges: Map
     if joinery:
         failed = [f for f in failed if f.get("check") not in WOOD_DIAGNOSTICS]
     failures = [failure_sentence(f) for f in failed]
-    joint_notes = [check["detail"] for check in checks if check.get("joint") and check["state"] != "fail"
-                   and check.get("detail") and ("WARNING" in check["detail"] or check["state"] == "unknown")]
+    joint_notes = [check["detail"] for check in checks
+                   if check.get("joint") and check["state"] == "unknown" and check.get("detail")]
     status = str(row.get("status") or "pending")
     if not objective:
         reason = row.get("error") or result.get("error") or f"it ended with status {status}"

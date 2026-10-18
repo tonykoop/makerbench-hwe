@@ -73,14 +73,16 @@ def test_the_r1_rehearsal_fails_neck_to_hull():
     assert joints["soundboard↔hull"]["status"] == "fail" and joints["string holder↔soundboard"]["status"] == "fail"
 
 
-def test_touching_and_seated_joints_pass_and_deep_ones_warn():
+def test_touching_and_seated_joints_pass_and_too_deep_ones_fail():
     spec = _spec()
     seated = _by(jc.check(spec, _harp(neck_bottom=90.0)))
     assert all(row["status"] == "pass" for row in seated.values())
     assert seated["neck↔hull"]["penetration_mm"] == pytest.approx(10.0, abs=0.5)
     assert seated["soundboard↔hull"]["gap_mm"] == pytest.approx(0.0, abs=1e-6)
-    deep = _by(jc.check(spec, _harp(neck_bottom=60.0)))["neck↔hull"]
-    assert deep["status"] == "pass" and "beyond the 20 mm joinery allowance" in deep["warning"]
+    deep_report = jc.check(spec, _harp(neck_bottom=60.0))
+    deep = _by(deep_report)["neck↔hull"]
+    assert deep["status"] == "fail" and deep["reason"] == "penetration" and jc.sub_score(deep_report) == 0.0
+    assert deep["sentence"] == "neck↔hull: interpenetrates 40 mm, beyond the 20 mm joinery allowance — FAIL"
     gapped = _by(jc.check(spec, _harp(holder_bottom=106.8)))["string holder↔soundboard"]
     assert gapped["status"] == "fail" and gapped["sentence"] == "string holder↔soundboard: 0.8 mm gap — FAIL"
 
@@ -169,3 +171,38 @@ def test_morning_review_keeps_stl_checks_for_designs_without_joints(tmp_path):
     design = cr._design(tmp_path, tmp_path, row, {})
     assert [check["name"] for check in design["checks"]] == list(cr.BASE_CHECKS)
     assert design["diagnostics"] == [] and design["all_pass"] is True
+
+
+def _panel(corners) -> trimesh.Trimesh:
+    return trimesh.Trimesh(np.asarray(corners, float), [(0, 1, 2), (0, 2, 3)], process=False)
+
+
+def test_open_panels_touching_along_an_edge_measure_zero():
+    """Codex's #1152 reproduction: a sampled distance said 1.3 mm; the panels touch at (2, y, 0)."""
+    a = _panel([(0, 0, 0), (10, 0, 0), (10, 10, 0), (0, 10, 0)])
+    b = _panel([(2, -5, 0), (2, 15, 0), (2, 15, 10), (2, -5, 10)])
+    measured = jc.measure(a, b)
+    assert measured["method"] == "triangle-exact" and measured["gap_mm"] == pytest.approx(0.0, abs=1e-9)
+    assert jc._sampled_gap(a, b) > 0.5  # what the old upper bound would have FAILed on
+    lifted = b.copy()
+    lifted.apply_translation((0, 0, 0.8))
+    assert jc.measure(a, lifted)["gap_mm"] == pytest.approx(0.8, abs=1e-9)
+    crossing = b.copy()
+    crossing.apply_translation((0, 0, -5))  # B passes through A's interior: distance 0
+    assert jc.measure(a, crossing)["gap_mm"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_exact_gap_matches_known_distances_between_open_meshes():
+    a = _panel([(0, 0, 0), (10, 0, 0), (10, 10, 0), (0, 10, 0)])
+    corner = _panel([(13, 14, 0), (20, 14, 0), (20, 20, 0), (13, 20, 0)])  # nearest: (10,10)-(13,14) = 5
+    assert jc.measure(a, corner)["gap_mm"] == pytest.approx(5.0, abs=1e-9)
+    tilted = _panel([(5, 5, 3), (6, 5, 9), (6, 6, 9), (5, 6, 3)])  # nearest: its lower edge, 3 above A
+    assert jc.measure(a, tilted)["gap_mm"] == pytest.approx(3.0, abs=1e-9)
+
+
+def test_a_too_deep_joint_explains_its_penetration_in_the_gate(tmp_path):
+    objective = _gate(tmp_path, _harp(neck_bottom=60.0))
+    assert objective["sub_scores"]["joints"] == 0.0 and not objective["passed"]
+    row = next(f for f in objective["failures"] if f["check"] == "joints")
+    assert (row["reason"], row["unit"], row["threshold"]) == ("penetration", "mm penetration", 20.0)
+    assert row["measured"] == pytest.approx(40.0, abs=0.5)

@@ -444,10 +444,13 @@ def mesh_objective_gate(
                     interface=item.get("name")))
         for joint in (joints or {}).get("joints", []):
             if joint["status"] == "fail":
+                deep = joint.get("reason") == "penetration"
                 failures.append(_failure(
-                    joint_contact.CHECK, measured=joint["gap_mm"], threshold=joint["tolerance_mm"], unit="mm gap",
-                    requires="measured <= threshold", body_id=joint["joint"], detail=joint["sentence"],
-                    joint=joint["joint"], body_ids=joint.get("bodies")))
+                    joint_contact.CHECK, measured=joint["penetration_mm"] if deep else joint["gap_mm"],
+                    threshold=joint["joinery_allowance_mm"] if deep else joint["tolerance_mm"],
+                    unit="mm penetration" if deep else "mm gap", requires="measured <= threshold",
+                    body_id=joint["joint"], detail=joint["sentence"], joint=joint["joint"],
+                    reason=joint.get("reason"), body_ids=joint.get("bodies")))
         # #800: advisory only, computed after the rate and never folded into it.
         try:
             acoustic = acoustic_advisory.advise(spec, mesh)
