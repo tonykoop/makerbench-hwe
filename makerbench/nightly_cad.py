@@ -670,9 +670,18 @@ class NightlyExecutor:
         """
         assert self.runs_root is not None
         revisions.source_run_dir(self.runs_root, request.source_run_id)  # confinement only
-        original = next((j for j in jobs if j.run_id == request.source_run_id), None)
+        # A revised design's run is not in the nightly queue: follow the revision ledger back to the
+        # night that produced it (chains of revisions), guarding against loops.
+        origin_id, seen = request.source_run_id, set()
+        original = None
+        while origin_id and origin_id not in seen and len(seen) < revisions.MAX_CHAIN:
+            seen.add(origin_id)
+            original = next((j for j in jobs if j.run_id == origin_id), None)
+            if original is not None:
+                break
+            origin_id = revisions.parent_run(self.runs_root, origin_id)
         if original is None:
-            raise ValueError(f"source run {request.source_run_id} is not in the nightly queue")
+            raise ValueError(f"source run {request.source_run_id} is not in the nightly queue or the revision ledger")
         entrant = next((e for e in original.entrants if e.entrant_id == request.entrant_id), None)
         if entrant is None:
             raise ValueError(f"{request.entrant_id} did not take part in {request.source_run_id}")

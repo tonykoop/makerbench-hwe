@@ -153,6 +153,26 @@ def pending_count(runs_root: Path) -> int:
     return sum(1 for job in _read(path).get("jobs", []) if isinstance(job, Mapping) and job.get("status") == PENDING)
 
 
+def parent_run(runs_root: Path, run_id: str) -> Optional[str]:
+    """The run a revision run continued, from the ledger (``new_run`` link + ``revision_of``).
+
+    A revision run never enters the nightly queue, so this is how a later request to revise a
+    revised design finds where that design's entrant configuration came from.
+    """
+    path = revision_queue_path(runs_root)
+    if not path.is_file():
+        return None
+    for job in _read(path).get("jobs", []):
+        if isinstance(job, Mapping) and isinstance(job.get("new_run"), Mapping) and job["new_run"].get("run_id") == run_id:
+            parent = job.get("revision_of")
+            if isinstance(parent, Mapping) and is_slug(parent.get("run_id")):
+                return str(parent["run_id"])
+    return None
+
+
+MAX_CHAIN = 50
+
+
 def claim_next(runs_root: Path, *, now: Optional[datetime] = None) -> Optional[RevisionRequest]:
     """Mark the next pending request ``running`` and return it; ``None`` when nothing is pending.
 

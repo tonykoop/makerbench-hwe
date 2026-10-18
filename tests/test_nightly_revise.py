@@ -186,3 +186,51 @@ def test_a_symlinked_destination_run_folder_is_refused_before_any_write(night):
 def test_job_ids_with_matchup_colons_get_a_windows_safe_folder_name(night):
     assert rev.is_slug("sambuca-night-revise-model::level::openscad")
     assert rev.folder_name("a::b+c") == "a--b-c"
+
+
+# ---- revise a revision --------------------------------------------------------------------
+
+
+def _executor(night, handler):
+    return NightlyExecutor(
+        queue_path=night.tmp / "queue.json", registry_path=night.tmp / "registry.json", output_root=night.runs,
+        now=lambda: NOW, runs_root=night.runs, handlers={"revision": handler},
+    )
+
+
+def test_a_revised_design_can_be_revised_again_chain_of_two(night, monkeypatch):
+    _plant_source(night)
+    gen = FakeGenerator()
+    _patch_providers(monkeypatch, gen)
+    handler = make_revision_handler()
+    path = _write_queue(night, _job(night, feedback="first change"))
+    first = _executor(night, handler).run()
+    first_id = first["run_id"]
+    assert _jobs(path)["sambuca-night-revise-codex-openscad"]["new_run"] == {"run_id": first_id}
+
+    # Morning Review of the REVISION run: the same design, revised once more (new job id).
+    second_job = {**_job(night, feedback="second change", run_id=first_id), "job_id": "second-revise"}
+    queue = json.loads(path.read_text())
+    queue["jobs"].append(second_job)
+    atomic_write_json(path, queue)
+    second = _executor(night, handler).run()
+
+    assert second["run_id"] not in {night.run_id, first_id}
+    assert _jobs(path)["second-revise"]["status"] == "done"
+    assert _jobs(path)["second-revise"]["new_run"] == {"run_id": second["run_id"]}
+    assert "second change" in gen.requests[1].prompt and "deeper" in gen.requests[1].prompt  # continued the revised source
+    row = json.loads((Path(second["run_dir"]) / "run_log.json").read_text())["trials"][0]
+    provenance = json.loads(Path(row["result"]["gen"]["provenance_path"]).read_text())
+    assert provenance["revision_of"]["run_id"] == first_id
+
+
+def test_revision_ledger_loops_are_refused_not_followed_forever(night):
+    jobs = [
+        {"job_id": "a", "status": "done", "new_run": {"run_id": "run-a"}, "revision_of": {"run_id": "run-b"}},
+        {"job_id": "b", "status": "done", "new_run": {"run_id": "run-b"}, "revision_of": {"run_id": "run-a"}},
+        {**_job(night, run_id="run-a"), "job_id": "c"},
+    ]
+    path = _write_queue(night, *jobs)
+    _executor(night, _synthetic_handler).run()
+    job = _jobs(path)["c"]
+    assert job["status"] == "failed" and "revision ledger" in job["error"]
