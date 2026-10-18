@@ -104,8 +104,8 @@ def _check_remote(repo: Path) -> str:
     """The one URL to push to: every origin url and pushurl must be the instrument's own GitHub repo.
 
     The raw configured URLs are read (not ``remote get-url``, which shows only the first push
-    URL while ``git push`` sends to all of them), and any insteadOf/pushInsteadOf rule that
-    would rewrite one of them is refused, so the URL checked is the URL pushed to.
+    URL while ``git push`` sends to all of them). Any insteadOf/pushInsteadOf rule in git's
+    config refuses the push, so the URL checked is the URL pushed to.
     """
     fetch = _git(repo, "config", "--get-all", "remote.origin.url", check=False).splitlines()
     push = _git(repo, "config", "--get-all", "remote.origin.pushurl", check=False).splitlines()
@@ -113,10 +113,12 @@ def _check_remote(repo: Path) -> str:
     allowed = f"github.com/{'|'.join(REMOTE_OWNERS)}/{repo.name}"
     if not fetch or not all(url and remote_ok(url, repo.name) for url in urls):
         raise PromoteError(f"Every origin URL and push URL must be {allowed}; refusing to push.")
-    rules = _git(repo, "config", "--get-regexp", r"^url\..*\.(push)?insteadof$", check=False).splitlines()
-    prefixes = [line.split(None, 1)[1].strip() for line in rules if len(line.split(None, 1)) == 2]
-    if any(prefix and url.startswith(prefix) for prefix in prefixes for url in urls):
-        raise PromoteError("A git insteadOf/pushInsteadOf rule rewrites origin's URL; refusing to push.")
+    # Any rewrite rule refuses, matching or not: an empty insteadOf value is a match-all prefix,
+    # and prefix matching is git's to decide, not ours.
+    rules = _git(repo, "config", "--get-regexp", r"^url\..*\.(push)?insteadof$", check=False)
+    if rules.strip():
+        raise PromoteError("git has an insteadOf/pushInsteadOf URL rewrite configured; refusing to push "
+                           "(remove it to publish promotions).")
     return (push or fetch)[0].strip()
 
 

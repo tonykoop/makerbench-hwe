@@ -240,6 +240,23 @@ def test_a_url_rewrite_of_origin_is_refused(setup, tmp_path, rule):
     with pytest.raises(pm.PromoteError, match="insteadOf"):
         pm._check_remote(instrument)
     _git(instrument, "config", "--unset", f"url.{tmp_path / 'decoy.git'}.{rule}")
-    _git(instrument, "config", "url.https://example.invalid/.insteadOf", "https://unrelated.example/")
-    assert pm._check_remote(instrument) == "https://github.com/tonykoop/sambuca.git"  # unrelated rules are fine
+    assert pm._check_remote(instrument) == "https://github.com/tonykoop/sambuca.git"  # the control: no rules
+    # An empty value is a match-all prefix in git; any rule at all refuses, matching or not.
+    for value in ("", "https://unrelated.example/"):
+        _git(instrument, "config", f"url.{tmp_path / 'decoy.git'}.{rule}", value)
+        with pytest.raises(pm.PromoteError, match="insteadOf"):
+            pm._check_remote(instrument)
+        _git(instrument, "config", "--unset", f"url.{tmp_path / 'decoy.git'}.{rule}")
+
+
+def test_an_empty_rewrite_never_reaches_the_push(setup, tmp_path, monkeypatch):
+    studio_repo, root, instrument, origin = setup
+    elsewhere = tmp_path / "rewritten.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(elsewhere)], check=True)
+    monkeypatch.setattr(pm, "remote_ok", lambda url, name: url == str(origin))
+    _git(instrument, "config", f"url.{elsewhere}.pushInsteadOf", "")
+    client = _client(studio_repo, root, control_room_promote=True, promote_pr_opener=lambda *a: pytest.fail("opened"))
+    response = client.post(f"/api/review/{SAMBUCA_RUN}/promote/{SOLIDWORKS}", headers=ORIGIN)
+    assert response.status_code == 409 and "insteadOf" in response.text
+    assert _git(elsewhere, "branch", "--list") == "" and _git(origin, "branch", "--list", "makerbench/*") == ""
     assert pm.github_repo("git@github.com:tonykoop/sambuca.git", "sambuca") == "tonykoop/sambuca"
