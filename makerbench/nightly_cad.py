@@ -316,7 +316,19 @@ def _model_label(name: str) -> str:
 
 
 def route_label(entrant: NightlyEntrant) -> str:
-    """The route Morning Review shows for an entrant, e.g. ``CADAM · OpenRouter · Opus 5.5`` (#1099)."""
+    """The route Morning Review shows for an entrant, e.g. ``CADAM · OpenRouter · Opus 5.5`` (#1099).
+
+    Total: an id the runner cannot route (the same reason that entrant's dispatch failed) gets an
+    honest fallback label instead of raising, so labelling can never abort the night (#648).
+    """
+    try:
+        return _route_label(entrant)
+    except (ValueError, KeyError):
+        return (f"{entrant.kind} · {entrant.model_id or 'no model'} · "
+                f"{_BACKEND_LABELS.get(entrant.backend, entrant.backend)} (route not recognized)")
+
+
+def _route_label(entrant: NightlyEntrant) -> str:
     if entrant.kind == "cadam":
         return f"CADAM · OpenRouter · {_model_label(entrant.model_id)}"
     if entrant.kind == "live":

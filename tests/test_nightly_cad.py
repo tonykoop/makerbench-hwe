@@ -418,3 +418,26 @@ def test_a_matchup_night_writes_what_morning_review_reads(tmp_path):
     for name in summary["pair_files"]:
         page = (run_dir / "morning-vote" / name).read_text()
         assert "Opus" not in page and "Sonnet" not in page and "OpenRouter" not in page  # vote pages stay blind
+
+
+def test_an_unroutable_entrant_fails_alone_and_the_night_still_finishes(tmp_path):
+    photo = _image(tmp_path / "reference.png")
+    queue = tmp_path / "queue.json"
+    atomic_write_json(queue, {"schema": "makerbench-nightly-cad-queue-v1", "jobs": [{
+        "job_id": "night", "instrument_id": "sambuca", "reference_image": photo.as_posix(), "budget_usd": 2.0,
+        "entrants": [
+            {"entrant_id": "mystery", "kind": "arena", "model_id": "unprefixed-model"},   # no provider prefix
+            {"entrant_id": "bad-live", "kind": "live", "model_id": "codex-", "backend": "solidworks-live"},
+            {"entrant_id": "good-a", "kind": "cadam", "model_id": "anthropic/claude-opus-5.5", "max_cost_usd": 1.0},
+            {"entrant_id": "good-b", "kind": "cadam", "model_id": "anthropic/claude-opus-5.5", "max_cost_usd": 1.0},
+        ]}]})
+    executor = NightlyExecutor(queue_path=queue, registry_path=_registry(tmp_path / "registry.json"),
+                               output_root=tmp_path / "runs", handlers={"cadam": _synthetic_handler})
+    result = executor.run()  # the arena and live entrants fail in dispatch; labelling must not raise
+    assert [row["status"] for row in result["outcomes"]] == ["error", "error", "complete", "complete"]
+    assert result["status"] == "votable" and (Path(result["run_dir"]) / "morning-summary.json").is_file()
+    rows = json.loads((Path(result["run_dir"]) / "run_log.json").read_text())["trials"]
+    routes = {row["model_id"]: row.get("meta", {}).get("route") for row in rows}
+    assert routes["mystery"] == "arena · unprefixed-model · OpenSCAD (route not recognized)"
+    assert routes["bad-live"] == "live · codex- · SolidWorks live bridge (route not recognized)"
+    assert routes["good-a"] == "CADAM · OpenRouter · Opus 5.5"
