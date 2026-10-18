@@ -269,6 +269,9 @@ def test_codex_driver_gets_its_connector_by_name_without_tokens(tmp_path):
     assert argv[argv.index("--sandbox") + 1] == "workspace-write"
     overrides = [argv[i + 1] for i, tok in enumerate(argv) if tok == "-c"]
     assert 'mcp_servers.hwe-solidworks.command="python3"' in overrides
+    assert [o for o in overrides if "approval" in o] == [
+        'mcp_servers.hwe-solidworks.default_tools_approval_mode="approve"']
+    assert "--dangerously-bypass-approvals-and-sandbox" not in argv
     assert 'mcp_servers.hwe-solidworks.args=["-m", "driver.solidworks_mcp_server"]' in overrides
     assert 'mcp_servers.hwe-solidworks.env_vars=["HWE_SW_HOST", "HWE_SW_PORT", "HWE_SW_TOKEN"]' in overrides
     assert any(o.startswith("mcp_servers.hwe-solidworks.env={PYTHONPATH=") for o in overrides)

@@ -185,6 +185,10 @@ def driver_command(config: LiveCadConfig, gen_dir: Path) -> list[str]:
                 "-c", f"{key}.env={{PYTHONPATH={json.dumps(server['pythonpath'])}}}",
                 "-c", f"{key}.env_vars={json.dumps(server['env_names'])}",
             ]
+            if config.connector == "hwe-solidworks":
+                # codex exec cannot prompt. Approve this CAD connector only;
+                # shell commands retain the workspace-write sandbox.
+                argv += ["-c", f'{key}.default_tools_approval_mode="approve"']
         return argv
     if config.driver_runtime == "claude":
         server = _mcp_server(config)
