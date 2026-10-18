@@ -451,25 +451,24 @@ def _appdir(tmp_path):
     return appdir
 
 
-def _shims(tmp_path, monkeypatch):
-    from makerbench import live_cad_runner
-
+def _shims(tmp_path):
+    """A synthetic StudioPipeline-hwe checkout holding both MCP shims (CI has no real one)."""
     root = tmp_path / "StudioPipeline-hwe"
     (root / "driver").mkdir(parents=True)
     for name in ("solidworks_mcp_server.py", "fusion_mcp_server.py"):
         (root / "driver" / name).write_text("")
-    monkeypatch.setattr(live_cad_runner.LiveCadConfig, "connector_cwd", root.as_posix())
+    return root
 
 
 def test_every_entrant_is_go_when_its_tools_answer(tmp_path, monkeypatch):
-    _shims(tmp_path, monkeypatch)
+    root = _shims(tmp_path)
     reference = tmp_path / "photo.jpg"
     reference.write_bytes(b"x")
     queue = _queue_file(tmp_path, [{"job_id": "done", "status": "votable"}, _matchup_job(reference)])
     seen = []
     status = audit_entrants(queue, {"MAKERBENCH_FREECAD_APPDIR": str(_appdir(tmp_path)), "HWE_SW_TOKEN": FAKE_TOKEN},
                             cadam=_CADAM_OK, environ={}, which=lambda name: f"/usr/bin/{name}",
-                            ping=lambda config: seen.append(config.env) or True)
+                            ping=lambda config: seen.append(config.env) or True, connector_root=root)
     assert status.ok and status.job_id == "sambuca-matchup"
     assert {item.entrant_id: item.route for item in status.entrants} == {
         "cadam-opus": "CADAM · OpenRouter · Opus 5.5", "freecad-opus": "Claude Code · Opus 5.5 · FreeCAD",
@@ -494,7 +493,7 @@ def _report_lines(status):
 
 
 def test_each_missing_piece_is_its_own_no_go(tmp_path, monkeypatch):
-    _shims(tmp_path, monkeypatch)
+    root = _shims(tmp_path)
     reference = tmp_path / "photo.jpg"
     reference.write_bytes(b"x")
     job = _matchup_job(reference)
@@ -503,7 +502,7 @@ def test_each_missing_piece_is_its_own_no_go(tmp_path, monkeypatch):
     cadam_down = CadamStatus("http://127.0.0.1:3000", False, False, "CADAM server not reachable")
     status = audit_entrants(queue, {}, cadam=cadam_down, environ={},
                             which=lambda name: None if name == "claude" else f"/usr/bin/{name}",
-                            ping=lambda config: config.connector == "hwe-fusion")
+                            ping=lambda config: config.connector == "hwe-fusion", connector_root=root)
     verdict = {item.entrant_id: (item.ok, " ".join(item.notes)) for item in status.entrants}
     assert not status.ok
     assert verdict["cadam-opus"][0] is False and "not reachable" in verdict["cadam-opus"][1] and "ceiling" in verdict["cadam-opus"][1]
@@ -533,7 +532,6 @@ def test_job_level_problems_are_no_go(tmp_path):
 def test_cli_preflight_prints_the_entrant_section_by_default(tmp_path, monkeypatch):
     from makerbench import nightly_preflight
 
-    _shims(tmp_path, monkeypatch)
     monkeypatch.setattr(nightly_preflight, "_probe_transport", lambda *a, **k: b"<html></html>")
     monkeypatch.setattr("makerbench.live_cad_runner.connector_available", lambda config: False)
     reference = tmp_path / "photo.jpg"
@@ -546,3 +544,13 @@ def test_cli_preflight_prints_the_entrant_section_by_default(tmp_path, monkeypat
     assert result.exit_code == 1
     assert "entrants: job sambuca-matchup" in result.output and "NO-GO solidworks-sol" in result.output
     assert FAKE_TOKEN not in result.output
+
+
+def test_a_missing_mcp_shim_is_its_own_no_go(tmp_path):
+    reference = tmp_path / "photo.jpg"
+    reference.write_bytes(b"x")
+    status = audit_entrants(_queue_file(tmp_path, [_matchup_job(reference)]), {"HWE_SW_TOKEN": FAKE_TOKEN},
+                            cadam=_CADAM_OK, environ={}, which=lambda name: "/bin/x", ping=lambda config: True,
+                            connector_root=tmp_path / "no-checkout")
+    live = {item.entrant_id: " ".join(item.notes) for item in status.entrants if "live" in item.route}
+    assert all("MCP shim missing" in notes for notes in live.values()) and len(live) == 2

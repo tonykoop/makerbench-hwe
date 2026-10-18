@@ -495,6 +495,7 @@ def audit_entrants(
     which: Callable[[str], Optional[str]] = shutil.which,
     ping: Optional[Callable[[object], bool]] = None,
     routes: Sequence[RouteStatus] = (),
+    connector_root: Optional[Path] = None,
 ) -> EntrantsStatus:
     """GO/NO-GO per entrant of the job the runner would claim next (read-only, nothing runs)."""
     from . import code_cad_providers as providers
@@ -580,7 +581,8 @@ def audit_entrants(
                 ok = False
                 lines.append(f"{runtime} is not on PATH")
             config = LiveCadConfig(backend=entrant.backend, driver_model=model, driver_runtime=runtime,
-                                   connector=connector, env=bridge_env())
+                                   connector=connector, env=bridge_env(),
+                                   **({"connector_cwd": Path(connector_root).as_posix()} if connector_root else {}))
             shim = Path(config.connector_cwd) / (_MCP_MODULES[connector].replace(".", "/") + ".py")
             if not shim.is_file():
                 ok = False
