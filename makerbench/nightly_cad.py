@@ -25,6 +25,7 @@ from .live_cad_runner import (
     LiveCadConfig,
     connector_available,
     connector_mcp_probe,
+    connector_unattended,
     driver_route,
     make_live_execute_trial,
 )
@@ -845,6 +846,9 @@ class NightlyExecutor:
         launched, message = connector_mcp_probe(config)
         if not launched:
             raise RuntimeError(message)
+        if connector == "hwe-fusion" and connector_unattended(config) is not True:
+            raise RuntimeError("hwe-fusion bridge is not in unattended mode: every confirm would wait for a "
+                               "human (restart the Luthier Bridge add-in with LUTHIER_UNATTENDED=1; hwe#544)")
         execute = make_live_execute_trial(registry=registry, run_dir=run_dir, config=config)
         orchestration = OrchestrationConfig(
             instrument_ids=(job.instrument_id,),

@@ -330,12 +330,8 @@ def _redact_transcript(text: str, env: Mapping[str, str]) -> str:
     return redacted
 
 
-def connector_available(config: LiveCadConfig) -> bool:
-    """Best-effort preflight: the adapter answers an authenticated ping.
-
-    WSL cannot see the Windows CAD app directly; this only checks the HTTP
-    boundary. A False here means don't bother launching agents.
-    """
+def _bridge_ping(config: LiveCadConfig) -> Optional[dict]:
+    """The bridge's authenticated ``/ping`` body, or None when it does not answer."""
     prefix = "HWE_FUSION" if config.for_fusion() else "HWE_SW"
     default_port = "8766" if config.for_fusion() else "8767"
     host = config.env.get(f"{prefix}_HOST") or os.environ.get(f"{prefix}_HOST", "127.0.0.1")
@@ -351,10 +347,33 @@ def connector_available(config: LiveCadConfig) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=8) as resp:
             data = _json.loads(resp.read().decode())
-        # SolidWorks reports liveness via ``api_available``; Fusion via ``have_adsk``.
-        return bool(data.get("ok") and (data.get("api_available") or data.get("have_adsk")))
     except (urllib.error.URLError, OSError, ValueError):
-        return False
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def connector_available(config: LiveCadConfig) -> bool:
+    """Best-effort preflight: the adapter answers an authenticated ping.
+
+    WSL cannot see the Windows CAD app directly; this only checks the HTTP
+    boundary. A False here means don't bother launching agents.
+    """
+    data = _bridge_ping(config) or {}
+    # SolidWorks reports liveness via ``api_available``; Fusion via ``have_adsk``.
+    return bool(data.get("ok") and (data.get("api_available") or data.get("have_adsk")))
+
+
+def connector_unattended(config: LiveCadConfig) -> Optional[bool]:
+    """Whether the bridge was started in unattended mode (None: it did not say).
+
+    The Luthier Bridge asks the client to approve every ``confirm`` unless Tony started it with
+    ``LUTHIER_UNATTENDED=1`` and a token (StudioPipeline/hwe#544); a headless driver cannot answer
+    that prompt, so an unattended night needs the bridge in that mode. The runner never answers it.
+    """
+    data = _bridge_ping(config)
+    if data is None or "unattended" not in data:
+        return None
+    return data.get("unattended") is True
 
 
 def expand_mcp_env(value: str, environ: Mapping[str, str]) -> str:

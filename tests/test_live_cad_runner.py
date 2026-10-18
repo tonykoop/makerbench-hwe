@@ -501,3 +501,12 @@ def test_mcp_probe_redacts_before_truncating(tmp_path, reply):
     assert not ok
     for size in range(6, len(token) + 1):
         assert token[:size] not in message and token[-size:] not in message
+
+
+@pytest.mark.parametrize("body, expected", [({"ok": True, "unattended": True}, True),
+                                            ({"ok": True, "unattended": False}, False),
+                                            ({"ok": True}, None), (None, None)])
+def test_connector_unattended_reads_the_bridge_ping(monkeypatch, body, expected):
+    monkeypatch.setattr(live, "_bridge_ping", lambda config: body)
+    cfg = live.LiveCadConfig(backend="fusion-live", driver_model="m", connector="hwe-fusion")
+    assert live.connector_unattended(cfg) is expected
