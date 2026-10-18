@@ -16,6 +16,7 @@ jobs:
     env:
       PYTHONPATH: ${{ github.workspace }}
       MAKERBENCH_FREECAD_INTEGRATION: "1"
+      MAKERBENCH_WOOD_FULL_PROOF: "1"
       MAKERBENCH_FREECAD_APPDIR: ${{ github.workspace }}/.freecad/squashfs-root
     steps:
       - uses: actions/checkout@v7
