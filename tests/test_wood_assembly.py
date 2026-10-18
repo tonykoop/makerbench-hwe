@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+from types import SimpleNamespace
 import zipfile
 import xml.etree.ElementTree as ET
 
@@ -18,13 +19,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture(autouse=True)
 def sample_editability_outside_native_ci(monkeypatch, request):
-    full_controls = {
-        "test_all_v2_dimensions_drive_measured_solids",
-        "test_photo_traced_parameter_contract_grades_pass",
-    }
-    # CI proves all dimensions once per parameter-table form; targeted exploit
-    # regressions retain their relevant probes instead of repeating both proofs.
-    if os.environ.get("MAKERBENCH_WOOD_FULL_PROOF") == "1" and request.node.name in full_controls:
+    full = os.environ.get("MAKERBENCH_WOOD_FULL_PROOF") == "1"
+    # The metric control proves every stock dimension. The spline control proves
+    # every scale parameter and its own kerf response, without repeating stock.
+    if full and request.node.name == "test_all_v2_dimensions_drive_measured_solids":
         return
     original = wood._run_worker
 
@@ -39,6 +37,12 @@ def sample_editability_outside_native_ci(monkeypatch, request):
                 "frozen-kerf": "KerfWidth",
             }.get(variant)
             spec = {**spec, "_test_probe_sample": True}
+            if full and request.node.name == "test_photo_traced_parameter_contract_grades_pass":
+                spec["_test_probe_dimensions"] = [
+                    f"Tongue{i:02d}{suffix}Scale"
+                    for i in range(1, 11)
+                    for suffix in ("Length", "HeadWidth")
+                ] + ["KerfWidth"]
             if request.node.name == "test_photo_traced_head_control_scale_has_local_response":
                 target = "Tongue03HeadWidthScale"
             if request.node.name == "test_photo_traced_fifth_length_scale_controls_its_own_tip":
@@ -48,6 +52,32 @@ def sample_editability_outside_native_ci(monkeypatch, request):
         return original(driver, spec, *args, **kwargs)
 
     monkeypatch.setattr(wood, "_run_worker", sampled)
+
+
+@pytest.mark.parametrize("form", ["metric", "spline"])
+def test_ci_proof_selection_keeps_all_unique_dimensions(monkeypatch, form):
+    monkeypatch.setenv("MAKERBENCH_WOOD_FULL_PROOF", "1")
+    captured = []
+    monkeypatch.setattr(wood, "_run_worker", lambda driver, spec: captured.append(spec))
+    name = {
+        "metric": "test_all_v2_dimensions_drive_measured_solids",
+        "spline": "test_photo_traced_parameter_contract_grades_pass",
+    }[form]
+    sample_editability_outside_native_ci.__wrapped__(
+        monkeypatch, SimpleNamespace(node=SimpleNamespace(name=name))
+    )
+    wood._run_worker(Path("_wood_assembly_worker.py"), {})
+    selected = captured[0]
+    if form == "metric":
+        assert "_test_probe_sample" not in selected  # Includes all 12 stock dimensions.
+    else:
+        assert selected["_test_probe_sample"]
+        assert len(selected["_test_probe_dimensions"]) == 21
+        assert set(selected["_test_probe_dimensions"]) == {
+            f"Tongue{i:02d}{suffix}Scale"
+            for i in range(1, 11)
+            for suffix in ("Length", "HeadWidth")
+        } | {"KerfWidth"}
 
 
 @pytest.fixture(scope="module")
@@ -637,7 +667,13 @@ def test_photo_traced_parameter_contract_grades_pass(photo_control):
     assert report["passed"], json.dumps([c for c in report["checks"] if not c["passed"]], indent=2)
     probes = [c for c in report["checks"] if c["check"] == "dimension_perturbation"]
     full = os.environ.get("MAKERBENCH_WOOD_FULL_PROOF") == "1"
-    assert len(probes) == (33 if full else 13)
+    assert len(probes) == (21 if full else 13)
+    if full:
+        assert {c.get("dimension") for c in probes} == {
+            f"Tongue{i:02d}{suffix}Scale"
+            for i in range(1, 11)
+            for suffix in ("Length", "HeadWidth")
+        } | {"KerfWidth"}
     assert any(c.get("dimension") == "Tongue03LengthScale" and c["passed"] for c in probes)
 
 
