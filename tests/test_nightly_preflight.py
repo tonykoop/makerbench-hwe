@@ -554,3 +554,27 @@ def test_a_missing_mcp_shim_is_its_own_no_go(tmp_path):
                             connector_root=tmp_path / "no-checkout")
     live = {item.entrant_id: " ".join(item.notes) for item in status.entrants if "live" in item.route}
     assert all("MCP shim missing" in notes for notes in live.values()) and len(live) == 2
+
+
+def test_a_cli_bridge_cadam_entrant_is_judged_by_its_route_checks(tmp_path):
+    from makerbench import cadam_routes
+    from makerbench.nightly_preflight import RouteStatus
+
+    reference = tmp_path / "photo.jpg"
+    reference.write_bytes(b"x")
+    job = _matchup_job(reference)
+    job["entrants"][0] = {"entrant_id": "cadam-cli", "kind": "cadam", "model_id": "anthropic/claude-opus-5.5",
+                          "route": "cli-bridge", "runtime": "claude", "max_cost_usd": 0}
+    queue = _queue_file(tmp_path, [job])
+    label = cadam_routes.route_label("cli-bridge", "claude", "anthropic/claude-opus-5.5")
+    cadam_down = CadamStatus("http://127.0.0.1:3000", False, False, "CADAM server not reachable")  # the OpenRouter app
+    kwargs = dict(cadam=cadam_down, environ={}, which=lambda name: "/bin/x", ping=lambda config: True,
+                  connector_root=_shims(tmp_path))
+    ready = audit_entrants(queue, {"HWE_SW_TOKEN": FAKE_TOKEN},
+                           routes=(RouteStatus(label, ((True, "bridge is already listening"),)),), **kwargs)
+    item = next(e for e in ready.entrants if e.entrant_id == "cadam-cli")
+    assert item.ok and "CLI bridge (claude subscription)" in " ".join(item.notes)  # no OpenRouter app or ceiling needed
+    broken = audit_entrants(queue, {"HWE_SW_TOKEN": FAKE_TOKEN},
+                            routes=(RouteStatus(label, ((False, "claude CLI is NOT logged in"),)),), **kwargs)
+    item = next(e for e in broken.entrants if e.entrant_id == "cadam-cli")
+    assert not item.ok and "claude CLI is NOT logged in" in item.notes
