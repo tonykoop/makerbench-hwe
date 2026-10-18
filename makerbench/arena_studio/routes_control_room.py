@@ -20,6 +20,7 @@ from . import control_room as cr
 from . import control_room_newrun as nr
 from . import instrument_repo as ir
 from . import library_manifest as lm
+from . import promote as pm
 from .service import MATCHUP_MESH_MAX_BYTES, ArenaStudioService, _matchup_glb
 
 NO_STORE = {"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"}
@@ -53,6 +54,8 @@ def register_control_room_routes(
     opener: Optional[cr.Opener] = None,
     library_fetch: Optional[Callable[[], str]] = None,
     library_manifest: Optional[Path] = None,
+    promote_publish: bool = False,
+    promote_pr_opener: Optional[Callable[[Path, str, str, str], str]] = None,
 ) -> None:
     runs_root = service.repo_root / "runs"
     open_file: cr.Opener = opener or cr.windows_opener
@@ -137,6 +140,40 @@ def register_control_room_routes(
         except Exception as error:  # noqa: BLE001 - shown to the reviewer, never fatal
             raise HTTPException(status_code=409, detail=f"Could not open {path.name}: {error}")
         return {"opened": path.name, "app": cr.NATIVE_APPS.get(path.suffix.lower(), "its app")}
+
+    @app.post("/api/review/{run_id}/promote/{trial_id}")
+    def promote_design(run_id: str, trial_id: str):
+        """#1111: commit the chosen design to its instrument repo on a new branch."""
+        run_dir = night_dir(run_id)
+        view = cr.review_view(run_dir, service.repo_root)
+        design = next((d for d in view["designs"] if d["trial_id"] == trial_id), None)
+        if design is None:
+            raise HTTPException(status_code=404, detail="Unknown design")
+        instrument_id = str(view.get("instrument_id") or "")
+        registry = service.get_registry_tasks()
+        repo = ir.find_repo(service.instruments_root, instrument_id, ir.registry_repo_path(registry, instrument_id))
+        if repo is None:
+            raise HTTPException(status_code=409, detail="No local instrument repo for this night (start the Studio with --instruments-root).")
+        stl = cr.trial_artifact(run_dir, service.repo_root, trial_id, "stl_path", ".stl")
+        glb = None
+        if stl is not None and stl.stat().st_size <= MATCHUP_MESH_MAX_BYTES:
+            stat = stl.stat()
+            glb = _matchup_glb(str(stl), stat.st_mtime_ns, stat.st_size)
+        chosen = pm.Design(
+            run_id=run_id, trial_id=trial_id, entrant=design["entrant"], name=design["name"], route=design["route"],
+            instrument_id=instrument_id, checks=design["checks"], native=cr.native_path(run_dir, service.repo_root, trial_id),
+            mesh_glb=glb, render=cr.trial_artifact(run_dir, service.repo_root, trial_id, "png_path", ".png"),
+        )
+        try:
+            worktrees = nr.confined(runs_root, *cr.CONTROL_ROOM_PROMOTE_DIR.parts, "x").parent
+        except nr.UnsafePath as error:
+            raise HTTPException(status_code=409, detail=str(error))
+        try:
+            result = pm.promote(repo, chosen, worktrees=worktrees, publish=promote_publish,
+                                pr_opener=promote_pr_opener or pm.gh_pr_opener)
+        except pm.PromoteError as error:
+            raise HTTPException(status_code=409, detail=str(error))
+        return {**result, "repo": repo.name, "publish": promote_publish}
 
     # New Run (#1114). Nothing here launches a model except run-now, which needs --allow-live.
     nightly_queue = runs_root / "nightly-cad-queue.json"

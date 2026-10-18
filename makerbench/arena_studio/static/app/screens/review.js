@@ -133,7 +133,7 @@ function Assembly({ assembly }) {
   `;
 }
 
-function Card({ runId, design, index, count, state, useWebgl, onMove, onNote, onRevise, onOpen, drag }) {
+function Card({ runId, design, index, count, state, useWebgl, onMove, onNote, onRevise, onOpen, onPromote, drag }) {
   const revise = Boolean(state.revise[design.trial_id]);
   const noteId = `note-${index}`;
   return html`
@@ -192,6 +192,7 @@ function Card({ runId, design, index, count, state, useWebgl, onMove, onNote, on
           <button type="button" class="button button-quiet review-revise" aria-pressed=${revise ? "true" : "false"} onClick=${() => onRevise(design.trial_id, noteId)}>
             ${revise ? "Marked for revision" : "Revise with my notes"}
           </button>
+          <button type="button" class="button button-quiet" data-promote onClick=${() => onPromote(design)}>Promote to library</button>
         </div>
       </div>
     </li>
@@ -275,6 +276,28 @@ function Night({ view, voter }) {
       setToast(error.message);
     }
   };
+  const [promoting, setPromoting] = useState(null);
+  const [promoted, setPromoted] = useState(null);
+  const promoteDialog = useRef(null);
+  useEffect(() => {
+    if (promoting) promoteDialog.current?.showModal?.();
+  }, [promoting]);
+  const confirmPromote = async () => {
+    const design = promoting;
+    promoteDialog.current?.close();
+    try {
+      const result = await api(`${base(runId)}/promote/${encodeURIComponent(design.trial_id)}`, { method: "POST" });
+      setPromoted(result);
+      setToast(
+        result.pr_url
+          ? `Opened a PR in ${result.repo}: ${result.pr_url}`
+          : `Committed on branch ${result.branch} in ${result.repo}. Not pushed: promotion publishing is off.`,
+      );
+    } catch (error) {
+      setToast(error.message);
+    }
+  };
+
   const onSave = async () => {
     setSaving(true);
     try {
@@ -308,6 +331,7 @@ function Night({ view, voter }) {
             onNote=${(trialId, text) => setState((prev) => setNote(prev, trialId, text))}
             onRevise=${onRevise}
             onOpen=${onOpen}
+            onPromote=${setPromoting}
           />`,
         )}
       </ol>
@@ -328,7 +352,20 @@ function Night({ view, voter }) {
       </div>
     </div>
     <p class="review-toast" role="status" aria-live="polite" hidden=${!toast}>${toast || ""}</p>
-    <dialog class="review-dialog" ref=${dialog} onClose=${() => setSaved(null)}>
+    <dialog class="review-dialog" ref=${promoteDialog} onClose=${() => setPromoting(null)} data-testid="promote-dialog">
+      ${promoting && html`
+        <h2>Promote ${promoting.name}'s design?</h2>
+        <p>This adds to the instrument repo, on a new branch: the native file, a 3D model for the explorer, the render as a hero image, and a provenance note (tool, model, date, checks passed).</p>
+        <p>Scores and the other entrants' designs stay in MakerBench. The repo's release status does not change. You merge the PR yourself.</p>
+        <p data-testid="promote-explorer-note">The explorer is regenerated in a separate step, so the new model shows there only after that.</p>
+        <div class="actions">
+          <button type="button" class="button button-quiet" onClick=${() => promoteDialog.current?.close()}>Cancel</button>
+          <button type="button" class="button" onClick=${confirmPromote}>Promote</button>
+        </div>
+      `}
+    </dialog>
+    ${promoted && html`<p class="hint" role="status" data-testid="promoted">Last promotion: ${promoted.repo}, branch <code>${promoted.branch}</code>${promoted.pr_url ? html`, <a href=${promoted.pr_url} target="_blank" rel="noopener noreferrer">pull request</a>` : ", not pushed"}. The explorer is regenerated in a separate step.</p>`}
+    <dialog class="review-dialog" ref=${dialog} onClose=${() => setSaved(null)} data-testid="save-dialog">
       ${saved && html`
         <h2>Review saved</h2>
         <p>

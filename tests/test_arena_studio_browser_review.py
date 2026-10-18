@@ -215,7 +215,7 @@ def test_notes_persist_and_save_writes_the_review_schema(studio_url: str, review
         assert not (run_dir / "morning-review.json").exists()
 
         page.get_by_role("button", name="Save review").click()
-        dialog = page.locator("dialog.review-dialog")
+        dialog = page.get_by_test_id("save-dialog")
         dialog.wait_for()
         assert "1 revision request saved for the revision runner" in dialog.inner_text()
         assert "#1116" in dialog.inner_text() and "tonight" not in dialog.inner_text()
@@ -313,3 +313,43 @@ def test_layout_screens(studio_url: str, screenshot_dir: Path, mode: str, color_
         assert [p for p in problems if "WebGL" not in p and "GPU" not in p] == []
         context.close()
         browser.close()
+
+
+def test_promote_to_library_confirms_then_commits_a_local_branch(tmp_path: Path, screenshot_dir: Path):
+    from test_control_room_promote import _git, build_scratch_instrument
+
+    repo = build_control_room_repo(tmp_path / "studio")
+    instrument, origin = build_scratch_instrument(tmp_path / "instruments")
+    app = create_studio_app(registry_path=repo / "registry.json", repo_root=repo, instruments_root=tmp_path / "instruments")
+    port = _free_port()
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    while not server.started:
+        time.sleep(0.05)
+    try:
+        with sync_playwright() as playwright:
+            browser = _launch(playwright)
+            context, page, problems = _open(browser, f"http://127.0.0.1:{port}/#/review/{SAMBUCA_RUN}")
+            _card(page, FREECAD).get_by_role("button", name="Promote to library").click()
+            dialog = page.get_by_test_id("promote-dialog")
+            dialog.get_by_role("heading", name="Promote FreeCAD's design?").wait_for()
+            assert "Scores and the other entrants' designs stay in MakerBench" in dialog.inner_text()
+            assert "regenerated in a separate step" in dialog.inner_text()
+            dialog.get_by_role("button", name="Cancel").click()
+            assert _git(instrument, "branch", "--list", "makerbench/*") == ""
+
+            _card(page, FREECAD).get_by_role("button", name="Promote to library").click()
+            dialog.get_by_role("button", name="Promote").click()
+            page.get_by_test_id("promoted").wait_for()
+            assert "not pushed" in page.get_by_test_id("promoted").inner_text()
+            assert "separate step" in page.get_by_test_id("promoted").inner_text()
+            assert "freecad-opus" in _git(instrument, "branch", "--list", "makerbench/*")
+            assert _git(origin, "branch", "--list", "makerbench/*") == ""
+            page.screenshot(path=str(screenshot_dir / "review-promoted-1440-light.png"), full_page=False)
+            assert problems == []
+            context.close()
+            browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
