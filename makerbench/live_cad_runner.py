@@ -330,6 +330,9 @@ def _redact_transcript(text: str, env: Mapping[str, str]) -> str:
     return redacted
 
 
+_PING_MAX_BYTES = 64 * 1024
+
+
 def _bridge_ping(config: LiveCadConfig) -> Optional[dict]:
     """The bridge's authenticated ``/ping`` body, or None when it does not answer."""
     prefix = "HWE_FUSION" if config.for_fusion() else "HWE_SW"
@@ -346,9 +349,12 @@ def _bridge_ping(config: LiveCadConfig) -> Optional[dict]:
         req.add_header("Authorization", f"Bearer {token}")
     try:
         with urllib.request.urlopen(req, timeout=8) as resp:
-            data = _json.loads(resp.read().decode())
-    except (urllib.error.URLError, OSError, ValueError):
-        return None
+            raw = resp.read(_PING_MAX_BYTES + 1)
+        if len(raw) > _PING_MAX_BYTES:
+            return None  # a ping is tiny; anything bigger is not a bridge we trust
+        data = _json.loads(raw.decode())
+    except (urllib.error.URLError, OSError, ValueError, RecursionError):
+        return None  # fail closed: not available, not unattended
     return data if isinstance(data, dict) else None
 
 

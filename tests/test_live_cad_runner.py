@@ -510,3 +510,42 @@ def test_connector_unattended_reads_the_bridge_ping(monkeypatch, body, expected)
     monkeypatch.setattr(live, "_bridge_ping", lambda config: body)
     cfg = live.LiveCadConfig(backend="fusion-live", driver_model="m", connector="hwe-fusion")
     assert live.connector_unattended(cfg) is expected
+
+
+class _PingResponse:
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def read(self, size=-1):
+        return self._body if size is None or size < 0 else self._body[:size]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+@pytest.mark.parametrize("body", [
+    json.dumps({"ok": True, "have_adsk": True, "unattended": True, "pad": "x" * (64 * 1024)}).encode(),
+    b"[" * 50_000 + b"]" * 50_000,                                   # oversized nesting
+    b'{"ok": true, "unattended": true, "x": ' + b"[" * 20_000 + b"]" * 20_000 + b"}",  # deep, under the cap
+    b"\xff\xfe not json",
+])
+def test_bridge_ping_fails_closed_on_hostile_bodies(monkeypatch, body):
+    import urllib.request
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: _PingResponse(body))
+    cfg = live.LiveCadConfig(backend="fusion-live", driver_model="m", connector="hwe-fusion")
+    assert live._bridge_ping(cfg) is None
+    assert live.connector_available(cfg) is False
+    assert live.connector_unattended(cfg) is None
+
+
+def test_bridge_ping_reads_a_normal_body(monkeypatch):
+    import urllib.request
+
+    body = json.dumps({"ok": True, "have_adsk": True, "unattended": True}).encode()
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: _PingResponse(body))
+    cfg = live.LiveCadConfig(backend="fusion-live", driver_model="m", connector="hwe-fusion")
+    assert live.connector_available(cfg) is True and live.connector_unattended(cfg) is True
