@@ -1443,6 +1443,41 @@ def entrant_confinement(model_id: str, context_tier: str, *, sandboxed: bool = F
     return policy
 
 
+# Claude Code accepts a family alias (``opus``) or a full model name (``claude-opus-5-5``), never
+# the dotted short form an entrant id carries (``opus-5.5`` failed the 2026-10-18 dry night, #663).
+_CLAUDE_FAMILIES = "fable|opus|sonnet|haiku"
+_CLAUDE_SHORT = re.compile(rf"^(?:claude-)?({_CLAUDE_FAMILIES})-(\d+)[.-](\d+)$", re.I)
+_CLAUDE_CLI_MODEL = re.compile(
+    rf"^(?:(?:{_CLAUDE_FAMILIES})|claude-(?:{_CLAUDE_FAMILIES})-\d+(?:-\d+)?(?:-\d{{8}})?)(?:\[1m\])?$"
+)
+
+
+def claude_cli_model(name: str) -> str:
+    """The Claude Code ``--model`` value for an entrant's model name.
+
+    ``opus-5.5`` / ``claude-opus-5.5`` / ``opus-5-5`` become ``claude-opus-5-5``; an alias
+    (``sonnet``) or a name already in full passes through unchanged.
+    """
+    raw = str(name or "").strip()
+    family = _CLAUDE_SHORT.match(raw)
+    if family:
+        return f"claude-{family.group(1).lower()}-{family.group(2)}-{family.group(3)}"
+    return raw
+
+
+def claude_cli_model_problem(name: Optional[str]) -> Optional[str]:
+    """Why Claude Code would reject ``--model name``, or None when it is a model name it accepts.
+
+    ``None`` (no ``--model``: the CLI default) is accepted.
+    """
+    if name is None:
+        return None
+    if _CLAUDE_CLI_MODEL.match(str(name).strip()):
+        return None
+    return (f"{name!r} is not a Claude Code model name (use an alias such as 'opus' "
+            "or a full name such as 'claude-opus-5-5')")
+
+
 def model_name_for_model_id(model_id: str, provider: str) -> Optional[str]:
     """Extract the CLI ``--model`` value from a conventional model id."""
 
@@ -1451,9 +1486,25 @@ def model_name_for_model_id(model_id: str, provider: str) -> Optional[str]:
         if prefix_provider == provider and lowered.startswith(prefix) and prefix != "stub":
             name = model_id.strip()[len(prefix):]
             if name and name not in {"cli", "default"}:
-                return name
+                return claude_cli_model(name) if provider == "claude" else name
             return None
     return None
+
+
+def cli_model_for_model_id(
+    model_id: str, *, model_map: Optional[Mapping[str, Mapping[str, object]]] = None
+) -> tuple[str, Optional[str]]:
+    """``(provider, CLI model)`` that ``resolve_generator`` dispatches ``model_id`` to.
+
+    Preflight validates this same pair, so what it approves is what the runner runs.
+    """
+    overrides = dict((model_map or {}).get(model_id) or {})
+    provider = str(overrides.get("provider") or provider_for_model_id(model_id))
+    model = overrides.get("model")
+    model = str(model) if model else model_name_for_model_id(model_id, provider)
+    if provider == "claude" and model:
+        model = claude_cli_model(model)
+    return provider, model
 
 
 def resolve_generator(
@@ -1482,9 +1533,7 @@ def resolve_generator(
         return make_stub_generator(backend=backend)
 
     overrides = dict((model_map or {}).get(model_id) or {})
-    provider = str(overrides.get("provider") or provider_for_model_id(model_id))
-    model = overrides.get("model")
-    model = str(model) if model else model_name_for_model_id(model_id, provider)
+    provider, model = cli_model_for_model_id(model_id, model_map=model_map)
 
     entrant_timeout = overrides.get("timeout_s") or timeout_s
     timeout_kwargs = {"timeout_s": int(entrant_timeout)} if entrant_timeout else {}

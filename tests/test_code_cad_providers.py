@@ -795,6 +795,41 @@ class TestDispatch:
         assert gen(_request("my-custom-entrant")) == "cube(1);"
         assert seen["cmd"][seen["cmd"].index("--model") + 1] == "opus"
 
+    @pytest.mark.parametrize("model_id, cli_model", [
+        ("claude-code-opus-5.5", "claude-opus-5-5"),  # the 2026-10-18 dry-night entrant (#663)
+        ("claude-code-sonnet-5-5", "claude-sonnet-5-5"),
+        ("claude-opus-5.5", "claude-opus-5-5"),
+        ("claude-code-fable-5.1", "claude-fable-5-1"),
+        ("claude-code-sonnet", "sonnet"),             # an alias passes through
+        ("claude-code-default", None),                # the CLI default: no --model
+    ])
+    def test_claude_ids_map_to_names_the_cli_accepts(self, model_id, cli_model):
+        assert providers.cli_model_for_model_id(model_id) == ("claude", cli_model)
+        assert providers.claude_cli_model_problem(cli_model) is None
+
+    @pytest.mark.parametrize("name", ["opus-5.5", "claude-opus-5.5", "opus-5-5", "opus5.5", ""])
+    def test_claude_cli_model_problem_rejects_names_the_cli_refuses(self, name):
+        assert "not a Claude Code model name" in providers.claude_cli_model_problem(name)
+
+    @pytest.mark.parametrize("name", ["opus", "claude-opus-5-5", "claude-sonnet-4-5-20250929", "claude-opus-5-5[1m]"])
+    def test_claude_cli_model_problem_accepts_aliases_and_full_names(self, name):
+        assert providers.claude_cli_model_problem(name) is None
+
+    def test_claude_generator_passes_the_full_model_name(self, monkeypatch):
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"] = cmd
+            return _completed(stdout=json.dumps({"result": "```scad\ncube(1);\n```"}))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        gen = providers.resolve_generator("claude-code-opus-5.5")
+        assert gen(_request("claude-code-opus-5.5")) == "cube(1);"
+        assert seen["cmd"][seen["cmd"].index("--model") + 1] == "claude-opus-5-5"
+        override = providers.resolve_generator("x", model_map={"x": {"provider": "claude", "model": "opus-5.5"}})
+        assert override(_request("x")) == "cube(1);"
+        assert seen["cmd"][seen["cmd"].index("--model") + 1] == "claude-opus-5-5"
+
     def test_preflight_stub_needs_nothing(self):
         assert providers.preflight_binaries(["stub-a", "stub-b"], stub=True) == []
 

@@ -480,6 +480,7 @@ def test_every_entrant_is_go_when_its_tools_answer(tmp_path, monkeypatch):
     assert "driver codex --model gpt-6.1-sol" in notes["solidworks-sol"]
     assert "driver claude --model claude-sonnet-5-5" in notes["fusion-sonnet"]
     assert "checksum marker matches" in notes["freecad-opus"]
+    assert "claude CLI, model claude-opus-5-5," in notes["freecad-opus"]
     assert seen[0]["HWE_SW_TOKEN"] == FAKE_TOKEN  # the ping gets the bridge token...
     report = _report_lines(status)
     assert FAKE_TOKEN not in report  # ...and it never reaches the report
@@ -512,6 +513,37 @@ def test_each_missing_piece_is_its_own_no_go(tmp_path, monkeypatch):
     assert verdict["fusion-sonnet"][0] is False and "claude is not on PATH" in verdict["fusion-sonnet"][1]
     lines = _report_lines(status)
     assert "NO-GO solidworks-sol · Codex · GPT-6.1 Sol · SolidWorks live bridge" in lines and lines.endswith("preflight: NO-GO")
+
+
+def test_a_claude_model_the_cli_rejects_is_no_go(tmp_path, monkeypatch):
+    """2026-10-18 dry night (#663): ``claude -p --model opus-5.5`` exited rc=1 unrecognized_model.
+
+    Preflight checks the CLI model the runner itself resolves, so a mapping that hands the CLI
+    ``opus-5.5`` again is NO-GO before the night starts.
+    """
+    from makerbench import code_cad_providers as providers
+
+    root = _shims(tmp_path)
+    reference = tmp_path / "photo.jpg"
+    reference.write_bytes(b"x")
+    env = {"MAKERBENCH_FREECAD_APPDIR": str(_appdir(tmp_path)), "HWE_SW_TOKEN": FAKE_TOKEN}
+
+    def audit():
+        status = audit_entrants(_queue_file(tmp_path, [_matchup_job(reference)]), env, cadam=_CADAM_OK, environ={},
+                                which=lambda name: f"/usr/bin/{name}", ping=lambda config: True, connector_root=root)
+        return {item.entrant_id: (item.ok, " ".join(item.notes)) for item in status.entrants}, status
+
+    verdict, status = audit()
+    assert status.ok and verdict["freecad-opus"][0]
+    monkeypatch.setattr(providers, "cli_model_for_model_id", lambda model_id, **kwargs: ("claude", "opus-5.5"))
+    monkeypatch.setattr(providers, "claude_cli_model", lambda name: name)  # the live driver's route, too
+    verdict, status = audit()
+    assert not status.ok
+    for entrant_id in ("freecad-opus", "fusion-sonnet"):
+        assert verdict[entrant_id][0] is False
+        assert "not a Claude Code model name" in verdict[entrant_id][1]
+    assert verdict["solidworks-sol"][0] is True  # a Codex driver is not judged by Claude's names
+    assert "NO-GO freecad-opus" in _report_lines(status)
 
 
 def test_job_level_problems_are_no_go(tmp_path):
