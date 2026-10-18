@@ -21,6 +21,7 @@ from . import code_cad_providers as providers
 from .cadam_adapter import CadamClient, CadamConfig, CadamRecoveryRequiredError
 from .code_cad_orchestrator import OrchestrationConfig, run_orchestration
 from .live_cad_runner import LiveCadConfig, connector_available, driver_route, make_live_execute_trial
+from . import cadam_routes
 from . import nightly_revisions as revisions
 from .run_log_io import atomic_write_json, file_lock, find_trial, has_trial, trial_rows
 from .schema import MatchupMetadata, matchup_metadata
@@ -48,6 +49,16 @@ class NightlyEntrant:
     context_tier: str = "blind"
     max_cost_usd: float = 0.0
     timeout_s: Optional[int] = None
+    # CADAM entrants only (#1102): which model route serves the turn, and for the CLI bridge
+    # which subscription runtime backs it. Reported as separate entrants, never merged.
+    route: str = cadam_routes.ROUTE_OPENROUTER
+    runtime: str = ""
+
+    @property
+    def route_label(self) -> Optional[str]:
+        if self.kind != "cadam":
+            return None
+        return cadam_routes.route_label(self.route, self.runtime, self.model_id)
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, object]) -> "NightlyEntrant":
@@ -59,6 +70,8 @@ class NightlyEntrant:
             context_tier=str(payload.get("context_tier") or "blind"),
             max_cost_usd=float(payload.get("max_cost_usd") or 0.0),
             timeout_s=(int(payload["timeout_s"]) if payload.get("timeout_s") is not None else None),
+            route=str(payload.get("route") or cadam_routes.ROUTE_OPENROUTER),
+            runtime=str(payload.get("runtime") or ""),
         )
 
     def matchup_level(self) -> str:
@@ -79,6 +92,14 @@ class NightlyEntrant:
             raise ValueError("live entrants require solidworks-live or fusion-live backend")
         if self.max_cost_usd < 0:
             raise ValueError("max_cost_usd cannot be negative")
+        if self.route not in cadam_routes.ROUTES:
+            raise ValueError(f"unsupported CADAM route: {self.route}")
+        if self.kind != "cadam" and (self.route != cadam_routes.ROUTE_OPENROUTER or self.runtime):
+            raise ValueError("route and runtime apply to cadam entrants only")
+        if self.kind == "cadam" and self.route == cadam_routes.ROUTE_CLI_BRIDGE and self.runtime not in cadam_routes.RUNTIMES:
+            raise ValueError("cli-bridge CADAM entrants need runtime claude or codex")
+        if self.kind == "cadam" and self.route == cadam_routes.ROUTE_OPENROUTER and self.runtime:
+            raise ValueError("runtime applies to the cli-bridge route only")
 
 
 @dataclass
@@ -329,8 +350,8 @@ def route_label(entrant: NightlyEntrant) -> str:
 
 
 def _route_label(entrant: NightlyEntrant) -> str:
-    if entrant.kind == "cadam":
-        return f"CADAM · OpenRouter · {_model_label(entrant.model_id)}"
+    if entrant.kind == "cadam":  # route-aware (#1102): "CADAM · OpenRouter · M" or "CADAM via CLI · <runtime> · M"
+        return cadam_routes.route_label(entrant.route, entrant.runtime, _model_label(entrant.model_id))
     if entrant.kind == "live":
         runtime, model = driver_route(entrant.model_id)
         return f"{_RUNTIME_LABELS[runtime]} · {_model_label(model)} · {_BACKEND_LABELS.get(entrant.backend, entrant.backend)}"
@@ -622,7 +643,11 @@ class NightlyExecutor:
 
     def _cadam_config(self, entrant: NightlyEntrant) -> CadamConfig:
         return CadamConfig(
-            base_url=os.environ.get("CADAM_BASE_URL", "http://127.0.0.1:3000"),
+            base_url=(
+                os.environ.get("CADAM_BRIDGE_BASE_URL", cadam_routes.DEFAULT_BRIDGE_CADAM_URL)
+                if entrant.route == cadam_routes.ROUTE_CLI_BRIDGE
+                else os.environ.get("CADAM_BASE_URL", "http://127.0.0.1:3000")
+            ),
             supabase_url=os.environ.get("VITE_SUPABASE_URL", "http://127.0.0.1:54321"),
             user_id=os.environ.get("CADAM_USER_ID", ""),
             access_token=os.environ.get("CADAM_ACCESS_TOKEN", ""),
@@ -652,13 +677,21 @@ class NightlyExecutor:
             "separate or disable them in the fabrication export; respect the registry envelope "
             "and minimum wall. Return a complete build_parametric_model tool call."
         )
-        generated = CadamClient(self._cadam_config(entrant)).generate(
+        route_provenance = self._route_provenance(entrant)
+        client = CadamClient(self._cadam_config(entrant))
+        generate = lambda: client.generate(  # noqa: E731 - one call, two routes
             prompt=prompt,
             reference_image=Path(job.reference_image),
             output_dir=run_dir / "cadam" / entrant.entrant_id,
             conversation_id=str(dispatch["conversation_id"]),
             resume_only=resume_only,
         )
+        if entrant.route == cadam_routes.ROUTE_CLI_BRIDGE:
+            config_path, key = cadam_routes.bridge_settings_for_run(os.environ)
+            with cadam_routes.CliBridge(config_path, key, command=cadam_routes.bridge_command_from_env(os.environ)):
+                generated = generate()  # the bridge lives only for this CADAM turn
+        else:
+            generated = generate()
         arena_runner.ingest_candidate(
             run_log_path=run_dir / "run_log.json",
             registry=registry,
@@ -674,9 +707,29 @@ class NightlyExecutor:
                 "source_image": generated.prepared_image_path.as_posix(),
                 "model": generated.model,
                 "cost_usd": generated.cost_usd,
+                **route_provenance,
             },
+            # meta.route is stamped by _record_route (route_label, total) after the entrant; the label here
+            # keeps the configured model id for the side-by-side smoke page
+            trial_meta={"entrant_label": entrant.route_label},
         )
         return generated.cost_usd
+
+    @staticmethod
+    def _route_provenance(entrant: NightlyEntrant) -> dict:
+        """Which route, runtime and CLI served the turn (recorded in the candidate's provenance)."""
+        info: dict = {"route": entrant.route, "entrant_label": entrant.route_label}
+        if entrant.route == cadam_routes.ROUTE_CLI_BRIDGE:
+            info["runtime"] = entrant.runtime
+            try:
+                path, _key = cadam_routes.bridge_settings_for_run(os.environ)
+                settings = cadam_routes.read_bridge_config(path)
+                mapped = settings.models.get(entrant.model_id, {})
+                info["cli_model"] = mapped.get("cli_model")
+                info["cli_version"] = cadam_routes.cli_version(settings.binary(entrant.runtime))
+            except (cadam_routes.BridgeError, OSError, ValueError):
+                info["cli_version"] = "unknown"
+        return info
 
     def _run_arena(
         self,
