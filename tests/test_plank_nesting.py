@@ -150,3 +150,9 @@ def test_blank_longer_than_bed_is_unplaced_not_success(tmp_path):
     f = _order(tmp_path, blanks={"B4": {"length": 60.0, "width": 1.75}})
     folder, rep = pn.run(f, tmp_path / "out")
     assert rep["unplaced_blanks"] and rep["placed_blanks"] == 0
+
+
+def test_infeasible_crosscut_rejected_cleanly(tmp_path):
+    # kerf >= the stock each cut must leave: segment length would be <= 0
+    assert _rejects(tmp_path, plank={"length": 10, "bed_x": 4, "bed_clearance": 0, "crosscut_kerf": 9})
+    assert _rejects(tmp_path, plank={"length": 10, "bed_x": 4, "bed_clearance": 0, "crosscut_kerf": 50})

@@ -162,6 +162,11 @@ def crosscut_plan(plank: PlankSpec) -> list[Segment]:
     if n > 100:
         raise NestingError("crosscut plan needs more than 100 segments; check bed and plank sizes")
     seg_len = (plank.length - plank.crosscut_kerf * (n - 1)) / n
+    if seg_len <= 2 * plank.edge_margin_x + plank.spacing:
+        raise NestingError(
+            f"infeasible crosscut: {n} segment(s) of {seg_len:.3f} in after "
+            f"{plank.crosscut_kerf:g} in kerfs leave no usable length"
+        )
     segs, x0 = [], 0.0
     for i in range(n):
         s = Segment(i, x0, seg_len)
