@@ -10,6 +10,7 @@ All notable changes to MakerBench should be recorded here.
 
 - **CADAM routes side-by-side smoke (#1103, epic #1099):** `python scripts/cadam_routes_smoke.py` plans (and preflights, redacted) a one-job sambuca run through CADAM·OpenRouter·Fable 5.1, CADAM via CLI·claude and CADAM via CLI·codex; only `--run --tony-go` spends quota/budget. It publishes a 3-column comparison page (`makerbench/cadam_routes_smoke.py`). Not run by the build loop.
 
+
 - **CADAM routes side-by-side smoke (#1103, epic #1099):** `python scripts/cadam_routes_smoke.py` plans (and preflights, redacted) a one-job sambuca run through CADAM·OpenRouter·Fable 5.1, CADAM via CLI·claude and CADAM via CLI·codex; only `--run --tony-go --yes` spends quota/money (the OpenRouter route is not hard-capped; the $3 is a post-call check). It publishes a 3-column comparison page (`makerbench/cadam_routes_smoke.py`). Not run by the build loop.
 
 - **Nightly CADAM route selection (#1102, epic #1099):** CADAM nightly entrants take `route: openrouter | cli-bridge` and `runtime: claude | codex`; `arena preflight` audits the route each queued entrant will use (OpenRouter key + picker model, or bridge config/key/model mapping/CLI login/bridge/bridge-mode CADAM), the runner starts and stops the CLI bridge around the CADAM turn, provenance records route, runtime and CLI version, and the morning page labels the routes as separate entrants. See `docs/cadam/NIGHTLY_ROUTES.md`.
