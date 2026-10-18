@@ -205,3 +205,11 @@ def test_studio_launcher_never_references_legacy_checkout_path():
     # refactor of that glob.
     text = STUDIO_LAUNCHER.read_text(encoding="utf-8")
     assert not LEGACY_PATTERN.search(text)
+
+
+def test_runner_passes_the_pinned_freecad_appdir_unless_the_secrets_file_sets_one():
+    text = RUNNER.read_text(encoding="utf-8")
+    assert re.search(r'\[string\]\$FreecadAppDirWsl\s*=\s*"[^"]*freecad-1\.1\.4/squashfs-root"', text)
+    # Exported after the secrets file is sourced, keeping a value the file already set.
+    assert text.index("source '$SecretsWsl'") < text.index('export MAKERBENCH_FREECAD_APPDIR="`${MAKERBENCH_FREECAD_APPDIR:-$FreecadAppDirWsl}"')
+    assert text.index("export MAKERBENCH_FREECAD_APPDIR") < text.index("arena overnight")

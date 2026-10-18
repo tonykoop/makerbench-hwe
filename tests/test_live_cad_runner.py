@@ -39,6 +39,13 @@ def _write_box_stl(path: Path) -> None:
     trimesh.creation.box(extents=(120.0, 60.0, 40.0)).export(path)
 
 
+def _requested_stl(assignment: str, config: live.LiveCadConfig) -> Path:
+    """The STL path the assignment asks for, mapped from the Windows staging root to WSL."""
+    win_stl = next(ln.strip() for ln in assignment.splitlines() if ln.strip().lower().endswith(".stl"))
+    relative = win_stl[len(config.win_staging_root.rstrip("\\")):].lstrip("\\").replace("\\", "/")
+    return Path(config.wsl_staging_root) / relative
+
+
 def _fake_runner_factory(config: live.LiveCadConfig):
     """Return a subprocess.run stand-in that 'builds' by writing the STL."""
 
@@ -47,11 +54,7 @@ def _fake_runner_factory(config: live.LiveCadConfig):
         # it to the wsl staging path the runner will read.
         assignment = argv[-1]
         # trial id is the staging subdir the runner created; find it from the path
-        win_stl = [ln for ln in assignment.splitlines() if ln.strip().endswith("output.stl")][
-            -1
-        ].strip()
-        trial_id = Path(win_stl.replace("\\", "/")).parent.name
-        _write_box_stl(Path(config.wsl_staging_root) / trial_id / "output.stl")
+        _write_box_stl(_requested_stl(assignment, config))
         return subprocess.CompletedProcess(argv, 0, stdout="built ok", stderr="")
 
     return fake_runner
@@ -192,11 +195,7 @@ def test_transcript_redacts_tokens_and_uses_trial_cwd(tmp_path):
         seen["argv"] = argv
         seen["cwd"] = kwargs["cwd"]
         assignment = argv[-1]
-        win_stl = [line for line in assignment.splitlines() if line.strip().endswith("output.stl")][
-            -1
-        ].strip()
-        trial_id = Path(win_stl.replace("\\", "/")).parent.name
-        _write_box_stl(Path(cfg.wsl_staging_root) / trial_id / "output.stl")
+        _write_box_stl(_requested_stl(assignment, cfg))
         return subprocess.CompletedProcess(
             argv,
             0,
@@ -308,3 +307,60 @@ def test_claude_driver_runs_the_assignment_and_unknown_runtimes_are_refused(tmp_
     cfg.driver_runtime = "gemini"
     with pytest.raises(ValueError, match="unknown live driver runtime"):
         live.driver_command(cfg, tmp_path)
+
+
+def test_live_brief_drops_code_cad_wording():
+    brief = ("Model a multi-part sambuca assembly as ONE self-contained OpenSCAD program: a boat harp. "
+             "Define one module per part, plus a top-level assembly module placing every part in playing position.")
+    text = live.live_brief(brief, "hwe-fusion")
+    assert "OpenSCAD" not in text and "module" not in text
+    assert text.startswith("Model a multi-part sambuca assembly in ONE Fusion part")
+    assert "one named body per part" in text and "every body placed in playing position" in text
+
+
+def test_live_deliverables_carry_the_naming_rule_and_the_native_file(tmp_path):
+    cfg = _config(tmp_path, runner=None)
+    cfg.cad_stem = "trumpet-sheetmetal_base_r1"
+    fake = _fake_runner_factory(cfg)
+
+    def runner(argv, **kwargs):
+        result = fake(argv, **kwargs)
+        native = next(ln.strip() for ln in argv[-1].splitlines() if ln.strip().endswith(".SLDPRT"))
+        _requested_native = Path(cfg.wsl_staging_root) / native[len(cfg.win_staging_root):].lstrip("\\").replace("\\", "/")
+        _requested_native.write_bytes(b"native")
+        return result
+
+    cfg.runner = runner
+    run_dir = tmp_path / "run"
+    trial = ArenaTrial(instrument_id="trumpet-sheetmetal", model_id="codex-sw", seed=0, rep=0,
+                       provider="solidworks-live", trial_id="trumpet-sheetmetal__seed0__rep0__codex-sw")
+    row = live.make_live_execute_trial(registry=_REGISTRY, run_dir=run_dir, config=cfg)(trial)
+    deliverables = run_dir / "gen" / trial.trial_id / "trumpet-sheetmetal_base_r1"
+    assert sorted(p.name for p in deliverables.iterdir()) == [
+        "trumpet-sheetmetal_base_r1_model.SLDPRT", "trumpet-sheetmetal_base_r1_model.stl"]
+    assert row["native_path"].endswith("trumpet-sheetmetal_base_r1/trumpet-sheetmetal_base_r1_model.SLDPRT")
+    assignment = (run_dir / "gen" / trial.trial_id / "assignment.md").read_text()
+    assert "trumpet-sheetmetal_base_r1\\trumpet-sheetmetal_base_r1_model.stl" in assignment
+    assert "never a bare name like assembly.FCStd" in assignment and "naming_notes" not in row
+
+
+def test_a_misnamed_export_is_taken_with_a_clear_note(tmp_path):
+    cfg = _config(tmp_path, runner=None)
+
+    def runner(argv, **kwargs):
+        wanted = _requested_stl(argv[-1], cfg)
+        _write_box_stl(wanted.parent / "output.stl")  # the old bare name
+        return subprocess.CompletedProcess(argv, 0, stdout="built", stderr="")
+
+    cfg.runner = runner
+    trial = ArenaTrial(instrument_id="trumpet-sheetmetal", model_id="codex-sw", seed=0, rep=0,
+                       provider="solidworks-live", trial_id="trumpet-sheetmetal__seed0__rep0__codex-sw")
+    row = live.make_live_execute_trial(registry=_REGISTRY, run_dir=tmp_path / "run", config=cfg)(trial)
+    assert row["naming_notes"] == ["exported output.stl; the naming rule (#1134) asks for trumpet-sheetmetal_base_r1_model.stl"]
+    assert row["render_ok"] is True
+
+
+def test_no_export_at_all_names_what_was_found(tmp_path):
+    cfg = _config(tmp_path, runner=lambda argv, **kw: subprocess.CompletedProcess(argv, 3, stdout="", stderr=""))
+    with pytest.raises(Exception, match=r"found nothing; driver exit 3"):
+        live.run_live_agent(_REGISTRY["instruments"][0], tmp_path / "run" / "gen" / "t", cfg)

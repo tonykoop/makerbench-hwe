@@ -174,6 +174,7 @@ def _cli_args(tmp_path, secrets, queue):
         str(tmp_path),
         "--runner-script",
         str(queue),  # any existing file stands in for the runner script
+        "--no-entrants",  # these tests cover the other gates; entrant checks are tested below
     ]
 
 
@@ -414,3 +415,133 @@ def test_a_5xx_from_the_app_is_no_go_even_when_sign_in_would_succeed(tmp_path):
     report = _bot_report(tmp_path, broken_app)
     assert not report.ok and not report.cadam.server_ok
     assert "HTTP 503" in "\n".join(render_report_lines(report))
+
+
+# --- per-entrant GO/NO-GO (#663) ------------------------------------------------
+
+from makerbench.nightly_preflight import audit_entrants  # noqa: E402
+from makerbench.nightly_preflight import CadamStatus  # noqa: E402
+
+_CADAM_OK = CadamStatus("http://127.0.0.1:3000", True, True, "CADAM server up; bot sign-in succeeded")
+
+
+def _matchup_job(reference, **extra):
+    return {
+        "job_id": "sambuca-matchup", "instrument_id": "sambuca", "reference_image": str(reference), "budget_usd": 2.0,
+        "entrants": [
+            {"entrant_id": "cadam-opus", "kind": "cadam", "model_id": "anthropic/claude-opus-5.5", "max_cost_usd": 2.0},
+            {"entrant_id": "freecad-opus", "kind": "arena", "model_id": "claude-code-opus-5.5", "backend": "freecad",
+             "context_tier": "image"},
+            {"entrant_id": "solidworks-sol", "kind": "live", "model_id": "codex-gpt-6.1-sol", "backend": "solidworks-live",
+             "context_tier": "image"},
+            {"entrant_id": "fusion-sonnet", "kind": "live", "model_id": "claude-code-sonnet-5.5", "backend": "fusion-live",
+             "context_tier": "image"},
+        ],
+        **extra,
+    }
+
+
+def _appdir(tmp_path):
+    from makerbench.freecad_backend import APPIMAGE_SHA256
+
+    appdir = tmp_path / "squashfs-root"
+    appdir.mkdir()
+    (appdir / "AppRun").write_text("")
+    (appdir / ".makerbench-appimage-sha256").write_text(APPIMAGE_SHA256 + "\n")
+    return appdir
+
+
+def _shims(tmp_path, monkeypatch):
+    from makerbench import live_cad_runner
+
+    root = tmp_path / "StudioPipeline-hwe"
+    (root / "driver").mkdir(parents=True)
+    for name in ("solidworks_mcp_server.py", "fusion_mcp_server.py"):
+        (root / "driver" / name).write_text("")
+    monkeypatch.setattr(live_cad_runner.LiveCadConfig, "connector_cwd", root.as_posix())
+
+
+def test_every_entrant_is_go_when_its_tools_answer(tmp_path, monkeypatch):
+    _shims(tmp_path, monkeypatch)
+    reference = tmp_path / "photo.jpg"
+    reference.write_bytes(b"x")
+    queue = _queue_file(tmp_path, [{"job_id": "done", "status": "votable"}, _matchup_job(reference)])
+    seen = []
+    status = audit_entrants(queue, {"MAKERBENCH_FREECAD_APPDIR": str(_appdir(tmp_path)), "HWE_SW_TOKEN": FAKE_TOKEN},
+                            cadam=_CADAM_OK, environ={}, which=lambda name: f"/usr/bin/{name}",
+                            ping=lambda config: seen.append(config.env) or True)
+    assert status.ok and status.job_id == "sambuca-matchup"
+    assert {item.entrant_id: item.route for item in status.entrants} == {
+        "cadam-opus": "CADAM · OpenRouter · Opus 5.5", "freecad-opus": "Claude Code · Opus 5.5 · FreeCAD",
+        "solidworks-sol": "Codex · GPT-6.1 Sol · SolidWorks live bridge",
+        "fusion-sonnet": "Claude Code · Sonnet 5.5 · Fusion live bridge"}
+    assert "live CAD runs one at a time on one seat: SolidWorks then Fusion" in status.job_notes
+    assert "worst-case paid spend $2.00 of a $2.00 budget" in status.job_notes
+    notes = {item.entrant_id: " ".join(item.notes) for item in status.entrants}
+    assert "driver codex --model gpt-6.1-sol" in notes["solidworks-sol"]
+    assert "driver claude --model claude-sonnet-5-5" in notes["fusion-sonnet"]
+    assert "checksum marker matches" in notes["freecad-opus"]
+    assert seen[0]["HWE_SW_TOKEN"] == FAKE_TOKEN  # the ping gets the bridge token...
+    report = _report_lines(status)
+    assert FAKE_TOKEN not in report  # ...and it never reaches the report
+
+
+def _report_lines(status):
+    from makerbench.nightly_preflight import LockStatus, PreflightReport, QueueStatus
+
+    report = PreflightReport(secrets=(), lock=LockStatus(LOCK_ABSENT), queue=QueueStatus(ok=True), entrants=status)
+    return "\n".join(render_report_lines(report))
+
+
+def test_each_missing_piece_is_its_own_no_go(tmp_path, monkeypatch):
+    _shims(tmp_path, monkeypatch)
+    reference = tmp_path / "photo.jpg"
+    reference.write_bytes(b"x")
+    job = _matchup_job(reference)
+    job["entrants"][0]["max_cost_usd"] = 0
+    queue = _queue_file(tmp_path, [job])
+    cadam_down = CadamStatus("http://127.0.0.1:3000", False, False, "CADAM server not reachable")
+    status = audit_entrants(queue, {}, cadam=cadam_down, environ={},
+                            which=lambda name: None if name == "claude" else f"/usr/bin/{name}",
+                            ping=lambda config: config.connector == "hwe-fusion")
+    verdict = {item.entrant_id: (item.ok, " ".join(item.notes)) for item in status.entrants}
+    assert not status.ok
+    assert verdict["cadam-opus"][0] is False and "not reachable" in verdict["cadam-opus"][1] and "ceiling" in verdict["cadam-opus"][1]
+    assert verdict["freecad-opus"][0] is False and "MAKERBENCH_FREECAD_APPDIR is not set" in verdict["freecad-opus"][1]
+    assert verdict["solidworks-sol"][0] is False and "start_solidworks_bridge.ps1" in verdict["solidworks-sol"][1]
+    assert verdict["fusion-sonnet"][0] is False and "claude is not on PATH" in verdict["fusion-sonnet"][1]
+    lines = _report_lines(status)
+    assert "NO-GO solidworks-sol · Codex · GPT-6.1 Sol · SolidWorks live bridge" in lines and lines.endswith("preflight: NO-GO")
+
+
+def test_job_level_problems_are_no_go(tmp_path):
+    reference = tmp_path / "photo.jpg"
+    reference.write_bytes(b"x")
+    over = _matchup_job(reference, budget_usd=1.0)
+    status = audit_entrants(_queue_file(tmp_path, [over]), {}, cadam=_CADAM_OK, environ={},
+                            which=lambda name: "/bin/x", ping=lambda config: True)
+    assert not status.job_ok and any("exceed the night's $1.00 budget" in note for note in status.job_notes)
+    assembly = _matchup_job(reference, deliverable="assembly")
+    status = audit_entrants(_queue_file(tmp_path, [assembly]), {}, cadam=_CADAM_OK, environ={},
+                            which=lambda name: "/bin/x", ping=lambda config: True)
+    assert not status.job_ok and any("assembly nights are not supported" in note for note in status.job_notes)
+    empty = audit_entrants(_queue_file(tmp_path, [{"job_id": "x", "status": "votable"}]), {}, cadam=_CADAM_OK, environ={})
+    assert empty.ok and empty.job_notes == ("no queued job",)
+
+
+def test_cli_preflight_prints_the_entrant_section_by_default(tmp_path, monkeypatch):
+    from makerbench import nightly_preflight
+
+    _shims(tmp_path, monkeypatch)
+    monkeypatch.setattr(nightly_preflight, "_probe_transport", lambda *a, **k: b"<html></html>")
+    monkeypatch.setattr("makerbench.live_cad_runner.connector_available", lambda config: False)
+    reference = tmp_path / "photo.jpg"
+    reference.write_bytes(b"x")
+    secrets = _secrets_file(tmp_path, f"CADAM_USER_ID={FAKE_VALUE}\nCADAM_ACCESS_TOKEN={FAKE_TOKEN}\n"
+                                      f"SUPABASE_SERVICE_ROLE_KEY={FAKE_TOKEN}\n")
+    queue = _queue_file(tmp_path, [_matchup_job(reference)])
+    args = [a for a in _cli_args(tmp_path, secrets, queue) if a != "--no-entrants"]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 1
+    assert "entrants: job sambuca-matchup" in result.output and "NO-GO solidworks-sol" in result.output
+    assert FAKE_TOKEN not in result.output

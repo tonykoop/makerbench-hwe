@@ -15,6 +15,10 @@ Audits activation state without ever printing secret values:
 - Lock: ``runs/.nightly-cad.lock`` — absent, held by a live PID, or stale.
 - Queue: per-job status summary (job ids + statuses, blocked jobs called out).
 - Paths: runner script, repo root, queue, output root, instruments root.
+- Entrants (#663): GO/NO-GO for each entrant of the next queued job. CADAM needs the app check above
+  and a cost ceiling; a CLI entrant needs its binary (and, for FreeCAD, the pinned AppDir); a live
+  entrant needs its driver CLI, its connector's MCP shim and an authenticated bridge ping. The
+  driver model and the serialized live order (one CAD seat) are printed.
 
 Read-only by design: no queue or lock mutation code paths live here. The
 report is safe to paste into a GO review — values never leave this module,
@@ -23,8 +27,10 @@ only classifications.
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import shutil
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -127,6 +133,26 @@ class RouteStatus:
 
 
 @dataclass(frozen=True)
+class EntrantCheck:
+    entrant_id: str
+    route: str
+    ok: bool
+    notes: tuple[str, ...] = ()  # fixed text only: never a token or a reply body
+
+
+@dataclass(frozen=True)
+class EntrantsStatus:
+    job_id: Optional[str]
+    job_notes: tuple[str, ...] = ()
+    job_ok: bool = True
+    entrants: tuple[EntrantCheck, ...] = ()
+
+    @property
+    def ok(self) -> bool:
+        return self.job_ok and all(item.ok for item in self.entrants)
+
+
+@dataclass(frozen=True)
 class PreflightReport:
     secrets: tuple[SecretStatus, ...]
     lock: LockStatus
@@ -134,6 +160,7 @@ class PreflightReport:
     paths: tuple[PathStatus, ...] = field(default_factory=tuple)
     cadam: Optional[CadamStatus] = None
     routes: tuple[RouteStatus, ...] = ()
+    entrants: Optional[EntrantsStatus] = None
 
     @property
     def secrets_ok(self) -> bool:
@@ -147,7 +174,9 @@ class PreflightReport:
     def ok(self) -> bool:
         cadam_ok = self.cadam is None or self.cadam.ok
         routes_ok = all(route.ok for route in self.routes)
-        return self.secrets_ok and self.lock.ok and self.queue.ok and self.paths_ok and cadam_ok and routes_ok
+        entrants_ok = self.entrants is None or self.entrants.ok
+        return (self.secrets_ok and self.lock.ok and self.queue.ok and self.paths_ok and cadam_ok and routes_ok
+                and entrants_ok)
 
 
 def classify_secret_value(value: Optional[str]) -> str:
@@ -439,6 +468,132 @@ def _bridge_checks(setting, entries, env, runtime, model, run, http_get, which, 
     return checks
 
 
+SOLIDWORKS_START_HINT = (r"start it: powershell -File C:\Users\Tony\Documents\GitHub\StudioPipeline-hwe"
+                         r"\scripts\start_solidworks_bridge.ps1 (SolidWorks open with a blank part)")
+FUSION_START_HINT = "start it: open Fusion with the Luthier Bridge add-in running (listener on 8766)"
+
+
+def _freecad_note(entries: Mapping[str, str], env: Mapping[str, str]) -> tuple[bool, str]:
+    from .freecad_backend import APPIMAGE_SHA256, FREECAD_VERSION
+
+    value = (entries.get("MAKERBENCH_FREECAD_APPDIR") or env.get("MAKERBENCH_FREECAD_APPDIR") or "").strip()
+    if not value:
+        return False, "MAKERBENCH_FREECAD_APPDIR is not set (install: python scripts/install_freecad.py <dir>)"
+    appdir = Path(value)
+    marker = appdir / ".makerbench-appimage-sha256"
+    if not (appdir / "AppRun").is_file() or not marker.is_file() or marker.read_text().strip() != APPIMAGE_SHA256:
+        return False, f"FreeCAD AppDir at {appdir} is not the pinned {FREECAD_VERSION} extraction"
+    return True, f"FreeCAD {FREECAD_VERSION} AppDir at {appdir} (checksum marker matches)"
+
+
+def audit_entrants(
+    queue_path: Path,
+    entries: Mapping[str, str],
+    *,
+    cadam: Optional[CadamStatus],
+    environ: Optional[Mapping[str, str]] = None,
+    which: Callable[[str], Optional[str]] = shutil.which,
+    ping: Optional[Callable[[object], bool]] = None,
+    routes: Sequence[RouteStatus] = (),
+) -> EntrantsStatus:
+    """GO/NO-GO per entrant of the job the runner would claim next (read-only, nothing runs)."""
+    from . import code_cad_providers as providers
+    from .live_cad_runner import LiveCadConfig, _MCP_MODULES, connector_available, driver_route
+    from .nightly_cad import NightlyJob, route_label
+
+    env = os.environ if environ is None else environ
+    ping = ping or connector_available
+    try:
+        payload = json.loads(Path(queue_path).read_text(encoding="utf-8"))
+        raw = next((job for job in payload.get("jobs") or [] if str(job.get("status") or "queued") in {"queued", "running"}), None)
+    except (OSError, ValueError, AttributeError):
+        return EntrantsStatus(None, ("queue unreadable",), job_ok=False)
+    if raw is None:
+        return EntrantsStatus(None, ("no queued job",), job_ok=True)
+    job = NightlyJob.from_dict(raw)
+    notes, job_ok = [], True
+    try:
+        job.validate()
+        notes.append(f"{job.instrument_id}, {job.deliverable} part, reference {Path(job.reference_image).name}")
+    except ValueError as exc:
+        notes.append(str(exc))
+        job_ok = False
+    paid = sum(entrant.max_cost_usd for entrant in job.entrants)
+    if paid > job.budget_usd:
+        notes.append(f"paid ceilings ${paid:.2f} exceed the night's ${job.budget_usd:.2f} budget: the last paid entrant would be refused")
+        job_ok = False
+    else:
+        notes.append(f"worst-case paid spend ${paid:.2f} of a ${job.budget_usd:.2f} budget")
+    live = [entrant for entrant in job.entrants if entrant.kind == "live"]
+    if live:
+        order = " then ".join("SolidWorks" if e.backend == "solidworks-live" else "Fusion" for e in live)
+        notes.append(f"live CAD runs one at a time on one seat: {order}")
+
+    def bridge_env() -> dict[str, str]:
+        keys = ("HWE_SW_HOST", "HWE_SW_PORT", "HWE_SW_TOKEN", "HWE_FUSION_HOST", "HWE_FUSION_PORT", "HWE_FUSION_TOKEN")
+        return {key: (entries.get(key) or env.get(key) or "") for key in keys if entries.get(key) or env.get(key)}
+
+    checks = []
+    for entrant in job.entrants:
+        lines, ok = [], True
+        try:
+            route = route_label(entrant)
+        except ValueError as exc:
+            checks.append(EntrantCheck(entrant.entrant_id, "unknown route", False, (str(exc),)))
+            continue
+        if entrant.kind == "cadam":
+            # The route's own readiness (#1102: key or bridge, model, CLI login) comes from audit_routes.
+            label = cadam_routes.route_label(entrant.route, entrant.runtime, entrant.model_id)
+            route_status = next((item for item in routes if item.label == label), None)
+            if route_status is not None:
+                ok = route_status.ok
+                lines.extend(text for passed, text in route_status.checks if not passed)
+            if entrant.route == cadam_routes.ROUTE_CLI_BRIDGE:
+                lines.append(f"model {entrant.model_id} via CADAM's CLI bridge ({entrant.runtime} subscription)")
+            else:
+                lines.append(f"model {entrant.model_id} via the local CADAM app")
+                if cadam is None or not cadam.ok:
+                    ok = False
+                    lines.append(cadam.message if cadam is not None else "CADAM app not checked")
+                if entrant.max_cost_usd <= 0:
+                    ok = False
+                    lines.append("a paid entrant needs a max_cost_usd ceiling")
+                else:
+                    lines.append(f"ceiling ${entrant.max_cost_usd:.2f}")
+        elif entrant.kind == "arena":
+            provider = providers.provider_for_model_id(entrant.model_id)
+            model = providers.model_name_for_model_id(entrant.model_id, provider) or "CLI default"
+            binary = providers.CLI_BINARIES.get(provider)
+            lines.append(f"{provider} CLI, model {model}, backend {entrant.backend}, context {entrant.context_tier}")
+            if binary and which(binary) is None:
+                ok = False
+                lines.append(f"{binary} is not on PATH")
+            if entrant.backend == "freecad":
+                freecad_ok, note = _freecad_note(entries, env)
+                ok = ok and freecad_ok
+                lines.append(note)
+        elif entrant.kind == "live":
+            runtime, model = driver_route(entrant.model_id)
+            connector = "hwe-fusion" if entrant.backend == "fusion-live" else "hwe-solidworks"
+            lines.append(f"driver {runtime} --model {model}, connector {connector}")
+            if which(runtime) is None:
+                ok = False
+                lines.append(f"{runtime} is not on PATH")
+            config = LiveCadConfig(backend=entrant.backend, driver_model=model, driver_runtime=runtime,
+                                   connector=connector, env=bridge_env())
+            shim = Path(config.connector_cwd) / (_MCP_MODULES[connector].replace(".", "/") + ".py")
+            if not shim.is_file():
+                ok = False
+                lines.append(f"MCP shim missing: {shim}")
+            if ping(config):
+                lines.append(f"{connector} bridge answered an authenticated ping")
+            else:
+                ok = False
+                lines.append(f"{connector} bridge did not answer ({SOLIDWORKS_START_HINT if connector == 'hwe-solidworks' else FUSION_START_HINT})")
+        checks.append(EntrantCheck(entrant.entrant_id, route, ok, tuple(lines)))
+    return EntrantsStatus(job.job_id, tuple(notes), job_ok, tuple(checks))
+
+
 def build_report(
     *,
     secrets_path: Path,
@@ -452,15 +607,23 @@ def build_report(
     route_run: cadam_routes.Run = cadam_routes.default_run,
     route_http_get: cadam_routes.HttpGet = cadam_routes.default_http_get,
     route_which: Callable[[str], Optional[str]] = cadam_routes.which_binary,
+    check_entrants: bool = False,
+    which: Callable[[str], Optional[str]] = shutil.which,
+    bridge_ping: Optional[Callable[[object], bool]] = None,
 ) -> PreflightReport:
     entries = parse_secrets_file(secrets_path) if secrets_path.exists() else {}
+    cadam = audit_cadam(entries, transport=cadam_transport, environ=environ)
+    routes = audit_routes(queue_path, entries, environ=environ, run=route_run, http_get=route_http_get, which=route_which)
     return PreflightReport(
         secrets=audit_secrets(secrets_path, required_keys),
         lock=audit_lock(lock_path, pid_alive=pid_alive),
         queue=audit_queue(queue_path),
         paths=audit_paths(named_paths),
-        cadam=audit_cadam(entries, transport=cadam_transport, environ=environ),
-        routes=audit_routes(queue_path, entries, environ=environ, run=route_run, http_get=route_http_get, which=route_which),
+        cadam=cadam,
+        routes=routes,
+        entrants=(audit_entrants(queue_path, entries, cadam=cadam, environ=environ, which=which, ping=bridge_ping,
+                                 routes=routes)
+                  if check_entrants else None),
     )
 
 
@@ -491,5 +654,14 @@ def render_report_lines(report: PreflightReport) -> list[str]:
     for item in report.paths:
         state = "exists" if item.exists else "MISSING"
         lines.append(f"  {item.name}: {item.path} ({state})")
+    if report.entrants is not None:
+        status = report.entrants
+        lines.append(f"[{'PASS' if status.ok else 'FAIL'}] entrants: job {status.job_id or '-'}")
+        for note in status.job_notes:
+            lines.append(f"  {note}")
+        for item in status.entrants:
+            lines.append(f"  {'GO   ' if item.ok else 'NO-GO'} {item.entrant_id} · {item.route}")
+            for note in item.notes:
+                lines.append(f"        {note}")
     lines.append(f"preflight: {'GO' if report.ok else 'NO-GO'}")
     return lines

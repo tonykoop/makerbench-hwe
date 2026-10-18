@@ -95,12 +95,14 @@ def cell_status(tool: Tool, model: Model) -> Optional[str]:
 
 
 def entrant_for(tool: Tool, model: Model) -> nightly_cad.NightlyEntrant:
+    """Every entrant of a night sees the same reference photo (#648): the ``image`` context tier."""
     model_id = model.openrouter if tool.route == "openrouter" else model.cli
     return nightly_cad.NightlyEntrant(
         entrant_id=f"{tool.id}-{model.id}",
         kind=tool.kind,
         model_id=str(model_id),
         backend=tool.backend,
+        context_tier="image",
     )
 
 

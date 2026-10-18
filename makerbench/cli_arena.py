@@ -1409,6 +1409,40 @@ def arena_overnight(
     console.print(json.dumps(result, indent=2, sort_keys=True))
 
 
+@arena_app.command("draft-matchup")
+def arena_draft_matchup(
+        out: str = typer.Option(..., "--out", help="Draft queue file to write (never the live nightly-cad-queue.json)."),
+        instrument: str = typer.Option("sambuca", "--instrument", help="Arena registry task id."),
+        entrants: str = typer.Option("cadam:opus,freecad:opus,solidworks:sol,fusion:sonnet", "--entrants",
+                                     help="Comma-separated New Run picks, tool:model."),
+        reference: Optional[str] = typer.Option("SambucaPhotobyDonHitchcock_BritishMuseum.jpg", "--reference",
+                                                help="Image file name under the instrument repo's images/ folder."),
+        cap_usd: float = typer.Option(2.0, "--cap-usd", help="OpenRouter cap for the night, split across paid entrants."),
+        registry: str = typer.Option(DEFAULT_REGISTRY, help="Arena registry JSON path."),
+        runs_root: str = typer.Option("runs", "--runs-root", help="Runs root (plans and the copied reference go under control-room/plans)."),
+        instruments_root: str = typer.Option("/mnt/c/Users/Tony/Documents/GitHub/instruments", "--instruments-root"),
+        replace: bool = typer.Option(False, "--replace", help="Overwrite an existing draft file.")):
+    """Draft one matchup job with the New Run code path into a DRAFT queue file (#663).
+
+    Nothing runs and the live nightly queue is never written. Check the draft with
+    ``arena preflight --queue <draft>``.
+    """
+
+    from .nightly_draft import DraftError, draft_matchup
+
+    try:
+        drafted = draft_matchup(
+            instrument=instrument, entrants=[item.strip() for item in entrants.split(",") if item.strip()],
+            registry_path=Path(registry), runs_root=Path(runs_root), out_path=Path(out),
+            reference=reference or None, instruments_root=Path(instruments_root) if instruments_root else None,
+            cap_usd=cap_usd, replace=replace,
+        )
+    except DraftError as exc:
+        console.print(f"[red]draft not written: {exc}[/red]")
+        raise typer.Exit(code=1)
+    console.print(json.dumps(drafted, indent=2, sort_keys=True))
+
+
 @arena_app.command("preflight")
 def arena_preflight(
         secrets: str = typer.Option(..., "--secrets", help="Path to the external nightly-cad secrets env file (values are classified, never printed)."),
@@ -1417,7 +1451,8 @@ def arena_preflight(
         repo_root: Optional[str] = typer.Option(None, "--repo-root", help="Repo checkout root (defaults to the current directory)."),
         runner_script: Optional[str] = typer.Option(None, "--runner-script", help="Windows runner script path (defaults to <repo-root>/scripts/windows/run-nightly-cad-arena.ps1)."),
         instruments_root: Optional[str] = typer.Option(None, "--instruments-root", help="Instrument build-repo root to include in the path audit."),
-        lock: Optional[str] = typer.Option(None, "--lock", help="Lock file path (defaults to <output-root>/.nightly-cad.lock).")):
+        lock: Optional[str] = typer.Option(None, "--lock", help="Lock file path (defaults to <output-root>/.nightly-cad.lock)."),
+        entrants: bool = typer.Option(True, "--entrants/--no-entrants", help="GO/NO-GO per entrant of the next queued job: CLIs, models, FreeCAD AppDir, MCP shims and authenticated bridge pings (#663). Read-only; nothing is generated.")):
     """Redacted GO/NO-GO audit of nightly-arena activation state (#658).
 
     Reports secrets (PRESENT/MISSING/PLACEHOLDER — values are never echoed),
@@ -1450,6 +1485,7 @@ def arena_preflight(
         lock_path=Path(lock) if lock else output_path / ".nightly-cad.lock",
         queue_path=Path(queue),
         named_paths=named_paths,
+        check_entrants=entrants,
     )
     for line in nightly_preflight.render_report_lines(report):
         console.print(line, markup=False, highlight=False)
