@@ -8,6 +8,8 @@ from shapely.geometry import box
 from shapely.ops import unary_union
 
 from makerbench.acoustic_tongues import extract_profiles, main, saved_panel_brep
+from makerbench._wood_files import delivery_files, manifest
+from makerbench.wood_assembly import public_spec
 
 
 def generated_footprint(offset=(0, 0)):
@@ -77,12 +79,17 @@ def native(path, name="PanelBody", shape=b"saved-geometry", link=None):
             z.writestr("Panel.Shape.brp", shape)
 
 
-def test_saved_brep_and_assembly_links(tmp_path):
+@pytest.mark.parametrize("with_manifest", [True, False])
+def test_saved_brep_and_assembly_links(tmp_path, with_manifest):
+    files = delivery_files(public_spec())
+    if with_manifest:
+        (tmp_path / "manifest.json").write_text(json.dumps(manifest(files)))
     (tmp_path / "parts").mkdir()
-    panel = tmp_path / "parts/top.FCStd"
+    panel = tmp_path / files["top"]
     native(panel)
-    assembly = tmp_path / "assembly.FCStd"
-    native(assembly, name="Top", link="parts/top.FCStd")
+    assert saved_panel_brep(panel)[0] == b"saved-geometry"
+    assembly = tmp_path / files["assembly"]
+    native(assembly, name="Top", link=files["top"])
     data, prov = saved_panel_brep(assembly)
     assert data == b"saved-geometry"
     assert prov["input_sha256"] == hashlib.sha256(assembly.read_bytes()).hexdigest()
@@ -96,10 +103,38 @@ def test_saved_brep_and_assembly_links(tmp_path):
         saved_panel_brep(assembly)
 
 
-def test_unsafe_external_links_rejected_before_read(tmp_path):
-    assembly = tmp_path / "assembly.FCStd"
-    native(assembly, name="Top", link="../private/anything.FCStd")
-    with pytest.raises(ValueError):
+@pytest.mark.parametrize(
+    "link", ["../outside.FCStd", "/tmp/outside.FCStd", "parts/undeclared.FCStd"]
+)
+def test_unsafe_external_links_rejected_before_read(tmp_path, link):
+    files = delivery_files(public_spec())
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest(files)))
+    assembly = tmp_path / files["assembly"]
+    native(assembly, name="Top", link=link)
+    with pytest.raises(ValueError, match="outside the supplied part files"):
+        saved_panel_brep(assembly)
+
+
+def test_panel_symlink_cannot_escape_bundle(tmp_path):
+    files = delivery_files(public_spec())
+    bundle = tmp_path / "bundle"
+    (bundle / "parts").mkdir(parents=True)
+    outside = tmp_path / "outside.FCStd"
+    native(outside)
+    (bundle / files["top"]).symlink_to(outside)
+    assembly = bundle / files["assembly"]
+    native(assembly, name="Top", link=files["top"])
+    with pytest.raises(ValueError, match="Panel link escapes input bundle"):
+        saved_panel_brep(assembly)
+
+
+def test_linked_parts_must_be_self_contained(tmp_path):
+    files = delivery_files(public_spec())
+    (tmp_path / "parts").mkdir()
+    native(tmp_path / files["top"], name="Top", link=files["bottom"])
+    assembly = tmp_path / files["assembly"]
+    native(assembly, name="Top", link=files["top"])
+    with pytest.raises(ValueError, match="outside the supplied part files"):
         saved_panel_brep(assembly)
 
 
