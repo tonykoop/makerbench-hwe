@@ -36,7 +36,7 @@ jobs:
         id: pin
         run: |
           python -c "from makerbench.freecad_backend import APPIMAGE_SHA256; print('sha256=' + APPIMAGE_SHA256)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .freecad/squashfs-root
           key: freecad-extracted-${{ runner.os }}-${{ runner.arch }}-${{ steps.pin.outputs.sha256 }}
