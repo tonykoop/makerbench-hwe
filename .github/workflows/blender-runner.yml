@@ -51,7 +51,7 @@ jobs:
           python-version: "3.12"
 
       - name: Restore pinned Blender
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ env.MAKERBENCH_BLENDER_CACHE }}
           key: blender-4.2.23-linux-x64-bea0eb3146be
