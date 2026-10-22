@@ -1596,6 +1596,10 @@ def arena_studio(
             "--control-room-promote",
             help="Let Morning Review's Promote to library push its branch and open a PR in the instrument repo. Off: the branch stays local.",
         ),
+        control_room_queue: Optional[str] = typer.Option(
+            None, "--control-room-queue",
+            help="Nightly queue shown by Tonight's Queue and written by New Run only with --control-room-queue-writes. Default: nightly-cad-queue.json beside --control-room-runs, otherwise <repo>/runs/nightly-cad-queue.json.",
+        ),
         control_room_runs: Optional[str] = typer.Option(
             None,
             "--control-room-runs",
@@ -1637,6 +1641,7 @@ def arena_studio(
         library_manifest=Path(library_manifest) if library_manifest else None,
         control_room_promote=control_room_promote,
         control_room_runs_root=Path(control_room_runs) if control_room_runs else None,
+        control_room_queue=Path(control_room_queue) if control_room_queue else None,
     )
     console.print(f"[bold green]MakerBench Arena Studio running at http://{host}:{port}/[/bold green]")
     uvicorn.run(app, host=host, port=port)

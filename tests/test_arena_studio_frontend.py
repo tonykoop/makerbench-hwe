@@ -119,6 +119,9 @@ def test_nothing_shipped_reaches_the_network():
                 "https://github.com/tonykoop/makerbench-hwe/blob/main/docs/showcase/try-it.md",
             }:
                 continue
+            # Written GO is an explicit navigation link, never fetched by the browser.
+            if path == STATIC / "app/screens/queue.js" and url == "https://github.com/tonykoop/makerbench-hwe/issues/664":
+                continue
             if url not in ALLOWED_URL_STRINGS:
                 offenders.append(f"{path.relative_to(STATIC)}: {url}")
     assert offenders == []

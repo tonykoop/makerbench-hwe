@@ -322,6 +322,25 @@ def save_queue(path: Path, payload: Mapping[str, object], jobs: list[NightlyJob]
     atomic_write_json(Path(path), updated)
 
 
+def save_active_job(path: Path, job: NightlyJob) -> None:
+    """Persist only runner-owned state, preserving concurrent queue edits (#1160).
+
+    Tonight's Queue and New Run use this same queue sidecar lock. A job removed
+    before its claim is persisted must never be resurrected or dispatched.
+    """
+    with file_lock(path):
+        payload, _jobs = load_queue(path)
+        current = next((row for row in payload["jobs"] if row.get("job_id") == job.job_id), None)
+        if current is None or (current.get("status") or "queued") not in {"queued", "running"}:
+            raise RuntimeError("The selected nightly job changed before its state could be saved.")
+        if job.status == "running" and (current.get("status") or "queued") == "queued":
+            next_job = next((row for row in payload["jobs"] if (row.get("status") or "queued") in {"queued", "running"}), None)
+            if next_job is not current:
+                raise RuntimeError("The nightly queue order changed before this job could be claimed.")
+        current.update(status=job.status, run_id=job.run_id, run_dir=job.run_dir)
+        atomic_write_json(path, payload)
+
+
 @contextmanager
 def nightly_lease(path: Path, *, now: Callable[[], datetime]) -> Iterator[None]:
     """Acquire the single-seat nightly lease without waiting."""
@@ -1022,7 +1041,7 @@ class NightlyExecutor:
         job.run_dir = run_dir.as_posix()
         job.status = "running"
         if claimed is None:
-            save_queue(self.queue_path, payload, jobs)
+            save_active_job(self.queue_path, job)
         _fresh_run_log(run_dir, job, matchup=matchup)
         registry = arena_runner.load_arena_registry(self.registry_path)
         _night_inputs(run_dir, job, registry, night=self.now().astimezone(timezone.utc).date().isoformat())
@@ -1151,7 +1170,7 @@ class NightlyExecutor:
             atomic_write_json(run_dir / "morning-summary.json", morning)
         job.status = "votable" if morning["votable"] else "blocked"
         if claimed is None:
-            save_queue(self.queue_path, payload, jobs)
+            save_active_job(self.queue_path, job)
         else:
             failure = next((row.get("error") for row in outcomes if row.get("status") in {"error", "failed", "paid-dispatch-uncertain"}), None)
             revisions.finish(

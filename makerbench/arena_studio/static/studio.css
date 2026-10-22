@@ -2548,6 +2548,82 @@ body[data-demo="true"] .demo-header-links {
   }
 }
 
+/* Tonight's Queue (#1160): ordered nights with a read-only readiness rail. */
+.screen-queue { max-width: 80rem; }
+.queue-banner { display: flex; flex-wrap: wrap; gap: .35rem .6rem; margin: 1rem 0; padding: .7rem .9rem; background: color-mix(in srgb, var(--brass) 12%, var(--surface)); border: 1px solid color-mix(in srgb, var(--brass) 50%, var(--line)); border-radius: 6px; font-size: var(--step--1); }
+.queue-layout { display: grid; grid-template-columns: minmax(0, 1fr) 20.5rem; gap: var(--space-6); align-items: start; margin-top: var(--space-4); }
+.queue-upcoming { min-width: 0; }
+.queue-list-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .7rem; }
+.queue-list-heading h2, .queue-box h2 { font-size: .8rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.queue-list-heading h2 span { display: block; font-weight: 400; font-size: .75rem; text-transform: none; letter-spacing: 0; margin-top: .3rem; }
+.queue-list { display: grid; gap: .75rem; margin: 0; padding: 0; list-style: none; }
+.queue-night { display: grid; grid-template-columns: 3.1rem 5rem minmax(0, 1fr); border: 1px solid var(--line); border-radius: 8px; background: var(--surface); overflow: hidden; }
+.queue-night[data-status="running"] { border-color: var(--accent); }
+.queue-night[data-status="blocked"] { border-color: var(--danger); }
+.queue-night.queue-over { box-shadow: 0 0 0 2px var(--accent); }
+.queue-order { display: flex; flex-direction: column; align-items: center; gap: .35rem; padding: .8rem .2rem; border-right: 1px solid var(--line); background: color-mix(in srgb, var(--line) 22%, var(--surface)); }
+.queue-night[draggable="true"] .queue-order { cursor: grab; }
+.queue-order strong { font-size: 1.4rem; font-weight: 500; }
+.queue-order small { font: .65rem ui-monospace, monospace; color: var(--muted); overflow-wrap: anywhere; text-align: center; }
+.queue-order button { width: 1.85rem; min-height: 1.9rem; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; cursor: pointer; }
+.queue-order button:disabled { opacity: .4; cursor: default; }
+.queue-thumb { display: grid; place-items: center; background: color-mix(in srgb, var(--brass) 8%, var(--ground)); border-right: 1px solid var(--line); min-width: 0; }
+.queue-thumb img { width: 100%; height: 100%; max-height: 17rem; object-fit: cover; }
+.queue-thumb span { color: var(--muted); font-size: .7rem; text-align: center; padding: .4rem; }
+.queue-body { display: grid; gap: .6rem; padding: .8rem .9rem; min-width: 0; }
+.queue-who { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .6rem; }
+.queue-who h3 { font-size: 1.05rem; }
+.queue-sub { color: var(--muted); font: .75rem ui-monospace, monospace; }
+.queue-entrants { display: flex; flex-wrap: wrap; gap: .35rem; }
+.queue-chip { display: inline-block; max-width: 100%; border: 1px solid var(--line); border-radius: 4px; padding: .15rem .4rem; font: .7rem ui-monospace, monospace; overflow-wrap: anywhere; }
+.queue-status { text-transform: uppercase; font-family: var(--font-ui); font-weight: 600; letter-spacing: .04em; color: var(--muted); }
+.queue-status.running { color: var(--accent); border-color: var(--accent); }
+.queue-status.blocked { color: var(--danger); border-color: var(--danger); }
+.queue-status.draft { color: var(--brass); border-color: var(--brass); }
+.queue-status.done, .queue-status.votable { color: var(--ok); border-color: var(--ok); }
+.queue-meta { display: flex; flex-wrap: wrap; gap: .3rem 1rem; margin: 0; font-size: .75rem; }
+.queue-meta > div { display: flex; flex-wrap: wrap; gap: .35rem; min-width: 0; }
+.queue-meta dt { color: var(--muted); }
+.queue-meta dd { margin: 0; overflow-wrap: anywhere; min-width: 0; }
+.queue-job-id dd { font: .7rem ui-monospace, monospace; }
+.queue-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+.queue-actions .button, .queue-undo .button, .queue-list-heading .button { padding: .35rem .6rem; font-size: .75rem; text-decoration: none; }
+.queue-actions [aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+.queue-reason { margin: 0; color: var(--danger); font-size: .8rem; overflow-wrap: anywhere; }
+.queue-undo { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; padding: .7rem .9rem; margin-top: .7rem; border: 1px dashed var(--line); border-radius: 6px; font-size: .8rem; color: var(--muted); }
+.queue-rail { position: sticky; top: .75rem; display: grid; gap: .75rem; min-width: 0; }
+.queue-box { display: grid; gap: .65rem; border: 1px solid var(--line); border-radius: 8px; padding: .9rem; background: var(--surface); min-width: 0; }
+.queue-box p { margin: 0; font-size: .8rem; }
+.queue-box .button:disabled { opacity: .45; cursor: default; }
+.queue-box h3 { font-size: .8rem; }
+.queue-go-row { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
+.queue-go-row p { font-size: .75rem; }
+.queue-switch { width: 2.9rem; height: 1.65rem; border: 1px solid var(--line); border-radius: 1rem; background: var(--ground); padding: .2rem; cursor: not-allowed; flex: none; }
+.queue-switch span { display: block; width: 1.1rem; height: 1.1rem; border-radius: 50%; background: var(--surface); border: 1px solid var(--line); }
+.queue-switch[aria-checked="true"] { background: var(--ok); }
+.queue-switch[aria-checked="true"] span { margin-left: 1rem; }
+.queue-kv { display: grid; grid-template-columns: 1fr minmax(0, 1.2fr); gap: .3rem .6rem; font-size: .8rem; margin: 0; }
+.queue-kv dt { color: var(--muted); }
+.queue-kv dd { margin: 0; text-align: right; font: .75rem ui-monospace, monospace; overflow-wrap: anywhere; }
+.queue-checklist { margin: 0; padding-left: 1rem; font-size: .8rem; color: var(--muted); }
+.queue-lights { display: grid; gap: .55rem; list-style: none; margin: 0; padding: 0; }
+.queue-lights li { display: grid; grid-template-columns: .6rem minmax(0, .9fr) minmax(0, 1.1fr); gap: .4rem; align-items: baseline; font-size: .75rem; }
+.queue-lights small { color: var(--muted); font: .65rem ui-monospace, monospace; text-align: right; overflow-wrap: anywhere; }
+.queue-dot { display: inline-block; width: .5rem; height: .5rem; border-radius: 50%; background: var(--line); }
+.queue-dot.ok { background: var(--ok); }
+.queue-dot.warn { background: var(--brass); }
+.queue-dot.error { background: var(--danger); }
+.queue-checks { display: grid; gap: .35rem; margin: 0; padding: 0; list-style: none; font-size: .8rem; }
+.queue-checks li { display: flex; align-items: baseline; gap: .6rem; }
+.queue-verdict { font: .7rem ui-monospace, monospace; flex: none; }
+.queue-good, .queue-verdict.go { color: var(--ok); }
+.queue-bad, .queue-verdict.no { color: var(--danger); }
+.queue-entrant-check { padding: .6rem 0; border-top: 1px solid var(--line); font-size: .8rem; overflow-wrap: anywhere; }
+.queue-entrant-check ul { margin: .4rem 0 0; padding-left: 1rem; color: var(--muted); font-size: .75rem; }
+.queue-notice { color: var(--muted); font-size: .8rem; }
+@media (max-width: 1100px) { .queue-layout { grid-template-columns: minmax(0, 1fr); } .queue-rail { position: static; } }
+@media (max-width: 620px) { .queue-night { grid-template-columns: 2.7rem minmax(0, 1fr); } .queue-thumb { display: none; } .queue-body { padding: .65rem; } }
+
 /* Control Room: Morning Review (#1105). A brief rail beside one ranked column of
  * design cards; the review tray stays pinned to the bottom of the window. */
 .screen-review {

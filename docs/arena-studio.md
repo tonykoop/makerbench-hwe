@@ -107,6 +107,7 @@ on, a **Voting as** name (remembered in this browser), and server status.
 | **Blind voting** | `#/vote/<run>` | Vote on anonymous A/B pairs from a run. See [Blind voting](#blind-voting). |
 | **Nightly cockpit** | `#/nightly` | A read-only view of the nightly CAD queue and its lease. |
 | **Morning review** | `#/morning`, `#/morning/<job>` | Vote blind on a finished nightly bundle. |
+| **Tonight's Queue** | `#/queue` | Reorder queued nights, remove with undo, and inspect GO status, readiness and selected-job preflight. Names entrants; outside the blind flow. |
 | **Launch** | `#/launch` | Pick instruments, approve reference images, start a dry run and watch its log; nightly preflight. |
 | **Agreement analytics** | `#/analytics/<run>` | Human Elo with intervals, how people agree with the objective checks, outliers, export. |
 | **Compare runs** | `#/compare?a=<run>&b=<run>` | Two runs side by side and the entrants rated in both. |
@@ -116,6 +117,50 @@ on, a **Voting as** name (remembered in this browser), and server status.
 Every screen has loading, empty and error states. An error always shows the
 server's own message and a **Try again** button; it never shows stale data as if
 it were current.
+
+## Tonight's Queue
+
+The third Control Room tab, after Morning Review and New Run, shows running,
+queued, blocked and completed nights. Use the arrows or drag queued cards to
+reorder them. **Move to tomorrow** moves a night to the end of the queue; it
+does not set a calendar date. **Remove** preserves the job with `status: removed`;
+**Undo** restores it. Running and blocked jobs cannot be reordered or removed.
+
+For a nightly task with an external runs folder and queue, start the Studio with:
+
+```bash
+python -m makerbench.cli arena studio \
+  --control-room-runs /path/to/nightly/runs \
+  --control-room-queue /path/to/nightly/queue.json
+```
+
+Without `--control-room-queue-writes`, edits stay in the Studio server's memory
+and a **Draft only** banner stays visible. The file is unchanged. With that flag,
+New Run and Tonight's Queue share the configured queue and its sidecar lock.
+The runner updates only its active job, preserving edits to other nights.
+Stale edits are refused; refresh after the queue changes elsewhere.
+
+The default queue is `nightly-cad-queue.json` beside an explicit
+`--control-room-runs` folder, or `<repo>/runs/nightly-cad-queue.json` when no
+external folder is supplied. Plan reference thumbnails are confined to the runs
+folder's `control-room/plans/` tree; symlinked paths are refused.
+
+The GO switch is read-only. Task state is **unknown (Windows task)** unless
+`control-room/task-state.json` contains a cached `{"state": "Enabled"}` or
+`{"state": "Disabled"}`. Written GO means a comment on #664 begins with `GO:`;
+it is fetched at most once per ten minutes, including failed fetches. Offline
+state is shown as unknown. This screen never enables the scheduled task.
+
+Status lights show authenticated bridge pings, CLI presence on PATH (sign-in
+remains unknown), backend availability, credential presence and CADAM app
+reachability. Credential values are never displayed. Weekly quotas remain
+unknown unless recorded session telemetry explicitly contains
+`telemetry.weekly_quota.<claude|codex>.remaining_percent`.
+
+Select a queued night and use **Run preflight** for GO/NO-GO per entrant. It runs
+the existing preflight report against a temporary snapshot of that job, with
+the configured queue's adjacent `makerbench-nightly.env` and the runs folder's
+nightly lock. It does not edit the queue, start a night or spend model tokens.
 
 ## Blind voting
 

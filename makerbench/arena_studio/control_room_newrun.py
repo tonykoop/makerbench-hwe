@@ -500,13 +500,21 @@ def write_draft(runs_root: Path, built: Sequence[Mapping[str, Any]], *, staged_b
     return path.relative_to(runs_root).as_posix()
 
 
-def append_jobs(runs_root: Path, built: Sequence[Mapping[str, Any]]) -> int:
+def append_jobs(runs_root: Path, built: Sequence[Mapping[str, Any]], *, queue_path: Optional[Path] = None) -> int:
     """Append jobs to the nightly queue under its lock, through the runner's own load/save.
 
-    The queue file and its lock are confined to runs/ (no symlinked ``runs`` or file).
+    The default queue is under runs/. An explicitly configured queue can be elsewhere;
+    neither path, its lock nor runs/control-room may pass through a symlink.
     """
-    queue_path = confined(runs_root, "nightly-cad-queue.json")
-    confined(runs_root, "nightly-cad-queue.json.lock")
+    from .control_room_queue import QueueError, safe_path
+
+    confined(runs_root, "control-room")
+    queue_path = Path(queue_path) if queue_path is not None else runs_root / "nightly-cad-queue.json"
+    try:
+        safe_path(queue_path)
+        safe_path(queue_path.with_name(queue_path.name + ".lock"))
+    except QueueError as exc:
+        raise UnsafePath(str(exc)) from exc
     with file_lock(queue_path):
         if queue_path.is_file():
             payload, jobs = nightly_cad.load_queue(queue_path)
@@ -514,7 +522,8 @@ def append_jobs(runs_root: Path, built: Sequence[Mapping[str, Any]]) -> int:
             payload, jobs = {"schema": nightly_cad.SCHEMA}, []
         known = {job.job_id for job in jobs}
         added = [nightly_cad.NightlyJob.from_dict(item["job"]) for item in built if item["job"]["job_id"] not in known]
-        nightly_cad.save_queue(queue_path, payload, jobs + added)
+        # Preserve running-job metadata and Tonight's Queue removal/undo records.
+        atomic_write_json(queue_path, {**payload, "jobs": [*(payload.get("jobs") or []), *(job.as_dict() for job in added)]})
     return len(added)
 
 
