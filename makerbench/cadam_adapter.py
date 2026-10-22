@@ -383,21 +383,29 @@ class CadamClient:
                     "parent_message_id": None,
                 },
             )
-            stream = self._send(
-                "POST",
-                f"{self.config.base_url.rstrip('/')}/api/parametric-chat",
-                {
-                    "Authorization": f"Bearer {access_token}",
-                    "Content-Type": "application/json",
-                },
-                _json_body(
+            try:
+                stream = self._send(
+                    "POST",
+                    f"{self.config.base_url.rstrip('/')}/api/parametric-chat",
                     {
-                        "conversationId": conversation_id,
-                        "model": self.config.model,
-                        "thinking": True,
-                    }
-                ),
-            )
+                        "Authorization": f"Bearer {access_token}",
+                        "Content-Type": "application/json",
+                    },
+                    _json_body(
+                        {
+                            "conversationId": conversation_id,
+                            "model": self.config.model,
+                            "thinking": True,
+                        }
+                    ),
+                )
+            except CadamTransportError as exc:
+                if str(exc).endswith(("(HTTP 401)", "(HTTP 403)")):
+                    raise
+                raise CadamRecoveryRequiredError(
+                    "paid CADAM stream interrupted; refusing automatic repost "
+                    f"(conversation_id={conversation_id})"
+                ) from exc
             stream_path.write_bytes(stream)
         elif code and not stream_path.exists():
             stream_path.write_bytes(b"recovered from persisted assistant row\n")

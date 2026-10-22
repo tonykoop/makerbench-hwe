@@ -86,3 +86,19 @@ def test_resolution(tmp_path, blocker, outcome):
 
 def test_never_purchased_credits_is_no_go():
     assert openrouter_credit_check('secret', lambda *args: b'{"data":{"limit_remaining":null,"usage":0,"is_free_tier":true}}')[0] is False
+
+
+def test_interrupted_chat_is_uncertain(tmp_path):
+    def transport(method, url, headers, body):
+        if url.endswith('/api/parametric-chat'):
+            raise TimeoutError('secret')
+        return b'[]'
+    client = CadamClient(CadamConfig(base_url='http://cadam.test', supabase_url='http://supabase.test',
+        user_id='test', access_token='token', service_role_key='service'), transport=transport, sleep_fn=lambda _: None)
+    with pytest.raises(CadamRecoveryRequiredError, match='stream interrupted') as error:
+        client.generate(prompt='fixture', output_dir=tmp_path)
+    assert 'secret' not in str(error.value)
+
+
+def test_missing_credit_counters_is_no_go():
+    assert openrouter_credit_check('secret', lambda *args: b'{"data":{}}')[0] is False

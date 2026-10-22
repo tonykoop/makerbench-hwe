@@ -382,7 +382,7 @@ def openrouter_credit_check(key: str, transport=None) -> tuple[bool, str]:
         raw = transport("GET", "https://openrouter.ai/api/v1/auth/key",
                         {"Authorization": f"Bearer {key}"}, None)
         data = json.loads(raw)["data"]
-        remaining, usage = data.get("limit_remaining"), data.get("usage")
+        remaining, usage = data["limit_remaining"], data["usage"]
         if remaining is not None and (isinstance(remaining, bool) or not isinstance(remaining, (int, float))):
             raise ValueError("invalid counter")
         if usage is not None and (isinstance(usage, bool) or not isinstance(usage, (int, float))):
