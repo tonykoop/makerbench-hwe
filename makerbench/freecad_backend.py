@@ -179,7 +179,7 @@ def run_freecad(
     ``appdir`` (or MAKERBENCH_FREECAD_APPDIR) is the install script's extracted
     squashfs-root. Output must be absent or empty; failed runs publish no files.
     Entrants receive ``doc`` and return ``result`` (Part.Shape or object.Shape),
-    or leave exactly one shape object in that document.
+    or leave an assembly or PartDesign bodies in that document.
     """
     native_filename = _native_name(native_filename)
     if not math.isfinite(timeout_s) or timeout_s <= 0:

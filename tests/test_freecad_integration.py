@@ -231,3 +231,47 @@ result = body
     assert artifacts.provenance['editability'] == {'aliases': 2, 'bodies': 1, 'sketches': 1, 'constraints': 2}
     assert artifacts.provenance['warnings'] == []
     assert artifacts.stl_path.stat().st_size > 84
+
+
+@pytest.mark.parametrize('assembly', [True, False])
+def test_multiple_bodies_without_result(tmp_path, runtime, assembly):
+    """Export the placed assembly, or a temporary fusion; never flatten doc."""
+    script = tmp_path / 'multi_body.py'
+    script.write_text(f"""
+import FreeCAD as App, Part, MeshPart
+assembly = doc.addObject('App::Part', 'assembly') if {assembly!r} else None
+if assembly:
+    assembly.Placement.Base = App.Vector(10, 0, 0)
+for name, x in [('hull', 0), ('soundboard', {3 if assembly else 1})]:
+    body = doc.addObject('PartDesign::Body', name)
+    if assembly:
+        assembly.addObject(body)
+    block = body.newObject('PartDesign::AdditiveBox', name + '_block')
+    block.Length = block.Width = block.Height = 2
+    body.Placement.Base = App.Vector(x, 0, 0)
+doc.recompute()
+original_names = [obj.Name for obj in doc.Objects]
+original_mesh = MeshPart.meshFromShape
+def checked_mesh(**kwargs):
+    assert [obj.Name for obj in doc.Objects] == original_names
+    assert doc.hull.Tip.TypeId == 'PartDesign::AdditiveBox'
+    assert doc.soundboard.Tip.TypeId == 'PartDesign::AdditiveBox'
+    assert abs(doc.hull.Shape.Volume - 8) < 1e-6
+    assert abs(doc.soundboard.Shape.Volume - 8) < 1e-6
+    shape = kwargs['Shape']
+    assert abs(shape.Volume - {16 if assembly else 12}) < 1e-6
+    assert abs(shape.BoundBox.XMin - {10 if assembly else 0}) < 1e-6
+    assert abs(shape.BoundBox.XMax - {15 if assembly else 3}) < 1e-6
+    return original_mesh(**kwargs)
+MeshPart.meshFromShape = checked_mesh
+""")
+    artifacts = backend.run_freecad(script, tmp_path / 'out', appdir=runtime)
+    assert artifacts.provenance['editability']['bodies'] == 2
+    assert artifacts.stl_path.stat().st_size > 84
+    # Independent exported mesh volume, including overlap removal for the fallback.
+    records = struct.iter_unpack('<12fH', artifacts.stl_path.read_bytes()[84:])
+    volume = 0
+    for record in records:
+        ax, ay, az, bx, by, bz, cx, cy, cz = record[3:12]
+        volume += ax * (by * cz - bz * cy) + ay * (bz * cx - bx * cz) + az * (bx * cy - by * cx)
+    assert abs(volume / 6) == pytest.approx(16 if assembly else 12, rel=.002)

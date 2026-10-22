@@ -42,8 +42,10 @@ print(artifacts.native_path, artifacts.step_path, artifacts.stl_path, artifacts.
 
 An entrant receives `doc`, a fresh FreeCAD document. Set `result` to a valid
 positive-volume `Part.Shape` or a document object with `.Shape`. Alternatively,
-leave exactly one shape object in `doc`. Multiple objects require an explicit
-result (e.g. a compound). Each invocation has a fresh process, document, HOME,
+omit `result` to export top-level `App::Part` assemblies. Without an assembly,
+the worker fuses the final PartDesign body shapes for export only; the document
+bodies and their feature histories remain unchanged. A single raw shape object
+is also supported. Each invocation has a fresh process, document, HOME,
 configuration/cache directories, and an allowlisted environment with no inherited
 display or credential variables. The runner times out the process group and
 publishes artifacts only after successful export. Output directories must be
