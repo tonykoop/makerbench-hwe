@@ -200,5 +200,6 @@ def test_stop_leaves_later_jobs_queued_in_multi_job_run(tmp_path, options):
     result = executor.run(**options)
     assert result['status'] == 'stopped' and result['job_count'] == 1
     assert calls == [('sambuca-night', 'cadam-fable-image')]
-    assert [job['status'] for job in live.read(queue)['jobs']] == ['stopped', 'queued']
+    assert [job.get('status', 'queued') for job in live.read(queue)['jobs']] == ['stopped', 'queued']
+    assert live.read(queue)['jobs'][1] == payload['jobs'][1]
     assert len(list(root.glob('*/nightly-state.json'))) == 1

@@ -496,9 +496,10 @@ def test_full_evening_journey_through_every_screen(
         page.get_by_test_id("draft-banner").wait_for()
         nights = page.locator(".queue-list .queue-night")
         nights.first.wait_for()
-        assert nights.count() == 1
-        assert nights.first.get_attribute("data-job") == JOB
-        assert nights.first.get_attribute("data-status") == "votable"
+        assert nights.count() == 2
+        assert nights.first.get_attribute("data-job") == "fixture-udu"
+        assert nights.first.get_attribute("data-status") == "running"
+        assert page.locator(f'.queue-night[data-job="{JOB}"]').get_attribute("data-status") == "votable"
         page.locator(".queue-lights li", has_text="FreeCAD").wait_for()
         assert page.get_by_role("switch").is_disabled()
         assert page.get_by_role("button", name="Run preflight", exact=True).is_disabled()
