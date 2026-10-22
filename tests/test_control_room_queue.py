@@ -3,6 +3,7 @@
 import json
 import subprocess
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -56,6 +57,12 @@ def edit(api, action, job_id="", order=None, revision=None):
 
 def queued(view):
     return [j["job_id"] for j in view["jobs"] if j["status"] in {"queued", "draft"}]
+
+
+def test_queue_fixture_has_no_host_paths_or_queued_run_folders():
+    assert not any(marker in FIXTURE.read_text() for marker in ("/mnt/", "/home/", "Users"))
+    assert all(j.get("run_dir") is None and j.get("run_id") is None
+               for j in json.loads(FIXTURE.read_text())["jobs"] if j["status"] == "queued")
 
 
 def test_queue_cards_use_fixture_route_labels_and_confined_plan_images(repo):
@@ -228,6 +235,31 @@ def test_real_status_lights_use_presence_and_explicit_quota_telemetry(repo, monk
     assert by_label["Claude CLI"]["detail"] == "on PATH · sign-in unknown"
 
 
+@pytest.mark.parametrize("pinned", [False, True])
+def test_queue_status_uses_real_backend_availability_without_doe_monkeypatch(repo, monkeypatch, pinned):
+    from makerbench import freecad_backend, live_cad_runner
+
+    # Only external I/O is stubbed: the real FreeCAD and DoE availability code runs.
+    monkeypatch.setattr(live_cad_runner, "connector_available", lambda config: False)
+    monkeypatch.setattr(pf, "audit_cadam", lambda *a, **kw: pf.CadamStatus("redacted", False, False, "offline"))
+    monkeypatch.delenv("MAKERBENCH_FREECAD_APPDIR", raising=False)
+    if pinned:
+        appdir = repo / "fixture-freecad-appdir"
+        (appdir / "usr" / "bin").mkdir(parents=True)
+        (appdir / "AppRun").write_text("# fixture; never executed")
+        (appdir / "usr" / "bin" / "python").write_text("# fixture; never executed")
+        (appdir / ".makerbench-appimage-sha256").write_text(freecad_backend.APPIMAGE_SHA256)
+        monkeypatch.setenv("MAKERBENCH_FREECAD_APPDIR", str(appdir))
+    api = client(repo)
+    api.app.state.control_room_queue.go.fetch = lambda: False
+    response = api.get("/api/queue/status")
+    assert response.status_code == 200, response.text
+    lights = {light["label"]: light for light in response.json()["lights"]}
+    assert lights["FreeCAD"]["state"] == ("ok" if pinned else "warn")
+    assert "Pinned FreeCAD AppDir" in lights["FreeCAD"]["detail"]
+    assert {"OpenSCAD", "Blender"} <= lights.keys()
+
+
 def test_preflight_passes_only_selected_snapshot_to_real_report_builder(repo, monkeypatch):
     api = client(repo)
     queue = repo / "runs" / "nightly-cad-queue.json"
@@ -276,10 +308,24 @@ def test_explicit_external_queue_and_newrun_share_one_destination(repo, tmp_path
 def test_external_runs_default_queue_is_beside_runs_root(repo, tmp_path):
     runs = tmp_path / "external" / "runs"
     runs.mkdir(parents=True)
-    queue = runs.parent / "nightly-cad-queue.json"
+    queue = runs.parent / "queue.json"
     queue.write_bytes((repo / "runs" / "nightly-cad-queue.json").read_bytes())
     api = client(repo, control_room_runs_root=runs)
     assert len(api.get("/api/queue").json()["jobs"]) == 6
+
+
+def test_newrun_default_external_queue_matches_windows_task_queue(repo, tmp_path):
+    runs = tmp_path / "arena-nightly" / "runs"
+    runs.mkdir(parents=True)
+    queue = runs.parent / "queue.json"
+    queue.write_bytes((repo / "runs" / "nightly-cad-queue.json").read_bytes())
+    api = client(repo, control_room_runs_root=runs, control_room_queue_writes=True)
+    response = api.post("/api/newrun/tonight", headers=ORIGIN, json={
+        "instrument": "sambuca", "brief": "Boat body.", "entrants": ["freecad:opus", "freecad:sol"],
+        "turns": 1, "cap_usd": 0, "deliverable": "single", "variants": [], "stop_early": True})
+    assert response.status_code == 200 and response.json()["queued"], response.text
+    assert len(json.loads(queue.read_text())["jobs"]) == 7
+    assert not (runs / "nightly-cad-queue.json").exists()
 
 
 def test_cross_origin_queue_edits_are_refused(repo):
@@ -381,3 +427,59 @@ def test_production_runner_keeps_queue_changes_made_inside_an_entrant_handler(re
     view = api.get("/api/queue").json()
     assert queued(view) == [i for i in reversed(order) if i != "fixture-ocarina"]
     assert next(j for j in view["jobs"] if j["job_id"] == "fixture-ocarina")["can_undo"]
+
+
+@pytest.mark.parametrize("action", ["tomorrow", "remove"])
+def test_runner_retries_changed_claim_and_creates_no_refused_run_directory(repo, monkeypatch, action):
+    from test_nightly_cad import _synthetic_handler
+
+    path = repo / "runs" / "nightly-cad-queue.json"
+    payload = json.loads(path.read_text())
+    for job in payload["jobs"]:
+        job["reference_image"] = str(repo / "runs" / job["reference_image"])
+        if job["status"] == "running":
+            job["status"] = "votable"
+    atomic_write_json(path, payload)
+    api = client(repo, control_room_queue_writes=True)
+    order = queued(api.get("/api/queue").json())
+    original_save, raced, handled = nightly_cad.save_active_job, [], []
+    def save(queue, job):
+        if job.status == "running" and not raced:
+            raced.append(job.job_id)
+            edit(api, action, job.job_id).raise_for_status()
+        return original_save(queue, job)
+    def handler(job, entrant, run_dir, registry):
+        handled.append(job.job_id)
+        return _synthetic_handler(job, entrant, run_dir, registry)
+    monkeypatch.setattr(nightly_cad, "save_active_job", save)
+    result = nightly_cad.NightlyExecutor(
+        queue_path=path, registry_path=repo / "registry.json", output_root=repo / "runs",
+        now=lambda: datetime(2026, 10, 22, 6, 30, tzinfo=timezone.utc),
+        handlers={"arena": handler, "live": handler}).run()
+    assert raced == [order[0]] and result["job_id"] == order[1]
+    assert result["status"] == "votable" and set(handled) == {order[1]}
+    assert not (repo / "runs" / f"20261022T063000Z-{order[0]}").exists()
+
+
+def test_runner_returns_empty_without_a_run_directory_if_all_claims_were_removed(repo, monkeypatch):
+    path = repo / "runs" / "nightly-cad-queue.json"
+    payload = json.loads(path.read_text())
+    for job in payload["jobs"]:
+        job["reference_image"] = str(repo / "runs" / job["reference_image"])
+        if job["status"] == "running":
+            job["status"] = "votable"
+    atomic_write_json(path, payload)
+    api = client(repo, control_room_queue_writes=True)
+    order = queued(api.get("/api/queue").json())
+    original_save = nightly_cad.save_active_job
+    def save(queue, job):
+        for job_id in order:
+            edit(api, "remove", job_id).raise_for_status()
+        return original_save(queue, job)
+    monkeypatch.setattr(nightly_cad, "save_active_job", save)
+    result = nightly_cad.NightlyExecutor(
+        queue_path=path, registry_path=repo / "registry.json", output_root=repo / "runs",
+        handlers={"arena": lambda *a: pytest.fail("removed job was dispatched"),
+                  "live": lambda *a: pytest.fail("removed job was dispatched")}).run()
+    assert result["status"] == "queue-empty"
+    assert not [p for p in (repo / "runs").iterdir() if p.is_dir() and p.name != "control-room"]

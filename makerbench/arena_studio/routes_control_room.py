@@ -76,7 +76,7 @@ def register_control_room_routes(
     external_runs = runs_root is not None
     runs_root = Path(runs_root) if external_runs else service.repo_root / "runs"
     nightly_queue = Path(queue_path) if queue_path is not None else (
-        runs_root.parent if external_runs else runs_root) / "nightly-cad-queue.json"
+        runs_root.parent / "queue.json" if external_runs else runs_root / "nightly-cad-queue.json")
     register_queue_routes(app, service, runs_root=runs_root, queue_path=nightly_queue,
                           writes=queue_writes, instruments_root=service.instruments_root)
     open_file: cr.Opener = opener or cr.windows_opener

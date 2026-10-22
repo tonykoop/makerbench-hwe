@@ -146,8 +146,8 @@
       "instrument_id": "egyptian-harps",
       "job_id": "fixture-egyptian-harps",
       "reference_image": "control-room/plans/fixture-egyptian-harps/references/reference-1.png",
-      "run_dir": "/mnt/c/Users/Tony/Documents/StudioPipeline-Pilot/arena-nightly/runs/20261022T054030Z-cr-20261022T053925Z-egyptian-harps",
-      "run_id": "20261022T054030Z-cr-20261022T053925Z-egyptian-harps",
+      "run_dir": null,
+      "run_id": null,
       "seed": 0,
       "status": "queued",
       "drafted_by": "Fixture \u00b7 New Run"
@@ -215,8 +215,8 @@
       "instrument_id": "ocarina",
       "job_id": "fixture-ocarina",
       "reference_image": "control-room/plans/fixture-ocarina/references/reference-1.png",
-      "run_dir": "/mnt/c/Users/Tony/Documents/StudioPipeline-Pilot/arena-nightly/runs/20261022T055602Z-cr-20261022T053516Z-ocarina",
-      "run_id": "20261022T055602Z-cr-20261022T053516Z-ocarina",
+      "run_dir": null,
+      "run_id": null,
       "seed": 0,
       "status": "queued",
       "drafted_by": "Fixture \u00b7 New Run"

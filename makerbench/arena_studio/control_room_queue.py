@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from .. import nightly_cad, nightly_preflight
+from .. import freecad_backend, nightly_cad, nightly_preflight
 from ..run_log_io import atomic_write_json, file_lock
 from . import control_room_newrun as nr
 from . import doe
@@ -83,7 +83,15 @@ def status_lights(repo_root: Path) -> list[dict]:
         lights.append({"label": f"{runtime.title()} CLI", "state": "ok" if present else "warn",
                        "detail": "on PATH · sign-in unknown" if present else "not on PATH"})
     for backend, label in (("freecad", "FreeCAD"), ("openscad", "OpenSCAD"), ("blender", "Blender")):
-        availability = doe.backend_availability(backend)
+        if backend == "freecad":
+            # FreeCAD uses the pinned AppDir, not the DoE executable vocabulary.
+            try:
+                freecad_backend.pinned_appdir()
+                availability = {"status": "available", "reason": "Pinned FreeCAD AppDir found; runtime requires preflight"}
+            except (OSError, RuntimeError):
+                availability = {"status": "requires_preflight", "reason": "Pinned FreeCAD AppDir unavailable; run preflight"}
+        else:
+            availability = doe.backend_availability(backend)
         lights.append({"label": label, "state": "ok" if availability["status"] == "available" else "warn",
                        "detail": availability["reason"]})
     for key, label in (("OPENROUTER_API_KEY", "OpenRouter key"), ("HWE_SW_TOKEN", "SolidWorks key"),

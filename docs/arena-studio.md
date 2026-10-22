@@ -140,10 +140,12 @@ New Run and Tonight's Queue share the configured queue and its sidecar lock.
 The runner updates only its active job, preserving edits to other nights.
 Stale edits are refused; refresh after the queue changes elsewhere.
 
-The default queue is `nightly-cad-queue.json` beside an explicit
+The default queue is `queue.json` beside an explicit
 `--control-room-runs` folder, or `<repo>/runs/nightly-cad-queue.json` when no
 external folder is supplied. Plan reference thumbnails are confined to the runs
 folder's `control-room/plans/` tree; symlinked paths are refused.
+The Windows task wrapper forwards its explicit `QueueWsl` argument as `--queue`;
+use `--control-room-queue` when that task was configured with a different name.
 
 The GO switch is read-only. Task state is **unknown (Windows task)** unless
 `control-room/task-state.json` contains a cached `{"state": "Enabled"}` or

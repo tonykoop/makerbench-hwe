@@ -1598,7 +1598,7 @@ def arena_studio(
         ),
         control_room_queue: Optional[str] = typer.Option(
             None, "--control-room-queue",
-            help="Nightly queue shown by Tonight's Queue and written by New Run only with --control-room-queue-writes. Default: nightly-cad-queue.json beside --control-room-runs, otherwise <repo>/runs/nightly-cad-queue.json.",
+            help="Nightly queue shown by Tonight's Queue and written by New Run only with --control-room-queue-writes. Default: queue.json beside --control-room-runs, otherwise <repo>/runs/nightly-cad-queue.json.",
         ),
         control_room_runs: Optional[str] = typer.Option(
             None,
