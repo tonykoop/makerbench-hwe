@@ -240,6 +240,8 @@ def test_make_live_execute_trial_full_row(tmp_path):
     assert row["context_tier"] == "blind"
     assert row["status"] in {"scored", "auto_fail"}
     assert row["render_ok"] is True  # box renders/loads
+    assert row["render_source"] == "stl-fallback"
+    assert Path(row["artifacts"]["png_path"]).is_file()
     assert row["objective"]["sub_scores"]["watertight"] == 1.0
     assert "transcript_path" in row["gen"]
 
@@ -549,3 +551,75 @@ def test_bridge_ping_reads_a_normal_body(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: _PingResponse(body))
     cfg = live.LiveCadConfig(backend="fusion-live", driver_model="m", connector="hwe-fusion")
     assert live.connector_available(cfg) is True and live.connector_unattended(cfg) is True
+
+
+@pytest.mark.parametrize("preview_mode", ["missing", "agent", "failed"])
+def test_live_preview_routes_feed_morning_candidates(tmp_path, monkeypatch, preview_mode):
+    from PIL import Image
+    from makerbench import nightly_cad
+    from makerbench.code_cad_arena_runner import build_vote_candidates
+
+    cfg = _config(tmp_path, runner=None)
+    cfg.backend, cfg.connector = "fusion-live", "hwe-fusion"
+    run_dir = tmp_path / "run"
+    trial = ArenaTrial(instrument_id="trumpet-sheetmetal", model_id="fusion-test", seed=0,
+                       rep=0, provider="fusion-live", trial_id="fixture-fusion")
+
+    def agent(spec, gen_dir, config):
+        stl = gen_dir / "output.stl"
+        _write_box_stl(stl)
+        if preview_mode == "agent":
+            Image.new("RGB", (16, 16)).save(gen_dir / "preview.png")
+        return stl
+
+    calls = []
+
+    def turntable(mesh, output, **kwargs):
+        calls.append(kwargs)
+        if preview_mode == "failed":
+            raise CompileError("fixture renderer failure")
+        assert trimesh.load(mesh, force="mesh").is_watertight
+        target = Path(output) / "frame_00.png"
+        target.parent.mkdir(parents=True)
+        Image.new("RGB", (16, 16)).save(target)
+        return [str(target)]
+
+    monkeypatch.setattr(live, "run_live_agent", agent)
+    monkeypatch.setattr(live.render, "render_turntable", turntable)
+    row = live.make_live_execute_trial(registry=_REGISTRY, run_dir=run_dir, config=cfg)(trial)
+    log = {"trials": [{"trial_id": trial.trial_id, "instrument_id": trial.instrument_id,
+                       "model_id": trial.model_id, "seed": 0, "rep": 0, "result": row}]}
+    (run_dir / "run_log.json").write_text(json.dumps(log))
+    summary = nightly_cad.finalize_morning_bundle(run_dir, cost_usd=0)
+    from makerbench.arena_studio.control_room import _design
+    design = _design(run_dir, tmp_path, log["trials"][0], {})
+    assert design["has_mesh"] is True
+    assert design["has_render"] is (preview_mode != "failed")
+    assert row["objective"]["sub_scores"]["watertight"] == 1.0
+    assert summary["valid_candidate_count"] == (0 if preview_mode == "failed" else 1)
+    if preview_mode == "failed":
+        assert row["render_ok"] is False
+        assert row["render_error"] == "fixture renderer failure"
+        assert row["render_source"] is None
+    else:
+        expected = "agent-preview" if preview_mode == "agent" else "stl-fallback"
+        assert row["render_source"] == expected
+        candidate = next(iter(build_vote_candidates(log).values()))[0]
+        assert candidate.provenance["render_source"] == expected
+        with Image.open(row["artifacts"]["png_path"]) as preview:
+            preview.verify()
+    assert len(calls) == (0 if preview_mode == "agent" else 1)
+    if calls:
+        assert calls[0]["renderer"] == "openscad"
+
+
+def test_fusion_assignment_names_conditional_native_export(tmp_path):
+    cfg = _config(tmp_path, runner=None)
+    cfg.connector, cfg.backend = "hwe-fusion", "fusion-live"
+    native = r"C:\out\trumpet_default_r1_assembly.f3d"
+    assignment = live.build_assignment(_REGISTRY["instruments"][0], cfg,
+                                       r"C:\out\trumpet.stl", win_native=native)
+    assert 'call `export_design` with format "f3d"' in assignment
+    assert native in assignment
+    assert "StudioPipeline/hwe#575" in assignment
+    assert "if the advertised" in assignment
