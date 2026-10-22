@@ -12,7 +12,10 @@ from makerbench import nightly_cad
     ({'adapter': 'solidworks', 'document': 'Part1', 'document_type': 'part'}, True),
     ({'adapter': 'solidworks', 'document': 'Assembly1', 'document_type': 'assembly'}, False),
     ({'adapter': 'solidworks', 'document': 'Drawing1', 'document_type': 'drawing'}, False),
-    ({'adapter': 'solidworks', 'document': 'Part1'}, False),
+    ({'adapter': 'solidworks', 'document': 'Part1'}, True),
+    ({'adapter': 'solidworks', 'document': 'Part1', 'document_type': None}, False),
+    ({'adapter': 'solidworks', 'document': None}, False),
+    ({'adapter': 'solidworks', 'document': 'Part1', 'error': 'ActiveDoc COM error'}, False),
     ({'adapter': 'solidworks', 'document': '', 'document_type': 'part'}, False),
     ({'error': {'message': 'bound document is closed'}}, False),
     ({}, False), ([], False),
@@ -26,7 +29,8 @@ def test_context_contract(data, ok):
     passed, reason = connector_part_document(config, urlopen=bridge)
     assert passed is ok
     if isinstance(data, dict) and data.get('error'):
-        assert data['error']['message'] in reason
+        error = data['error']
+        assert (error['message'] if isinstance(error, dict) else error) in reason
 
 
 def test_http_bridge_error_is_preserved_but_token_is_redacted():
@@ -56,3 +60,54 @@ def test_nightly_fails_before_driver_or_mcp_probe(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match='SldWorks.Application.ActiveDoc') as error:
         executor._run_live(job, entrant, tmp_path / 'run', {})
     assert str(error.value) == reason
+
+
+@pytest.mark.parametrize('ping_ok,error', [(True, None), (False, None),
+                                         (True, 'no active SolidWorks document'),
+                                         (True, 'SldWorks.Application.ActiveDoc COM failure')])
+def test_current_bridge_context_without_part_probe_fixture(tmp_path, monkeypatch, ping_ok, error):
+    from makerbench.nightly_preflight import audit_entrants
+
+    # Shape from StudioPipeline/hwe solidworks/sw_adapter.py::handle_get_context
+    # (pre-#576): configurations is an active/names mapping; no document_type exists.
+    context = {
+        'adapter': 'solidworks', 'document': 'Part1',
+        'configurations': {'active': 'Default', 'names': ['Default']},
+        'parameters': [], 'feature_tree': [], 'active_selections': [],
+    }
+    if error:
+        context = {'error': {'message': error}}
+    calls = []
+
+    def bridge(request, timeout):
+        calls.append(request.full_url)
+        assert request.full_url.endswith('/context')
+        return io.BytesIO(json.dumps(context).encode())
+
+    # Exercise the real connector_part_document through audit_entrants. This module
+    # has no autouse fake_part_document fixture and only replaces HTTP transport.
+    monkeypatch.setattr('urllib.request.urlopen', bridge)
+    shim = tmp_path / 'driver' / 'solidworks_mcp_server.py'
+    shim.parent.mkdir()
+    shim.write_text('# fixture')
+    ref = tmp_path / 'ref.png'
+    ref.write_bytes(b'fixture')
+    queue = tmp_path / 'queue.json'
+    queue.write_text(json.dumps({'jobs': [{
+        'job_id': 'legacy', 'instrument_id': 'fixture', 'reference_image': str(ref),
+        'entrants': [{'entrant_id': name, 'kind': 'live', 'backend': 'solidworks-live',
+                      'model_id': 'codex-gpt-6.1-sol'} for name in ('sw-a', 'sw-b')],
+    }]}))
+    status = audit_entrants(queue, {'HWE_SW_TOKEN': 'fixture-token'}, cadam=None,
+                            environ={}, which=lambda _: '/fixture/tool',
+                            ping=lambda _: ping_ok, connector_root=tmp_path)
+    assert status.job_ok
+    for entrant in status.entrants:
+        assert entrant.ok is (ping_ok and error is None)
+        if error:
+            assert any(error in line for line in entrant.notes)
+        elif ping_ok:
+            assert 'WARN: document type unverified (bridge predates hwe#576)' in entrant.notes
+        else:
+            assert any('bridge did not answer' in line for line in entrant.notes)
+    assert len(calls) == (2 if ping_ok else 0)

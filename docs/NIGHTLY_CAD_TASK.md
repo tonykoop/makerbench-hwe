@@ -111,5 +111,6 @@ path. `--dry-run` runs those checks and prints the argv. The same command is
 ## SolidWorks dry-night seat
 
 Follow the [SolidWorks dry-night runsheet](cadam/DRY_NIGHT_RUNSHEET.md) before
-preflight. An authenticated ping alone is insufficient: the bridge must prove
-that its open document is a Part through `get_context`.
+preflight. An authenticated ping alone is insufficient: `get_context` must report
+an open document. Explicit document types must be `part`; older bridges that omit
+the type remain GO with a document-type-unverified WARN (hwe#576).

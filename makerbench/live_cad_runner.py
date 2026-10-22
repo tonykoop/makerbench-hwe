@@ -385,7 +385,7 @@ def connector_available(config: LiveCadConfig) -> bool:
 
 
 def connector_part_document(config: LiveCadConfig, *, urlopen=None) -> tuple[bool, str]:
-    """Call SolidWorks get_context (GET /context); require explicit part identity."""
+    """Check the open SolidWorks document, warning when legacy bridges omit its type."""
     import urllib.error
     import urllib.request
 
@@ -418,11 +418,15 @@ def connector_part_document(config: LiveCadConfig, *, urlopen=None) -> tuple[boo
         return False, "hwe-solidworks get_context: " + _redact_transcript(str(detail), env)
     if status != 200:
         return False, f"hwe-solidworks get_context HTTP {status}"
-    if (data.get("adapter") == "solidworks" and data.get("document")
-            and data.get("document_type") == "part"):
+    document = data.get("document")
+    if data.get("adapter") != "solidworks" or not isinstance(document, str) or not document.strip():
+        return False, "hwe-solidworks get_context did not report an open document"
+    if "document_type" not in data:
+        return True, "WARN: document type unverified (bridge predates hwe#576)"
+    if data["document_type"] == "part":
         return True, "hwe-solidworks get_context confirms an open part document"
-    return False, ("hwe-solidworks get_context did not prove an open part document "
-                   "(requires document and document_type=part; update the bridge if type is absent)")
+    kind = _redact_transcript(str(data["document_type"]), env)
+    return False, f"hwe-solidworks get_context document_type={kind}; requires part"
 
 
 def connector_unattended(config: LiveCadConfig) -> Optional[bool]:
