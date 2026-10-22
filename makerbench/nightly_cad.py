@@ -24,6 +24,7 @@ from .code_cad_orchestrator import OrchestrationConfig, run_orchestration
 from .live_cad_runner import (
     LiveCadConfig,
     connector_available,
+    connector_part_document,
     connector_mcp_probe,
     connector_unattended,
     driver_route,
@@ -844,6 +845,10 @@ class NightlyExecutor:
             hint = (" (start it with StudioPipeline-hwe scripts\\start_solidworks_bridge.ps1)"
                     if connector == "hwe-solidworks" else " (open Fusion with the Luthier Bridge add-in running)")
             raise RuntimeError(f"{connector} authenticated preflight failed{hint}")
+        if connector == "hwe-solidworks":
+            part_open, reason = connector_part_document(config)
+            if not part_open:
+                raise RuntimeError(reason)
         launched, message = connector_mcp_probe(config)
         if not launched:
             raise RuntimeError(message)

@@ -505,6 +505,7 @@ def audit_entrants(
     connector_root: Optional[Path] = None,
     mcp_probe: Optional[Callable[..., tuple[bool, str]]] = None,
     unattended: Optional[Callable[[object], Optional[bool]]] = None,
+    part_document: Optional[Callable[[object], tuple[bool, str]]] = None,
 ) -> EntrantsStatus:
     """GO/NO-GO per entrant of the job the runner would claim next (read-only, nothing runs).
 
@@ -519,6 +520,7 @@ def audit_entrants(
         LiveCadConfig,
         _MCP_MODULES,
         connector_available,
+        connector_part_document,
         connector_mcp_probe,
         connector_unattended,
         driver_command,
@@ -531,6 +533,7 @@ def audit_entrants(
         mcp_probe = mcp_probe or connector_mcp_probe
         unattended = unattended or connector_unattended
     ping = ping or connector_available
+    part_document = part_document or connector_part_document
     try:
         payload = json.loads(Path(queue_path).read_text(encoding="utf-8"))
         raw = next((job for job in payload.get("jobs") or [] if str(job.get("status") or "queued") in {"queued", "running"}), None)
@@ -640,6 +643,10 @@ def audit_entrants(
                 lines.append(f"{token_key} is not set in the secrets file or the environment (the bridge requires it)")
             if ping(config):
                 lines.append(f"{connector} bridge answered an authenticated ping")
+                if connector == "hwe-solidworks":
+                    part_open, reason = part_document(config)
+                    ok = ok and part_open
+                    lines.append(reason)
                 if mcp_probe is not None:
                     launched, message = mcp_probe(config, environ={**env, **config.env})
                     ok = ok and launched

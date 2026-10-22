@@ -396,6 +396,51 @@ def connector_available(config: LiveCadConfig) -> bool:
     return bool(data.get("ok") and (data.get("api_available") or data.get("have_adsk")))
 
 
+def connector_part_document(config: LiveCadConfig, *, urlopen=None) -> tuple[bool, str]:
+    """Check the open SolidWorks document, warning when legacy bridges omit its type."""
+    import urllib.error
+    import urllib.request
+
+    env = {**os.environ, **config.env}
+    host = env.get("HWE_SW_HOST", "127.0.0.1")
+    port = env.get("HWE_SW_PORT", "8767")
+    request = urllib.request.Request(f"http://{host}:{port}/context")
+    if env.get("HWE_SW_TOKEN"):
+        request.add_header("Authorization", f"Bearer {env['HWE_SW_TOKEN']}")
+    open_url = urlopen or urllib.request.urlopen
+    status = 200
+    try:
+        try:
+            response = open_url(request, timeout=8)
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+            response = exc  # Bridge errors contain the useful COM failure text.
+        with response:
+            raw = response.read(_PING_MAX_BYTES + 1)
+        if len(raw) > _PING_MAX_BYTES:
+            return False, "hwe-solidworks get_context response exceeds preflight limit"
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("not an object")
+    except (OSError, ValueError, RecursionError):
+        return False, "hwe-solidworks get_context unavailable or invalid response"
+    error = data.get("error")
+    if error:
+        detail = error.get("message", "bridge error") if isinstance(error, dict) else str(error)
+        return False, "hwe-solidworks get_context: " + _redact_transcript(str(detail), env)
+    if status != 200:
+        return False, f"hwe-solidworks get_context HTTP {status}"
+    document = data.get("document")
+    if data.get("adapter") != "solidworks" or not isinstance(document, str) or not document.strip():
+        return False, "hwe-solidworks get_context did not report an open document"
+    if "document_type" not in data:
+        return True, "WARN: document type unverified (bridge predates hwe#576)"
+    if data["document_type"] == "part":
+        return True, "hwe-solidworks get_context confirms an open part document"
+    kind = _redact_transcript(str(data["document_type"]), env)
+    return False, f"hwe-solidworks get_context document_type={kind}; requires part"
+
+
 def connector_unattended(config: LiveCadConfig) -> Optional[bool]:
     """Whether the bridge was started in unattended mode (None: it did not say).
 
