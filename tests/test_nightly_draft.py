@@ -50,6 +50,7 @@ def test_the_sambuca_matchup_drafts_like_add_to_tonight(tmp_path):
     job = jobs[0]
     job.validate()
     assert job.deliverable == "single" and job.budget_usd == 2.0
+    assert job.turns == 3 and job.stop_early is True
     assert Path(job.reference_image).read_bytes() == env["photo"].read_bytes()  # copied into the plan folder
     assert [(e.entrant_id, e.kind, e.model_id, e.backend, e.context_tier, e.max_cost_usd) for e in job.entrants] == [
         ("cadam-opus", "cadam", "anthropic/claude-opus-5.5", "openscad", "image", 2.0),
@@ -59,6 +60,16 @@ def test_the_sambuca_matchup_drafts_like_add_to_tonight(tmp_path):
     ]
     assert drafted["plan"]["runner_cannot_apply"] == []
     assert (env["runs_root"] / payload["plan"]).is_file()
+
+
+def test_draft_carries_turn_allowance_and_stop_early(tmp_path):
+    env = _setup(tmp_path)
+    drafted = draft_matchup(instrument="sambuca", entrants=ENTRANTS, registry_path=env["registry_path"],
+                            runs_root=env["runs_root"], out_path=tmp_path / "draft.json", reference="Museum.jpg",
+                            instruments_root=env["instruments_root"], turns=8, stop_early=False)
+    assert drafted["job"]["turns"] == drafted["plan"]["max_turns"] == 8
+    assert drafted["job"]["stop_early"] is drafted["plan"]["stop_when_all_checks_pass"] is False
+    assert drafted["plan"]["runner_cannot_apply"] == []
 
 
 @pytest.mark.parametrize("name", ["nightly-cad-queue.json", "queue.json", None, "task"])
@@ -94,9 +105,10 @@ def test_cli_draft_matchup_writes_the_draft_and_explains_refusals(tmp_path):
     env = _setup(tmp_path)
     args = ["arena", "draft-matchup", "--registry", str(env["registry_path"]), "--runs-root", str(env["runs_root"]),
             "--instruments-root", str(env["instruments_root"]), "--reference", "Museum.jpg"]
-    result = CliRunner().invoke(app, [*args, "--out", str(tmp_path / "draft.json")])
+    result = CliRunner().invoke(app, [*args, "--out", str(tmp_path / "draft.json"), "--turns", "5", "--no-stop-early"])
     assert result.exit_code == 0, result.output
     assert '"deliverable": "single"' in result.output
+    assert '"turns": 5' in result.output and '"stop_early": false' in result.output
     refused = CliRunner().invoke(app, [*args, "--out", str(env["live"])])
     assert refused.exit_code == 1 and "draft not written" in refused.output
 

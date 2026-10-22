@@ -143,12 +143,14 @@ def test_add_to_tonight_with_queue_writes_off_leaves_the_queue_alone(repo: Path)
     assert (repo / "runs" / result["plans"][0]).is_file()
 
 
-def test_add_to_tonight_with_queue_writes_on_appends_through_the_runner_format(repo: Path):
+@pytest.mark.parametrize("turns, stop_early", [(1, True), (5, False), (8, True)])
+def test_add_to_tonight_with_queue_writes_on_appends_through_the_runner_format(repo: Path, turns, stop_early):
     queue = repo / "runs" / "nightly-cad-queue.json"
     upload = "data:image/png;base64," + base64.b64encode(PNG).decode()
-    # Only settings the runner applies: the registry brief, one turn, one reference.
+    # The nightly runner carries the registry brief, turn allowance and one reference.
     result = _client(repo, control_room_queue_writes=True).post(
-        "/api/newrun/tonight", json={**FORM, "instrument": "kora", "brief": "Calabash harp.", "turns": 1,
+        "/api/newrun/tonight", json={**FORM, "instrument": "kora", "brief": "Calabash harp.", "turns": turns,
+                                     "stop_early": stop_early,
                                      "references": [{"name": "kora.png", "data": upload}]}, headers=ORIGIN
     ).json()
     assert result["queued"] is True and result["added"] == 1
@@ -156,6 +158,7 @@ def test_add_to_tonight_with_queue_writes_on_appends_through_the_runner_format(r
     assert [job.job_id for job in jobs][0] == "existing"
     added = jobs[1]
     assert added.instrument_id == "kora" and added.status == "queued"
+    assert added.turns == turns and added.stop_early is stop_early
     reference = Path(added.reference_image)
     assert reference.read_bytes() == PNG and reference.is_relative_to(repo / "runs" / "control-room" / "plans")
 
@@ -198,7 +201,7 @@ def test_settings_the_runner_cannot_apply_are_staged_not_queued(repo: Path):
     client = _client(repo, control_room_queue_writes=True)
     form = {**FORM, "brief": "Boat body, but taller.", "variants": ["15"], "deliverable": "assembly", "turns": 5}
     gaps = client.post("/api/newrun/estimate", json=form, headers=ORIGIN).json()["runner_gaps"]
-    assert len(gaps) == 4 and "edited brief" in gaps[0]
+    assert len(gaps) == 3 and "edited brief" in gaps[0]
     result = client.post("/api/newrun/tonight", json=form, headers=ORIGIN).json()
     assert result["queued"] is False and result["staged_because"] == gaps
     assert queue.read_bytes() == before

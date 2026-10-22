@@ -52,6 +52,8 @@ def draft_matchup(
     reference: Optional[str] = None,
     instruments_root: Optional[Path] = None,
     cap_usd: float = 2.0,
+    turns: int = nr.RUNNER_TURNS,
+    stop_early: bool = True,
     replace: bool = False,
     now: Optional[datetime] = None,
     live_queues: Sequence[Path] = (TASK_QUEUE,),
@@ -75,12 +77,12 @@ def draft_matchup(
         "instrument": instrument,
         "entrants": list(entrants),
         "brief": card["brief"],            # the registry brief: what the runner sends
-        "turns": nr.RUNNER_TURNS,
+        "turns": turns,
         "cap_usd": float(cap_usd),
         "deliverable": "single",
         "variants": [],
         "references": [{"repo_image": reference}] if reference else [],
-        "stop_early": True,
+        "stop_early": stop_early,
     }
     gaps = nr.runner_gaps(form, card)
     if gaps:

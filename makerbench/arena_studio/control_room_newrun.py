@@ -2,8 +2,8 @@
 
 Turns the New Run form into nightly-queue jobs (``makerbench-nightly-cad-queue-v1``,
 the same ``NightlyJob``/``NightlyEntrant`` the runner reads) plus a Control Room
-*plan* per job holding what the queue schema has no field for: the deliverable mode,
-variant, brief, turns and the stop-early switch. The runner rewrites the queue
+*plan* per job holding settings such as the deliverable mode, variant and brief.
+Turns and the stop-early switch travel in the job itself. The runner rewrites the queue
 through ``NightlyJob.as_dict()``, which keeps only its own fields, so the plan lives
 beside the queue (``runs/control-room/plans/<job_id>.json``), keyed by ``job_id``.
 
@@ -31,7 +31,7 @@ from .instrument_repo import RepoFileError, read_bounded
 PLAN_SCHEMA = "makerbench-control-room-run-plan-v1"
 DRAFT_SCHEMA = "makerbench-control-room-tonight-draft-v1"
 CONTROL_ROOM_DIR = Path("control-room")
-MAX_TURNS = 8
+MAX_TURNS = nightly_cad.MAX_TURNS
 MAX_REFERENCE_BYTES = 10 * 1024 * 1024
 MAX_REFERENCES = 6
 IMAGE_MAGIC = {b"\x89PNG\r\n\x1a\n": ".png", b"\xff\xd8\xff": ".jpg", b"RIFF": ".webp"}
@@ -250,9 +250,9 @@ def _slug(value: str) -> str:
 
 
 MAX_VARIANTS = 12
-#: What the nightly runner executes today (nightly_cad): the registry brief, one attempt per
-#: entrant, one reference image, the instrument as registered. Anything else is staged.
-RUNNER_TURNS = 1
+#: Default revision allowance for new nightly jobs; legacy queues still get one attempt.
+RUNNER_TURNS = nightly_cad.DEFAULT_TURNS
+RUN_NOW_TURNS = 1
 
 
 class UnsafePath(NewRunError):
@@ -369,8 +369,6 @@ def runner_gaps(form: Mapping[str, Any], card: Optional[Mapping[str, Any]]) -> l
         gaps.append("variants (the runner builds the instrument as registered)")
     if (form.get("deliverable") or "single") == "assembly":
         gaps.append("the wood-assembly mode")
-    if isinstance(form.get("turns"), int) and form["turns"] != RUNNER_TURNS:
-        gaps.append(f"{form['turns']} turns (the runner gives each entrant one attempt)")
     if len(form.get("references") or []) > 1:
         gaps.append("extra reference images (the runner uses the first)")
     return gaps
@@ -407,7 +405,7 @@ def run_now_gaps(form: Mapping[str, Any], card: Optional[Mapping[str, Any]]) -> 
         gaps.append("variants (Run now builds the instrument as registered)")
     if (form.get("deliverable") or "single") != "single":
         gaps.append("the wood-assembly mode")
-    if form.get("turns", RUNNER_TURNS) != RUNNER_TURNS:
+    if form.get("turns", RUN_NOW_TURNS) != RUN_NOW_TURNS:
         gaps.append(f"{form.get('turns')} turns (Run now gives each entrant one attempt)")
     if form.get("references"):
         gaps.append("reference images you added (Run now uses the task's own)")
@@ -458,7 +456,8 @@ def build_jobs(form: Mapping[str, Any], *, instruments: Mapping[str, Mapping[str
             for tool, model in picks
         ]
         job = nightly_cad.NightlyJob(job_id=job_id, instrument_id=instrument_id, reference_image=str(reference),
-                                     entrants=entrants, budget_usd=per_job)
+                                     entrants=entrants, budget_usd=per_job, turns=checked["turns"],
+                                     stop_early=bool(form.get("stop_early", True)))
         job.validate()
         plan = {
             "schema": PLAN_SCHEMA,

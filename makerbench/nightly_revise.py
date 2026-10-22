@@ -32,12 +32,14 @@ class RevisionUnsupported(RuntimeError):
     """The request cannot be continued by this handler (reason is user-facing)."""
 
 
-def continue_prompt(source: str, feedback: str, *, from_turn: Any, extra_turns: int) -> str:
+def continue_prompt(source: str, feedback: str, *, from_turn: Any, extra_turns: int,
+                    backend: str = "openscad", render_path: Optional[str] = None) -> str:
     return (
         "You are continuing an earlier design after the maker reviewed it.\n\n"
-        f"Current source (`openscad`, your best result at turn {from_turn}):\n\n```openscad\n{source}\n```\n\n"
+        f"Current source (`{backend}`, your best result at turn {from_turn}):\n\n```{backend}\n{source}\n```\n\n"
         f"Requested change:\n{feedback.strip()}\n\n"
-        f"You may use up to {extra_turns} further turns. Keep everything that was not asked to change. "
+        + (f"Previous render: {render_path}\n\n" if render_path else "")
+        + f"You may use up to {extra_turns} further turns. Keep everything that was not asked to change. "
         "Return the complete revised program as the single fenced code block the format requires."
     )
 
