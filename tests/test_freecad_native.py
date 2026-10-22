@@ -66,12 +66,18 @@ def test_sandbox_copies_only_bounded_native_export(tmp_path, monkeypatch, mode):
         assert not out.exists()
 
 
-def test_nightly_freecad_native_name_pointer_and_python_source(tmp_path, monkeypatch):
+@pytest.mark.parametrize("turns", [1, 3])
+def test_nightly_freecad_native_name_pointer_and_python_source(tmp_path, monkeypatch, turns):
     from makerbench.arena_studio.control_room import review_view
 
     registry = {'instruments': [{'id': 'test-harp', 'task_brief': 'A synthetic box.',
                                 'envelope_mm': [100, 100, 100], 'min_bodies': 1}]}
-    monkeypatch.setattr(nightly_cad.providers, 'resolve_generator', lambda *args, **kwargs: lambda request: 'result = box')
+    def generator(request):
+        generator.usage_observations[(request.model_id, request.instrument_id, request.seed, request.context_tier)] = {'cost_usd': 0.1}
+        return 'result = box'
+
+    generator.usage_observations = {}
+    monkeypatch.setattr(nightly_cad.providers, 'resolve_generator', lambda *args, **kwargs: generator)
     expected = 'test-harp_base_r1_model.FCStd'
 
     def compile_fixture(source, out, *, native_filename):
@@ -85,13 +91,19 @@ def test_nightly_freecad_native_name_pointer_and_python_source(tmp_path, monkeyp
 
     monkeypatch.setattr(arena, 'compiler_for_backend', lambda _: compile_fixture)
     entrant = nightly_cad.NightlyEntrant('fc', 'arena', 'stub-a', backend='freecad')
-    job = nightly_cad.NightlyJob('night', 'test-harp', '', [entrant])
+    job = nightly_cad.NightlyJob('night', 'test-harp', '', [entrant], turns=turns, stop_early=False)
     run_dir = tmp_path / 'run'
     executor = nightly_cad.NightlyExecutor(queue_path=tmp_path / 'queue.json',
                                          registry_path=tmp_path / 'registry.json', output_root=tmp_path)
-    executor._run_arena(job, entrant, run_dir, registry)
+    cost = executor._run_arena(job, entrant, run_dir, registry)
+    assert cost == pytest.approx(0.0 if turns == 1 else 0.1 * turns)
     row = json.loads((run_dir / 'run_log.json').read_text())['trials'][0]['result']
     assert Path(row['native_path']).name == expected
+    if turns > 1:
+        assert Path(row['native_path']).parent.parent.name == f'turn-{turns}'
+        assert len(row['turns']) == turns
+        assert all(Path(turn['source_path']).suffix == '.py' for turn in row['turns'])
+        assert len(list((run_dir / 'gen').rglob('*.FCStd'))) == turns
     assert Path(row['native_path']).parent == Path(row['artifacts']['stl_path']).parent
     assert Path(row['gen']['scad_path']).suffix == '.py'
     assert not list((run_dir / 'gen').rglob('*.scad'))
