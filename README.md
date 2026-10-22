@@ -260,6 +260,7 @@ These are the supported `makerbench` entry points. Run any command with
 | `makerbench arena overnight` | Run one resumable, budget-capped nightly instrument job and write anonymous morning vote pages. |
 | `makerbench arena draft-matchup` | Draft one nightly matchup job through the Control Room New Run code path into a draft queue file (never the live queue). |
 | `makerbench arena preflight` | Redacted GO/NO-GO audit of nightly-arena activation state: secrets (never echoed), lock ownership, queue statuses, required paths, and GO/NO-GO per entrant of the next queued job. |
+| `makerbench arena resolve-dispatch` | Record a person's resolution (`lost` or `received`) for a paid CADAM dispatch whose outcome stayed uncertain, under the queue lock, clearing the night's safety block when nothing else blocks it. |
 | `makerbench arena live-cad-session` | Start an interactive, step-by-step SolidWorks/Fusion session (Codex or Claude) wired like the nightly live driver: connector-only MCP approval, bridge env by name, refuses to launch when the bridge or MCP ping fails (`scripts/live-cad-session.sh`). |
 | `makerbench arena pairs` | Print the blind Swiss-pairing plan for one arena voting round (dry run). |
 | `makerbench arena turntable` | Generate zero-WebGL frame-swap images from an existing mesh with `--renderer auto|gpu|openscad` and provenance. |
