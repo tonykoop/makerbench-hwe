@@ -796,11 +796,16 @@ class NightlyExecutor:
             timeout_s=entrant.timeout_s,
             backend=entrant.backend,
         )
+        compiler = arena_runner.compiler_for_backend(entrant.backend)
+        native_name = cad_names.name(night_stem(job), cad_names.MODEL_PART, "FCStd")
+        if entrant.backend == "freecad":
+            from functools import partial
+            compiler = partial(compiler, native_filename=native_name)
         execute = arena_runner.make_execute_trial(
             registry=registry,
             run_dir=run_dir,
             generators={entrant.entrant_id: generator},
-            compiler=arena_runner.compiler_for_backend(entrant.backend),
+            compiler=compiler,
             backend=entrant.backend,
             context_tier=entrant.context_tier,
             instruments_root=self.instruments_root,
@@ -826,6 +831,18 @@ class NightlyExecutor:
             run_log_path=run_dir / "run_log.json",
             execute_trial=execute,
         )
+        if entrant.backend == "freecad":
+            log_path = run_dir / "run_log.json"
+            log = json.loads(log_path.read_text(encoding="utf-8"))
+            trial_id = f"{job.instrument_id}__seed{job.seed}__rep0__{entrant.entrant_id}"
+            row = find_trial(log, trial_id)
+            result = row.get("result") if isinstance(row, dict) else None
+            artifacts = result.get("artifacts") if isinstance(result, dict) else None
+            stl = artifacts.get("stl_path") if isinstance(artifacts, dict) else None
+            if stl:
+                native = Path(stl).parent / native_name
+                if native.is_file() and not native.is_symlink() and native.stat().st_size:
+                    _record_native(log_path, job, entrant, native)
         row = find_trial(log or {}, build_trial_matrix(config)[0].trial_id) or {}
         return sum((
             float(turn.get("cost_usd") or 0.0)

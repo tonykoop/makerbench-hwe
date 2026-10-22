@@ -123,6 +123,7 @@ def run_generation_batch(
     workspace_dir: Optional[Path] = None,
     entrant_tools: tuple[str, ...] = (),
     prompt_override: Optional[str] = None,
+    source_suffix: str = ".scad",
 ) -> list[GenerationResult]:
     """Generate OpenSCAD attempts for N models under the same spec and seed.
 
@@ -134,6 +135,8 @@ def run_generation_batch(
 
     if isinstance(seed, bool) or not isinstance(seed, int):
         raise ValueError("seed must be an integer")
+    if source_suffix not in {".scad", ".py"}:
+        raise ValueError("source_suffix must be .scad or .py")
     models = [_require_model_id(model_id) for model_id in model_ids]
     if not models:
         raise ValueError("model_ids must contain at least one model")
@@ -158,14 +161,14 @@ def run_generation_batch(
             workspace_dir=str(workspace_dir) if workspace_dir is not None else None,
             entrant_tools=tuple(entrant_tools),
         )
-        results.append(_run_one(request, generator, out_dir))
+        results.append(_run_one(request, generator, out_dir, source_suffix=source_suffix))
     return results
 
 
-def _run_one(request: GenerationRequest, generator: Generator, out_dir: Path) -> GenerationResult:
+def _run_one(request: GenerationRequest, generator: Generator, out_dir: Path, *, source_suffix: str = ".scad") -> GenerationResult:
     stem = f"{_slug(request.instrument_id)}_seed{request.seed}_{_slug(request.model_id)}"
     raw_path = out_dir / f"{stem}.raw.txt"
-    scad_path = out_dir / f"{stem}.scad"
+    scad_path = out_dir / f"{stem}{source_suffix}"
     provenance_path = out_dir / f"{stem}.provenance.json"
 
     status = "ok"
