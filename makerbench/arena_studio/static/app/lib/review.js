@@ -123,3 +123,63 @@ export function clearDraft(runId, storage = globalThis.localStorage) {
     // Nothing to clear.
   }
 }
+
+// --- A blocked night (#1158): the runner's verdict, shown honestly. ---
+
+const NIGHT_STATUS = {
+  votable: "votable",
+  partial: "partial",
+  blocked: "blocked",
+  running: "running",
+};
+
+export function nightStatusLabel(status) {
+  return NIGHT_STATUS[status] || null;
+}
+
+// The banner headline for a night that is not fully votable; null when every design is in.
+export function statusHeadline(summary) {
+  const failed = (summary?.failed_entrants || []).length;
+  const total = summary?.designs ?? 0;
+  if (summary?.status === "blocked") {
+    return total > 0 && failed >= total
+      ? "This night is blocked: nothing to vote on."
+      : `This night is blocked: ${plural(failed, "entrant")} of ${total} failed.`;
+  }
+  if (summary?.status === "partial") return `This night is only partly votable: ${plural(failed, "entrant")} of ${total} failed.`;
+  if (summary?.status === "running") return "This night is still running.";
+  return null;
+}
+
+function plural(count, noun) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+function usd(value) {
+  return typeof value === "number" && Number.isFinite(value) ? `$${value.toFixed(2)}` : null;
+}
+
+export function spendText(spend) {
+  const spent = usd(spend?.spent_usd);
+  if (!spent) return "Spend not recorded.";
+  const parts = [`${spent} spent`];
+  const limit = usd(spend?.limit_usd);
+  if (limit) parts[0] += ` of ${limit} cap`;
+  const reserved = usd(spend?.reserved_usd);
+  if (reserved && spend.reserved_usd > 0) parts.push(`${reserved} still reserved`);
+  if (spend?.halted_reason) parts.push(`halted: ${spend.halted_reason}`);
+  return `${parts.join(" · ")}.`;
+}
+
+// Which cards get "Retry this entrant": every entrant the night lists as failed.
+export function failedIds(summary) {
+  return new Set((summary?.failed_entrants || []).map((entry) => entry.trial_id));
+}
+
+// The toast after a retry, from the server's answer and nothing else.
+export function retryResultText(result, design) {
+  const note = result?.runner?.note ? ` ${result.runner.note}` : "";
+  if (result?.queued) return `Queued ${result.job.job_id} for ${design.name} in the Control Room revision queue.${note}`;
+  if (result?.queue?.skipped) return `A runner already took ${result.job.job_id}; nothing was changed.`;
+  return `Queue writes are off: the retry for ${design.name} is kept as a draft in ${result?.draft || "the run folder"}.${note}`;
+}

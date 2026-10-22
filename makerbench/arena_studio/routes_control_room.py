@@ -13,7 +13,7 @@ from typing import Any, Callable, Optional
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
 from . import control_room as cr
@@ -49,6 +49,11 @@ class ReviewPayload(BaseModel):
     revise: list[str] = Field(default_factory=list)
     extra_turns: int = cr.DEFAULT_EXTRA_TURNS
     reviewer: str = "tony"
+
+
+class RetryPayload(BaseModel):
+    note: str = ""
+    extra_turns: int = cr.DEFAULT_EXTRA_TURNS
 
 
 def register_control_room_routes(
@@ -103,6 +108,43 @@ def register_control_room_routes(
             review["queued"] = bool(jobs)
         cr.save_review(run_dir, review)
         return {"saved": cr.REVIEW_FILE, "review": review}
+
+    @app.post("/api/review/{run_id}/retry/{trial_id}")
+    def retry_entrant(run_id: str, trial_id: str, payload: RetryPayload):
+        """Retry this entrant (#1158): one revision-queue job for one entrant, through the same
+        queue as Revise when queue writes are on; kept as a draft in the run folder otherwise."""
+        run_dir = night_dir(run_id)
+        view = cr.review_view(run_dir, service.repo_root)
+        try:
+            job = cr.retry_job(view, trial_id, note=payload.note, extra_turns=payload.extra_turns, run_dir=run_dir)
+        except cr.ReviewError as error:
+            raise HTTPException(status_code=400, detail=str(error))
+        design = next(d for d in view["designs"] if d["trial_id"] == trial_id)
+        if queue_writes:
+            try:
+                counts = cr.queue_retry(cr.confined_queue_path(runs_root), job)
+            except cr.QueueError as error:
+                raise HTTPException(status_code=409, detail=str(error))
+            return {"queued": not counts["skipped"], "queue": counts, "draft": None, "job": job, "runner": design["retry"]}
+        cr.record_retry(run_dir, job)
+        return {"queued": False, "queue": None, "draft": cr.RETRY_DRAFT_FILE, "job": job, "runner": design["retry"]}
+
+    @app.get("/api/review/{run_id}/text/{trial_id}/{kind}")
+    def get_text(run_id: str, trial_id: str, kind: str):
+        """A card's build transcript, or its CADAM stream decoded to plain lines (#1158)."""
+        run_dir = night_dir(run_id)
+        design = next((d for d in cr.review_view(run_dir, service.repo_root)["designs"] if d["trial_id"] == trial_id), None)
+        if design is None:
+            raise HTTPException(status_code=404, detail="Unknown design")
+        if kind == "transcript":
+            path = cr.transcript_path(run_dir, trial_id)
+        elif kind == "cadam-stream":
+            path = cr.cadam_stream_path(run_dir, design["entrant"])
+        else:
+            raise HTTPException(status_code=404, detail="No such text")
+        if path is None:
+            raise HTTPException(status_code=404, detail="No such text recorded for this design")
+        return PlainTextResponse(cr.read_text_file(path), headers=NO_STORE)
 
     @app.get("/api/review/{run_id}/mesh/{trial_id}")
     def get_mesh(run_id: str, trial_id: str):
@@ -440,14 +482,23 @@ def register_control_room_routes(
                 links.append(f'<a href="{base}/render/{tid}">Render</a>')
             if d["native"]:
                 links.append(f'<a href="{base}/native/{tid}">{escape(d["native"]["file"])}</a>')
+            for text in d.get("transcripts") or []:
+                links.append(f'<a href="{base}/text/{tid}/{quote(text["kind"])}">{escape(text["label"])}</a>')
             fails = "".join(f"<li>{escape(text)}</li>" for text in d["failures"])
             rows.append(
                 f'<li><strong>{escape(d["name"])}</strong> <span class="hint">{escape(d["route"])}</span>'
                 f' · {"passes every check" if d["all_pass"] else "fails a check"}'
                 f'{f"<ul>{fails}</ul>" if fails else ""}<p>{" · ".join(links) or "No files recorded."}</p></li>'
             )
+        summary = view["summary"]
+        night = f'<p>This night is <strong>{escape(str(summary["status"]))}</strong>.'
+        if summary.get("safety_block"):
+            night += f' {escape(str(summary["safety_block"]))}'
+        if summary.get("next_action"):
+            night += f' {escape(str(summary["next_action"]))}'
+        night += "</p>"
         return page(f"Morning Review: {view['title']}",
-                    f'<p><a href="/review">All nights</a></p><h1>{escape(str(view["title"]))}</h1>'
+                    f'<p><a href="/review">All nights</a></p><h1>{escape(str(view["title"]))}</h1>{night}'
                     f'<ol>{"".join(rows)}</ol>'
                     f'<p><a href="/#/review/{quote(run_id)}">Rank, add notes and save (needs JavaScript)</a></p>')
 
