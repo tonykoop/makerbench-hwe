@@ -745,7 +745,9 @@ def append_to_queue(queue_path: Path, jobs: Sequence[Mapping[str, Any]], *, run_
 
     The latest save wins: a still-queued job for the same design is replaced with the new
     note, and a queued job for a design no longer sent back is withdrawn. Jobs a runner has
-    already picked up (status other than ``queued``) are never touched.
+    already picked up (status other than ``queued``) are never touched, and neither are
+    *Retry this entrant* jobs (``retry: true``, #1158): a retry is asked for on its own, not
+    through the review's Revise selections, so a later save is not a cancel.
     """
     with file_lock(queue_path):
         payload = _read_json(queue_path) if queue_path.is_file() else None
@@ -755,7 +757,8 @@ def append_to_queue(queue_path: Path, jobs: Sequence[Mapping[str, Any]], *, run_
         for job in payload.get("jobs") or []:
             if not isinstance(job, Mapping):
                 continue
-            ours = _mapping(job.get("revision_of")).get("run_id") == run_id and job.get("status") == "queued"
+            ours = (_mapping(job.get("revision_of")).get("run_id") == run_id and job.get("status") == "queued"
+                    and not job.get("retry"))
             if ours and job.get("job_id") in wanted:
                 kept.append(wanted.pop(job["job_id"]))
                 counts["replaced"] += 1

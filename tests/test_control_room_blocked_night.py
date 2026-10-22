@@ -13,7 +13,7 @@ pytest.importorskip("trimesh")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from control_room_fixture import BLOCKED_RUN, SAMBUCA_RUN, add_blocked_night, build_control_room_repo  # noqa: E402
+from control_room_fixture import BLOCKED_FIXTURE, BLOCKED_RUN, SAMBUCA_RUN, add_blocked_night, build_control_room_repo  # noqa: E402
 
 from makerbench import nightly_revisions  # noqa: E402
 from makerbench.arena_studio import control_room as cr  # noqa: E402
@@ -230,3 +230,39 @@ def test_api_payload_and_no_js_page_have_no_host_paths(repo: Path):
     assert "This night is <strong>blocked</strong>." in page and "Add OpenRouter credits" in page
     assert "build_transcript.txt" in page and "cadam-stream.bin (decoded)" in page
     assert page.count("<li><strong>") == 4
+
+
+
+def test_save_review_never_withdraws_a_standalone_retry(repo: Path):
+    """A retry is asked for on its own; an ordinary Save review afterwards is not a cancel."""
+    client = _client(repo, control_room_queue_writes=True)
+    queue = repo / "runs" / cr.REVISION_QUEUE
+    retry = client.post(f"/api/review/{BLOCKED_RUN}/retry/{CADAM}", json={}, headers=ORIGIN).json()
+    assert retry["queued"] is True and len(json.loads(queue.read_text())["jobs"]) == 1
+    order = client.get(f"/api/review/{BLOCKED_RUN}").json()["grader_order"]
+    saved = client.post(f"/api/review/{BLOCKED_RUN}", json={"ranking": order, "revise": []}, headers=ORIGIN).json()["review"]
+    assert saved["queue"] == {"added": 0, "replaced": 0, "withdrawn": 0}
+    jobs = json.loads(queue.read_text())["jobs"]
+    assert [j["job_id"] for j in jobs] == [retry["job"]["job_id"]] and jobs[0]["status"] == "queued"
+    # A review's own Revise request still reconciles as before, beside the retry.
+    saved = client.post(f"/api/review/{BLOCKED_RUN}", json={"ranking": order, "notes": {FREECAD: "Use arc.Curve.Center."},
+                                                            "revise": [FREECAD]}, headers=ORIGIN).json()["review"]
+    assert saved["queue"] == {"added": 1, "replaced": 0, "withdrawn": 0}
+    saved = client.post(f"/api/review/{BLOCKED_RUN}", json={"ranking": order, "revise": []}, headers=ORIGIN).json()["review"]
+    assert saved["queue"] == {"added": 0, "replaced": 0, "withdrawn": 1}
+    assert [j["job_id"] for j in json.loads(queue.read_text())["jobs"]] == [retry["job"]["job_id"]]
+
+
+FORBIDDEN_IN_FIXTURE = ("/home/", "/mnt/", "/tmp", "C:\\", "Users", "session id", "$TMPDIR", "workdir:")
+
+
+def test_the_committed_fixture_carries_no_host_paths_or_session_ids():
+    """The blocked-night fixture is public: real error strings, no private paths (#1158)."""
+    for path in sorted(BLOCKED_FIXTURE.rglob("*")):
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for term in FORBIDDEN_IN_FIXTURE:
+            assert term not in text, f"{path.relative_to(BLOCKED_FIXTURE)} contains {term!r}"
+    transcript = (BLOCKED_FIXTURE / "gen" / SOLIDWORKS / "build_transcript.txt").read_text(encoding="utf-8")
+    assert "SolidWorks does not expose NewDocument" in transcript  # the error strings the tests need stay
