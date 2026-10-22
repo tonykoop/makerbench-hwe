@@ -920,6 +920,7 @@ def build_vote_candidates(
                     "seed": entry.get("seed"),
                     "rep": entry.get("rep"),
                     "stl_path": str(stl_path) if stl_path else None,
+                    "render_source": result.get("render_source"),
                 },
             )
         )
