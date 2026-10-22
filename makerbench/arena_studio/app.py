@@ -133,6 +133,7 @@ def create_studio_app(
     control_room_promote: bool = False,
     promote_pr_opener: Optional[Callable[[Path, str, str, str], str]] = None,
     control_room_runs_root: Optional[Path] = None,
+    control_room_queue: Optional[Path] = None,
 ) -> FastAPI:
     """Create and configure the Arena Studio FastAPI instance."""
 
@@ -208,6 +209,7 @@ def create_studio_app(
         library_fetch=library_fetch, library_manifest=library_manifest,
         promote_publish=control_room_promote, promote_pr_opener=promote_pr_opener,
         runs_root=control_room_runs_root,
+        queue_path=control_room_queue,
     )
     register_workbench_routes(  # design workbench (#788 W3)
         app, service.workbench, _resolve_run_dir, lambda value: _publish_value(value, service.repo_root)

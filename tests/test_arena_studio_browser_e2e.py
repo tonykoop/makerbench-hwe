@@ -4,7 +4,7 @@ One Studio server, one repo holding data for every screen, one browser session
 walking the rail in the order a person would on a real evening:
 
   Runs -> Blind voting (vote by keyboard) -> Agreement analytics -> Launch (a
-  zero-token dry run) -> Compare runs -> DoE matrix -> Nightly cockpit ->
+  zero-token dry run) -> Compare runs -> DoE matrix -> Tonight's Queue -> Nightly cockpit ->
   Morning review (vote by keyboard) -> Runs again.
 
 The per-screen browser files (F1-F6) prove each screen in depth; this file
@@ -46,7 +46,7 @@ trimesh = pytest.importorskip("trimesh")
 
 from PIL import Image, ImageDraw  # noqa: E402 - after the optional-dependency guards
 
-from makerbench import cli_arena, scad_sandbox  # noqa: E402 - after the optional-dependency guards
+from makerbench import cli_arena, live_cad_runner, nightly_preflight, scad_sandbox  # noqa: E402 - after the optional-dependency guards
 from makerbench.arena_studio import create_studio_app  # noqa: E402 - after the optional-dependency guards
 from makerbench.arena_studio.service import ArenaStudioService  # noqa: E402 - after the optional-dependency guards
 
@@ -76,6 +76,7 @@ RAIL = [
     ("morning", "Morning review", False),
     ("review", "Review the night", False),
     ("newrun", "New run", False),
+    ("queue", "Tonight's Queue", False),
     ("launch", "Launch", False),
     ("analytics", "Agreement analytics", True),
     ("compare", "Compare runs", False),
@@ -245,11 +246,15 @@ def studio_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-def studio_url(studio_repo: Path):
+def studio_url(studio_repo: Path, monkeypatch: pytest.MonkeyPatch):
+    # Keep external bridge/CADAM probes offline; backend availability stays real.
+    monkeypatch.setattr(live_cad_runner, "connector_available", lambda config: False)
+    monkeypatch.setattr(nightly_preflight, "audit_cadam", lambda *a, **kw: nightly_preflight.CadamStatus("fixture", False, False, "offline"))
     app = create_studio_app(
         registry_path=studio_repo / "registry.json", repo_root=studio_repo,
         instruments_root=studio_repo / "instruments",
     )
+    app.state.control_room_queue.go.fetch = lambda: False
     port = _free_port()
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
@@ -473,6 +478,19 @@ def test_full_evening_journey_through_every_screen(
         preview.locator(".facts dd.measure").first.filter(has_text="32").wait_for()
         page.locator(".skips li", has_text="kora").filter(has_text="Reference image not approved").wait_for()
         shot("07-doe")
+
+        # Tonight's Queue: the same fixture night, draft-only controls, and readiness.
+        session.go("Tonight's Queue")
+        page.get_by_test_id("draft-banner").wait_for()
+        nights = page.locator(".queue-list .queue-night")
+        nights.first.wait_for()
+        assert nights.count() == 1
+        assert nights.first.get_attribute("data-job") == JOB
+        assert nights.first.get_attribute("data-status") == "votable"
+        page.locator(".queue-lights li", has_text="FreeCAD").wait_for()
+        assert page.get_by_role("switch").is_disabled()
+        assert page.get_by_role("button", name="Run preflight", exact=True).is_disabled()
+        shot("07a-queue")
 
         # 7. Nightly cockpit: read-only view of the queue and its lease.
         session.go("Nightly cockpit")

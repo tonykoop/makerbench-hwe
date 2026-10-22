@@ -4,6 +4,7 @@ import { html } from "../html.js";
 const TABS = [
   ["review", "Morning Review"],
   ["newrun", "New Run"],
+  ["queue", "Tonight's Queue"],
 ];
 
 export function ControlRoomTabs({ current }) {

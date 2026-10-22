@@ -21,6 +21,7 @@ from . import control_room_newrun as nr
 from . import instrument_repo as ir
 from . import library_manifest as lm
 from . import promote as pm
+from .routes_control_room_queue import register_queue_routes
 from .service import MATCHUP_MESH_MAX_BYTES, ArenaStudioService, _matchup_glb
 
 NO_STORE = {"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"}
@@ -67,11 +68,17 @@ def register_control_room_routes(
     promote_publish: bool = False,
     promote_pr_opener: Optional[Callable[[Path, str, str, str], str]] = None,
     runs_root: Optional[Path] = None,
+    queue_path: Optional[Path] = None,
 ) -> None:
     # Where nights are read from (and Control Room files kept). The scheduled nightly task writes
     # to its own output root (e.g. StudioPipeline-Pilot/arena-nightly/runs), so Studio can be
     # pointed there; the default stays the repo's runs/ folder.
-    runs_root = Path(runs_root) if runs_root is not None else service.repo_root / "runs"
+    external_runs = runs_root is not None
+    runs_root = Path(runs_root) if external_runs else service.repo_root / "runs"
+    nightly_queue = Path(queue_path) if queue_path is not None else (
+        runs_root.parent / "queue.json" if external_runs else runs_root / "nightly-cad-queue.json")
+    register_queue_routes(app, service, runs_root=runs_root, queue_path=nightly_queue,
+                          writes=queue_writes, instruments_root=service.instruments_root)
     open_file: cr.Opener = opener or cr.windows_opener
 
     def night_dir(run_id: str) -> Path:
@@ -227,7 +234,6 @@ def register_control_room_routes(
         return {**result, "repo": repo.name, "publish": promote_publish}
 
     # New Run (#1114). Nothing here launches a model except run-now, which needs --allow-live.
-    nightly_queue = runs_root / "nightly-cad-queue.json"
     telemetry_store = str(service.repo_root / "data" / "sessions.jsonl")
 
 
@@ -322,7 +328,7 @@ def register_control_room_routes(
             gaps = built[0]["plan"]["runner_cannot_apply"]
             jobs = [item["job"] for item in built]
             if queue_writes and not gaps:
-                return {"queued": True, "added": nr.append_jobs(runs_root, built), "plans": plans, "jobs": jobs}
+                return {"queued": True, "added": nr.append_jobs(runs_root, built, queue_path=nightly_queue), "plans": plans, "jobs": jobs}
             # Queue writes off, or the runner would drop settings: staged, never silently queued.
             draft = nr.write_draft(runs_root, built, staged_because=gaps if queue_writes else ())
             return {"queued": False, "staged_because": gaps if queue_writes else [], "draft": draft,
@@ -408,7 +414,7 @@ def register_control_room_routes(
                            for item in staged]
             if queue_writes and runnable:
                 response["ahead"] = nr.queued_ahead(nightly_queue)
-                added = nr.append_jobs(runs_root, runnable)
+                added = nr.append_jobs(runs_root, runnable, queue_path=nightly_queue)
                 draft = nr.write_draft(runs_root, staged, staged_because=staged_because) if staged else None
                 return {**response, "queued": True, "added": added, "draft": draft,
                         "queued_order": [item["plan"]["instrument_id"] for item in runnable],

@@ -322,6 +322,30 @@ def save_queue(path: Path, payload: Mapping[str, object], jobs: list[NightlyJob]
     atomic_write_json(Path(path), updated)
 
 
+class QueueClaimChanged(RuntimeError):
+    """The queued selection changed; the runner must read and claim again."""
+
+
+def save_active_job(path: Path, job: NightlyJob) -> None:
+    """Persist only runner-owned state, preserving concurrent queue edits (#1160).
+
+    Tonight's Queue and New Run use this same queue sidecar lock. A job removed
+    before its claim is persisted must never be resurrected or dispatched.
+    """
+    with file_lock(path):
+        payload, _jobs = load_queue(path)
+        current = next((row for row in payload["jobs"] if row.get("job_id") == job.job_id), None)
+        if current is None or (current.get("status") or "queued") not in {"queued", "running"}:
+            error = QueueClaimChanged if job.status == "running" else RuntimeError
+            raise error("The selected nightly job changed before its state could be saved.")
+        if job.status == "running" and (current.get("status") or "queued") == "queued":
+            next_job = next((row for row in payload["jobs"] if (row.get("status") or "queued") in {"queued", "running"}), None)
+            if next_job is not current:
+                raise QueueClaimChanged("The nightly queue order changed before this job could be claimed.")
+        current.update(status=job.status, run_id=job.run_id, run_dir=job.run_dir)
+        atomic_write_json(path, payload)
+
+
 @contextmanager
 def nightly_lease(path: Path, *, now: Callable[[], datetime]) -> Iterator[None]:
     """Acquire the single-seat nightly lease without waiting."""
@@ -991,38 +1015,43 @@ class NightlyExecutor:
 
     def _run_one(self) -> dict:
         """Run one job with the caller holding the nightly lease."""
-        payload, jobs = load_queue(self.queue_path)
-        job = next(
-            (item for item in jobs if item.status in {"queued", "running"}),
-            None,
-        )
-        claimed: Optional[revisions.RevisionRequest] = None
-        if job is None:
-            taken = self._claim_revision(payload, jobs)
-            if taken is None:
-                return {"status": "queue-empty"}
-            job, claimed = taken
-        job.validate()
-        matchup = matchup_metadata(payload)
-        if not job.run_id:
-            stamp = self.now().astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            name = revisions.folder_name(job.job_id) if job.revision else job.job_id
-            job.run_id = f"{stamp}-{name}"
-        if job.revision:
-            # the destination is derived from queue data: resolve and confine it under the
-            # output root (refusing a pre-existing symlinked folder) before anything is made
-            try:
-                run_dir = revisions.confined_child(self.output_root, job.run_id)
-            except revisions.RevisionQueueError as exc:
-                revisions.finish(self.runs_root, claimed, ok=False, error=str(exc), now=self.now())
-                raise ValueError(str(exc)) from None
-        else:
-            run_dir = Path(job.run_dir) if job.run_dir else self.output_root / job.run_id
+        while True:
+            payload, jobs = load_queue(self.queue_path)
+            job = next(
+                (item for item in jobs if item.status in {"queued", "running"}),
+                None,
+            )
+            claimed: Optional[revisions.RevisionRequest] = None
+            if job is None:
+                taken = self._claim_revision(payload, jobs)
+                if taken is None:
+                    return {"status": "queue-empty"}
+                job, claimed = taken
+            job.validate()
+            matchup = matchup_metadata(payload)
+            if not job.run_id:
+                stamp = self.now().astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                name = revisions.folder_name(job.job_id) if job.revision else job.job_id
+                job.run_id = f"{stamp}-{name}"
+            if job.revision:
+                # the destination is derived from queue data: resolve and confine it under the
+                # output root (refusing a pre-existing symlinked folder) before anything is made
+                try:
+                    run_dir = revisions.confined_child(self.output_root, job.run_id)
+                except revisions.RevisionQueueError as exc:
+                    revisions.finish(self.runs_root, claimed, ok=False, error=str(exc), now=self.now())
+                    raise ValueError(str(exc)) from None
+            else:
+                run_dir = Path(job.run_dir) if job.run_dir else self.output_root / job.run_id
+            job.run_dir = run_dir.as_posix()
+            job.status = "running"
+            if claimed is None:
+                try:
+                    save_active_job(self.queue_path, job)
+                except QueueClaimChanged:
+                    continue  # reread the queue and claim its current first job
+            break
         run_dir.mkdir(parents=True, exist_ok=True)
-        job.run_dir = run_dir.as_posix()
-        job.status = "running"
-        if claimed is None:
-            save_queue(self.queue_path, payload, jobs)
         _fresh_run_log(run_dir, job, matchup=matchup)
         registry = arena_runner.load_arena_registry(self.registry_path)
         _night_inputs(run_dir, job, registry, night=self.now().astimezone(timezone.utc).date().isoformat())
@@ -1151,7 +1180,7 @@ class NightlyExecutor:
             atomic_write_json(run_dir / "morning-summary.json", morning)
         job.status = "votable" if morning["votable"] else "blocked"
         if claimed is None:
-            save_queue(self.queue_path, payload, jobs)
+            save_active_job(self.queue_path, job)
         else:
             failure = next((row.get("error") for row in outcomes if row.get("status") in {"error", "failed", "paid-dispatch-uncertain"}), None)
             revisions.finish(
