@@ -833,9 +833,9 @@ class NightlyExecutor:
         )
         if entrant.backend == "freecad":
             log_path = run_dir / "run_log.json"
-            log = json.loads(log_path.read_text(encoding="utf-8"))
+            native_log = json.loads(log_path.read_text(encoding="utf-8"))
             trial_id = f"{job.instrument_id}__seed{job.seed}__rep0__{entrant.entrant_id}"
-            row = find_trial(log, trial_id)
+            row = find_trial(native_log, trial_id)
             result = row.get("result") if isinstance(row, dict) else None
             artifacts = result.get("artifacts") if isinstance(result, dict) else None
             stl = artifacts.get("stl_path") if isinstance(artifacts, dict) else None
