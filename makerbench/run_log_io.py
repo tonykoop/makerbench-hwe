@@ -71,6 +71,15 @@ def trial_rows(run_log: Mapping[str, object]) -> list:
     return [row for row in run_log.get("trials") or [] if not _off_track(row, config)]
 
 
+def live_status_rows(run_log: Mapping[str, object]) -> list:
+    """Operational Live monitor only: retain every route, including freeform.
+
+    Never use this for scores, rankings, voting, publication, or benchmark summaries;
+    those consumers must continue using trial_rows. Live shows dispatch progress.
+    """
+    return list(run_log.get("trials") or [])
+
+
 def find_trial(
     run_log: Mapping[str, object], trial_id: str, *, unique: bool = False
 ) -> Mapping[str, object] | None:

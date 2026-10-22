@@ -3669,3 +3669,30 @@ body[data-demo="true"] .demo-header-links {
   color: var(--muted);
   font-size: var(--step--1);
 }
+
+/* Live night: stacked entrant lanes and sticky controls, with PNG previews only. */
+.live-layout { display:grid; grid-template-columns:minmax(0,1fr) 280px; gap:24px; align-items:start; }
+.live-lanes { list-style:none; padding:0; margin:0; display:grid; gap:12px; }
+.live-lane { display:grid; grid-template-columns:150px minmax(0,1fr); border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--surface); }
+.live-render { background:var(--ground); display:grid; place-items:center; min-height:150px; padding:8px; font-size:12px; text-align:center; }
+.live-render img { width:100%; max-height:200px; object-fit:contain; }
+.live-body { padding:12px 14px; min-width:0; }
+.live-body p { margin:6px 0; }
+.live-who,.live-turns,.live-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.live-who h2 { font-size:16px; margin:0; overflow-wrap:anywhere; }
+.live-chip { font-size:11px; text-transform:uppercase; border:1px solid currentColor; padding:2px 7px; border-radius:4px; }
+.live-progress { height:10px; display:flex; border-radius:5px; overflow:hidden; background:var(--ground); }
+.live-progress span { flex:1; }
+.live-progress .scored,.live-turns .ok { background:var(--ok); }
+.live-progress .failed,.live-turns .bad { background:var(--danger); }
+.live-progress .running,.live-turns .now { background:var(--accent); }
+.live-turns span { border:1px solid var(--line); padding:2px 7px; border-radius:4px; }
+.live-rail { position:sticky; top:12px; display:grid; gap:12px; }
+.live-box { padding:14px; border:1px solid var(--line); border-radius:10px; background:var(--surface); }
+.live-box h2 { font-size:13px; text-transform:uppercase; }
+.live-box button { margin:4px; }
+.live-log,.live-transcript { font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; background:var(--ground); padding:8px; max-height:110px; overflow:auto; }
+.live-transcript { max-height:440px; }
+.live-confirm { border:1px solid var(--danger); padding:10px; }
+@media(max-width:960px) { .live-layout { grid-template-columns:minmax(0,1fr); } .live-rail { position:static; } }
+@media(max-width:620px) { .live-lane { grid-template-columns:minmax(0,1fr); } }

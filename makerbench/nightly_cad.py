@@ -706,17 +706,22 @@ class NightlyExecutor:
         self.runs_root = Path(runs_root) if runs_root else None
 
     def _state(self, run_dir: Path, job: NightlyJob, **extra: object) -> None:
-        atomic_write_json(
-            run_dir / "nightly-state.json",
-            {
-                "schema": STATE_SCHEMA,
-                "job_id": job.job_id,
-                "run_id": job.run_id,
+        # Studio stop requests and runner updates share the queue sidecar lock.
+        with file_lock(self.queue_path):
+            path = run_dir / "nightly-state.json"
+            previous = json.loads(path.read_text()) if path.is_file() else {}
+            atomic_write_json(path, {
+                "schema": STATE_SCHEMA, "job_id": job.job_id, "run_id": job.run_id,
                 "status": job.status,
                 "updated_utc": self.now().astimezone(timezone.utc).isoformat(),
+                "started_utc": previous.get("started_utc") or self.now().astimezone(timezone.utc).isoformat(),
+                "stop_requested": previous.get("stop_requested") is True,
                 **extra,
-            },
-        )
+            })
+
+    def _stop_requested(self, run_dir: Path) -> bool:
+        with file_lock(self.queue_path):
+            return json.loads((run_dir / "nightly-state.json").read_text()).get("stop_requested") is True
 
     def _cadam_config(self, entrant: NightlyEntrant) -> CadamConfig:
         return CadamConfig(
@@ -1008,9 +1013,10 @@ class NightlyExecutor:
                 if result["status"] == "queue-empty":
                     break
                 results.append(result)
-                if stop_on_block and result["status"] == "blocked":
+                if result["status"] == "stopped" or (stop_on_block and result["status"] == "blocked"):
                     break
-            return {"status": "blocked" if any(r["status"] == "blocked" for r in results) else "complete",
+            return {"status": "stopped" if any(r["status"] == "stopped" for r in results) else
+                    "blocked" if any(r["status"] == "blocked" for r in results) else "complete",
                     "jobs": results, "job_count": len(results)}
 
     def _run_one(self) -> dict:
@@ -1044,6 +1050,7 @@ class NightlyExecutor:
             else:
                 run_dir = Path(job.run_dir) if job.run_dir else self.output_root / job.run_id
             job.run_dir = run_dir.as_posix()
+            resuming_queued = job.status == "queued"
             job.status = "running"
             if claimed is None:
                 try:
@@ -1052,6 +1059,15 @@ class NightlyExecutor:
                     continue  # reread the queue and claim its current first job
             break
         run_dir.mkdir(parents=True, exist_ok=True)
+        # Re-queueing a stopped job is an explicit resume, after its safe claim.
+        if resuming_queued:
+            with file_lock(self.queue_path):
+                state_path = run_dir / "nightly-state.json"
+                if state_path.is_file():
+                    previous = json.loads(state_path.read_text())
+                    if previous.get("status") == "stopped":
+                        previous["stop_requested"] = False
+                        atomic_write_json(state_path, previous)
         _fresh_run_log(run_dir, job, matchup=matchup)
         registry = arena_runner.load_arena_registry(self.registry_path)
         _night_inputs(run_dir, job, registry, night=self.now().astimezone(timezone.utc).date().isoformat())
@@ -1059,7 +1075,13 @@ class NightlyExecutor:
         outcomes: list[dict] = []
         self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
 
+        stopped = False
         for entrant in job.entrants:
+            if self._stop_requested(run_dir):
+                stopped = True
+                outcomes.extend({"entrant_id": e.entrant_id, "status": "stopped"}
+                                for e in job.entrants if not _has_trial(run_dir / "run_log.json", job, e))
+                break
             previous_dispatch = budget.dispatches.get(entrant.entrant_id, {})
             if previous_dispatch.get("status") == "resolved":
                 outcomes.append({"entrant_id": entrant.entrant_id, "status": "dispatch-resolved",
@@ -1096,7 +1118,8 @@ class NightlyExecutor:
                         )
                 # The reservation and paid-dispatch identity must be durable
                 # before any provider request can leave this process.
-                self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
+                self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__,
+                            active_entrant=entrant.entrant_id, entrant_started_utc=self.now().astimezone(timezone.utc).isoformat())
                 handler = self.handlers.get("revision" if job.revision else entrant.kind)
                 if handler is not None:
                     cost = handler(job, entrant, run_dir, registry)
@@ -1178,7 +1201,7 @@ class NightlyExecutor:
             morning["votable"] = False
             morning["safety_block"] = safety_block
             atomic_write_json(run_dir / "morning-summary.json", morning)
-        job.status = "votable" if morning["votable"] else "blocked"
+        job.status = "stopped" if stopped else ("votable" if morning["votable"] else "blocked")
         if claimed is None:
             save_active_job(self.queue_path, job)
         else:

@@ -11,6 +11,7 @@ import { LaunchScreen } from "./screens/launch.js";
 import { AnalyticsScreen } from "./screens/agreement.js";
 import { CompareScreen } from "./screens/compare.js";
 import { MorningScreen, NightlyScreen } from "./screens/nightly.js";
+import { LiveScreen } from "./screens/live.js";
 import { NewRunScreen } from "./screens/newrun.js";
 import { QueueScreen } from "./screens/queue.js";
 import { ReviewScreen } from "./screens/review.js";
@@ -31,6 +32,7 @@ export const SCREENS = [
   { id: "review", label: "Review the night", component: ReviewScreen, hideOnBlind: true },
   { id: "newrun", label: "New run", component: NewRunScreen, hideOnBlind: true },
   { id: "queue", label: "Tonight's Queue", component: QueueScreen, hideOnBlind: true },
+  { id: "live", label: "Live", component: LiveScreen, hideOnBlind: true },
   { id: "launch", label: "Launch", component: LaunchScreen },
   { id: "analytics", label: "Agreement analytics", component: AnalyticsScreen, takesRun: true },
   { id: "compare", label: "Compare runs", component: CompareScreen },

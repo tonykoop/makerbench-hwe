@@ -586,3 +586,35 @@ ARENA_STUDIO_REQUIRE_BROWSER=1 python -m pytest -q tests/test_arena_studio_brows
 - **Ctrl+C in the Windows launcher left something running.** Report it on #743.
   Meanwhile `wsl.exe -d Ubuntu -- pkill -f "makerbench.cli arena studio"` stops the
   server.
+
+## Live night
+
+`#/live` polls `/api/live` every five seconds and shows the active job's entrant
+lanes, PNG previews, recorded revise turns, bounded transcript tails, spend and
+lease PID. It uses the same runs root and nightly queue as the Control Room.
+The screen names entrants and is excluded from blind-screen navigation.
+
+Stop after this entrant requires `--control-room-queue-writes` and an in-page
+confirmation. It atomically sets `stop_requested` in the active run's
+`nightly-state.json` under the queue sidecar lock. The runner preserves that
+flag during its state writes, finishes the active entrant, creates the morning
+bundle from existing outputs, and marks undispatched entrants and the job
+stopped. Other queued jobs are unchanged. An operator can resume by re-queueing
+that stopped job with its existing run ID/directory; completed trial IDs are
+not dispatched again and the old stop flag is cleared.
+
+New runner states record the active entrant and its start time. For older runs,
+Live labels its queue-order inference explicitly. Missing times, charges and
+runtime presence are shown as unknown rather than invented. A live build's
+transcript may only appear when its driver flushes it. Available `turn.json`
+files and CADAM stream tails are read without modifying the run. Full transcript
+views retain only the final 2 MiB and redact credentials and absolute paths.
+
+Capture view now uses the active Fusion/SolidWorks bridge's read-only
+`GET /view` capture endpoint, without camera parameters, staging, confirmation
+or model calls. Capture errors leave the build alone. Native actions open only
+recorded files inside the active run. Skip waiting entrant stays disabled:
+the current runner has no seat-wait state or safe skip protocol to act on.
+Live status counts include all routes; blind scoring and voting filters are
+unchanged. Daily counters group run-folder UTC dates and are operational counts,
+not benchmark aggregates. PID liveness is checked only for the local host.
