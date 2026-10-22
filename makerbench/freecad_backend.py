@@ -162,7 +162,7 @@ def compile_freecad_to_artifacts(
             (out_dir / name).write_bytes((output / name).read_bytes())
         (out_dir / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     stl, png = out_dir / "output.stl", out_dir / "preview.png"
-    warnings = cadquery_backend._render_preview(stl, png, timeout, env)
+    warnings = tuple(provenance.get("warnings", [])) + tuple(cadquery_backend._render_preview(stl, png, timeout, env))
     return RenderArtifacts(stl_path=stl, png_path=png, warnings=warnings)
 
 

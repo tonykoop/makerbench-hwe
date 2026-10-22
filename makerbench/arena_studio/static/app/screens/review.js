@@ -210,7 +210,7 @@ function Card({ runId, design, index, count, state, useWebgl, onMove, onNote, on
           ${design.diagnostics.map((item) => `${item.name} ${item.state === "pass" ? "✓" : item.state === "fail" ? "✕" : "?"}`).join(" · ")}
         </p>`}
         <p class="review-stats">
-          <span>Editable: <b>${design.editable_parameters == null ? "not recorded" : plural(design.editable_parameters, "parameter")}</b></span>
+          <span>Editable: <b>${design.editability ? `${design.editability.aliases} params · ${design.editability.bodies} bodies` : design.editable_parameters == null ? "not recorded" : plural(design.editable_parameters, "parameter")}</b></span>
           <span>Time <b>${minutesText(design.time_s)}</b></span>
           <span>Cost <b>${costText(design.cost)}</b></span>
         </p>

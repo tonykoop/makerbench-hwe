@@ -141,6 +141,9 @@ def test_document_object_export(tmp_path, runtime):
     )
     artifacts = backend.run_freecad(script, tmp_path / "out", appdir=runtime)
     assert artifacts.stl_path.stat().st_size > 84
+    assert artifacts.provenance["editability"] == {"aliases": 0, "bodies": 0, "sketches": 0, "constraints": 0}
+    assert artifacts.provenance["warnings"] == [
+        "FreeCAD editability: no spreadsheet aliases", "FreeCAD editability: no PartDesign bodies"]
 
 
 @pytest.mark.parametrize(
@@ -198,3 +201,33 @@ def test_native_keeps_editable_features_and_spreadsheet(tmp_path, runtime):
         "assert loaded.Box.Length.Value == 24\nresult = loaded.Box\n"
     )
     backend.run_freecad(reader, tmp_path / "edited", appdir=runtime)
+
+
+def test_partdesign_editability_counts(tmp_path, runtime):
+    script = tmp_path / 'editable.py'
+    script.write_text("""
+import FreeCAD as App, Part, Sketcher
+params = doc.addObject('Spreadsheet::Sheet', 'params')
+params.set('A1', '10 mm')
+params.setAlias('A1', 'diameter')
+params.set('A2', '20 mm')
+params.setAlias('A2', 'height')
+assembly = doc.addObject('App::Part', 'assembly')
+body = doc.addObject('PartDesign::Body', 'hull')
+assembly.addObject(body)
+sketch = body.newObject('Sketcher::SketchObject', 'profile')
+sketch.addGeometry(Part.Circle(App.Vector(0, 0, 0), App.Vector(0, 0, 1), 5), False)
+sketch.addConstraint(Sketcher.Constraint('Coincident', 0, 3, -1, 1))
+sketch.addConstraint(Sketcher.Constraint('Diameter', 0, 10))
+sketch.renameConstraint(1, 'diameter')
+sketch.setExpression('Constraints.diameter', 'params.diameter')
+pad = body.newObject('PartDesign::Pad', 'pad')
+pad.Profile = sketch
+pad.setExpression('Length', 'params.height')
+doc.recompute()
+result = body
+""")
+    artifacts = backend.run_freecad(script, tmp_path / 'out', appdir=runtime)
+    assert artifacts.provenance['editability'] == {'aliases': 2, 'bodies': 1, 'sketches': 1, 'constraints': 2}
+    assert artifacts.provenance['warnings'] == []
+    assert artifacts.stl_path.stat().st_size > 84

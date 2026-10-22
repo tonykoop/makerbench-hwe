@@ -157,3 +157,20 @@ test reopens a native document and changes a spreadsheet-driven dimension.
 STEP, STL, FCStd and provenance copy-out rejects symlinks, empty/missing files,
 and files over 256 MiB each. Native export uses the same sandbox and output folder
 as the mesh; it does not grant additional host access.
+
+
+## Editable entrant documents
+
+FreeCAD entrants should retain one named `PartDesign::Body` per physical part,
+with constrained sketches and Pad/Pocket/Revolve/Loft features where appropriate.
+Put driving dimensions in the `params` spreadsheet, assign aliases, and bind
+feature/constraint expressions to them. Keep named bodies separate inside an
+`App::Part` assembly or through placements; do not fuse the final assembly.
+A transient compound for mesh export does not replace the document feature tree.
+
+The worker records `editability: {aliases, bodies, sketches, constraints}` in
+compiler provenance. Missing aliases or bodies produce warnings, not grading
+failures. Morning Review reads those counts beside the retained mesh and shows
+“Editable: N params · M bodies”. These are structural counts, not proof that all
+features are constrained or that each parameter change rebuilds successfully.
+Native document saving is handled separately by #1170; mesh grading is unchanged.
