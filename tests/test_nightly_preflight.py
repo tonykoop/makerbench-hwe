@@ -676,3 +676,23 @@ def test_fusion_entrant_needs_an_unattended_bridge(tmp_path, mode, go):
     if not go:
         assert "LUTHIER_UNATTENDED=1" in verdict["fusion-sonnet"][1]
     assert "unattended" not in verdict["solidworks-sol"][1]  # Fusion only
+
+
+@pytest.fixture(autouse=True)
+def fake_part_document(monkeypatch):
+    monkeypatch.setattr('makerbench.live_cad_runner.connector_part_document',
+                        lambda config: (True, 'hwe-solidworks get_context confirms an open part document'))
+
+
+@pytest.mark.parametrize('open_part', [False, True])
+def test_solidworks_context_required_even_when_ping_passes(tmp_path, open_part):
+    reference = tmp_path / 'photo.jpg'
+    reference.write_bytes(b'x')
+    reason = 'hwe-solidworks get_context: SldWorks.Application.ActiveDoc'
+    status = audit_entrants(_queue_file(tmp_path, [_matchup_job(reference)]), {'HWE_SW_TOKEN': FAKE_TOKEN},
+                           cadam=_CADAM_OK, environ={}, which=lambda _: '/usr/bin/tool',
+                           ping=lambda _: True, connector_root=_shims(tmp_path),
+                           part_document=lambda _: (open_part, 'open part' if open_part else reason))
+    sw = next(row for row in status.entrants if row.entrant_id == 'solidworks-sol')
+    assert sw.ok is open_part
+    assert ('open part' if open_part else reason) in sw.notes

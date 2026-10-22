@@ -384,6 +384,47 @@ def connector_available(config: LiveCadConfig) -> bool:
     return bool(data.get("ok") and (data.get("api_available") or data.get("have_adsk")))
 
 
+def connector_part_document(config: LiveCadConfig, *, urlopen=None) -> tuple[bool, str]:
+    """Call SolidWorks get_context (GET /context); require explicit part identity."""
+    import urllib.error
+    import urllib.request
+
+    env = {**os.environ, **config.env}
+    host = env.get("HWE_SW_HOST", "127.0.0.1")
+    port = env.get("HWE_SW_PORT", "8767")
+    request = urllib.request.Request(f"http://{host}:{port}/context")
+    if env.get("HWE_SW_TOKEN"):
+        request.add_header("Authorization", f"Bearer {env['HWE_SW_TOKEN']}")
+    open_url = urlopen or urllib.request.urlopen
+    status = 200
+    try:
+        try:
+            response = open_url(request, timeout=8)
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+            response = exc  # Bridge errors contain the useful COM failure text.
+        with response:
+            raw = response.read(_PING_MAX_BYTES + 1)
+        if len(raw) > _PING_MAX_BYTES:
+            return False, "hwe-solidworks get_context response exceeds preflight limit"
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("not an object")
+    except (OSError, ValueError, RecursionError):
+        return False, "hwe-solidworks get_context unavailable or invalid response"
+    error = data.get("error")
+    if error:
+        detail = error.get("message", "bridge error") if isinstance(error, dict) else str(error)
+        return False, "hwe-solidworks get_context: " + _redact_transcript(str(detail), env)
+    if status != 200:
+        return False, f"hwe-solidworks get_context HTTP {status}"
+    if (data.get("adapter") == "solidworks" and data.get("document")
+            and data.get("document_type") == "part"):
+        return True, "hwe-solidworks get_context confirms an open part document"
+    return False, ("hwe-solidworks get_context did not prove an open part document "
+                   "(requires document and document_type=part; update the bridge if type is absent)")
+
+
 def connector_unattended(config: LiveCadConfig) -> Optional[bool]:
     """Whether the bridge was started in unattended mode (None: it did not say).
 
