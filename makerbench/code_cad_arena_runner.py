@@ -615,6 +615,7 @@ def make_execute_trial(
                 context_tier=context_tier,
                 workspace_dir=workspace_dir,
                 entrant_tools=offered_tools,
+                **({"source_suffix": ".py"} if backend == "freecad" else {}),
                 **({"prompt_override": prompt_override} if prompt_override is not None else {}),
             )[0]
             if max_turns > 1:

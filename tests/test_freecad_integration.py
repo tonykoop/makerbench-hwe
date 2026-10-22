@@ -70,6 +70,15 @@ def test_headless_exports_are_deterministic(tmp_path, runtime, shape, volume, mo
     first = backend.run_freecad(script, tmp_path / "one", appdir=runtime)
     time.sleep(1.1)  # Ensure header timestamps differ; distinct scratch/output dirs too.
     second = backend.run_freecad(script, tmp_path / "two", appdir=runtime)
+    assert first.native_path.is_file()
+    native_reader = tmp_path / "read_native.py"
+    native_reader.write_text(
+        f"import FreeCAD, Part\nloaded = FreeCAD.openDocument({str(first.native_path)!r})\n"
+        "bodies = [o for o in loaded.Objects if hasattr(o, 'Shape') and o.Shape.Solids]\n"
+        "assert bodies\nresult = bodies[0]\n"
+        f"assert abs(result.Shape.Volume - {volume!r}) < 1e-6\n"
+    )
+    backend.run_freecad(native_reader, tmp_path / "native-roundtrip", appdir=runtime)
     assert first.stl_path.read_bytes() == second.stl_path.read_bytes()
     stl = first.stl_path.read_bytes()
     facets = struct.unpack("<I", stl[80:84])[0]
@@ -163,3 +172,29 @@ def test_timeout_and_stale_output(tmp_path, runtime):
     with pytest.raises(ValueError, match="must be empty"):
         backend.run_freecad(script, out, appdir=runtime)
     assert (out / "output.stl").read_bytes() == b"old"
+
+
+def test_native_keeps_editable_features_and_spreadsheet(tmp_path, runtime):
+    source = tmp_path / "editable.py"
+    source.write_text(
+        "sheet = doc.addObject('Spreadsheet::Sheet', 'Dimensions')\n"
+        "sheet.set('A1', '12 mm')\nsheet.setAlias('A1', 'width')\n"
+        "box = doc.addObject('Part::Box', 'Box')\n"
+        "box.setExpression('Length', 'Dimensions.width')\nresult = box\n"
+    )
+    artifacts = backend.run_freecad(source, tmp_path / "out", appdir=runtime,
+                                    native_filename="box_base_r1_model.FCStd")
+    assert artifacts.native_path.name == "box_base_r1_model.FCStd"
+    assert artifacts.provenance['native'] == {
+        'filename': 'box_base_r1_model.FCStd', 'parameter_count': 1,
+        'spreadsheet_count': 1, 'expression_count': 1,
+    }
+    reader = tmp_path / "edit_native.py"
+    reader.write_text(
+        f"import FreeCAD\nloaded = FreeCAD.openDocument({str(artifacts.native_path)!r})\n"
+        "assert loaded.Box.TypeId == 'Part::Box'\n"
+        "assert loaded.Box.Length.Value == 12\n"
+        "loaded.Dimensions.set('A1', '24 mm')\nloaded.recompute()\n"
+        "assert loaded.Box.Length.Value == 24\nresult = loaded.Box\n"
+    )
+    backend.run_freecad(reader, tmp_path / "edited", appdir=runtime)

@@ -37,7 +37,7 @@ from pathlib import Path
 from makerbench.freecad_backend import run_freecad
 
 artifacts = run_freecad(Path("entrant.py"), Path("new-output-dir"), timeout_s=180)
-print(artifacts.step_path, artifacts.stl_path, artifacts.provenance_path)
+print(artifacts.native_path, artifacts.step_path, artifacts.stl_path, artifacts.provenance_path)
 ```
 
 An entrant receives `doc`, a fresh FreeCAD document. Set `result` to a valid
@@ -134,3 +134,26 @@ The v2 top exposes ten `TongueNNLength`, `TongueNNNeckWidth` and
 perturbation check. Recompute with **F5**, save the part, then recompute the assembly. The task guide
 includes the filenames, stock/cut-list contract, grading command and supported
 feature types. Geometric fixture success does not establish acoustic tuning.
+
+
+### Single-part native deliverables
+
+The worker saves the entrant's document as FCStd before closing it, preserving its
+features, expressions and spreadsheets. A bare returned shape is retained as a
+PartDesign feature when it is not already represented in the document; this does
+not invent a parametric construction history. Grading still uses only the STL.
+
+Nightly FreeCAD entries write `<instrument>_base_r1_model.FCStd` beside the STL
+and set `result.native_path` for Morning Review's native download and Open in
+FreeCAD. The entrant program is saved as `.py`; the legacy JSON key `scad_path`
+continues to point to that Python file for compatibility. Standalone export calls
+default to `output.FCStd` and may supply a plain `native_filename`.
+
+Native metadata in the export `provenance.json` records spreadsheet count,
+spreadsheet alias count (`parameter_count`), and expression count. These cheap
+counts describe what was saved; they are not an editability grade. The integration
+test reopens a native document and changes a spreadsheet-driven dimension.
+
+STEP, STL, FCStd and provenance copy-out rejects symlinks, empty/missing files,
+and files over 256 MiB each. Native export uses the same sandbox and output folder
+as the mesh; it does not grant additional host access.

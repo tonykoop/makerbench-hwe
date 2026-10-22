@@ -31,7 +31,7 @@ def arena(tmp_path, monkeypatch):
 
     provider.usage_observations = {}
 
-    def compiler(source, out_dir):
+    def compiler(source, out_dir, **kwargs):
         if source.read_text() == "broken":
             raise render.CompileError("'Part.Arc' object has no attribute 'Center'")
         mesh = out_dir / "output.stl"
@@ -88,7 +88,7 @@ def test_compile_failure_revises_same_entrant_and_scores_only_final(arena, backe
 def test_failed_objective_feeds_checks_and_readable_render_back(arena, monkeypatch):
     run, calls, _, _, _ = arena
 
-    def oversized_first(source, out_dir):
+    def oversized_first(source, out_dir, **kwargs):
         mesh = out_dir / "output.stl"
         trimesh.creation.box(extents=[1000 if len(calls) == 1 else 30, 30, 30]).export(mesh)
         preview = out_dir / "preview.png"
@@ -133,7 +133,7 @@ def test_first_all_pass_stops_immediately(arena, monkeypatch):
 def test_compiler_infrastructure_error_keeps_turn_cost_and_does_not_revise(arena, monkeypatch):
     run, calls, _, _, _ = arena
 
-    def unavailable(source, out_dir):
+    def unavailable(source, out_dir, **kwargs):
         raise RuntimeError("sandbox unavailable")
 
     monkeypatch.setattr(runner, "compiler_for_backend", lambda backend: unavailable)
@@ -146,7 +146,7 @@ def test_compiler_infrastructure_error_keeps_turn_cost_and_does_not_revise(arena
 def test_exhausted_compile_failures_score_the_final_failure(arena, monkeypatch):
     run, calls, _, _, _ = arena
 
-    def fails(source, out_dir):
+    def fails(source, out_dir, **kwargs):
         raise render.CompileError("still broken")
 
     monkeypatch.setattr(runner, "compiler_for_backend", lambda backend: fails)
@@ -183,7 +183,7 @@ def test_one_turn_preserves_legacy_payload_bytes(tmp_path):
         calls.append(request)
         return "broken"
 
-    def compiler(source, out_dir):
+    def compiler(source, out_dir, **kwargs):
         raise render.CompileError("compile failed")
 
     kwargs = dict(registry=registry, run_dir=tmp_path, generators={"stub-a": generator},
@@ -221,7 +221,7 @@ def test_retired_check_does_not_block_stop_or_enter_feedback(arena, monkeypatch,
             payload['objective']['sub_scores']['min_wall'] = 0.0
         return payload
 
-    def successful(source, out_dir):
+    def successful(source, out_dir, **kwargs):
         source.write_text('fixed')
         return compiler(source, out_dir)
 
@@ -259,7 +259,7 @@ def test_compile_failure_removes_prior_workspace_preview(arena, monkeypatch):
 
     observe.usage_observations = provider.usage_observations
 
-    def first_render_then_failure(source, out_dir):
+    def first_render_then_failure(source, out_dir, **kwargs):
         if len(calls) == 2:
             raise render.CompileError('second turn failed')
         source.write_text('fixed')
