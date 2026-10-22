@@ -180,3 +180,25 @@ def test_stop_rejects_symlink_lock_and_stale_job(repo, tmp_path):
     atomic_write_json(state, {'status': 'stopped'})
     with pytest.raises(ValueError, match='no longer running'):
         store.stop(state.parent.name)
+
+
+@pytest.mark.parametrize('options', [{'all_jobs': True}, {'max_jobs': 2}])
+def test_stop_leaves_later_jobs_queued_in_multi_job_run(tmp_path, options):
+    from test_nightly_cad import _queue, _image, _registry, _synthetic_handler
+    queue = _queue(tmp_path / 'queue.json', _image(tmp_path / 'ref.png'))
+    payload = live.read(queue)
+    payload['jobs'].append({**payload['jobs'][0], 'job_id': 'later-night'})
+    atomic_write_json(queue, payload)
+    root = tmp_path / 'runs'
+    calls = []
+    def handler(job, entrant, run_dir, registry):
+        calls.append((job.job_id, entrant.entrant_id))
+        live.LiveStore(root, queue, tmp_path).stop(run_dir.name)
+        return _synthetic_handler(job, entrant, run_dir, registry)
+    executor = nightly_cad.NightlyExecutor(queue_path=queue, registry_path=_registry(tmp_path / 'registry.json'),
+                                           output_root=root, handlers={kind: handler for kind in ('arena', 'cadam', 'live')})
+    result = executor.run(**options)
+    assert result['status'] == 'stopped' and result['job_count'] == 1
+    assert calls == [('sambuca-night', 'cadam-fable-image')]
+    assert [job['status'] for job in live.read(queue)['jobs']] == ['stopped', 'queued']
+    assert len(list(root.glob('*/nightly-state.json'))) == 1
