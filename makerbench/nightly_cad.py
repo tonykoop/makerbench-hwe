@@ -1166,6 +1166,9 @@ def resolve_dispatch(*, run_id: str, entrant_id: str, outcome: str, note: str = 
         unresolved = next((r.get("error") for r in rows
                            if r.get("status") == "paid-dispatch-uncertain"), None)
         blocker = budget.get("halted_reason") or unresolved
+        # A persisted reason not represented by an entrant outcome may be an
+        # independent/operator safety hold. Resolving a dispatch cannot clear
+        # that hold; retain it even when budget and uncertainty are now clear.
         old_errors = {r.get("error") for r in rows}
         if morning.get("safety_block") and morning["safety_block"] not in old_errors:
             blocker = blocker or morning["safety_block"]

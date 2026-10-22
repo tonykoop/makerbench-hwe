@@ -53,7 +53,7 @@ def test_credit_errors(error, ok):
     assert result[0] is ok and 'secret' not in result[1]
 
 
-@pytest.mark.parametrize('blocker', [None, 'budget overrun', 'other dispatch'])
+@pytest.mark.parametrize('blocker', [None, 'budget overrun', 'other dispatch', 'operator safety hold'])
 @pytest.mark.parametrize('outcome', ['lost', 'received'])
 def test_resolution(tmp_path, blocker, outcome):
     root = tmp_path / 'runs'
@@ -68,7 +68,7 @@ def test_resolution(tmp_path, blocker, outcome):
     state = {'outcomes': rows, 'budget': {'halted_reason': blocker if blocker == 'budget overrun' else None,
              'reservations': {'a': 3}, 'dispatches': {'a': {'status': 'dispatched'}}}}
     (run / 'nightly-state.json').write_text(json.dumps(state))
-    (run / 'morning-summary.json').write_text(json.dumps({'safety_block': 'uncertain', 'votable': False,
+    (run / 'morning-summary.json').write_text(json.dumps({'safety_block': blocker if blocker == 'operator safety hold' else 'uncertain', 'votable': False,
                                                         'valid_candidate_count': 2, 'pair_files': ['p.html']}))
     args = dict(run_id='r1', entrant_id='a', outcome=outcome, runs_root=root, queue_path=queue)
     with nightly_lease(root / '.nightly-cad.lock', now=lambda: datetime.now(timezone.utc)):
@@ -102,3 +102,15 @@ def test_interrupted_chat_is_uncertain(tmp_path):
 
 def test_missing_credit_counters_is_no_go():
     assert openrouter_credit_check('secret', lambda *args: b'{"data":{}}')[0] is False
+
+
+@pytest.mark.parametrize('code,warn', [(401, False), (402, False), (403, False), (429, True),
+                                    (500, True), (502, True), (503, True), (504, True)])
+def test_credit_http_outage_warns_but_auth_and_credit_failure_block(code, warn):
+    def transport(*args):
+        raise urllib.error.HTTPError('url', code, 'secret-provider-response', {}, None)
+    ok, message = openrouter_credit_check('secret-key', transport)
+    assert ok is warn
+    assert message.startswith('WARN:') is warn
+    assert str(code) in message
+    assert 'secret' not in message

@@ -390,6 +390,8 @@ def openrouter_credit_check(key: str, transport=None) -> tuple[bool, str]:
         return ((remaining is None or remaining > 0) and data.get("is_free_tier") is not True,
                 f"OpenRouter limit_remaining={remaining}, usage={usage}")
     except urllib.error.HTTPError as exc:
+        if exc.code == 429 or 500 <= exc.code < 600:
+            return True, f"WARN: OpenRouter credit check unavailable (HTTP {exc.code})"
         return False, f"OpenRouter credit check HTTP {exc.code}"
     except (OSError, TimeoutError):
         return True, "WARN: OpenRouter credit check skipped (offline)"
