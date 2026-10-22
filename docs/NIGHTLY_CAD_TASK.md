@@ -114,3 +114,19 @@ Follow the [SolidWorks dry-night runsheet](cadam/DRY_NIGHT_RUNSHEET.md) before
 preflight. An authenticated ping alone is insufficient: `get_context` must report
 an open document. Explicit document types must be `part`; older bridges that omit
 the type remain GO with a document-type-unverified WARN (hwe#576).
+
+## Multiple jobs and morning counts
+
+`arena overnight --queue <queue.json> --output-root <runs> --all` consumes
+queued/running jobs in queue order under one nightly lease. Terminal jobs are
+skipped; a running job resumes its recorded folder and completed trials.
+Use `--max-jobs N` to bound the invocation and `--stop-on-block` to stop after a
+blocked job. Without that flag, a failed live-seat preflight blocks its job,
+preserves the reason, and the loop continues. The JSON result lists every job's
+status. Without `--all` or `--max-jobs`, the command retains its single-job behavior.
+The Windows task wrapper now passes `--all`.
+
+`arena morning --night YYYY-MM-DD --runs-root <runs>` reads the UTC night stored
+in each run's `brief.json` and lists votable, valid, and failed counts from its
+morning summary. Missing/invalid summaries are marked incomplete, with unknown
+counts. This command does not regenerate or change run evidence.

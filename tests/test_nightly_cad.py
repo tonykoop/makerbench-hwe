@@ -107,6 +107,20 @@ def _synthetic_handler(job, entrant, run_dir, _registry):
     return 0.66 if entrant.kind == "cadam" else 0.0
 
 
+def test_solidworks_closed_document_is_a_live_seat_failure(tmp_path, monkeypatch):
+    """Merged get_context checks must still block the --all job as a seat failure."""
+    monkeypatch.setattr(nightly_cad, "connector_available", lambda config: True)
+    reason = "hwe-solidworks get_context: no open part document"
+    monkeypatch.setattr(nightly_cad, "connector_part_document", lambda config: (False, reason))
+    monkeypatch.setattr(nightly_cad, "connector_mcp_probe", lambda config: pytest.fail("closed seat reached MCP launch"))
+    entrant = NightlyEntrant("solidworks-sol", "live", "codex-gpt-6.1-sol", backend="solidworks-live")
+    job = NightlyJob("seat", "sambuca", str(_image(tmp_path / "reference.png")), [entrant])
+    executor = NightlyExecutor(queue_path=tmp_path / "queue.json", registry_path=tmp_path / "registry.json",
+                               output_root=tmp_path / "runs")
+    with pytest.raises(nightly_cad.LiveSeatUnavailableError, match="no open part document"):
+        executor._run_live(job, entrant, tmp_path, {})
+
+
 def test_budget_guard_refuses_worst_case_overspend():
     guard = BudgetGuard(5.0, spent_usd=3.0)
     entrant = NightlyEntrant(entrant_id="paid", kind="cadam", model_id="fable", max_cost_usd=2.01)
@@ -520,3 +534,95 @@ def test_definite_cadam_failure_reaches_morning_summary(tmp_path):
     assert 'safety_block' not in result['morning']
     summary = json.loads((Path(result['run_dir']) / 'morning-summary.json').read_text())
     assert any(row['error'] == reason for row in summary['failures'])
+
+
+def _three_job_executor(tmp_path, monkeypatch):
+    payload = json.loads((Path(__file__).parent / 'fixtures/nightly-three-jobs.json').read_text())
+    reference = _image(tmp_path / 'reference.png')
+    for job in payload['jobs']:
+        job['reference_image'] = str(reference)
+    queue = tmp_path / 'queue.json'
+    atomic_write_json(queue, payload)
+    calls = []
+    executor = NightlyExecutor(queue_path=queue, registry_path=_registry(tmp_path / 'registry.json'),
+                              output_root=tmp_path / 'runs',
+                              now=lambda: datetime(2026, 10, 21, 23, tzinfo=timezone.utc))
+    def handler(job, entrant, run_dir, registry):
+        # Another executor cannot acquire the lease, including between jobs.
+        with pytest.raises(RuntimeError, match='another nightly'):
+            with nightly_lease(executor.lease_path, now=executor.now):
+                pass
+        calls.append((job.job_id, entrant.entrant_id))
+        return _synthetic_handler(job, entrant, run_dir, registry)
+    executor.handlers['arena'] = handler
+    monkeypatch.setattr(nightly_cad, 'connector_available', lambda _: False)
+    return executor, calls
+
+
+@pytest.mark.parametrize('stop,expected', [(False, ['votable', 'blocked', 'votable']),
+                                          (True, ['votable', 'blocked'])])
+def test_all_jobs_order_single_lease_and_blocked_seat(tmp_path, monkeypatch, stop, expected):
+    executor, calls = _three_job_executor(tmp_path, monkeypatch)
+    result = executor.run(all_jobs=True, stop_on_block=stop)
+    assert [job['status'] for job in result['jobs']] == expected
+    assert [job['job_id'] for job in result['jobs']] == [f'fixture-{i+1}' for i in range(len(expected))]
+    assert 'hwe-fusion authenticated preflight failed' in result['jobs'][1]['morning']['safety_block']
+    assert result['jobs'][1]['morning']['valid_candidate_count'] == 2
+    prior = list(calls)
+    again = executor.run(all_jobs=True)
+    assert again['job_count'] == (1 if stop else 0)
+    assert calls[:len(prior)] == prior
+    assert len(calls) == 6
+
+
+def test_max_jobs_and_running_resume_preserve_trials(tmp_path, monkeypatch):
+    executor, calls = _three_job_executor(tmp_path, monkeypatch)
+    first = executor.run(max_jobs=1)
+    assert first['job_count'] == 1
+    payload = json.loads(executor.queue_path.read_text())
+    payload['jobs'][0]['status'] = 'running'
+    atomic_write_json(executor.queue_path, payload)
+    second = executor.run(max_jobs=1)
+    assert second['jobs'][0]['run_id'] == first['jobs'][0]['run_id']
+    assert all(row['status'] == 'already-complete' for row in second['jobs'][0]['outcomes'])
+    assert len(calls) == 2
+
+
+def test_morning_lists_matching_night_without_writes(tmp_path, monkeypatch):
+    executor, _ = _three_job_executor(tmp_path, monkeypatch)
+    executor.run(all_jobs=True)
+    before = {p: p.read_bytes() for p in executor.output_root.rglob('*.json')}
+    summary = nightly_cad.morning_summary(executor.output_root, '2026-10-21')
+    assert summary['run_count'] == 3
+    assert [r['status'] for r in summary['runs']] == ['votable', 'blocked', 'votable']
+    assert [r['valid_candidate_count'] for r in summary['runs']] == [2, 2, 2]
+    assert [r['failed_candidate_count'] for r in summary['runs']] == [0, 1, 0]
+    assert nightly_cad.morning_summary(executor.output_root, '2026-10-20')['run_count'] == 0
+    assert before == {p: p.read_bytes() for p in executor.output_root.rglob('*.json')}
+    with pytest.raises(ValueError):
+        nightly_cad.morning_summary(executor.output_root, 'not-a-date')
+    (executor.output_root / summary['runs'][0]['run_id'] / 'morning-summary.json').unlink()
+    assert nightly_cad.morning_summary(executor.output_root, '2026-10-21')['runs'][0]['status'] == 'incomplete'
+
+
+def test_overnight_all_and_morning_cli_wiring(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from makerbench.cli import app
+    seen = []
+    monkeypatch.setattr(NightlyExecutor, 'run', lambda self, **kwargs: seen.append(kwargs) or {'jobs': []})
+    runner = CliRunner()
+    result = runner.invoke(app, ['arena', 'overnight', '--queue', 'fixture.json', '--output-root', str(tmp_path),
+                                 '--all', '--max-jobs', '3', '--stop-on-block', '--no-revisions'])
+    assert result.exit_code == 0, result.output
+    assert seen == [{'all_jobs': True, 'max_jobs': 3, 'stop_on_block': True}]
+    result = runner.invoke(app, ['arena', 'morning', '--night', '2026-10-21', '--runs-root', str(tmp_path)])
+    assert result.exit_code == 0 and '"run_count": 0' in result.output
+
+
+def test_morning_keeps_interrupted_folder_without_brief(tmp_path):
+    (tmp_path / '20261021T230000Z-interrupted').mkdir()
+    (tmp_path / 'control-room').mkdir()
+    result = nightly_cad.morning_summary(tmp_path, '2026-10-21')
+    assert result['run_count'] == 1
+    assert result['runs'][0]['status'] == 'incomplete'
+    assert result['runs'][0]['valid_candidate_count'] is None

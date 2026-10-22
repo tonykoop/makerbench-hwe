@@ -1388,6 +1388,9 @@ def arena_overnight(
         registry: str = typer.Option(DEFAULT_REGISTRY, help="Arena registry JSON path."),
         instruments_root: Optional[str] = typer.Option(None, "--instruments-root"),
         lease_path: Optional[str] = typer.Option(None, "--lease-path"),
+        all_jobs: bool = typer.Option(False, "--all", help="Run queued jobs in order under one lease."),
+        max_jobs: Optional[int] = typer.Option(None, "--max-jobs", min=1),
+        stop_on_block: bool = typer.Option(False, "--stop-on-block"),
         revisions: bool = typer.Option(True, "--revisions/--no-revisions", help="When the nightly queue is empty, run pending Morning Review revision requests from <output-root>/control-room/revision-queue.json (#1116).")):
     """Run or resume one queued overnight instrument experiment."""
 
@@ -1403,11 +1406,26 @@ def arena_overnight(
             lease_path=Path(lease_path) if lease_path else None,
             runs_root=Path(output_root) if revisions else None,
             handlers={"revision": make_revision_handler()} if revisions else None,
-        ).run()
+        ).run(all_jobs=all_jobs, max_jobs=max_jobs, stop_on_block=stop_on_block)
     except (RuntimeError, ValueError, OSError) as exc:
         console.print(f"[red]overnight arena failed: {exc}[/red]")
         raise typer.Exit(code=1)
     console.print(json.dumps(result, indent=2, sort_keys=True))
+
+
+@arena_app.command("morning")
+def arena_morning(
+        night: str = typer.Option(..., "--night", help="UTC night date, YYYY-MM-DD, as saved in brief.json."),
+        runs_root: Path = typer.Option(Path("runs"), "--runs-root", "--output-root")):
+    """List per-run morning counts for a night without changing run evidence."""
+    from .nightly_cad import morning_summary
+
+    try:
+        result = morning_summary(runs_root, night)
+    except (OSError, ValueError) as exc:
+        console.print(str(exc), markup=False)
+        raise typer.Exit(code=1)
+    console.print(json.dumps(result, indent=2), markup=False)
 
 
 @arena_app.command("draft-matchup")
