@@ -65,7 +65,7 @@ def test_browser_queue_edits_preflight_and_undo(queue_studio):
         context, page, errors = open_queue(browser, url)
         draft = page.get_by_test_id("draft-banner").count() == 1
         assert page.get_by_role("navigation", name="Control Room screens").get_by_role("link").all_text_contents() == [
-            "Morning Review", "New Run", "Tonight's Queue"]
+            "Morning Review", "New Run", "Tonight's Queue", "Live"]
         assert page.get_by_role("switch").is_disabled()
         assert "unknown (Windows task)" in page.locator(".queue-kv").inner_text()
         page.get_by_role("button", name="Move Ocarina up", exact=True).click()
