@@ -142,7 +142,9 @@ feature types. Geometric fixture success does not establish acoustic tuning.
 
 The worker saves the entrant's document as FCStd before closing it, preserving its
 features, expressions and spreadsheets. A bare returned shape is retained as a
-PartDesign feature when it is not already represented in the document; this does
+PartDesign feature when it is not already represented in the document and no
+PartDesign bodies are present. Transient assembly/body export shapes are never
+added back to the editable document. The bare-shape fallback does
 not invent a parametric construction history. Grading still uses only the STL.
 
 Nightly FreeCAD entries write `<instrument>_base_r1_model.FCStd` beside the STL
@@ -175,4 +177,5 @@ compiler provenance. Missing aliases or bodies produce warnings, not grading
 failures. Morning Review reads those counts beside the retained mesh and shows
 “Editable: N params · M bodies”. These are structural counts, not proof that all
 features are constrained or that each parameter change rebuilds successfully.
-Native document saving is handled separately by #1170; mesh grading is unchanged.
+Counts are taken before any bare-shape `ResultBody` fallback for native saving;
+mesh grading is unchanged.

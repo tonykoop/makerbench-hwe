@@ -71,6 +71,7 @@ def test_headless_exports_are_deterministic(tmp_path, runtime, shape, volume, mo
     time.sleep(1.1)  # Ensure header timestamps differ; distinct scratch/output dirs too.
     second = backend.run_freecad(script, tmp_path / "two", appdir=runtime)
     assert first.native_path.is_file()
+    assert first.provenance['editability']['bodies'] == 0  # before ResultBody fallback
     native_reader = tmp_path / "read_native.py"
     native_reader.write_text(
         f"import FreeCAD, Part\nloaded = FreeCAD.openDocument({str(first.native_path)!r})\n"
@@ -188,10 +189,12 @@ def test_native_keeps_editable_features_and_spreadsheet(tmp_path, runtime):
     artifacts = backend.run_freecad(source, tmp_path / "out", appdir=runtime,
                                     native_filename="box_base_r1_model.FCStd")
     assert artifacts.native_path.name == "box_base_r1_model.FCStd"
-    assert artifacts.provenance['native'] == {
+    expected_native = {
         'filename': 'box_base_r1_model.FCStd', 'parameter_count': 1,
         'spreadsheet_count': 1, 'expression_count': 1,
     }
+    assert {key: artifacts.provenance['native'][key] for key in expected_native} == expected_native
+    assert artifacts.provenance['editability'] == {'aliases': 1, 'bodies': 0, 'sketches': 0, 'constraints': 0}
     reader = tmp_path / "edit_native.py"
     reader.write_text(
         f"import FreeCAD\nloaded = FreeCAD.openDocument({str(artifacts.native_path)!r})\n"
@@ -267,6 +270,19 @@ MeshPart.meshFromShape = checked_mesh
 """)
     artifacts = backend.run_freecad(script, tmp_path / 'out', appdir=runtime)
     assert artifacts.provenance['editability']['bodies'] == 2
+    reader = tmp_path / 'read_multibody.py'
+    reader.write_text(
+        f"import FreeCAD, Part\nloaded = FreeCAD.openDocument({str(artifacts.native_path)!r})\n"
+        "assert loaded.getObject('ResultBody') is None\n"
+        "assert len([o for o in loaded.Objects if o.TypeId == 'PartDesign::Body']) == 2\n"
+        "assert loaded.hull.Tip.TypeId == 'PartDesign::AdditiveBox'\n"
+        "assert loaded.soundboard.Tip.TypeId == 'PartDesign::AdditiveBox'\n"
+        "loaded.hull.Tip.Length = 4\nloaded.recompute()\n"
+        "assert abs(loaded.hull.Shape.Volume - 16) < 1e-6\n"
+        "assert abs(loaded.soundboard.Shape.Volume - 8) < 1e-6\n"
+        "result = loaded.hull\n"
+    )
+    backend.run_freecad(reader, tmp_path / 'native-reopened', appdir=runtime)
     assert artifacts.stl_path.stat().st_size > 84
     # Independent exported mesh volume, including overlap removal for the fallback.
     records = struct.iter_unpack('<12fH', artifacts.stl_path.read_bytes()[84:])

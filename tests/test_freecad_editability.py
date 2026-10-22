@@ -28,6 +28,7 @@ def test_fake_runner_preserves_proof_and_warning(tmp_path, monkeypatch):
             out = Path(command[command.index('/out') - 1])
             (out / 'output.step').write_text('fixture step')
             (out / 'output.stl').write_text('fixture mesh')
+            (out / 'output.FCStd').write_bytes(b'fixture native')
             (out / 'provenance.json').write_text(json.dumps({'backend': 'freecad',
                 'freecad_version': backend.FREECAD_VERSION, 'editability': counts, 'warnings': [warning]}))
         def __enter__(self):
@@ -41,6 +42,7 @@ def test_fake_runner_preserves_proof_and_warning(tmp_path, monkeypatch):
     source.write_text('# fixture')
     out = tmp_path / 'out'
     result = backend.compile_freecad_to_artifacts(source, out)
+    assert (out / 'output.FCStd').read_bytes() == b'fixture native'
     assert result.warnings == (warning,)
     assert json.loads((out / 'provenance.json').read_text())['editability'] == counts
 

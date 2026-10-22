@@ -62,6 +62,7 @@ def main():
         if not provenance["editability"]["bodies"]:
             provenance["warnings"].append("FreeCAD editability: no PartDesign bodies")
         result = namespace.get("result")
+        document_result = result is None
         if result is None:
             # Resolve the assembly rather than counting its bodies and feature
             # history as competing results. getShape includes container placement.
@@ -91,7 +92,11 @@ def main():
         # Save the entrant's document, not the flattened STEP export document.
         native_doc = getattr(result, "Document", None) or namespace.get("doc", doc)
         native_doc.recompute()
-        if not any(hasattr(item, "Shape") and item.Shape.isSame(shape) for item in native_doc.Objects):
+        # Assembly/body export shapes are transient. Save their original feature
+        # tree without adding a duplicate flattened body to the native document.
+        has_bodies = any(item.TypeId == "PartDesign::Body" for item in native_doc.Objects)
+        if (not document_result and not has_bodies
+                and not any(hasattr(item, "Shape") and item.Shape.isSame(shape) for item in native_doc.Objects)):
             body = native_doc.addObject("PartDesign::Body", "ResultBody")
             feature = body.newObject("PartDesign::Feature", "Result")
             feature.Shape = shape.copy()
