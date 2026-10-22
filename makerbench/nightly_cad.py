@@ -20,7 +20,7 @@ from . import cad_names
 from . import code_cad_arena_runner as arena_runner
 from . import code_cad_providers as providers
 from .cadam_adapter import CadamClient, CadamConfig, CadamRecoveryRequiredError
-from .code_cad_orchestrator import OrchestrationConfig, run_orchestration
+from .code_cad_orchestrator import OrchestrationConfig, build_trial_matrix, run_orchestration
 from .live_cad_runner import (
     LiveCadConfig,
     connector_available,
@@ -40,6 +40,8 @@ SCHEMA = "makerbench-nightly-cad-queue-v1"
 STATE_SCHEMA = "makerbench-nightly-cad-state-v1"
 MORNING_SCHEMA = "makerbench-nightly-cad-morning-v1"
 BRIEF_SCHEMA = "makerbench-nightly-cad-brief-v1"
+MAX_TURNS = 8
+DEFAULT_TURNS = 3
 #: What a night builds. Assembly nights need an assembly harness the runner does not have yet.
 DELIVERABLES = ("single",)
 REFERENCE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
@@ -126,6 +128,8 @@ class NightlyJob:
     # Never read from the nightly queue file; the executor builds it from the revision queue.
     revision: Optional[dict] = None
     deliverable: str = "single"
+    turns: int = DEFAULT_TURNS
+    stop_early: bool = True
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, object]) -> "NightlyJob":
@@ -144,6 +148,9 @@ class NightlyJob:
             run_id=str(payload["run_id"]) if payload.get("run_id") else None,
             run_dir=str(payload["run_dir"]) if payload.get("run_dir") else None,
             deliverable=str(payload.get("deliverable") or "single"),
+            # Existing queues predate grader-driven revision and retain one attempt.
+            turns=payload.get("turns", 1),
+            stop_early=payload.get("stop_early", True),
         )
 
     def validate(self) -> None:
@@ -156,6 +163,10 @@ class NightlyJob:
             raise ValueError("nightly jobs require at least two entrants")
         if self.budget_usd < 0:
             raise ValueError("budget_usd cannot be negative")
+        if isinstance(self.turns, bool) or not isinstance(self.turns, int) or not 1 <= self.turns <= MAX_TURNS:
+            raise ValueError(f"turns must be a whole number from 1 to {MAX_TURNS}")
+        if not isinstance(self.stop_early, bool):
+            raise ValueError("stop_early must be a boolean")
         if self.deliverable == "assembly":
             raise ValueError("assembly nights are not supported by the nightly runner yet; queue a single-part night")
         if self.deliverable not in DELIVERABLES:
@@ -174,6 +185,8 @@ class NightlyJob:
             "run_id": self.run_id,
             "run_dir": self.run_dir,
             "deliverable": self.deliverable,
+            "turns": self.turns,
+            "stop_early": self.stop_early,
             "entrants": [entrant.__dict__ for entrant in self.entrants],
         }
 
@@ -504,6 +517,9 @@ def _trial_cost(run_log_path: Path, job: NightlyJob, entrant: NightlyEntrant) ->
     if not isinstance(row, Mapping):
         return 0.0
     result = row.get("result")
+    turns = (result or row.get("meta") or {}).get("turns")
+    if turns:
+        return sum(max(0.0, float(turn.get("cost_usd") or 0.0)) for turn in turns)
     gen = result.get("gen") if isinstance(result, Mapping) else None
     provenance_path = gen.get("provenance_path") if isinstance(gen, Mapping) else None
     if not provenance_path or not Path(str(provenance_path)).is_file():
@@ -788,6 +804,9 @@ class NightlyExecutor:
             backend=entrant.backend,
             context_tier=entrant.context_tier,
             instruments_root=self.instruments_root,
+            max_turns=job.turns,
+            stop_early=job.stop_early,
+            max_cost_usd=entrant.max_cost_usd,
             image_paths=(
                 {job.instrument_id: Path(job.reference_image)}
                 if entrant.context_tier == "image"
@@ -802,12 +821,16 @@ class NightlyExecutor:
             model_providers={entrant.entrant_id: providers.provider_for_model_id(entrant.model_id)},
             backend=entrant.backend,
         )
-        run_orchestration(
+        log = run_orchestration(
             config=config,
             run_log_path=run_dir / "run_log.json",
             execute_trial=execute,
         )
-        return 0.0
+        row = find_trial(log or {}, build_trial_matrix(config)[0].trial_id) or {}
+        return sum((
+            float(turn.get("cost_usd") or 0.0)
+            for turn in ((row.get("result") or row.get("meta") or {}).get("turns") or [])
+        ), 0.0)
 
     def _run_live(
         self,

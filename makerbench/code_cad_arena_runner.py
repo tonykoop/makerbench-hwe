@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import tempfile
 import warnings
 from pathlib import Path
@@ -24,6 +25,7 @@ from .arena_checks import (  # noqa: F401  (re-exported: the one definition live
     RETIRED_CHECKS,
     objective_rate,
     recorded_objective_rate,
+    retained_checks,
 )
 from . import assembly_fit
 from . import blender_backend
@@ -42,6 +44,7 @@ from .code_cad_arena import Vote, build_elo_leaderboard
 from .code_cad_context_staging import stage_workspace
 from .code_cad_generator import (
     Generator,
+    build_generation_prompt,
     instrument_spec_from_registry,
     run_generation_batch,
 )
@@ -503,6 +506,9 @@ def make_execute_trial(
     image_paths: Optional[Mapping[str, Path]] = None,
     backend: str,
     entrant_tools: bool = False,
+    max_turns: int = 1,
+    stop_early: bool = True,
+    max_cost_usd: float = 0.0,
 ) -> TrialExecutor:
     """Wire #422 generation and #423 objective scoring into one trial executor.
 
@@ -524,6 +530,11 @@ def make_execute_trial(
 
     ``entrant_tools`` (#798) offers studio-tier entrants the read-only
     measure/render tools; it is refused on every other tier.
+
+    ``max_turns`` enables grader-driven revisions for nightly arena entrants.
+    Each turn keeps its own source/render/provenance; only the final result is
+    scored. ``stop_early`` ends on all-pass; otherwise the full allowance is used.
+    The default one-turn path preserves existing artifacts and payloads.
     """
 
     from .entrant_tools import tools_for_tier
@@ -531,6 +542,8 @@ def make_execute_trial(
     if entrant_tools and context_tier != "studio":
         raise ValueError("entrant_tools is only available on the studio context tier (#798)")
     offered_tools = tools_for_tier(context_tier, entrant_tools)
+    if isinstance(max_turns, bool) or not isinstance(max_turns, int) or not 1 <= max_turns <= 8:
+        raise ValueError("max_turns must be a whole number from 1 to 8")
 
     def _execute_body(trial: ArenaTrial) -> dict:
         generator = generators.get(trial.model_id)
@@ -585,33 +598,100 @@ def make_execute_trial(
                 **studio_kwargs,
             )
 
-        results = run_generation_batch(
-            registry=registry,
-            instrument_id=trial.instrument_id,
-            seed=trial.seed,
-            model_ids=[trial.model_id],
-            generator=generator,
-            out_dir=gen_dir,
-            context_tier=context_tier,
-            workspace_dir=workspace_dir,
-            entrant_tools=offered_tools,
-        )
-        gen = results[0]
-        if gen.status != "ok" or gen.scad_path is None:
-            # Raise so the orchestrator records an error row and retries the
-            # trial up to max_attempts (transient CLI failures).
-            raise RuntimeError(f"generation {gen.status}: {gen.error}")
+        history: list[dict] = []
+        prompt_override = None
+        trigger = None
+        for turn in range(1, max_turns + 1):
+            # One-turn jobs keep their original paths, prompt and result shape.
+            turn_dir = gen_dir if max_turns == 1 else gen_dir / f"turn-{turn}"
+            render_dir = run_dir / "render" / trial.trial_id if max_turns == 1 else turn_dir / "render"
+            gen = run_generation_batch(
+                registry=registry,
+                instrument_id=trial.instrument_id,
+                seed=trial.seed,
+                model_ids=[trial.model_id],
+                generator=generator,
+                out_dir=turn_dir,
+                context_tier=context_tier,
+                workspace_dir=workspace_dir,
+                entrant_tools=offered_tools,
+                **({"prompt_override": prompt_override} if prompt_override is not None else {}),
+            )[0]
+            if max_turns > 1:
+                provenance = json.loads(gen.provenance_path.read_text(encoding="utf-8"))
+                usage = provenance.get("usage")
+                record = {
+                    "turn": turn,
+                    "revision_of": turn - 1 if turn > 1 else None,
+                    "trigger": trigger,
+                    "cost_usd": usage.get("cost_usd") if usage is not None else 0.0,
+                    "source_path": gen.scad_path.as_posix() if gen.scad_path else None,
+                    "provenance_path": gen.provenance_path.as_posix(),
+                }
+                history.append(record)
+            if gen.status != "ok" or gen.scad_path is None:
+                # Auth/timeout/provider failures are infrastructure errors, not revise triggers.
+                exc = RuntimeError(f"generation {gen.status}: {gen.error}")
+                if history:
+                    record.update(status="error", error=str(exc))
+                    atomic_write_json(turn_dir / "turn.json", record)
+                    exc.trial_meta = {"turns": history, "backend": backend}
+                raise exc
 
-        payload = evaluate_objective_trial(
-            trial_id=trial.trial_id,
-            model_id=trial.model_id,
-            instrument_id=trial.instrument_id,
-            seed=trial.seed,
-            scad_path=gen.scad_path,
-            out_dir=run_dir / "render" / trial.trial_id,
-            objective_gate=objective_gate,
-            compiler=compiler,
-        )
+            try:
+                payload = evaluate_objective_trial(
+                    trial_id=trial.trial_id,
+                    model_id=trial.model_id,
+                    instrument_id=trial.instrument_id,
+                    seed=trial.seed,
+                    scad_path=gen.scad_path,
+                    out_dir=render_dir,
+                    objective_gate=objective_gate,
+                    compiler=compiler,
+                )
+            except Exception as exc:
+                if history:
+                    record.update(status="error", error=str(exc))
+                    atomic_write_json(turn_dir / "turn.json", record)
+                    raise_with_trial_meta(exc, {"turns": history, "backend": backend})
+                raise
+            if max_turns == 1:
+                break
+            record.update(status=payload["status"], error=payload.get("error"),
+                          render_path=payload["artifacts"].get("png_path"), objective=payload["objective"])
+            atomic_write_json(turn_dir / "turn.json", record)
+            objective = payload["objective"]
+            all_pass = payload["status"] == "scored" and objective["passed"]
+            cost_spent = sum(float(item.get("cost_usd") or 0.0) for item in history)
+            if max_cost_usd > 0 and cost_spent >= max_cost_usd:
+                payload["revision_stop_reason"] = "entrant cost ceiling reached"
+                break
+            if turn == max_turns or (stop_early and all_pass):
+                break
+            trigger = (payload.get("error") or json.dumps({
+                "objective_pass_rate": recorded_objective_rate(objective),
+                "sub_scores": retained_checks(objective),
+                "failures": objective.get("failures", []),
+            }, sort_keys=True)) if not all_pass else "All objective checks passed; refine the design while preserving them."
+            preview = record["render_path"]
+            if workspace_dir is not None:
+                # Never expose an older turn's preview after the latest compile fails.
+                staged = workspace_dir / "revision-preview.png"
+                staged.unlink(missing_ok=True)
+                if preview and Path(preview).is_file():
+                    shutil.copyfile(preview, staged)
+                    preview = staged.as_posix()
+                else:
+                    preview = None
+            from .nightly_revise import continue_prompt
+
+            base_prompt, _ = build_generation_prompt(spec, trial.seed)
+            prompt_override = base_prompt + "\n" + continue_prompt(
+                gen.scad_path.read_text(encoding="utf-8"), trigger, from_turn=turn,
+                extra_turns=max_turns - turn, backend=backend, render_path=preview,
+            )
+        if history:
+            payload["turns"] = history
         payload["rep"] = trial.rep
         payload["gen"] = {
             "scad_path": gen.scad_path.as_posix(),

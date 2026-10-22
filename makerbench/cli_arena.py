@@ -1419,6 +1419,8 @@ def arena_draft_matchup(
         reference: Optional[str] = typer.Option("SambucaPhotobyDonHitchcock_BritishMuseum.jpg", "--reference",
                                                 help="Image file name under the instrument repo's images/ folder."),
         cap_usd: float = typer.Option(2.0, "--cap-usd", help="OpenRouter cap for the night, split across paid entrants."),
+        turns: int = typer.Option(3, "--turns", min=1, max=8, help="Grader-driven turns per arena entrant."),
+        stop_early: bool = typer.Option(True, "--stop-early/--no-stop-early", help="Stop arena revisions when all checks pass."),
         registry: str = typer.Option(DEFAULT_REGISTRY, help="Arena registry JSON path."),
         runs_root: str = typer.Option("runs", "--runs-root", help="Runs root (plans and the copied reference go under control-room/plans)."),
         instruments_root: str = typer.Option("/mnt/c/Users/Tony/Documents/GitHub/instruments", "--instruments-root"),
@@ -1436,7 +1438,7 @@ def arena_draft_matchup(
             instrument=instrument, entrants=[item.strip() for item in entrants.split(",") if item.strip()],
             registry_path=Path(registry), runs_root=Path(runs_root), out_path=Path(out),
             reference=reference or None, instruments_root=Path(instruments_root) if instruments_root else None,
-            cap_usd=cap_usd, replace=replace,
+            cap_usd=cap_usd, turns=turns, stop_early=stop_early, replace=replace,
         )
     except DraftError as exc:
         console.print(f"[red]draft not written: {exc}[/red]")

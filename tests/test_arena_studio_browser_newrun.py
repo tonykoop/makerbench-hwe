@@ -190,7 +190,7 @@ def test_queue_writes_on_stage_what_the_runner_cannot_apply_and_queue_the_rest(s
         page.get_by_role("button", name="Assembly build").click()
         gaps = page.get_by_test_id("runner-gaps")
         gaps.wait_for()
-        assert "wood-assembly mode" in gaps.inner_text() and "6 turns" in gaps.inner_text()
+        assert "wood-assembly mode" in gaps.inner_text() and "6 turns" not in gaps.inner_text()
         assert "staged, not queued" in gaps.inner_text()
         page.get_by_role("button", name="Add to tonight").click()
         dialog = page.locator("dialog.review-dialog")
