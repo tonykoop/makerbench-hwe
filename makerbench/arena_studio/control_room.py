@@ -7,9 +7,9 @@ The review reads only what the nightly runner already wrote into the run folder:
 - ``objective_scoreline.json`` and ``nightly-state.json`` when present;
 - an optional ``brief.json`` and reference image for the brief rail.
 
-Fields the runner does not record yet (per-turn passes, editable-parameter count,
-the native CAD file) are read when a trial row carries them and otherwise shown as
-"not recorded": nothing here invents a value.
+FreeCAD editability counts come from the compiler provenance beside the retained
+mesh. Other optional fields are read when a trial row carries them and otherwise
+shown as "not recorded": nothing here invents a value.
 
 Saving writes ``morning-review.json`` into the same folder. Revision requests are
 planned as next-night jobs inside that file. They are appended to the Control Room
@@ -277,6 +277,21 @@ def _cut_list(path: Optional[Path]) -> list[dict[str, str]]:
         return []
 
 
+def _editability(run_dir: Path, repo_root: Path, artifacts: Mapping[str, Any]) -> Optional[dict]:
+    mesh = contained_file(run_dir, artifacts.get("stl_path"), repo_root)
+    if mesh is None:
+        return None
+    path = contained_file(run_dir, str(mesh.parent / "provenance.json"), repo_root)
+    provenance = _mapping(_read_json(path)) if path else {}
+    counts = provenance.get("editability")
+    if provenance.get("backend") != "freecad" or not isinstance(counts, dict):
+        return None
+    keys = ("aliases", "bodies", "sketches", "constraints")
+    if not all(type(counts.get(key)) is int and counts[key] >= 0 for key in keys):
+        return None
+    return {key: counts[key] for key in keys}
+
+
 def _design(run_dir: Path, repo_root: Path, row: Mapping[str, Any], charges: Mapping[str, float]) -> dict[str, Any]:
     result = _mapping(row.get("result"))
     objective = _mapping(result.get("objective"))
@@ -306,7 +321,8 @@ def _design(run_dir: Path, repo_root: Path, row: Mapping[str, Any], charges: Map
         cost = {"kind": "subscription"}
     else:
         cost = {"kind": "unknown"}
-    editable = result.get("editable_parameters")
+    editability = _editability(run_dir, repo_root, artifacts)
+    editable = editability["aliases"] if editability is not None else result.get("editable_parameters")
     design = {
         "trial_id": trial_id,
         "entrant": entrant,
@@ -319,7 +335,8 @@ def _design(run_dir: Path, repo_root: Path, row: Mapping[str, Any], charges: Map
         "joint_notes": joint_notes,
         "diagnostics": _diagnostics(objective) if joinery and objective else [],
         "rate": trial_objective_rate(row),
-        "editable_parameters": editable if isinstance(editable, int) else None,
+        "editable_parameters": editable if type(editable) is int and editable >= 0 else None,
+        "editability": editability,
         "time_s": row.get("wall_time_s") if isinstance(row.get("wall_time_s"), (int, float)) else None,
         "cost": cost,
         "turns": turns,

@@ -353,3 +353,21 @@ def test_promote_to_library_confirms_then_commits_a_local_branch(tmp_path: Path,
     finally:
         server.should_exit = True
         thread.join(timeout=10)
+
+
+def test_editable_card_uses_compiler_provenance(studio_url: str, review_repo: Path):
+    from makerbench.arena_studio.control_room import contained_file
+    run = review_repo / 'runs' / 'nightly' / SAMBUCA_RUN
+    log = json.loads((run / 'run_log.json').read_text())
+    row = next(row for row in log['trials'] if row['trial_id'] == FREECAD)
+    mesh = contained_file(run, row['result']['artifacts']['stl_path'], review_repo)
+    assert mesh is not None
+    (mesh.parent / 'provenance.json').write_text(json.dumps({'backend': 'freecad', 'editability': {
+        'aliases': 12, 'bodies': 3, 'sketches': 4, 'constraints': 20}}))
+    with sync_playwright() as playwright:
+        browser = _launch(playwright)
+        context, page, problems = _open(browser, f'{studio_url}/#/review/{SAMBUCA_RUN}')
+        assert 'Editable: 12 params · 3 bodies' in _card(page, FREECAD).inner_text()
+        assert not problems
+        context.close()
+        browser.close()

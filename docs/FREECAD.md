@@ -42,8 +42,10 @@ print(artifacts.native_path, artifacts.step_path, artifacts.stl_path, artifacts.
 
 An entrant receives `doc`, a fresh FreeCAD document. Set `result` to a valid
 positive-volume `Part.Shape` or a document object with `.Shape`. Alternatively,
-leave exactly one shape object in `doc`. Multiple objects require an explicit
-result (e.g. a compound). Each invocation has a fresh process, document, HOME,
+omit `result` to export top-level `App::Part` assemblies. Without an assembly,
+the worker fuses the final PartDesign body shapes for export only; the document
+bodies and their feature histories remain unchanged. A single raw shape object
+is also supported. Each invocation has a fresh process, document, HOME,
 configuration/cache directories, and an allowlisted environment with no inherited
 display or credential variables. The runner times out the process group and
 publishes artifacts only after successful export. Output directories must be
@@ -140,7 +142,9 @@ feature types. Geometric fixture success does not establish acoustic tuning.
 
 The worker saves the entrant's document as FCStd before closing it, preserving its
 features, expressions and spreadsheets. A bare returned shape is retained as a
-PartDesign feature when it is not already represented in the document; this does
+PartDesign feature when it is not already represented in the document and no
+PartDesign bodies are present. Transient assembly/body export shapes are never
+added back to the editable document. The bare-shape fallback does
 not invent a parametric construction history. Grading still uses only the STL.
 
 Nightly FreeCAD entries write `<instrument>_base_r1_model.FCStd` beside the STL
@@ -157,3 +161,21 @@ test reopens a native document and changes a spreadsheet-driven dimension.
 STEP, STL, FCStd and provenance copy-out rejects symlinks, empty/missing files,
 and files over 256 MiB each. Native export uses the same sandbox and output folder
 as the mesh; it does not grant additional host access.
+
+
+## Editable entrant documents
+
+FreeCAD entrants should retain one named `PartDesign::Body` per physical part,
+with constrained sketches and Pad/Pocket/Revolve/Loft features where appropriate.
+Put driving dimensions in the `params` spreadsheet, assign aliases, and bind
+feature/constraint expressions to them. Keep named bodies separate inside an
+`App::Part` assembly or through placements; do not fuse the final assembly.
+A transient compound for mesh export does not replace the document feature tree.
+
+The worker records `editability: {aliases, bodies, sketches, constraints}` in
+compiler provenance. Missing aliases or bodies produce warnings, not grading
+failures. Morning Review reads those counts beside the retained mesh and shows
+“Editable: N params · M bodies”. These are structural counts, not proof that all
+features are constrained or that each parameter change rebuilds successfully.
+Counts are taken before any bare-shape `ResultBody` fallback for native saving;
+mesh grading is unchanged.

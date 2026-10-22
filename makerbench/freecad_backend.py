@@ -162,7 +162,7 @@ def compile_freecad_to_artifacts(
             (out_dir / name).write_bytes((output / name).read_bytes())
         (out_dir / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     stl, png = out_dir / "output.stl", out_dir / "preview.png"
-    warnings = cadquery_backend._render_preview(stl, png, timeout, env)
+    warnings = tuple(provenance.get("warnings", [])) + tuple(cadquery_backend._render_preview(stl, png, timeout, env))
     return RenderArtifacts(stl_path=stl, png_path=png, warnings=warnings)
 
 
@@ -179,7 +179,7 @@ def run_freecad(
     ``appdir`` (or MAKERBENCH_FREECAD_APPDIR) is the install script's extracted
     squashfs-root. Output must be absent or empty; failed runs publish no files.
     Entrants receive ``doc`` and return ``result`` (Part.Shape or object.Shape),
-    or leave exactly one shape object in that document.
+    or leave an assembly or PartDesign bodies in that document.
     """
     native_filename = _native_name(native_filename)
     if not math.isfinite(timeout_s) or timeout_s <= 0:

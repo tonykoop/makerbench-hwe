@@ -71,6 +71,7 @@ def test_headless_exports_are_deterministic(tmp_path, runtime, shape, volume, mo
     time.sleep(1.1)  # Ensure header timestamps differ; distinct scratch/output dirs too.
     second = backend.run_freecad(script, tmp_path / "two", appdir=runtime)
     assert first.native_path.is_file()
+    assert first.provenance['editability']['bodies'] == 0  # before ResultBody fallback
     native_reader = tmp_path / "read_native.py"
     native_reader.write_text(
         f"import FreeCAD, Part\nloaded = FreeCAD.openDocument({str(first.native_path)!r})\n"
@@ -141,6 +142,9 @@ def test_document_object_export(tmp_path, runtime):
     )
     artifacts = backend.run_freecad(script, tmp_path / "out", appdir=runtime)
     assert artifacts.stl_path.stat().st_size > 84
+    assert artifacts.provenance["editability"] == {"aliases": 0, "bodies": 0, "sketches": 0, "constraints": 0}
+    assert artifacts.provenance["warnings"] == [
+        "FreeCAD editability: no spreadsheet aliases", "FreeCAD editability: no PartDesign bodies"]
 
 
 @pytest.mark.parametrize(
@@ -185,10 +189,12 @@ def test_native_keeps_editable_features_and_spreadsheet(tmp_path, runtime):
     artifacts = backend.run_freecad(source, tmp_path / "out", appdir=runtime,
                                     native_filename="box_base_r1_model.FCStd")
     assert artifacts.native_path.name == "box_base_r1_model.FCStd"
-    assert artifacts.provenance['native'] == {
+    expected_native = {
         'filename': 'box_base_r1_model.FCStd', 'parameter_count': 1,
         'spreadsheet_count': 1, 'expression_count': 1,
     }
+    assert {key: artifacts.provenance['native'][key] for key in expected_native} == expected_native
+    assert artifacts.provenance['editability'] == {'aliases': 1, 'bodies': 0, 'sketches': 0, 'constraints': 0}
     reader = tmp_path / "edit_native.py"
     reader.write_text(
         f"import FreeCAD\nloaded = FreeCAD.openDocument({str(artifacts.native_path)!r})\n"
@@ -198,3 +204,90 @@ def test_native_keeps_editable_features_and_spreadsheet(tmp_path, runtime):
         "assert loaded.Box.Length.Value == 24\nresult = loaded.Box\n"
     )
     backend.run_freecad(reader, tmp_path / "edited", appdir=runtime)
+
+
+def test_partdesign_editability_counts(tmp_path, runtime):
+    script = tmp_path / 'editable.py'
+    script.write_text("""
+import FreeCAD as App, Part, Sketcher
+params = doc.addObject('Spreadsheet::Sheet', 'params')
+params.set('A1', '10 mm')
+params.setAlias('A1', 'diameter')
+params.set('A2', '20 mm')
+params.setAlias('A2', 'height')
+assembly = doc.addObject('App::Part', 'assembly')
+body = doc.addObject('PartDesign::Body', 'hull')
+assembly.addObject(body)
+sketch = body.newObject('Sketcher::SketchObject', 'profile')
+sketch.addGeometry(Part.Circle(App.Vector(0, 0, 0), App.Vector(0, 0, 1), 5), False)
+sketch.addConstraint(Sketcher.Constraint('Coincident', 0, 3, -1, 1))
+sketch.addConstraint(Sketcher.Constraint('Diameter', 0, 10))
+sketch.renameConstraint(1, 'diameter')
+sketch.setExpression('Constraints.diameter', 'params.diameter')
+pad = body.newObject('PartDesign::Pad', 'pad')
+pad.Profile = sketch
+pad.setExpression('Length', 'params.height')
+doc.recompute()
+result = body
+""")
+    artifacts = backend.run_freecad(script, tmp_path / 'out', appdir=runtime)
+    assert artifacts.provenance['editability'] == {'aliases': 2, 'bodies': 1, 'sketches': 1, 'constraints': 2}
+    assert artifacts.provenance['warnings'] == []
+    assert artifacts.stl_path.stat().st_size > 84
+
+
+@pytest.mark.parametrize('assembly', [True, False])
+def test_multiple_bodies_without_result(tmp_path, runtime, assembly):
+    """Export the placed assembly, or a temporary fusion; never flatten doc."""
+    script = tmp_path / 'multi_body.py'
+    script.write_text(f"""
+import FreeCAD as App, Part, MeshPart
+assembly = doc.addObject('App::Part', 'assembly') if {assembly!r} else None
+if assembly:
+    assembly.Placement.Base = App.Vector(10, 0, 0)
+for name, x in [('hull', 0), ('soundboard', {3 if assembly else 1})]:
+    body = doc.addObject('PartDesign::Body', name)
+    if assembly:
+        assembly.addObject(body)
+    block = body.newObject('PartDesign::AdditiveBox', name + '_block')
+    block.Length = block.Width = block.Height = 2
+    body.Placement.Base = App.Vector(x, 0, 0)
+doc.recompute()
+original_names = [obj.Name for obj in doc.Objects]
+original_mesh = MeshPart.meshFromShape
+def checked_mesh(**kwargs):
+    assert [obj.Name for obj in doc.Objects] == original_names
+    assert doc.hull.Tip.TypeId == 'PartDesign::AdditiveBox'
+    assert doc.soundboard.Tip.TypeId == 'PartDesign::AdditiveBox'
+    assert abs(doc.hull.Shape.Volume - 8) < 1e-6
+    assert abs(doc.soundboard.Shape.Volume - 8) < 1e-6
+    shape = kwargs['Shape']
+    assert abs(shape.Volume - {16 if assembly else 12}) < 1e-6
+    assert abs(shape.BoundBox.XMin - {10 if assembly else 0}) < 1e-6
+    assert abs(shape.BoundBox.XMax - {15 if assembly else 3}) < 1e-6
+    return original_mesh(**kwargs)
+MeshPart.meshFromShape = checked_mesh
+""")
+    artifacts = backend.run_freecad(script, tmp_path / 'out', appdir=runtime)
+    assert artifacts.provenance['editability']['bodies'] == 2
+    reader = tmp_path / 'read_multibody.py'
+    reader.write_text(
+        f"import FreeCAD, Part\nloaded = FreeCAD.openDocument({str(artifacts.native_path)!r})\n"
+        "assert loaded.getObject('ResultBody') is None\n"
+        "assert len([o for o in loaded.Objects if o.TypeId == 'PartDesign::Body']) == 2\n"
+        "assert loaded.hull.Tip.TypeId == 'PartDesign::AdditiveBox'\n"
+        "assert loaded.soundboard.Tip.TypeId == 'PartDesign::AdditiveBox'\n"
+        "loaded.hull.Tip.Length = 4\nloaded.recompute()\n"
+        "assert abs(loaded.hull.Shape.Volume - 16) < 1e-6\n"
+        "assert abs(loaded.soundboard.Shape.Volume - 8) < 1e-6\n"
+        "result = loaded.hull\n"
+    )
+    backend.run_freecad(reader, tmp_path / 'native-reopened', appdir=runtime)
+    assert artifacts.stl_path.stat().st_size > 84
+    # Independent exported mesh volume, including overlap removal for the fallback.
+    records = struct.iter_unpack('<12fH', artifacts.stl_path.read_bytes()[84:])
+    volume = 0
+    for record in records:
+        ax, ay, az, bx, by, bz, cx, cy, cz = record[3:12]
+        volume += ax * (by * cz - bz * cy) + ay * (bz * cx - bx * cz) + az * (bx * cy - by * cx)
+    assert abs(volume / 6) == pytest.approx(16 if assembly else 12, rel=.002)
