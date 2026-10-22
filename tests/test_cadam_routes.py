@@ -436,3 +436,9 @@ def test_preflight_reports_fallbacks_enabled(pre):
     messages = [text for status in pre.audit(OR) for ok, text in status.checks if ok]
     assert any("Anthropic preferred, fallbacks enabled" in text for text in messages)
     assert not any("fallbacks disabled" in text for text in messages)
+
+
+@pytest.fixture(autouse=True)
+def offline_credit_probe(monkeypatch):
+    monkeypatch.setattr("makerbench.nightly_preflight.openrouter_credit_check",
+                        lambda *args: (True, "OpenRouter limit_remaining=10, usage=0"))
