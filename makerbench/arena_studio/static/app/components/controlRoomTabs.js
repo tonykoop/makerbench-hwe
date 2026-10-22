@@ -5,6 +5,7 @@ const TABS = [
   ["review", "Morning Review"],
   ["newrun", "New Run"],
   ["queue", "Tonight's Queue"],
+  ["live", "Live"],
 ];
 
 export function ControlRoomTabs({ current }) {

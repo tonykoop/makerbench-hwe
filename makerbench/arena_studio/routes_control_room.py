@@ -234,6 +234,9 @@ def register_control_room_routes(
         return {**result, "repo": repo.name, "publish": promote_publish}
 
     # New Run (#1114). Nothing here launches a model except run-now, which needs --allow-live.
+    from .routes_control_room_live import register_live_routes
+    register_live_routes(app, service, runs_root=runs_root, queue_path=nightly_queue,
+                         writes=queue_writes, opener=open_file)
     telemetry_store = str(service.repo_root / "data" / "sessions.jsonl")
 
 

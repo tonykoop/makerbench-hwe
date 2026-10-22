@@ -77,6 +77,7 @@ RAIL = [
     ("review", "Review the night", False),
     ("newrun", "New run", False),
     ("queue", "Tonight's Queue", False),
+    ("live", "Live", False),
     ("launch", "Launch", False),
     ("analytics", "Agreement analytics", True),
     ("compare", "Compare runs", False),
@@ -241,6 +242,17 @@ def studio_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         ),
         encoding="utf-8",
     )
+    # Reuse the synthetic mid-flight Live fixture without its registry/lease.
+    # Keep the finished morning bundle and its blind identities independent.
+    from test_control_room_live import build_live_repo
+    live_repo = build_live_repo(tmp_path / "live-fixture")
+    live_queue = json.loads((live_repo / "runs" / "nightly-cad-queue.json").read_text())
+    live_run = live_repo / "runs" / "20261022T062220Z-fixture-udu"
+    live_run.rename(runs / live_run.name)
+    queue_path = runs / "nightly-cad-queue.json"
+    queue = json.loads(queue_path.read_text())
+    queue["jobs"].append(live_queue["jobs"][0])
+    queue_path.write_text(json.dumps(queue))
     monkeypatch.setattr(cli_arena, "_stage_turntable_frames", _fake_turntable_frames)
     return tmp_path
 
@@ -484,9 +496,10 @@ def test_full_evening_journey_through_every_screen(
         page.get_by_test_id("draft-banner").wait_for()
         nights = page.locator(".queue-list .queue-night")
         nights.first.wait_for()
-        assert nights.count() == 1
-        assert nights.first.get_attribute("data-job") == JOB
-        assert nights.first.get_attribute("data-status") == "votable"
+        assert nights.count() == 2
+        assert nights.first.get_attribute("data-job") == "fixture-udu"
+        assert nights.first.get_attribute("data-status") == "running"
+        assert page.locator(f'.queue-night[data-job="{JOB}"]').get_attribute("data-status") == "votable"
         page.locator(".queue-lights li", has_text="FreeCAD").wait_for()
         assert page.get_by_role("switch").is_disabled()
         assert page.get_by_role("button", name="Run preflight", exact=True).is_disabled()
@@ -496,9 +509,29 @@ def test_full_evening_journey_through_every_screen(
         session.go("Nightly cockpit")
         rows = page.locator("table.nightly-table tbody tr")
         rows.first.wait_for()
-        assert rows.count() == 1
+        assert rows.count() == 2
         assert "No lease: no nightly run is active" in page.locator(".lease-status").inner_text()
         shot("08-nightly")
+
+        # Live: walk the populated screen, not just its rail entry. Its fixture
+        # spans scored/failed/running/queued; reads must leave evidence unchanged.
+        live_run = studio_repo / "runs" / "20261022T062220Z-fixture-udu"
+        live_before = {p: p.read_bytes() for p in live_run.rglob("*") if p.is_file()}
+        session.go("Live")
+        page.get_by_role("heading", name="Tonight, as it happens").wait_for()
+        page.locator(".live-lane").nth(3).wait_for()
+        assert page.locator(".live-lane").count() == 4
+        assert page.locator(".live-lane").evaluate_all("nodes => nodes.map(n => n.dataset.state)") == [
+            "scored", "failed", "running", "queued"]
+        assert page.locator(".live-render img").count() == 1
+        assert page.locator(".live-screen canvas").count() == 0
+        page.get_by_role("button", name="Open full transcript").nth(2).click()
+        page.get_by_text("fixture: waiting for export", exact=False).last.wait_for()
+        assert "fixture: waiting for export" in page.locator(".live-transcript").inner_text()
+        page.get_by_role("button", name="Close transcript").click()
+        assert page.get_by_role("button", name="Stop after this entrant", exact=True).is_disabled()
+        assert all(p.read_bytes() == content for p, content in live_before.items())
+        shot("08-live")
 
         # 8. Morning review: the finished bundle, voted blind by keyboard.
         session.mark()
