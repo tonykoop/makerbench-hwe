@@ -1622,3 +1622,24 @@ def arena_studio(
     )
     console.print(f"[bold green]MakerBench Arena Studio running at http://{host}:{port}/[/bold green]")
     uvicorn.run(app, host=host, port=port)
+
+
+@arena_app.command("resolve-dispatch")
+def arena_resolve_dispatch(
+        run: str = typer.Option(..., "--run"),
+        entrant: str = typer.Option(..., "--entrant"),
+        outcome: str = typer.Option(..., "--outcome"),
+        note: str = typer.Option("", "--note"),
+        runs_root: Path = typer.Option(Path("runs"), "--runs-root"),
+        queue: Path = typer.Option(Path("queue.json"), "--queue"),
+        lease_path: Optional[Path] = typer.Option(None, "--lease-path")):
+    """Resolve an uncertain paid dispatch without retrying it or inferring billing."""
+    from .nightly_cad import resolve_dispatch
+
+    try:
+        result = resolve_dispatch(run_id=run, entrant_id=entrant, outcome=outcome, note=note,
+                                  runs_root=runs_root, queue_path=queue, lease_path=lease_path)
+    except (RuntimeError, ValueError, OSError) as exc:
+        console.print(str(exc), markup=False)
+        raise typer.Exit(code=1)
+    console.print(json.dumps(result, indent=2), markup=False)

@@ -19,7 +19,7 @@ from typing import Callable, Iterator, Mapping, Optional
 from . import cad_names
 from . import code_cad_arena_runner as arena_runner
 from . import code_cad_providers as providers
-from .cadam_adapter import CadamClient, CadamConfig, CadamRecoveryRequiredError
+from .cadam_adapter import CadamClient, CadamConfig, CadamRecoveryRequiredError, CadamStreamFailedError
 from .code_cad_orchestrator import OrchestrationConfig, build_trial_matrix, run_orchestration
 from .live_cad_runner import (
     LiveCadConfig,
@@ -622,6 +622,7 @@ def finalize_morning_bundle(run_dir: Path, *, cost_usd: float) -> dict:
         "votable": len(valid_ids) >= 2 and bool(pair_files),
         "valid_candidate_count": len(valid_ids),
         "failed_candidate_count": len(failures),
+        "failures": failures,
         "pair_files": pair_files,
         "cost_usd": round(cost_usd, 4),
     }
@@ -991,6 +992,12 @@ class NightlyExecutor:
             self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
 
             for entrant in job.entrants:
+                previous_dispatch = budget.dispatches.get(entrant.entrant_id, {})
+                if previous_dispatch.get("status") == "resolved":
+                    outcomes.append({"entrant_id": entrant.entrant_id, "status": "dispatch-resolved",
+                                     "resolution": previous_dispatch["resolution"]})
+                    self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
+                    continue
                 if _has_trial(run_dir / "run_log.json", job, entrant):
                     violation = None
                     if entrant.entrant_id in budget.reservations:
@@ -1054,6 +1061,11 @@ class NightlyExecutor:
                             **({"budget_violation": violation} if violation else {}),
                         }
                     )
+                except CadamStreamFailedError as exc:
+                    if dispatch is not None:
+                        dispatch["status"] = "failed"
+                    _append_error_trial(run_dir / "run_log.json", job, entrant, str(exc))
+                    outcomes.append({"entrant_id": entrant.entrant_id, "status": "failed", "error": str(exc)})
                 except CadamRecoveryRequiredError as exc:
                     # Do not append a terminal trial: an operator may later
                     # recover the same persisted conversation, but automatic
@@ -1100,7 +1112,7 @@ class NightlyExecutor:
             if claimed is None:
                 save_queue(self.queue_path, payload, jobs)
             else:
-                failure = next((row.get("error") for row in outcomes if row.get("status") in {"error", "paid-dispatch-uncertain"}), None)
+                failure = next((row.get("error") for row in outcomes if row.get("status") in {"error", "failed", "paid-dispatch-uncertain"}), None)
                 revisions.finish(
                     self.runs_root, claimed, ok=failure is None, run_id=job.run_id, error=failure, now=self.now()
                 )
@@ -1116,3 +1128,57 @@ class NightlyExecutor:
                 "outcomes": outcomes,
                 "budget": budget.__dict__,
             }
+
+
+def resolve_dispatch(*, run_id: str, entrant_id: str, outcome: str, note: str = "",
+                     runs_root: Path, queue_path: Path, lease_path: Optional[Path] = None) -> dict:
+    """Record an operator decision under the executor lease; never dispatch or invent cost."""
+    if outcome not in {"lost", "received"}:
+        raise ValueError("outcome must be lost or received")
+    if not run_id or Path(run_id).name != run_id or run_id in {".", ".."}:
+        raise ValueError("run must be a run ID")
+    run_dir = Path(runs_root) / run_id
+    if not run_dir.resolve().is_relative_to(Path(runs_root).resolve()):
+        raise ValueError("run escapes runs root")
+    with nightly_lease(lease_path or Path(runs_root) / ".nightly-cad.lock",
+                       now=lambda: datetime.now(timezone.utc)):
+        payload, jobs = load_queue(queue_path)
+        job = next((job for job in jobs if job.run_id == run_id), None)
+        if job is None:
+            raise ValueError("run is not in the queue")
+        state_path = run_dir / "nightly-state.json"
+        state = json.loads(state_path.read_text())
+        rows = state.get("outcomes", [])
+        row = next((row for row in rows if row.get("entrant_id") == entrant_id
+                    and row.get("status") == "paid-dispatch-uncertain"), None)
+        if row is None:
+            raise ValueError("entrant has no unresolved dispatch")
+        row["status"] = "dispatch-resolved"
+        row["resolution"] = {"outcome": outcome, "note": note,
+                             "resolved_utc": datetime.now(timezone.utc).isoformat()}
+        budget = state.get("budget", {})
+        dispatch = budget.get("dispatches", {}).get(entrant_id)
+        if dispatch is not None:
+            dispatch["status"] = "resolved"
+            dispatch["resolution"] = row["resolution"]
+        # Keep reservations: a manual receipt decision is not billing evidence.
+        morning = json.loads((run_dir / "morning-summary.json").read_text())
+        unresolved = next((r.get("error") for r in rows
+                           if r.get("status") == "paid-dispatch-uncertain"), None)
+        blocker = budget.get("halted_reason") or unresolved
+        old_errors = {r.get("error") for r in rows}
+        if morning.get("safety_block") and morning["safety_block"] not in old_errors:
+            blocker = blocker or morning["safety_block"]
+        if blocker:
+            morning["safety_block"] = blocker
+            morning["votable"] = False
+        else:
+            morning.pop("safety_block", None)
+            morning["votable"] = (morning.get("valid_candidate_count", 0) >= 2
+                                  and bool(morning.get("pair_files")))
+        job.status = "votable" if morning["votable"] else "blocked"
+        state.update(status=job.status, morning=morning)
+        atomic_write_json(state_path, state)
+        atomic_write_json(run_dir / "morning-summary.json", morning)
+        save_queue(queue_path, payload, jobs)
+        return state

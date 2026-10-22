@@ -501,3 +501,22 @@ def test_studio_can_review_nights_from_the_nightly_output_root(tmp_path):
     assert [n["run_id"] for n in pointed.get("/api/review/nights").json()["nights"]] == [run_id]
     view = pointed.get(f"/api/review/{run_id}").json()
     assert {d["route"] for d in view["designs"]} >= {"CADAM · OpenRouter · Opus 5.5", "Claude Code · Sonnet 5.5 · Fusion live bridge"}
+
+
+def test_definite_cadam_failure_reaches_morning_summary(tmp_path):
+    from makerbench.cadam_adapter import CadamStreamFailedError
+
+    reason = "Insufficient credits.\nModel call failed: No output generated."
+
+    def failed(*args):
+        raise CadamStreamFailedError(reason)
+
+    executor = NightlyExecutor(queue_path=_queue(tmp_path / 'queue.json', _image(tmp_path / 'ref.png')),
+                              registry_path=_registry(tmp_path / 'registry.json'), output_root=tmp_path / 'runs',
+                              handlers={'cadam': failed, 'arena': _synthetic_handler, 'live': _synthetic_handler})
+    result = executor.run()
+    assert result['outcomes'][0]['status'] == 'failed'
+    assert result['outcomes'][0]['error'] == reason
+    assert 'safety_block' not in result['morning']
+    summary = json.loads((Path(result['run_dir']) / 'morning-summary.json').read_text())
+    assert any(row['error'] == reason for row in summary['failures'])

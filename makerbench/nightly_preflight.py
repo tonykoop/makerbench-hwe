@@ -375,6 +375,28 @@ def queued_cadam_entrants(queue_path: Path) -> list[dict]:
     return found
 
 
+def openrouter_credit_check(key: str, transport=None) -> tuple[bool, str]:
+    """Read account counters without logging credentials or response/error bodies."""
+    transport = transport or _probe_transport
+    try:
+        raw = transport("GET", "https://openrouter.ai/api/v1/auth/key",
+                        {"Authorization": f"Bearer {key}"}, None)
+        data = json.loads(raw)["data"]
+        remaining, usage = data.get("limit_remaining"), data.get("usage")
+        if remaining is not None and (isinstance(remaining, bool) or not isinstance(remaining, (int, float))):
+            raise ValueError("invalid counter")
+        if usage is not None and (isinstance(usage, bool) or not isinstance(usage, (int, float))):
+            raise ValueError("invalid counter")
+        return ((remaining is None or remaining > 0) and data.get("is_free_tier") is not True,
+                f"OpenRouter limit_remaining={remaining}, usage={usage}")
+    except urllib.error.HTTPError as exc:
+        return False, f"OpenRouter credit check HTTP {exc.code}"
+    except (OSError, TimeoutError):
+        return True, "WARN: OpenRouter credit check skipped (offline)"
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return False, "OpenRouter credit check invalid response"
+
+
 def audit_routes(
     queue_path: Path,
     entries: Mapping[str, str],
@@ -384,6 +406,7 @@ def audit_routes(
     http_get: cadam_routes.HttpGet = cadam_routes.default_http_get,
     which: Callable[[str], Optional[str]] = cadam_routes.which_binary,
     repo_root: Path = cadam_routes.REPO_ROOT,
+    credit_transport=None,
 ) -> tuple[RouteStatus, ...]:
     """Route-specific readiness for every CADAM entrant queued. Read-only; no model call is made."""
     env = os.environ if environ is None else environ
@@ -400,6 +423,8 @@ def audit_routes(
         if route == cadam_routes.ROUTE_OPENROUTER:
             status = classify_secret_value(entries.get("OPENROUTER_API_KEY") or env.get("OPENROUTER_API_KEY"))
             checks.append((status == SECRET_PRESENT, f"OPENROUTER_API_KEY: {status}"))
+            if status == SECRET_PRESENT:
+                checks.append(openrouter_credit_check(setting("OPENROUTER_API_KEY"), credit_transport))
             if model.startswith("anthropic/"):
                 pinned = cadam_routes.anthropic_provider_pinned(cadam_dir)
                 checks.append((pinned, "OpenRouter Anthropic provider pin "

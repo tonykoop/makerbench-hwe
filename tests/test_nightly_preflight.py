@@ -696,3 +696,9 @@ def test_solidworks_context_required_even_when_ping_passes(tmp_path, open_part):
     sw = next(row for row in status.entrants if row.entrant_id == 'solidworks-sol')
     assert sw.ok is open_part
     assert ('open part' if open_part else reason) in sw.notes
+
+
+@pytest.fixture(autouse=True)
+def offline_credit_probe(monkeypatch):
+    monkeypatch.setattr("makerbench.nightly_preflight.openrouter_credit_check",
+                        lambda *args: (True, "OpenRouter limit_remaining=10, usage=0"))

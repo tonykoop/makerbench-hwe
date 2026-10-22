@@ -27,6 +27,35 @@ USD_PER_CADAM_BILLING_TOKEN = 0.01
 HttpTransport = Callable[[str, str, Mapping[str, str], Optional[bytes]], bytes]
 
 
+class CadamStreamFailedError(RuntimeError):
+    """A complete stream explicitly failed before producing any output."""
+
+
+def stream_failure(stream: bytes) -> Optional[str]:
+    errors = []
+    done = False
+    for line in stream.decode("utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        if not line.startswith("data: ") or done:
+            return None
+        data = line[6:]
+        if data == "[DONE]":
+            done = True
+            continue
+        try:
+            event = json.loads(data)
+        except ValueError:
+            return None
+        if not isinstance(event, dict):
+            return None
+        if event.get("type") == "error" and isinstance(event.get("errorText"), str):
+            errors.append(event["errorText"])
+        elif event.get("type") != "start":
+            return None  # Any output/tool event keeps the dispatch uncertain.
+    return "\n".join(errors) if done and errors else None
+
+
 class CadamRecoveryRequiredError(RuntimeError):
     """A persisted paid dispatch is unresolved and must never be auto-reposted."""
 
@@ -382,6 +411,9 @@ class CadamClient:
             if attempt < attempts - 1:
                 self.sleep_fn(0.5)
         if not code:
+            failure = stream_failure(stream_path.read_bytes()) if stream_path.exists() else None
+            if failure:
+                raise CadamStreamFailedError(failure)
             raise CadamRecoveryRequiredError(
                 "paid CADAM dispatch has no persisted structured build_parametric_model result; "
                 "refusing automatic repost "
