@@ -220,3 +220,7 @@ def test_studio_launcher_can_point_morning_review_at_the_nightly_output_root():
     assert re.search(r'\[string\]\$ControlRoomRunsWsl\s*=\s*""', text)
     assert "--control-room-runs '$ControlRoomRunsWsl'" in text
     assert "--allow-remote" not in text.split("#>", 1)[1]  # still loopback only
+
+
+def test_windows_task_drains_the_queue():
+    assert 'arena overnight --all' in RUNNER.read_text(encoding='utf-8')

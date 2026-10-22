@@ -36,6 +36,10 @@ from .run_log_io import atomic_write_json, file_lock, find_trial, has_trial, tri
 from .schema import MatchupMetadata, matchup_metadata
 
 
+class LiveSeatUnavailableError(RuntimeError):
+    """The live entrant cannot start because its seat failed preflight."""
+
+
 SCHEMA = "makerbench-nightly-cad-queue-v1"
 STATE_SCHEMA = "makerbench-nightly-cad-state-v1"
 MORNING_SCHEMA = "makerbench-nightly-cad-morning-v1"
@@ -885,16 +889,16 @@ class NightlyExecutor:
         if not connector_available(config):
             hint = (" (start it with StudioPipeline-hwe scripts\\start_solidworks_bridge.ps1)"
                     if connector == "hwe-solidworks" else " (open Fusion with the Luthier Bridge add-in running)")
-            raise RuntimeError(f"{connector} authenticated preflight failed{hint}")
+            raise LiveSeatUnavailableError(f"{connector} authenticated preflight failed{hint}")
         if connector == "hwe-solidworks":
             part_open, reason = connector_part_document(config)
             if not part_open:
-                raise RuntimeError(reason)
+                raise LiveSeatUnavailableError(reason)
         launched, message = connector_mcp_probe(config)
         if not launched:
-            raise RuntimeError(message)
+            raise LiveSeatUnavailableError(message)
         if connector == "hwe-fusion" and connector_unattended(config) is not True:
-            raise RuntimeError("hwe-fusion bridge is not in unattended mode: every confirm would wait for a "
+            raise LiveSeatUnavailableError("hwe-fusion bridge is not in unattended mode: every confirm would wait for a "
                                "human (restart the Luthier Bridge add-in with LUTHIER_UNATTENDED=1; hwe#544)")
         execute = make_live_execute_trial(registry=registry, run_dir=run_dir, config=config)
         orchestration = OrchestrationConfig(
@@ -967,185 +971,238 @@ class NightlyExecutor:
                 continue
             return job, request
 
-    def run(self) -> dict:
+    def run(self, *, all_jobs: bool = False, max_jobs: Optional[int] = None,
+            stop_on_block: bool = False) -> dict:
+        if max_jobs is not None and max_jobs < 1:
+            raise ValueError("max_jobs must be positive")
         with nightly_lease(self.lease_path, now=self.now):
-            payload, jobs = load_queue(self.queue_path)
-            job = next(
-                (item for item in jobs if item.status in {"queued", "running"}),
-                None,
-            )
-            claimed: Optional[revisions.RevisionRequest] = None
-            if job is None:
-                taken = self._claim_revision(payload, jobs)
-                if taken is None:
-                    return {"status": "queue-empty"}
-                job, claimed = taken
-            job.validate()
-            matchup = matchup_metadata(payload)
-            if not job.run_id:
-                stamp = self.now().astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-                name = revisions.folder_name(job.job_id) if job.revision else job.job_id
-                job.run_id = f"{stamp}-{name}"
-            if job.revision:
-                # the destination is derived from queue data: resolve and confine it under the
-                # output root (refusing a pre-existing symlinked folder) before anything is made
-                try:
-                    run_dir = revisions.confined_child(self.output_root, job.run_id)
-                except revisions.RevisionQueueError as exc:
-                    revisions.finish(self.runs_root, claimed, ok=False, error=str(exc), now=self.now())
-                    raise ValueError(str(exc)) from None
-            else:
-                run_dir = Path(job.run_dir) if job.run_dir else self.output_root / job.run_id
-            run_dir.mkdir(parents=True, exist_ok=True)
-            job.run_dir = run_dir.as_posix()
-            job.status = "running"
-            if claimed is None:
-                save_queue(self.queue_path, payload, jobs)
-            _fresh_run_log(run_dir, job, matchup=matchup)
-            registry = arena_runner.load_arena_registry(self.registry_path)
-            _night_inputs(run_dir, job, registry, night=self.now().astimezone(timezone.utc).date().isoformat())
-            budget = _resume_budget(run_dir, limit_usd=job.budget_usd)
-            outcomes: list[dict] = []
+            if not all_jobs and max_jobs is None:
+                return self._run_one()
+            results = []
+            while max_jobs is None or len(results) < max_jobs:
+                result = self._run_one()
+                if result["status"] == "queue-empty":
+                    break
+                results.append(result)
+                if stop_on_block and result["status"] == "blocked":
+                    break
+            return {"status": "blocked" if any(r["status"] == "blocked" for r in results) else "complete",
+                    "jobs": results, "job_count": len(results)}
+
+    def _run_one(self) -> dict:
+        """Run one job with the caller holding the nightly lease."""
+        payload, jobs = load_queue(self.queue_path)
+        job = next(
+            (item for item in jobs if item.status in {"queued", "running"}),
+            None,
+        )
+        claimed: Optional[revisions.RevisionRequest] = None
+        if job is None:
+            taken = self._claim_revision(payload, jobs)
+            if taken is None:
+                return {"status": "queue-empty"}
+            job, claimed = taken
+        job.validate()
+        matchup = matchup_metadata(payload)
+        if not job.run_id:
+            stamp = self.now().astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            name = revisions.folder_name(job.job_id) if job.revision else job.job_id
+            job.run_id = f"{stamp}-{name}"
+        if job.revision:
+            # the destination is derived from queue data: resolve and confine it under the
+            # output root (refusing a pre-existing symlinked folder) before anything is made
+            try:
+                run_dir = revisions.confined_child(self.output_root, job.run_id)
+            except revisions.RevisionQueueError as exc:
+                revisions.finish(self.runs_root, claimed, ok=False, error=str(exc), now=self.now())
+                raise ValueError(str(exc)) from None
+        else:
+            run_dir = Path(job.run_dir) if job.run_dir else self.output_root / job.run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        job.run_dir = run_dir.as_posix()
+        job.status = "running"
+        if claimed is None:
+            save_queue(self.queue_path, payload, jobs)
+        _fresh_run_log(run_dir, job, matchup=matchup)
+        registry = arena_runner.load_arena_registry(self.registry_path)
+        _night_inputs(run_dir, job, registry, night=self.now().astimezone(timezone.utc).date().isoformat())
+        budget = _resume_budget(run_dir, limit_usd=job.budget_usd)
+        outcomes: list[dict] = []
+        self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
+
+        for entrant in job.entrants:
+            previous_dispatch = budget.dispatches.get(entrant.entrant_id, {})
+            if previous_dispatch.get("status") == "resolved":
+                outcomes.append({"entrant_id": entrant.entrant_id, "status": "dispatch-resolved",
+                                 "resolution": previous_dispatch["resolution"]})
+                self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
+                continue
+            if _has_trial(run_dir / "run_log.json", job, entrant):
+                violation = None
+                if entrant.entrant_id in budget.reservations:
+                    violation = budget.charge(
+                        entrant,
+                        _trial_cost(run_dir / "run_log.json", job, entrant),
+                    )
+                outcomes.append(
+                    {
+                        "entrant_id": entrant.entrant_id,
+                        "status": "already-complete",
+                        **({"budget_violation": violation} if violation else {}),
+                    }
+                )
+                self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
+                continue
+            try:
+                budget.reserve(entrant)
+                dispatch = None
+                resume_only = False
+                if entrant.kind == "cadam" and entrant.kind not in self.handlers and not job.revision:
+                    dispatch = budget.prepare_dispatch(job, entrant)
+                    resume_only = str(dispatch.get("status")) == "dispatched"
+                    if not resume_only:
+                        dispatch["status"] = "dispatched"
+                        dispatch["dispatched_utc"] = (
+                            self.now().astimezone(timezone.utc).isoformat()
+                        )
+                # The reservation and paid-dispatch identity must be durable
+                # before any provider request can leave this process.
+                self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
+                handler = self.handlers.get("revision" if job.revision else entrant.kind)
+                if handler is not None:
+                    cost = handler(job, entrant, run_dir, registry)
+                elif entrant.kind == "cadam":
+                    assert dispatch is not None
+                    cost = self._run_cadam(
+                        job,
+                        entrant,
+                        run_dir,
+                        registry,
+                        dispatch=dispatch,
+                        resume_only=resume_only,
+                    )
+                elif entrant.kind == "live":
+                    cost = self._run_live(job, entrant, run_dir, registry)
+                else:
+                    cost = self._run_arena(job, entrant, run_dir, registry)
+                violation = budget.charge(entrant, cost)
+                if dispatch is not None:
+                    dispatch["status"] = "charged"
+                    dispatch["cost_usd"] = cost
+                # Close the trial-row -> budget-ledger crash window before
+                # moving to another entrant.
+                self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
+                outcomes.append(
+                    {
+                        "entrant_id": entrant.entrant_id,
+                        "status": "budget-overrun" if violation else "complete",
+                        "cost_usd": cost,
+                        **({"budget_violation": violation} if violation else {}),
+                    }
+                )
+            except CadamStreamFailedError as exc:
+                if dispatch is not None:
+                    dispatch["status"] = "failed"
+                _append_error_trial(run_dir / "run_log.json", job, entrant, str(exc))
+                outcomes.append({"entrant_id": entrant.entrant_id, "status": "failed", "error": str(exc)})
+            except CadamRecoveryRequiredError as exc:
+                # Do not append a terminal trial: an operator may later
+                # recover the same persisted conversation, but automatic
+                # reposting is permanently forbidden.
+                outcomes.append(
+                    {
+                        "entrant_id": entrant.entrant_id,
+                        "status": "paid-dispatch-uncertain",
+                        "error": str(exc),
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001 - one entrant must not kill the night.
+                _append_error_trial(run_dir / "run_log.json", job, entrant, str(exc))
+                outcomes.append(
+                    {"entrant_id": entrant.entrant_id, "status": "error", "error": str(exc),
+                     **({"seat_unavailable": True} if isinstance(exc, LiveSeatUnavailableError) else {})}
+                )
+            _record_route(run_dir / "run_log.json", job, entrant)
             self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
 
-            for entrant in job.entrants:
-                previous_dispatch = budget.dispatches.get(entrant.entrant_id, {})
-                if previous_dispatch.get("status") == "resolved":
-                    outcomes.append({"entrant_id": entrant.entrant_id, "status": "dispatch-resolved",
-                                     "resolution": previous_dispatch["resolution"]})
-                    self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
-                    continue
-                if _has_trial(run_dir / "run_log.json", job, entrant):
-                    violation = None
-                    if entrant.entrant_id in budget.reservations:
-                        violation = budget.charge(
-                            entrant,
-                            _trial_cost(run_dir / "run_log.json", job, entrant),
-                        )
-                    outcomes.append(
-                        {
-                            "entrant_id": entrant.entrant_id,
-                            "status": "already-complete",
-                            **({"budget_violation": violation} if violation else {}),
-                        }
-                    )
-                    self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
-                    continue
-                try:
-                    budget.reserve(entrant)
-                    dispatch = None
-                    resume_only = False
-                    if entrant.kind == "cadam" and entrant.kind not in self.handlers and not job.revision:
-                        dispatch = budget.prepare_dispatch(job, entrant)
-                        resume_only = str(dispatch.get("status")) == "dispatched"
-                        if not resume_only:
-                            dispatch["status"] = "dispatched"
-                            dispatch["dispatched_utc"] = (
-                                self.now().astimezone(timezone.utc).isoformat()
-                            )
-                    # The reservation and paid-dispatch identity must be durable
-                    # before any provider request can leave this process.
-                    self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
-                    handler = self.handlers.get("revision" if job.revision else entrant.kind)
-                    if handler is not None:
-                        cost = handler(job, entrant, run_dir, registry)
-                    elif entrant.kind == "cadam":
-                        assert dispatch is not None
-                        cost = self._run_cadam(
-                            job,
-                            entrant,
-                            run_dir,
-                            registry,
-                            dispatch=dispatch,
-                            resume_only=resume_only,
-                        )
-                    elif entrant.kind == "live":
-                        cost = self._run_live(job, entrant, run_dir, registry)
-                    else:
-                        cost = self._run_arena(job, entrant, run_dir, registry)
-                    violation = budget.charge(entrant, cost)
-                    if dispatch is not None:
-                        dispatch["status"] = "charged"
-                        dispatch["cost_usd"] = cost
-                    # Close the trial-row -> budget-ledger crash window before
-                    # moving to another entrant.
-                    self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
-                    outcomes.append(
-                        {
-                            "entrant_id": entrant.entrant_id,
-                            "status": "budget-overrun" if violation else "complete",
-                            "cost_usd": cost,
-                            **({"budget_violation": violation} if violation else {}),
-                        }
-                    )
-                except CadamStreamFailedError as exc:
-                    if dispatch is not None:
-                        dispatch["status"] = "failed"
-                    _append_error_trial(run_dir / "run_log.json", job, entrant, str(exc))
-                    outcomes.append({"entrant_id": entrant.entrant_id, "status": "failed", "error": str(exc)})
-                except CadamRecoveryRequiredError as exc:
-                    # Do not append a terminal trial: an operator may later
-                    # recover the same persisted conversation, but automatic
-                    # reposting is permanently forbidden.
-                    outcomes.append(
-                        {
-                            "entrant_id": entrant.entrant_id,
-                            "status": "paid-dispatch-uncertain",
-                            "error": str(exc),
-                        }
-                    )
-                except Exception as exc:  # noqa: BLE001 - one entrant must not kill the night.
-                    _append_error_trial(run_dir / "run_log.json", job, entrant, str(exc))
-                    outcomes.append(
-                        {"entrant_id": entrant.entrant_id, "status": "error", "error": str(exc)}
-                    )
-                _record_route(run_dir / "run_log.json", job, entrant)
-                self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__)
-
-            run_log = json.loads((run_dir / "run_log.json").read_text(encoding="utf-8"))
-            arena_runner.write_json(
-                run_dir / "objective_scoreline.json",
-                {
-                    "schema": "makerbench-code-cad-objective-scoreline-v1",
-                    "rows": arena_runner.collect_objective_scoreline(run_log),
-                    **({"matchup": matchup} if matchup else {}),
-                },
-            )
-            morning = finalize_morning_bundle(run_dir, cost_usd=budget.spent_usd)
-            uncertain_dispatch = next(
-                (
-                    row.get("error")
-                    for row in outcomes
-                    if row.get("status") == "paid-dispatch-uncertain"
-                ),
-                None,
-            )
-            safety_block = budget.halted_reason or uncertain_dispatch
-            if safety_block:
-                morning["votable"] = False
-                morning["safety_block"] = safety_block
-                atomic_write_json(run_dir / "morning-summary.json", morning)
-            job.status = "votable" if morning["votable"] else "blocked"
-            if claimed is None:
-                save_queue(self.queue_path, payload, jobs)
-            else:
-                failure = next((row.get("error") for row in outcomes if row.get("status") in {"error", "failed", "paid-dispatch-uncertain"}), None)
-                revisions.finish(
-                    self.runs_root, claimed, ok=failure is None, run_id=job.run_id, error=failure, now=self.now()
-                )
-            self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__, morning=morning)
-            return {
-                "status": job.status,
-                "job_id": job.job_id,
+        run_log = json.loads((run_dir / "run_log.json").read_text(encoding="utf-8"))
+        arena_runner.write_json(
+            run_dir / "objective_scoreline.json",
+            {
+                "schema": "makerbench-code-cad-objective-scoreline-v1",
+                "rows": arena_runner.collect_objective_scoreline(run_log),
                 **({"matchup": matchup} if matchup else {}),
-                "run_id": job.run_id,
-                "run_dir": run_dir.as_posix(),
-                **({"revision_of": job.revision} if job.revision else {}),
-                "morning": morning,
-                "outcomes": outcomes,
-                "budget": budget.__dict__,
-            }
+            },
+        )
+        morning = finalize_morning_bundle(run_dir, cost_usd=budget.spent_usd)
+        uncertain_dispatch = next(
+            (
+                row.get("error")
+                for row in outcomes
+                if row.get("status") == "paid-dispatch-uncertain"
+            ),
+            None,
+        )
+        seat_block = next((row["error"] for row in outcomes if row.get("seat_unavailable")), None)
+        safety_block = budget.halted_reason or uncertain_dispatch or seat_block
+        if safety_block:
+            morning["votable"] = False
+            morning["safety_block"] = safety_block
+            atomic_write_json(run_dir / "morning-summary.json", morning)
+        job.status = "votable" if morning["votable"] else "blocked"
+        if claimed is None:
+            save_queue(self.queue_path, payload, jobs)
+        else:
+            failure = next((row.get("error") for row in outcomes if row.get("status") in {"error", "failed", "paid-dispatch-uncertain"}), None)
+            revisions.finish(
+                self.runs_root, claimed, ok=failure is None, run_id=job.run_id, error=failure, now=self.now()
+            )
+        self._state(run_dir, job, outcomes=outcomes, budget=budget.__dict__, morning=morning)
+        return {
+            "status": job.status,
+            "job_id": job.job_id,
+            **({"matchup": matchup} if matchup else {}),
+            "run_id": job.run_id,
+            "run_dir": run_dir.as_posix(),
+            **({"revision_of": job.revision} if job.revision else {}),
+            "morning": morning,
+            "outcomes": outcomes,
+            "budget": budget.__dict__,
+        }
 
+
+def morning_summary(runs_root: Path, night: str) -> dict:
+    """Read the UTC night recorded in brief.json; never rewrite run evidence."""
+    if datetime.strptime(night, "%Y-%m-%d").date().isoformat() != night:
+        raise ValueError("night must be YYYY-MM-DD")
+    rows = []
+    for run_dir in sorted(Path(runs_root).iterdir()):
+        if not run_dir.is_dir() or run_dir.is_symlink() or run_dir.name.startswith("."):
+            continue
+        brief_path = run_dir / "brief.json"
+        try:
+            brief = json.loads(brief_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            brief = {}
+        saved_night = brief.get("night") if isinstance(brief, dict) else None
+        if saved_night != night:
+            # An interrupted initial claim may have a folder but no brief yet.
+            if saved_night or not re.match(r"^" + night.replace("-", "") + r"T[0-9]{6}Z-", run_dir.name):
+                continue
+        row = {"run_id": run_dir.name, "votable": None,
+               "valid_candidate_count": None, "failed_candidate_count": None}
+        try:
+            summary = json.loads((run_dir / "morning-summary.json").read_text(encoding="utf-8"))
+            row.update({key: summary[key] for key in
+                        ("votable", "valid_candidate_count", "failed_candidate_count")})
+            row["status"] = "votable" if summary["votable"] else "blocked"
+            if summary.get("safety_block"):
+                row["reason"] = summary["safety_block"]
+        except (OSError, ValueError, KeyError, TypeError):
+            row["status"] = "incomplete"
+            row["reason"] = "morning summary missing or invalid"
+        rows.append(row)
+    return {"night": night, "runs": rows, "run_count": len(rows)}
 
 def resolve_dispatch(*, run_id: str, entrant_id: str, outcome: str, note: str = "",
                      runs_root: Path, queue_path: Path, lease_path: Optional[Path] = None) -> dict:
@@ -1202,3 +1259,4 @@ def resolve_dispatch(*, run_id: str, entrant_id: str, outcome: str, note: str = 
         atomic_write_json(run_dir / "morning-summary.json", morning)
         save_queue(queue_path, payload, jobs)
         return state
+

@@ -257,7 +257,8 @@ These are the supported `makerbench` entry points. Run any command with
 | `makerbench arena run` | Run (or resume) the Code-CAD Arena 4D DoE matrix (instruments x seeds x reps x models) and write the objective scoreline. |
 | `makerbench arena matchup` | Preview a matchup that varies one axis; records held values and requires `--factorial` for multiple varying axes. |
 | `makerbench arena estimate` | Print historical per-model cost/time projections and unknown measurements without dispatching a run. |
-| `makerbench arena overnight` | Run one resumable, budget-capped nightly instrument job and write anonymous morning vote pages. |
+| `makerbench arena overnight` | Run resumable nightly jobs and write morning vote pages; `--all` drains the queue under one lease, with optional `--max-jobs` and `--stop-on-block`. |
+| `makerbench arena morning` | List per-run votable, valid, and failed counts for a saved UTC night (`--night YYYY-MM-DD --runs-root ROOT`), without changing run evidence. |
 | `makerbench arena draft-matchup` | Draft one nightly matchup job through the Control Room New Run code path into a draft queue file (never the live queue). |
 | `makerbench arena preflight` | Redacted GO/NO-GO audit of nightly-arena activation state: secrets (never echoed), lock ownership, queue statuses, required paths, and GO/NO-GO per entrant of the next queued job. |
 | `makerbench arena resolve-dispatch` | Record a person's resolution (`lost` or `received`) for a paid CADAM dispatch whose outcome stayed uncertain, under the queue lock, clearing the night's safety block when nothing else blocks it. |
