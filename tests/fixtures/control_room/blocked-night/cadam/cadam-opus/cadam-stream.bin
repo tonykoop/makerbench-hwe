@@ -1,0 +1,8 @@
+data: {"type":"start","messageId":"c4b89ef5-1b29-48da-bcb1-9f0a202ccb68"}
+
+data: {"type":"error","errorText":"Insufficient credits. This account never purchased credits. Make sure your key is on the correct account or org, and if so, purchase more at https://openrouter.ai/settings/credits"}
+
+data: {"type":"error","errorText":"Model call failed (openrouter/anthropic/claude-opus-5.5): No output generated. Check the stream for errors."}
+
+data: [DONE]
+

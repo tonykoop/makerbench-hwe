@@ -13,14 +13,19 @@ import {
   clearDraft,
   costText,
   dropOn,
+  failedIds,
   initialState,
   loadDraft,
   minutesText,
   move,
   nightLabel,
+  nightStatusLabel,
   payload,
+  retryResultText,
   saveDraft,
   setNote,
+  spendText,
+  statusHeadline,
   toggleRevise,
   trayCounts,
   turnKind,
@@ -46,7 +51,8 @@ function NightPicker({ nights, runId }) {
             class="review-night"
             href=${buildHash("review", [night.run_id])}
             aria-current=${night.run_id === runId ? "page" : undefined}
-            >${nightLabel(night)}</a
+            >${nightLabel(night)}${nightStatusLabel(night.status) &&
+            html`<span class="review-night-status" data-state=${night.status}>${nightStatusLabel(night.status)}</span>`}</a
           >
         `,
       )}
@@ -65,7 +71,29 @@ function Summary({ view }) {
       <span><b>${s.turns ?? "not recorded"}</b> turns</span>
       <span>Finished <b>${finished && !Number.isNaN(finished.getTime()) ? finished.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) + " UTC" : "not recorded"}</b></span>
     </p>
-    ${s.safety_block && html`<p class="panel-status is-error" role="alert">This night stopped early: ${s.safety_block}</p>`}
+    <${NightBanner} summary=${s} />
+  `;
+}
+
+// A night that is not fully votable (#1158): the runner's verdict, which entrants failed and
+// why (one line each), the spend, and the one next action. Nothing here is recomputed.
+function NightBanner({ summary }) {
+  const headline = statusHeadline(summary);
+  if (!headline) return null;
+  const failed = summary.failed_entrants || [];
+  return html`
+    <section class="review-block" data-state=${summary.status} role=${summary.status === "blocked" ? "alert" : "status"} data-testid="night-banner">
+      <h2>${headline}</h2>
+      ${summary.safety_block && html`<p class="review-block-reason">${summary.safety_block}</p>`}
+      ${failed.length > 0 &&
+      html`<ul class="review-block-list" aria-label="Failed entrants">
+        ${failed.map(
+          (entry) => html`<li key=${entry.trial_id}><b>${entry.name}</b> <span class="review-route">${entry.route}</span> — ${entry.reason}</li>`,
+        )}
+      </ul>`}
+      <p class="review-block-spend">${spendText(summary.spend)}</p>
+      ${summary.next_action && html`<p class="review-block-next"><b>Next:</b> ${summary.next_action}</p>`}
+    </section>
   `;
 }
 
@@ -133,9 +161,10 @@ function Assembly({ assembly }) {
   `;
 }
 
-function Card({ runId, design, index, count, state, useWebgl, onMove, onNote, onRevise, onOpen, onPromote, drag }) {
+function Card({ runId, design, index, count, state, useWebgl, onMove, onNote, onRevise, onOpen, onPromote, onRetry, failed, drag }) {
   const revise = Boolean(state.revise[design.trial_id]);
   const noteId = `note-${index}`;
+  const tid = encodeURIComponent(design.trial_id);
   return html`
     <li
       class=${`review-card${drag.over === design.trial_id ? " is-over" : ""}${drag.id === design.trial_id ? " is-dragging" : ""}`}
@@ -161,7 +190,19 @@ function Card({ runId, design, index, count, state, useWebgl, onMove, onNote, on
             </li>`,
           )}
         </ul>
+        ${design.placeholder && html`<p class="review-placeholder">The runner recorded an outcome for this entrant but no trial: nothing was built or graded.</p>`}
         ${design.failures.map((text) => html`<p class="review-fail-note">${text}</p>`)}
+        ${design.failure_detail &&
+        html`<details class="review-failure" data-testid="failure-detail">
+          <summary>Full failure text</summary>
+          <pre>${design.failure_detail}</pre>
+        </details>`}
+        ${(design.transcripts || []).length > 0 &&
+        html`<p class="review-texts" aria-label="Recorded texts">
+          ${design.transcripts.map(
+            (text) => html`<a key=${text.kind} href=${`${base(runId)}/text/${tid}/${text.kind}`} target="_blank" rel="noopener noreferrer">${text.label}</a>`,
+          )}
+        </p>`}
         ${(design.joint_notes || []).map((text) => html`<p class="review-joint-note">${text}</p>`)}
         ${(design.diagnostics || []).length > 0 &&
         html`<p class="hint review-diagnostics">
@@ -198,7 +239,9 @@ function Card({ runId, design, index, count, state, useWebgl, onMove, onNote, on
           <button type="button" class="button button-quiet review-revise" aria-pressed=${revise ? "true" : "false"} onClick=${() => onRevise(design.trial_id, noteId)}>
             ${revise ? "Marked for revision" : "Revise with my notes"}
           </button>
-          <button type="button" class="button button-quiet" data-promote onClick=${() => onPromote(design)}>Promote to library</button>
+          ${failed.has(design.trial_id)
+            ? html`<button type="button" class="button button-quiet review-retry" data-retry onClick=${() => onRetry(design, noteId)}>Retry this entrant</button>`
+            : html`<button type="button" class="button button-quiet" data-promote onClick=${() => onPromote(design)}>Promote to library</button>`}
         </div>
       </div>
     </li>
@@ -304,6 +347,31 @@ function Night({ view, voter }) {
     }
   };
 
+  const [retrying, setRetrying] = useState(null);
+  const [retryNote, setRetryNote] = useState("");
+  const retryDialog = useRef(null);
+  useEffect(() => {
+    if (retrying) retryDialog.current?.showModal?.();
+  }, [retrying]);
+  const onRetry = (design) => {
+    setRetryNote(state.notes[design.trial_id] || "");
+    setRetrying(design);
+  };
+  const confirmRetry = async () => {
+    const design = retrying;
+    retryDialog.current?.close();
+    try {
+      const result = await api(`${base(runId)}/retry/${encodeURIComponent(design.trial_id)}`, {
+        method: "POST",
+        body: { note: retryNote, extra_turns: EXTRA_TURNS },
+      });
+      setToast(retryResultText(result, design));
+    } catch (error) {
+      setToast(error.message);
+    }
+  };
+  const failed = useMemo(() => failedIds(view.summary), [view]);
+
   const onSave = async () => {
     setSaving(true);
     try {
@@ -338,6 +406,8 @@ function Night({ view, voter }) {
             onRevise=${onRevise}
             onOpen=${onOpen}
             onPromote=${setPromoting}
+            onRetry=${onRetry}
+            failed=${failed}
           />`,
         )}
       </ol>
@@ -367,6 +437,19 @@ function Night({ view, voter }) {
         <div class="actions">
           <button type="button" class="button button-quiet" onClick=${() => promoteDialog.current?.close()}>Cancel</button>
           <button type="button" class="button" onClick=${confirmPromote}>Promote</button>
+        </div>
+      `}
+    </dialog>
+    <dialog class="review-dialog" ref=${retryDialog} onClose=${() => setRetrying(null)} data-testid="retry-dialog">
+      ${retrying && html`
+        <h2>Retry ${retrying.name}?</h2>
+        <p>This writes one revision-queue job for ${retrying.name} only, continued from its best turn with ${EXTRA_TURNS} more turns, the same way Revise does. ${view.queue_writes ? "Queue writes are on, so it goes straight into the Control Room revision queue." : "Queue writes are off, so it is kept as a draft in the run folder."}</p>
+        <p class="hint">${retrying.retry?.note}</p>
+        <label class="field-label" for="retry-note">Note for the retry (optional)</label>
+        <textarea id="retry-note" class="review-note" maxlength="4000" value=${retryNote} onInput=${(event) => setRetryNote(event.currentTarget.value)}></textarea>
+        <div class="actions">
+          <button type="button" class="button button-quiet" onClick=${() => retryDialog.current?.close()}>Cancel</button>
+          <button type="button" class="button" data-confirm-retry onClick=${confirmRetry}>Retry this entrant</button>
         </div>
       `}
     </dialog>
