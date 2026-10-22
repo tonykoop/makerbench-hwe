@@ -25,6 +25,7 @@ from .arena_checks import (  # noqa: F401  (re-exported: the one definition live
     RETIRED_CHECKS,
     objective_rate,
     recorded_objective_rate,
+    retained_checks,
 )
 from . import assembly_fit
 from . import blender_backend
@@ -507,6 +508,7 @@ def make_execute_trial(
     entrant_tools: bool = False,
     max_turns: int = 1,
     stop_early: bool = True,
+    max_cost_usd: float = 0.0,
 ) -> TrialExecutor:
     """Wire #422 generation and #423 objective scoring into one trial executor.
 
@@ -659,22 +661,28 @@ def make_execute_trial(
                           render_path=payload["artifacts"].get("png_path"), objective=payload["objective"])
             atomic_write_json(turn_dir / "turn.json", record)
             objective = payload["objective"]
-            all_pass = (payload["status"] == "scored" and objective["passed"]
-                        and objective["objective_pass_rate"] == 1.0
-                        and all(float(v) == 1.0 for v in objective["sub_scores"].values()))
+            all_pass = payload["status"] == "scored" and objective["passed"]
+            cost_spent = sum(float(item.get("cost_usd") or 0.0) for item in history)
+            if max_cost_usd > 0 and cost_spent >= max_cost_usd:
+                payload["revision_stop_reason"] = "entrant cost ceiling reached"
+                break
             if turn == max_turns or (stop_early and all_pass):
                 break
             trigger = (payload.get("error") or json.dumps({
-                "objective_pass_rate": objective["objective_pass_rate"],
-                "sub_scores": objective["sub_scores"],
+                "objective_pass_rate": recorded_objective_rate(objective),
+                "sub_scores": retained_checks(objective),
                 "failures": objective.get("failures", []),
             }, sort_keys=True)) if not all_pass else "All objective checks passed; refine the design while preserving them."
             preview = record["render_path"]
-            if preview and workspace_dir is not None and Path(preview).is_file():
-                # Read-only CLI entrants can inspect only their staged workspace.
+            if workspace_dir is not None:
+                # Never expose an older turn's preview after the latest compile fails.
                 staged = workspace_dir / "revision-preview.png"
-                shutil.copyfile(preview, staged)
-                preview = staged.as_posix()
+                staged.unlink(missing_ok=True)
+                if preview and Path(preview).is_file():
+                    shutil.copyfile(preview, staged)
+                    preview = staged.as_posix()
+                else:
+                    preview = None
             from .nightly_revise import continue_prompt
 
             base_prompt, _ = build_generation_prompt(spec, trial.seed)

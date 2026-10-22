@@ -45,8 +45,9 @@ def arena(tmp_path, monkeypatch):
     executor = nightly_cad.NightlyExecutor(queue_path=tmp_path / "queue.json",
                                          registry_path=tmp_path / "registry.json", output_root=tmp_path / "runs")
 
-    def run(*, turns=3, stop_early=True, backend="freecad"):
-        entrant = nightly_cad.NightlyEntrant("entrant", "arena", "stub-a", backend=backend, context_tier="image")
+    def run(*, turns=3, stop_early=True, backend="freecad", max_cost_usd=0.0):
+        entrant = nightly_cad.NightlyEntrant("entrant", "arena", "stub-a", backend=backend, context_tier="image",
+                                            max_cost_usd=max_cost_usd)
         job = nightly_cad.NightlyJob("night", "box", str(reference), [entrant, entrant],
                                      turns=turns, stop_early=stop_early)
         cost = executor._run_arena(job, entrant, tmp_path / "run", registry)
@@ -207,3 +208,77 @@ def test_job_turn_validation_and_legacy_default(arena, turns):
     assert nightly_cad.NightlyJob.from_dict({}).turns == 1
     assert nightly_cad.NightlyJob("j", "box", "", []).turns == 3
     assert not calls
+
+
+@pytest.mark.parametrize('stop_early', [True, False])
+def test_retired_check_does_not_block_stop_or_enter_feedback(arena, monkeypatch, stop_early):
+    run, calls, compiler, _, _ = arena
+    original = runner.evaluate_objective_trial
+
+    def with_retired_check(**kwargs):
+        payload = original(**kwargs)
+        if payload['status'] == 'scored':
+            payload['objective']['sub_scores']['min_wall'] = 0.0
+        return payload
+
+    def successful(source, out_dir):
+        source.write_text('fixed')
+        return compiler(source, out_dir)
+
+    monkeypatch.setattr(runner, 'evaluate_objective_trial', with_retired_check)
+    monkeypatch.setattr(runner, 'compiler_for_backend', lambda _: successful)
+    _, row, _ = run(stop_early=stop_early, turns=2)
+    assert len(calls) == (1 if stop_early else 2)
+    if not stop_early:
+        assert 'All objective checks passed' in calls[1].prompt
+    assert row['result']['objective']['passed']
+
+
+def test_failed_check_feedback_filters_retired_check(arena, monkeypatch):
+    run, calls, _, _, _ = arena
+
+    def objective(**kwargs):
+        return {'status': 'scored', 'error': None, 'artifacts': {'png_path': None},
+                'objective': {'passed': False, 'objective_pass_rate': 0.3,
+                              'sub_scores': {'fits_envelope': 0.0, 'renders': 1.0, 'min_wall': 0.0}}}
+
+    monkeypatch.setattr(runner, 'evaluate_objective_trial', objective)
+    run(turns=2)
+    assert '"fits_envelope": 0.0' in calls[1].prompt
+    assert '"objective_pass_rate": 0.5' in calls[1].prompt
+    assert 'min_wall' not in calls[1].prompt
+
+
+def test_compile_failure_removes_prior_workspace_preview(arena, monkeypatch):
+    run, calls, compiler, provider, _ = arena
+    preview_at_dispatch = []
+
+    def observe(request):
+        preview_at_dispatch.append((Path(request.workspace_dir) / 'revision-preview.png').exists())
+        return provider(request)
+
+    observe.usage_observations = provider.usage_observations
+
+    def first_render_then_failure(source, out_dir):
+        if len(calls) == 2:
+            raise render.CompileError('second turn failed')
+        source.write_text('fixed')
+        return compiler(source, out_dir)
+
+    monkeypatch.setattr(nightly_cad.providers, 'resolve_generator', lambda *a, **kw: observe)
+    monkeypatch.setattr(runner, 'compiler_for_backend', lambda _: first_render_then_failure)
+    run(turns=3, stop_early=False)
+    assert preview_at_dispatch == [False, True, False]
+    assert 'revision-preview.png' not in calls[2].prompt
+    assert 'second turn failed' in calls[2].prompt
+
+
+@pytest.mark.parametrize('ceiling,expected_turns', [(0.1, 1), (0.15, 2), (0.2, 2), (0.0, 3)])
+def test_cost_ceiling_stops_further_turns(arena, ceiling, expected_turns):
+    run, calls, _, _, _ = arena
+    _, row, cost = run(turns=3, stop_early=False, max_cost_usd=ceiling)
+    assert len(calls) == expected_turns
+    assert cost == pytest.approx(0.1 * expected_turns)
+    assert len(row['result']['turns']) == expected_turns
+    if ceiling:
+        assert row['result']['revision_stop_reason'] == 'entrant cost ceiling reached'

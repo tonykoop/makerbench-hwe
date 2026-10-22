@@ -805,6 +805,7 @@ class NightlyExecutor:
             instruments_root=self.instruments_root,
             max_turns=job.turns,
             stop_early=job.stop_early,
+            max_cost_usd=entrant.max_cost_usd,
             image_paths=(
                 {job.instrument_id: Path(job.reference_image)}
                 if entrant.context_tier == "image"
